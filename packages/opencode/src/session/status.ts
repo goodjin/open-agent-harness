@@ -11,13 +11,23 @@ export namespace SessionStatus {
         type: z.literal("idle"),
       }),
       z.object({
+        type: z.literal("running"),
+      }),
+      z.object({
+        type: z.literal("waiting_permission"),
+      }),
+      z.object({
+        type: z.literal("waiting_user"),
+      }),
+      z.object({
+        type: z.literal("error"),
+        message: z.string(),
+      }),
+      z.object({
         type: z.literal("retry"),
         attempt: z.number(),
         message: z.string(),
         next: z.number(),
-      }),
-      z.object({
-        type: z.literal("busy"),
       }),
     ])
     .meta({
