@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { batch, createEffect, createMemo } from "solid-js"
+import { batch, createEffect, createMemo, createSignal } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { uniqueBy } from "remeda"
@@ -13,6 +13,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util/filesystem"
+import { AgentRegistry, type AgentMetadata } from "@/agent/registry"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
@@ -34,13 +35,55 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
+    // Agent registry for config/agents/ based agents
+    const registryBaseDir = sdk.directory ? path.join(sdk.directory, "config", "agents") : undefined
+    const registry = new AgentRegistry(registryBaseDir)
+    const [registryAgents, setRegistryAgents] = createSignal<AgentMetadata[]>([])
+
+    // Load agents from registry when sync completes
+    createEffect(() => {
+      if (sync.status === "complete" || sync.status === "partial") {
+        registry.list().then((agents) => {
+          setRegistryAgents(agents)
+        }).catch(() => {
+          // Fall back to server agents if registry fails
+        })
+      }
+    })
+
     const agent = iife(() => {
-      const agents = createMemo(() => sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden))
-      const visibleAgents = createMemo(() => sync.data.agent.filter((x) => !x.hidden))
+      // Use registry agents if available, otherwise fall back to server agents
+      const serverAgents = createMemo(() => sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden))
+      const serverVisibleAgents = createMemo(() => sync.data.agent.filter((x) => !x.hidden))
+
+      // Convert registry agents to UI format
+      const fromRegistry = createMemo(() =>
+        registryAgents().map((a) => ({
+          name: a.name,
+          description: a.description,
+          mode: "all" as const,
+          native: false,
+          hidden: false,
+          permission: [],
+          color: undefined,
+          model: undefined,
+        }))
+      )
+
+      const agents = createMemo(() => {
+        const regAgents = fromRegistry()
+        return regAgents.length > 0 ? regAgents : serverAgents()
+      })
+
+      const visibleAgents = createMemo(() => {
+        const regAgents = fromRegistry()
+        return regAgents.length > 0 ? regAgents : serverVisibleAgents()
+      })
+
       const [agentStore, setAgentStore] = createStore<{
         current: string
       }>({
-        current: agents()[0].name,
+        current: agents()[0]?.name ?? "",
       })
       const { theme } = useTheme()
       const colors = createMemo(() => [
@@ -57,7 +100,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           return agents()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current)!
+          return agents().find((x) => x.name === agentStore.current) ?? agents()[0]
         },
         set(name: string) {
           if (!agents().some((x) => x.name === name))
@@ -74,7 +117,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             if (next < 0) next = agents().length - 1
             if (next >= agents().length) next = 0
             const value = agents()[next]
-            setAgentStore("current", value.name)
+            if (value) setAgentStore("current", value.name)
           })
         },
         color(name: string) {

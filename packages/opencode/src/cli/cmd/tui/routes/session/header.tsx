@@ -1,6 +1,7 @@
 import { type Accessor, createMemo, createSignal, Match, Show, Switch } from "solid-js"
 import { useRouteData } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
+import { useLocal } from "@tui/context/local"
 import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
@@ -9,6 +10,7 @@ import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
 import { Flag } from "@/flag/flag"
 import { useTerminalDimensions } from "@opentui/solid"
+import { RGBA } from "@opentui/core"
 
 const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
@@ -36,6 +38,17 @@ const WorkspaceInfo = (props: { workspace: Accessor<string | undefined> }) => {
     <Show when={props.workspace()}>
       <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
         {props.workspace()}
+      </text>
+    </Show>
+  )
+}
+
+const AgentInfo = (props: { agentName: Accessor<string | undefined>; agentColor: Accessor<RGBA> }) => {
+  const { theme } = useTheme()
+  return (
+    <Show when={props.agentName()}>
+      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+        <text fg={props.agentColor()}>●</text> {props.agentName()}
       </text>
     </Show>
   )
@@ -77,6 +90,14 @@ export function Header() {
     const info = sync.workspace.get(id)
     if (!info) return `Workspace ${id}`
     return `Workspace ${id} (${info.type})`
+  })
+
+  const local = useLocal()
+  const currentAgentName = createMemo(() => local.agent.current()?.name)
+  const currentAgentColor = createMemo(() => {
+    const name = currentAgentName()
+    if (!name) return RGBA.fromInts(128, 128, 128, 255)
+    return local.agent.color(name)
   })
 
   const { theme } = useTheme()
@@ -156,11 +177,17 @@ export function Header() {
             <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={1}>
               {Flag.OPENCODE_EXPERIMENTAL_WORKSPACES ? (
                 <box flexDirection="column">
-                  <Title session={session} />
+                  <box flexDirection="row" gap={2}>
+                    <Title session={session} />
+                    <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
+                  </box>
                   <WorkspaceInfo workspace={workspace} />
                 </box>
               ) : (
-                <Title session={session} />
+                <box flexDirection="row" gap={2}>
+                  <Title session={session} />
+                  <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
+                </box>
               )}
               <ContextInfo context={context} cost={cost} />
             </box>
