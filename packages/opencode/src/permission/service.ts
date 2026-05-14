@@ -4,6 +4,7 @@ import { InstanceContext } from "@/effect/instance-context"
 import { ProjectID } from "@/project/schema"
 import { MessageID, SessionID } from "@/session/schema"
 import { PermissionTable } from "@/session/session.sql"
+import { SessionStatus } from "@/session/status"
 import { Database, eq } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Wildcard } from "@/util/wildcard"
@@ -161,6 +162,7 @@ export class PermissionService extends ServiceMap.Service<PermissionService, Per
 
         const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
         pending.set(id, { info, deferred })
+        SessionStatus.set(request.sessionID, { type: "waiting_permission" })
         void Bus.publish(Event.Asked, info)
         return yield* Effect.ensuring(
           Deferred.await(deferred),
