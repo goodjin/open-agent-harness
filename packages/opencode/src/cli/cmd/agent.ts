@@ -4,10 +4,11 @@ import { UI } from "../ui"
 import { Global } from "../../global"
 import { Agent } from "../../agent/agent"
 import { Provider } from "../../provider/provider"
+import { AgentRegistry, getRegistry } from "../../agent/registry"
+import { AgentTemplate } from "../../agent/schema"
 import path from "path"
 import fs from "fs/promises"
 import { Filesystem } from "../../util/filesystem"
-import matter from "gray-matter"
 import { Instance } from "../../project/instance"
 import { EOL } from "os"
 import type { Argv } from "yargs"
@@ -73,10 +74,10 @@ const AgentCreateCommand = cmd({
 
         const project = Instance.project
 
-        // Determine scope/path
+        // Determine scope/path - for template-based agents, use config/agents/
         let targetPath: string
         if (cliPath) {
-          targetPath = path.join(cliPath, "agent")
+          targetPath = path.join(cliPath, "agents")
         } else {
           let scope: "global" | "project" = "global"
           if (project.vcs === "git") {
@@ -100,7 +101,7 @@ const AgentCreateCommand = cmd({
           }
           targetPath = path.join(
             scope === "global" ? Global.Path.config : path.join(Instance.worktree, ".opencode"),
-            "agent",
+            "agents",
           )
         }
 
@@ -177,47 +178,94 @@ const AgentCreateCommand = cmd({
         }
 
         // Build tools config
-        const tools: Record<string, boolean> = {}
+        const deniedTools: string[] = []
         for (const tool of AVAILABLE_TOOLS) {
           if (!selectedTools.includes(tool)) {
-            tools[tool] = false
+            deniedTools.push(tool)
           }
         }
 
-        // Build frontmatter
-        const frontmatter: {
-          description: string
-          mode: AgentMode
-          tools?: Record<string, boolean>
-        } = {
-          description: generated.whenToUse,
-          mode,
-        }
-        if (Object.keys(tools).length > 0) {
-          frontmatter.tools = tools
-        }
+        // Convert mode to workflow_mode
+        const workflowMode = mode === "all" ? "auto" : mode === "primary" ? "manual" : "supervision"
 
-        // Write file
-        const content = matter.stringify(generated.systemPrompt, frontmatter)
-        const filePath = path.join(targetPath, `${generated.identifier}.md`)
+        // Create agent template directory
+        const agentId = generated.identifier.toLowerCase().replace(/\s+/g, "-")
+        const agentDir = path.join(targetPath, agentId)
+        const metaPath = path.join(agentDir, "meta.json")
+        const identityPath = path.join(agentDir, "identity.md")
+        const rulesPath = path.join(agentDir, "rules.md")
 
-        await fs.mkdir(targetPath, { recursive: true })
+        await fs.mkdir(agentDir, { recursive: true })
 
-        if (await Filesystem.exists(filePath)) {
+        if (await Filesystem.exists(metaPath)) {
           if (isFullyNonInteractive) {
-            console.error(`Error: Agent file already exists: ${filePath}`)
+            console.error(`Error: Agent directory already exists: ${agentDir}`)
             process.exit(1)
           }
-          prompts.log.error(`Agent file already exists: ${filePath}`)
+          prompts.log.error(`Agent directory already exists: ${agentDir}`)
           throw new UI.CancelledError()
         }
 
-        await Filesystem.write(filePath, content)
+        // Write meta.json
+        const meta: AgentTemplate.Meta = {
+          id: agentId,
+          name: generated.identifier,
+          role: generated.systemPrompt.slice(0, 200), // Use first 200 chars as role
+          description: generated.whenToUse,
+          workflow_mode: workflowMode as "auto" | "manual" | "supervision",
+          allowed_tools: selectedTools,
+          denied_tools: deniedTools,
+        }
+        await Filesystem.writeJson(metaPath, meta)
+
+        // Write identity.md
+        const identityContent = `# Identity
+
+## Role Definition
+${generated.systemPrompt}
+
+## Core Responsibilities
+1. **Primary Task**: ${generated.whenToUse}
+
+## Communication Style
+- Be clear and concise
+- Provide actionable feedback
+
+## Expertise Areas
+- Software development
+- Code review and optimization
+`
+        await Filesystem.write(identityPath, identityContent)
+
+        // Write rules.md
+        const rulesContent = `# Rules
+
+## General Behavior
+1. **Follow Instructions**: Always follow the user's instructions carefully
+2. **Be Helpful**: Provide useful and accurate information
+
+## Code Modification Rules
+1. **Make Minimal Changes**: Only change what's necessary
+2. **Preserve Functionality**: Ensure existing tests pass
+
+## Permission Handling
+1. **Ask Before Action**: Confirm destructive operations
+2. **Respect Boundaries**: Don't access unauthorized resources
+
+## Error Handling
+1. **Report Clearly**: Explain errors in user-friendly terms
+2. **Suggest Solutions**: Offer ways to fix issues
+
+## Session Management
+1. **Be Efficient**: Minimize unnecessary interactions
+2. **Track Context**: Maintain conversation continuity
+`
+        await Filesystem.write(rulesPath, rulesContent)
 
         if (isFullyNonInteractive) {
-          console.log(filePath)
+          console.log(agentDir)
         } else {
-          prompts.log.success(`Agent created: ${filePath}`)
+          prompts.log.success(`Agent created: ${agentDir}`)
           prompts.outro("Done")
         }
       },
@@ -232,18 +280,27 @@ const AgentListCommand = cmd({
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
-        const agents = await Agent.list()
+        const registry = getRegistry()
+        const agents = await registry.list()
+        const cfg = await import("../../config/config").then((m) => m.Config.get())
+        const defaultAgent = cfg.default_agent
+
         const sortedAgents = agents.sort((a, b) => {
-          if (a.native !== b.native) {
-            return a.native ? -1 : 1
-          }
+          // Default agent first
+          if (a.id === defaultAgent) return -1
+          if (b.id === defaultAgent) return 1
           return a.name.localeCompare(b.name)
         })
 
         for (const agent of sortedAgents) {
-          process.stdout.write(`${agent.name} (${agent.mode})` + EOL)
-          process.stdout.write(`  ${JSON.stringify(agent.permission, null, 2)}` + EOL)
+          const marker = agent.id === defaultAgent ? " (*)" : ""
+          process.stdout.write(`${agent.name}${marker}` + EOL)
+          process.stdout.write(`  ID: ${agent.id}` + EOL)
+          process.stdout.write(`  Mode: ${agent.mode}` + EOL)
+          process.stdout.write(`  Description: ${agent.description}` + EOL)
+          process.stdout.write(EOL)
         }
+        process.stdout.write(`${agents.length} agent(s)` + EOL)
       },
     })
   },
