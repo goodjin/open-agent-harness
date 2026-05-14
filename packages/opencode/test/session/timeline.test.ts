@@ -5,6 +5,8 @@ import { SessionTimeline } from "../../src/session/timeline"
 import { Instance } from "../../src/project/instance"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID } from "../../src/session/schema"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 import { tmpdir } from "../fixture/fixture"
 
 const projectRoot = path.join(__dirname, "../..")
@@ -14,39 +16,43 @@ describe("VAL-SESSION-009: Timeline checkpoint save", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        const messageID = MessageID.ascending()
-        await Session.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        // Simulate step-start with snapshot hash
-        const stepStartPart = {
-          id: PartID.ascending(),
-          messageID,
-          sessionID: session.id,
-          type: "step-start" as const,
-          snapshot: "abc123def456",
-        }
-        await Session.updatePart(stepStartPart)
+            // Simulate step-start with snapshot hash
+            const stepStartPart = {
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start" as const,
+              snapshot: "abc123def456",
+            }
+            await Session.updatePart(stepStartPart)
 
-        const checkpoints = await SessionTimeline.list(session.id)
-        expect(checkpoints.length).toBe(1)
-        expect(checkpoints[0].hash).toBe("abc123def456")
-        expect(checkpoints[0].messageID).toBe(messageID)
-        expect(typeof checkpoints[0].timestamp).toBe("number")
+            const checkpoints = await SessionTimeline.list(session.id)
+            expect(checkpoints.length).toBe(1)
+            expect(checkpoints[0].hash).toBe("abc123def456")
+            expect(checkpoints[0].messageID).toBe(messageID)
+            expect(typeof checkpoints[0].timestamp).toBe("number")
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
@@ -54,58 +60,62 @@ describe("VAL-SESSION-009: Timeline checkpoint save", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        // Create first message with step-start
-        const msgID1 = MessageID.ascending()
-        await Session.updateMessage({
-          id: msgID1,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() - 1000 },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            // Create first message with step-start
+            const msgID1 = MessageID.ascending()
+            await Session.updateMessage({
+              id: msgID1,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() - 1000 },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID: msgID1,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "hash1",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msgID1,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "hash1",
+            })
 
-        // Create second message with step-start
-        const msgID2 = MessageID.ascending()
-        await Session.updateMessage({
-          id: msgID2,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            // Create second message with step-start
+            const msgID2 = MessageID.ascending()
+            await Session.updateMessage({
+              id: msgID2,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID: msgID2,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "hash2",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msgID2,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "hash2",
+            })
 
-        const checkpoints = await SessionTimeline.list(session.id)
-        expect(checkpoints.length).toBe(2)
-        expect(checkpoints[0].hash).toBe("hash1")
-        expect(checkpoints[1].hash).toBe("hash2")
+            const checkpoints = await SessionTimeline.list(session.id)
+            expect(checkpoints.length).toBe(2)
+            expect(checkpoints[0].hash).toBe("hash1")
+            expect(checkpoints[1].hash).toBe("hash2")
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 })
@@ -115,45 +125,49 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        // Create a file in the workspace
-        const testFile = path.join(tmp.path, "test.txt")
-        await Bun.write(testFile, "original content")
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            // Create a file in the workspace
+            const testFile = path.join(tmp.path, "test.txt")
+            await Bun.write(testFile, "original content")
 
-        const session = await Session.create({})
+            const session = await Session.create({})
 
-        const messageID = MessageID.ascending()
-        await Session.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "abc123",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "abc123",
+            })
 
-        // Modify the file
-        await Bun.write(testFile, "modified content")
-        const modifiedContent = await Bun.file(testFile).text()
-        expect(modifiedContent).toBe("modified content")
+            // Modify the file
+            await Bun.write(testFile, "modified content")
+            const modifiedContent = await Bun.file(testFile).text()
+            expect(modifiedContent).toBe("modified content")
 
-        // Note: Snapshot.restore is idempotent - calling it with the same hash
-        // multiple times will result in the same state
-        const restored = await SessionTimeline.restore(session.id, "abc123")
-        expect(restored.id).toBe(session.id)
+            // Note: Snapshot.restore is idempotent - calling it with the same hash
+            // multiple times will result in the same state
+            const restored = await SessionTimeline.restore(session.id, "abc123")
+            expect(restored.id).toBe(session.id)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
@@ -161,36 +175,40 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        const messageID = MessageID.ascending()
-        await Session.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "abc123",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "abc123",
+            })
 
-        // Restore twice - both should succeed
-        const restored1 = await SessionTimeline.restore(session.id, "abc123")
-        const restored2 = await SessionTimeline.restore(session.id, "abc123")
-        expect(restored1.id).toBe(restored2.id)
+            // Restore twice - both should succeed
+            const restored1 = await SessionTimeline.restore(session.id, "abc123")
+            const restored2 = await SessionTimeline.restore(session.id, "abc123")
+            expect(restored1.id).toBe(restored2.id)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 })
@@ -200,26 +218,30 @@ describe("VAL-SESSION-014: dsl_context workflow state preservation", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        const dslContext = {
-          vars: { foo: "bar" },
-          history: [{ step: 1, action: "test" }],
-        }
+            const dslContext = {
+              vars: { foo: "bar" },
+              history: [{ step: 1, action: "test" }],
+            }
 
-        const updated = await Session.setDslContext({
-          sessionID: session.id,
-          dsl_context: dslContext,
-        })
+            const updated = await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: dslContext,
+            })
 
-        expect(updated.dsl_context).toEqual(dslContext)
+            expect(updated.dsl_context).toEqual(dslContext)
 
-        const retrieved = await Session.get(session.id)
-        expect(retrieved.dsl_context).toEqual(dslContext)
+            const retrieved = await Session.get(session.id)
+            expect(retrieved.dsl_context).toEqual(dslContext)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
@@ -227,46 +249,50 @@ describe("VAL-SESSION-014: dsl_context workflow state preservation", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        const dslContext = {
-          vars: { counter: 0 },
-          history: [],
-        }
+            const dslContext = {
+              vars: { counter: 0 },
+              history: [],
+            }
 
-        // Set initial dsl_context
-        await Session.setDslContext({
-          sessionID: session.id,
-          dsl_context: dslContext,
-        })
+            // Set initial dsl_context
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: dslContext,
+            })
 
-        const messageID = MessageID.ascending()
-        await Session.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "checkpoint1",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "checkpoint1",
+            })
 
-        // Verify dsl_context is still present
-        const afterCheckpoint = await Session.get(session.id)
-        expect(afterCheckpoint.dsl_context).toEqual(dslContext)
+            // Verify dsl_context is still present
+            const afterCheckpoint = await Session.get(session.id)
+            expect(afterCheckpoint.dsl_context).toEqual(dslContext)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
@@ -274,49 +300,53 @@ describe("VAL-SESSION-014: dsl_context workflow state preservation", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
 
-        const dslContext = {
-          vars: { important: "data" },
-          history: [{ step: 1 }],
-        }
+            const dslContext = {
+              vars: { important: "data" },
+              history: [{ step: 1 }],
+            }
 
-        // Set dsl_context before checkpoint
-        await Session.setDslContext({
-          sessionID: session.id,
-          dsl_context: dslContext,
-        })
+            // Set dsl_context before checkpoint
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: dslContext,
+            })
 
-        const messageID = MessageID.ascending()
-        await Session.updateMessage({
-          id: messageID,
-          sessionID: session.id,
-          role: "user",
-          time: { created: Date.now() },
-          agent: "user",
-          model: { providerID: "test", modelID: "test" },
-          tools: {},
-          mode: "",
-        } as unknown as MessageV2.Info)
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
 
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID,
-          sessionID: session.id,
-          type: "step-start",
-          snapshot: "abc123",
-        })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: "abc123",
+            })
 
-        // Restore (even though it doesn't actually do anything to dsl_context)
-        await SessionTimeline.restore(session.id, "abc123")
+            // Restore (even though it doesn't actually do anything to dsl_context)
+            await SessionTimeline.restore(session.id, "abc123")
 
-        // dsl_context should be preserved
-        const afterRestore = await Session.get(session.id)
-        expect(afterRestore.dsl_context).toEqual(dslContext)
+            // dsl_context should be preserved
+            const afterRestore = await Session.get(session.id)
+            expect(afterRestore.dsl_context).toEqual(dslContext)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 })
