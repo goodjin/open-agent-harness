@@ -130,7 +130,7 @@ export namespace SessionCompaction {
     }
 
     const agent = await Agent.get("compaction")
-    const model = agent.model
+    const model = agent?.model
       ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
       : await Provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
     const msg = (await Session.updateMessage({
