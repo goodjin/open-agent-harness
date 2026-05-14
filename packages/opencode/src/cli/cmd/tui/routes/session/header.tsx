@@ -11,6 +11,16 @@ import { useKeybind } from "../../context/keybind"
 import { Flag } from "@/flag/flag"
 import { useTerminalDimensions } from "@opentui/solid"
 import { RGBA } from "@opentui/core"
+import { createColors, createFrames } from "../../ui/spinner"
+
+// Extended session status type that includes all 6 states
+type SessionStatusInfo =
+  | { type: "idle" }
+  | { type: "running" }
+  | { type: "waiting_permission" }
+  | { type: "waiting_user" }
+  | { type: "error"; message: string }
+  | { type: "retry"; attempt: number; message: string; next: number }
 
 const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
@@ -54,11 +64,74 @@ const AgentInfo = (props: { agentName: Accessor<string | undefined>; agentColor:
   )
 }
 
+const SessionStatusIndicator = (props: { status: Accessor<SessionStatusInfo> }) => {
+  const { theme } = useTheme()
+  const local = useLocal()
+
+  const spinnerDef = createMemo(() => {
+    const color = local.agent.color(local.agent.current().name)
+    return {
+      frames: createFrames({
+        color,
+        style: "blocks",
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
+      }),
+      color: createColors({
+        color,
+        style: "blocks",
+        inactiveFactor: 0.6,
+        minAlpha: 0.3,
+      }),
+    }
+  })
+
+  const statusInfo = createMemo(() => {
+    const s = props.status()
+    switch (s.type) {
+      case "idle":
+        return { icon: "●", color: theme.success, label: "ready" }
+      case "running":
+        return { icon: null, color: local.agent.color(local.agent.current().name), label: "thinking" }
+      case "waiting_permission":
+        return { icon: "△", color: theme.warning, label: "awaiting permission" }
+      case "waiting_user":
+        return { icon: "⋯", color: theme.primary, label: "waiting for input" }
+      case "error":
+        return { icon: "✗", color: theme.error, label: "error" }
+      case "retry":
+        return { icon: "↻", color: theme.warning, label: `retry #${s.attempt}` }
+      default:
+        return { icon: "●", color: theme.textMuted, label: "unknown" }
+    }
+  })
+
+  return (
+    <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+      <Switch>
+        <Match when={props.status().type === "running"}>
+          <box flexDirection="row" gap={1} alignItems="center">
+            <spinner color={spinnerDef().color} frames={spinnerDef().frames} interval={80} />
+            <text fg={theme.textMuted}>thinking</text>
+          </box>
+        </Match>
+        <Match when={true}>
+          <text fg={statusInfo().color}>
+            <text>{statusInfo().icon}</text>{" "}
+            <text fg={theme.textMuted}>{statusInfo().label}</text>
+          </text>
+        </Match>
+      </Switch>
+    </text>
+  )
+}
+
 export function Header() {
   const route = useRouteData("session")
   const sync = useSync()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
+  const sessionStatus = createMemo(() => (sync.data.session_status[route.sessionID] ?? { type: "idle" }) as SessionStatusInfo)
 
   const cost = createMemo(() => {
     const total = pipe(
@@ -187,6 +260,7 @@ export function Header() {
                 <box flexDirection="row" gap={2}>
                   <Title session={session} />
                   <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
+                  <SessionStatusIndicator status={sessionStatus} />
                 </box>
               )}
               <ContextInfo context={context} cost={cost} />
