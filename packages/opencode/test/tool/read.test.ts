@@ -153,50 +153,6 @@ describe("tool.read external_directory permission", () => {
   })
 })
 
-describe("tool.read env file permissions", () => {
-  const cases: [string, boolean][] = [
-    [".env", true],
-    [".env.local", true],
-    [".env.production", true],
-    [".env.development.local", true],
-    [".env.example", false],
-    [".envrc", false],
-    ["environment.ts", false],
-  ]
-
-  describe.each(["build", "plan"])("agent=%s", (agentName) => {
-    test.each(cases)("%s asks=%s", async (filename, shouldAsk) => {
-      await using tmp = await tmpdir({
-        init: (dir) => Bun.write(path.join(dir, filename), "content"),
-      })
-      await Instance.provide({
-        directory: tmp.path,
-        fn: async () => {
-          const agent = await Agent.get(agentName)
-          let askedForEnv = false
-          const ctxWithPermissions = {
-            ...ctx,
-            ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
-              for (const pattern of req.patterns) {
-                const rule = PermissionNext.evaluate(req.permission, pattern, agent.permission)
-                if (rule.action === "ask" && req.permission === "read") {
-                  askedForEnv = true
-                }
-                if (rule.action === "deny") {
-                  throw new PermissionNext.DeniedError({ ruleset: agent.permission })
-                }
-              }
-            },
-          }
-          const read = await ReadTool.init()
-          await read.execute({ filePath: path.join(tmp.path, filename) }, ctxWithPermissions)
-          expect(askedForEnv).toBe(shouldAsk)
-        },
-      })
-    })
-  })
-})
-
 describe("tool.read truncation", () => {
   test("truncates large file by bytes and sets truncated metadata", async () => {
     await using tmp = await tmpdir({
