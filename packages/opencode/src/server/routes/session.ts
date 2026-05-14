@@ -10,6 +10,7 @@ import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
+import { SessionTimeline } from "../../session/timeline"
 import { Todo } from "../../session/todo"
 import { Agent } from "../../agent/agent"
 import { Snapshot } from "@/snapshot"
@@ -1021,6 +1022,111 @@ export const SessionRoutes = lazy(() =>
           reply: c.req.valid("json").response,
         })
         return c.json(true)
+      },
+    )
+    .get(
+      "/:sessionID/checkpoints",
+      describeRoute({
+        summary: "List session checkpoints",
+        description: "Get all checkpoint hashes and timestamps for a session.",
+        operationId: "session.checkpoints",
+        responses: {
+          200: {
+            description: "List of checkpoints",
+            content: {
+              "application/json": {
+                schema: resolver(SessionTimeline.Checkpoint.array()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        const checkpoints = await SessionTimeline.list(sessionID)
+        return c.json(checkpoints)
+      },
+    )
+    .post(
+      "/:sessionID/restore",
+      describeRoute({
+        summary: "Restore session from checkpoint",
+        description: "Restore workspace files to the state at a checkpoint hash.",
+        operationId: "session.restore",
+        responses: {
+          200: {
+            description: "Restored session",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          hash: z.string(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const { hash } = c.req.valid("json")
+        const session = await SessionTimeline.restore(sessionID, hash)
+        return c.json(session)
+      },
+    )
+    .patch(
+      "/:sessionID/dsl_context",
+      describeRoute({
+        summary: "Update session dsl_context",
+        description: "Update the workflow DSL context for a session.",
+        operationId: "session.setDslContext",
+        responses: {
+          200: {
+            description: "Updated session",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          dsl_context: Session.Info.shape.dsl_context,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const { dsl_context } = c.req.valid("json")
+        const session = await Session.setDslContext({ sessionID, dsl_context })
+        return c.json(session)
       },
     ),
 )

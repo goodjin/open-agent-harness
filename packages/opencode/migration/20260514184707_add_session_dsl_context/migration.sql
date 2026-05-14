@@ -1,0 +1,1 @@
+ALTER TABLE `session` ADD `dsl_context` text;

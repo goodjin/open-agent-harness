@@ -76,6 +76,7 @@ export namespace Session {
       share,
       revert,
       permission: row.permission ?? undefined,
+      dsl_context: row.dsl_context ?? undefined,
       time: {
         created: row.time_created,
         updated: row.time_updated,
@@ -102,6 +103,7 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
+      dsl_context: info.dsl_context ?? null,
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
@@ -157,6 +159,7 @@ export namespace Session {
           diff: z.string().optional(),
         })
         .optional(),
+      dsl_context: z.record(z.string(), z.unknown()).optional(),
     })
     .meta({
       ref: "Session",
@@ -500,6 +503,30 @@ export namespace Session {
             summary_additions: input.summary?.additions,
             summary_deletions: input.summary?.deletions,
             summary_files: input.summary?.files,
+            time_updated: Date.now(),
+          })
+          .where(eq(SessionTable.id, input.sessionID))
+          .returning()
+          .get()
+        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const info = fromRow(row)
+        Database.effect(() => Bus.publish(Event.Updated, { info }))
+        return info
+      })
+    },
+  )
+
+  export const setDslContext = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      dsl_context: Info.shape.dsl_context,
+    }),
+    async (input) => {
+      return Database.use((db) => {
+        const row = db
+          .update(SessionTable)
+          .set({
+            dsl_context: input.dsl_context ?? null,
             time_updated: Date.now(),
           })
           .where(eq(SessionTable.id, input.sessionID))
