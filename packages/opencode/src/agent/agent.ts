@@ -142,7 +142,7 @@ export namespace Agent {
     }
 
     const primaryVisible = Object.values(agents).find((a) => a.mode !== "subagent" && a.hidden !== true)
-    if (!primaryVisible) throw new Error("no primary visible agent found")
+    if (!primaryVisible) return undefined
     return primaryVisible.name
   }
 

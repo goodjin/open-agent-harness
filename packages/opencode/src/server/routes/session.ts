@@ -530,6 +530,9 @@ export const SessionRoutes = lazy(() =>
             break
           }
         }
+        if (!currentAgent) {
+          return c.json({ error: "No agent available for compaction" }, { status: 400 })
+        }
         await SessionCompaction.create({
           sessionID,
           agent: currentAgent,

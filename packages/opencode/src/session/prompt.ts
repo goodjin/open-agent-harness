@@ -961,14 +961,15 @@ export namespace SessionPrompt {
   }
 
   async function createUserMessage(input: PromptInput) {
-    const agent = await Agent.get(input.agent ?? (await Agent.defaultAgent()))
+    const agentName = input.agent ?? (await Agent.defaultAgent())
+    const agent = agentName ? await Agent.get(agentName) : undefined
 
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const model = input.model ?? agent?.model ?? (await lastModel(input.sessionID))
     const full =
-      !input.variant && agent.variant
+      !input.variant && agent?.variant
         ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
         : undefined
-    const variant = input.variant ?? (agent.variant && full?.variants?.[agent.variant] ? agent.variant : undefined)
+    const variant = input.variant ?? (agent?.variant && full?.variants?.[agent?.variant] ? agent?.variant : undefined)
 
     const info: MessageV2.Info = {
       id: input.messageID ?? MessageID.ascending(),
@@ -978,7 +979,7 @@ export namespace SessionPrompt {
         created: Date.now(),
       },
       tools: input.tools,
-      agent: agent.name,
+      agent: agent?.name ?? agentName ?? "unknown",
       model,
       system: input.system,
       format: input.format,
@@ -1268,7 +1269,7 @@ export namespace SessionPrompt {
 
         if (part.type === "agent") {
           // Check if this agent would be denied by task permission
-          const perm = PermissionNext.evaluate("task", part.name, agent.permission)
+          const perm = PermissionNext.evaluate("task", part.name, agent?.permission ?? [])
           const hint = perm.action === "deny" ? " . Invoked by user; guaranteed to exist." : ""
           return [
             {
@@ -1828,11 +1829,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       throw e
     }
-    const agent = await Agent.get(agentName)
+    const agent = agentName ? await Agent.get(agentName) : undefined
     if (!agent) {
       const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
       const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
-      const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
+      const error = new NamedError.Unknown({ message: `Agent not found: "${agentName ?? "undefined"}".${hint}` })
       Bus.publish(Session.Event.Error, {
         sessionID: input.sessionID,
         error: error.toObject(),
