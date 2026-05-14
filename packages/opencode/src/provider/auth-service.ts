@@ -68,15 +68,8 @@ export class ProviderAuthService extends ServiceMap.Service<ProviderAuthService,
     ProviderAuthService,
     Effect.gen(function* () {
       const auth = yield* Auth.AuthService
-      const hooks = yield* Effect.promise(async () => {
-        const mod = await import("../plugin")
-        return pipe(
-          await mod.Plugin.list(),
-          filter((x) => x.auth?.provider !== undefined),
-          map((x) => [x.auth!.provider, x.auth!] as const),
-          fromEntries(),
-        )
-      })
+      // Plugin system removed - no hooks available
+      const hooks: Record<string, { methods: Method[]; authorize?: () => Promise<AuthOuathResult>; callback?: (code?: string) => Promise<{ type: string; key?: string; access?: string; refresh?: string; expires?: number; accountId?: string }> }> = {}
       const pending = new Map<ProviderID, AuthOuathResult>()
 
       const methods = Effect.fn("ProviderAuthService.methods")(function* () {
@@ -87,15 +80,8 @@ export class ProviderAuthService extends ServiceMap.Service<ProviderAuthService,
         providerID: ProviderID
         method: number
       }) {
-        const method = hooks[input.providerID].methods[input.method]
-        if (method.type !== "oauth") return
-        const result = yield* Effect.promise(() => method.authorize())
-        pending.set(input.providerID, result)
-        return {
-          url: result.url,
-          method: result.method,
-          instructions: result.instructions,
-        }
+        // Plugin system removed - no authorization available
+        return undefined
       })
 
       const callback = Effect.fn("ProviderAuthService.callback")(function* (input: {
@@ -103,32 +89,8 @@ export class ProviderAuthService extends ServiceMap.Service<ProviderAuthService,
         method: number
         code?: string
       }) {
-        const match = pending.get(input.providerID)
-        if (!match) return yield* Effect.fail(new OauthMissing({ providerID: input.providerID }))
-        if (match.method === "code" && !input.code)
-          return yield* Effect.fail(new OauthCodeMissing({ providerID: input.providerID }))
-
-        const result = yield* Effect.promise(() =>
-          match.method === "code" ? match.callback(input.code!) : match.callback(),
-        )
-        if (!result || result.type !== "success") return yield* Effect.fail(new OauthCallbackFailed({}))
-
-        if ("key" in result) {
-          yield* auth.set(input.providerID, {
-            type: "api",
-            key: result.key,
-          })
-        }
-
-        if ("refresh" in result) {
-          yield* auth.set(input.providerID, {
-            type: "oauth",
-            access: result.access,
-            refresh: result.refresh,
-            expires: result.expires,
-            ...(result.accountId ? { accountId: result.accountId } : {}),
-          })
-        }
+        // Plugin system removed - cannot callback
+        return yield* Effect.fail(new OauthMissing({ providerID: input.providerID }))
       })
 
       return ProviderAuthService.of({

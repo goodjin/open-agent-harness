@@ -528,42 +528,6 @@ test("explicit Truncate.GLOB deny is respected", async () => {
   })
 })
 
-test("skill directories are allowed for external_directory", async () => {
-  await using tmp = await tmpdir({
-    git: true,
-    init: async (dir) => {
-      const skillDir = path.join(dir, ".opencode", "skill", "perm-skill")
-      await Bun.write(
-        path.join(skillDir, "SKILL.md"),
-        `---
-name: perm-skill
-description: Permission skill.
----
-
-# Permission Skill
-`,
-      )
-    },
-  })
-
-  const home = process.env.OPENCODE_TEST_HOME
-  process.env.OPENCODE_TEST_HOME = tmp.path
-
-  try {
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const build = await Agent.get("build")
-        const skillDir = path.join(tmp.path, ".opencode", "skill", "perm-skill")
-        const target = path.join(skillDir, "reference", "notes.md")
-        expect(PermissionNext.evaluate("external_directory", target, build!.permission).action).toBe("allow")
-      },
-    })
-  } finally {
-    process.env.OPENCODE_TEST_HOME = home
-  }
-})
-
 test("defaultAgent returns build when no default_agent config", async () => {
   await using tmp = await tmpdir()
   await Instance.provide({

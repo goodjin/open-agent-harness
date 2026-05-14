@@ -7,7 +7,7 @@ import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util/log"
 import { BunProc } from "../bun"
 import { Hash } from "../util/hash"
-import { Plugin } from "../plugin"
+import { Plugin } from "../plugin-stub"
 import { NamedError } from "@opencode-ai/util/error"
 import { ModelsDev } from "./models"
 import { Auth } from "../auth"
@@ -1138,6 +1138,25 @@ export namespace Provider {
         // Preserve custom fetch if it exists, wrap it with timeout logic
         const fetchFn = customFetch ?? fetch
         const opts = init ?? {}
+        
+        // 🔍 记录 URL 和 API Key 信息
+        console.log("\n" + "=".repeat(100))
+        console.log("📤 LLM API Request - URL & Auth")
+        console.log("=".repeat(100))
+        console.log("URL:", input)
+        console.log("Provider:", model.providerID)
+        console.log("Model:", model.id)
+        if (opts.headers) {
+          const auth = opts.headers["Authorization"] || opts.headers["authorization"]
+          if (auth) {
+            console.log("Authorization:", auth.substring(0, 50) + "...")
+          }
+        }
+        if (options["apiKey"]) {
+          console.log("API Key:", options["apiKey"].substring(0, 20) + "...")
+        }
+        console.log("=".repeat(100) + "\n")
+        
         const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
         const signals: AbortSignal[] = []
 

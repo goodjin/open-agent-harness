@@ -6,7 +6,7 @@ import { Log } from "../util/log"
 import { Instance } from "../project/instance"
 import { lazy } from "@opencode-ai/util/lazy"
 import { Shell } from "@/shell/shell"
-import { Plugin } from "@/plugin"
+import { Plugin } from "@/plugin-stub"
 import { PtyID } from "./schema"
 
 export namespace Pty {

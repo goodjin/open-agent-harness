@@ -1,4 +1,4 @@
-import { Plugin } from "../plugin"
+import { Plugin } from "../plugin-stub"
 import { Format } from "../format"
 import { LSP } from "../lsp"
 import { FileWatcherService } from "../file/watcher"

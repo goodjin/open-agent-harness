@@ -6,7 +6,6 @@ import { FileCommand } from "./file"
 import { LSPCommand } from "./lsp"
 import { RipgrepCommand } from "./ripgrep"
 import { ScrapCommand } from "./scrap"
-import { SkillCommand } from "./skill"
 import { SnapshotCommand } from "./snapshot"
 import { AgentCommand } from "./agent"
 
@@ -20,7 +19,6 @@ export const DebugCommand = cmd({
       .command(RipgrepCommand)
       .command(FileCommand)
       .command(ScrapCommand)
-      .command(SkillCommand)
       .command(SnapshotCommand)
       .command(AgentCommand)
       .command(PathsCommand)
