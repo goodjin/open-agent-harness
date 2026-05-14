@@ -233,12 +233,15 @@ export namespace SessionProcessor {
 
                 case "start-step":
                   snapshot = await Snapshot.track()
+                  const session = await Session.get(input.sessionID)
                   await Session.updatePart({
                     id: PartID.ascending(),
                     messageID: input.assistantMessage.id,
                     sessionID: input.sessionID,
                     snapshot,
                     type: "step-start",
+                    permission: session.permission,
+                    dsl_context: session.dsl_context,
                   })
                   break
 

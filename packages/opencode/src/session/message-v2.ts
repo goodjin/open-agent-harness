@@ -16,6 +16,7 @@ import { iife } from "@/util/iife"
 import { type SystemError } from "bun"
 import type { Provider } from "@/provider/provider"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { PermissionNext } from "@/permission/next"
 
 export namespace MessageV2 {
   export function isMedia(mime: string) {
@@ -239,6 +240,8 @@ export namespace MessageV2 {
   export const StepStartPart = PartBase.extend({
     type: z.literal("step-start"),
     snapshot: z.string().optional(),
+    permission: PermissionNext.Ruleset.optional(),
+    dsl_context: z.record(z.string(), z.unknown()).optional(),
   }).meta({
     ref: "StepStartPart",
   })
