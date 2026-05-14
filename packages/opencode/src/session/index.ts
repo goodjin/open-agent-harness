@@ -9,7 +9,7 @@ import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
-import { Database, NotFoundError, eq, and, or, gte, isNull, desc, like, inArray, lt } from "../storage/db"
+import { Database, NotFoundError, ForbiddenError, eq, and, or, gte, isNull, desc, like, inArray, lt } from "../storage/db"
 import type { SQL } from "../storage/db"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
@@ -67,7 +67,7 @@ export namespace Session {
       id: row.id,
       slug: row.slug,
       projectID: row.project_id,
-      workspaceID: row.workspace_id ?? undefined,
+      workspaceID: row.workspace_id!,
       directory: row.directory,
       parentID: row.parent_id ?? undefined,
       title: row.title,
@@ -126,7 +126,7 @@ export namespace Session {
       id: SessionID.zod,
       slug: z.string(),
       projectID: ProjectID.zod,
-      workspaceID: WorkspaceID.zod.optional(),
+      workspaceID: WorkspaceID.zod,
       directory: z.string(),
       parentID: SessionID.zod.optional(),
       summary: z
@@ -229,12 +229,16 @@ export namespace Session {
       })
       .optional(),
     async (input) => {
+      const workspaceID = input?.workspaceID ?? WorkspaceContext.workspaceID
+      if (!workspaceID) {
+        throw new Error("workspaceID is required to create a session")
+      }
       return createNext({
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
         permission: input?.permission,
-        workspaceID: input?.workspaceID,
+        workspaceID,
       })
     },
   )
@@ -301,7 +305,7 @@ export namespace Session {
     id?: SessionID
     title?: string
     parentID?: SessionID
-    workspaceID?: WorkspaceID
+    workspaceID: WorkspaceID
     directory: string
     permission?: PermissionNext.Ruleset
   }) {
@@ -350,6 +354,10 @@ export namespace Session {
   export const get = fn(SessionID.zod, async (id) => {
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     if (!row) throw new NotFoundError({ message: `Session not found: ${id}` })
+    const contextWorkspace = WorkspaceContext.workspaceID
+    if (contextWorkspace && row.workspace_id && row.workspace_id !== contextWorkspace) {
+      throw new ForbiddenError({ message: `Session ${id} does not belong to the current workspace` })
+    }
     return fromRow(row)
   })
 

@@ -25,6 +25,13 @@ export const NotFoundError = NamedError.create(
   }),
 )
 
+export const ForbiddenError = NamedError.create(
+  "ForbiddenError",
+  z.object({
+    message: z.string(),
+  }),
+)
+
 const log = Log.create({ service: "db" })
 
 export namespace Database {
