@@ -1147,7 +1147,8 @@ export namespace Provider {
         console.log("Provider:", model.providerID)
         console.log("Model:", model.id)
         if (opts.headers) {
-          const auth = opts.headers["Authorization"] || opts.headers["authorization"]
+          const headers = opts.headers as Record<string, string>
+          const auth = headers["Authorization"] || headers["authorization"]
           if (auth) {
             console.log("Authorization:", auth.substring(0, 50) + "...")
           }
