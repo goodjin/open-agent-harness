@@ -39,6 +39,194 @@ const baseCtx = {
 }
 
 // ============================================================================
+// VAL-CROSS-004: Tool call permission check denied returns error without execution
+// ============================================================================
+
+describe("tool permission gating - VAL-CROSS-004", () => {
+  test("edit tool denied permission returns error without executing write", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = `${tmp.path}/test-edit.txt`
+        await Bun.write(filePath, "original content\nsecond line\n")
+
+        // First, read the file using the Read tool (edit requires this for FileTime tracking)
+        const readCtx: Tool.Context = {
+          ...baseCtx,
+          ask: async () => {},
+        }
+        const { ReadTool } = await import("../../src/tool/read")
+        const readTool = await ReadTool.init()
+        await readTool.execute({ filePath }, readCtx)
+
+        const ctx: Tool.Context = {
+          ...baseCtx,
+          ask: async () => {
+            // Simulate permission denied - throws error before any write happens
+            throw new PermissionNext.DeniedError({ ruleset: [] })
+          },
+        }
+
+        const { EditTool } = await import("../../src/tool/edit")
+        const tool = await EditTool.init()
+
+        // Execute should throw due to permission denial
+        let thrownError: any
+        try {
+          await tool.execute(
+            {
+              filePath,
+              oldString: "original",
+              newString: "modified",
+            },
+            ctx,
+          )
+        } catch (error) {
+          thrownError = error
+        }
+
+        // Verify error was thrown
+        expect(thrownError).toBeDefined()
+        expect(thrownError instanceof PermissionNext.DeniedError).toBe(true)
+
+        // Verify file was NOT modified (write never happened)
+        const content = await Bun.file(filePath).text()
+        expect(content).toBe("original content\nsecond line\n")
+      },
+    })
+  })
+
+  test("edit tool denied permission for new file returns error without creating file", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = `${tmp.path}/new-file.txt`
+
+        const ctx: Tool.Context = {
+          ...baseCtx,
+          ask: async () => {
+            // Simulate permission denied
+            throw new PermissionNext.DeniedError({ ruleset: [] })
+          },
+        }
+
+        const { EditTool } = await import("../../src/tool/edit")
+        const tool = await EditTool.init()
+
+        // Execute should throw due to permission denial
+        let thrownError: any
+        try {
+          await tool.execute(
+            {
+              filePath,
+              oldString: "",
+              newString: "new content",
+            },
+            ctx,
+          )
+        } catch (error) {
+          thrownError = error
+        }
+
+        // Verify error was thrown
+        expect(thrownError).toBeDefined()
+        expect(thrownError instanceof PermissionNext.DeniedError).toBe(true)
+
+        // Verify file was NOT created (write never happened)
+        const exists = await Bun.file(filePath).exists()
+        expect(exists).toBe(false)
+      },
+    })
+  })
+
+  test("bash tool denied permission returns error without executing command", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const ctx: Tool.Context = {
+          ...baseCtx,
+          ask: async () => {
+            // Simulate permission denied
+            throw new PermissionNext.DeniedError({ ruleset: [] })
+          },
+        }
+
+        const { BashTool } = await import("../../src/tool/bash")
+        const tool = await BashTool.init()
+
+        // Execute should throw due to permission denial
+        let thrownError: any
+        try {
+          await tool.execute(
+            {
+              command: "echo 'modified' > /tmp/test-bash.txt",
+              description: "Write to file",
+            },
+            ctx,
+          )
+        } catch (error) {
+          thrownError = error
+        }
+
+        // Verify error was thrown
+        expect(thrownError).toBeDefined()
+        expect(thrownError instanceof PermissionNext.DeniedError).toBe(true)
+
+        // Verify command was NOT executed (file should not exist)
+        const exists = await Bun.file("/tmp/test-bash.txt").exists()
+        expect(exists).toBe(false)
+      },
+    })
+  })
+
+  test("write tool denied permission returns error without writing file", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const filePath = `${tmp.path}/test-write.txt`
+
+        const ctx: Tool.Context = {
+          ...baseCtx,
+          ask: async () => {
+            // Simulate permission denied
+            throw new PermissionNext.DeniedError({ ruleset: [] })
+          },
+        }
+
+        const { WriteTool } = await import("../../src/tool/write")
+        const tool = await WriteTool.init()
+
+        // Execute should throw due to permission denial
+        let thrownError: any
+        try {
+          await tool.execute(
+            {
+              filePath,
+              content: "new content",
+            },
+            ctx,
+          )
+        } catch (error) {
+          thrownError = error
+        }
+
+        // Verify error was thrown
+        expect(thrownError).toBeDefined()
+        expect(thrownError instanceof PermissionNext.DeniedError).toBe(true)
+
+        // Verify file was NOT created (write never happened)
+        const exists = await Bun.file(filePath).exists()
+        expect(exists).toBe(false)
+      },
+    })
+  })
+})
+
+// ============================================================================
 // VAL-PERM-019: Tool permission binding - all tools check permissions
 // ============================================================================
 
