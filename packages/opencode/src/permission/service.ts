@@ -1,11 +1,7 @@
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
-import { InstanceContext } from "@/effect/instance-context"
-import { ProjectID } from "@/project/schema"
 import { MessageID, SessionID } from "@/session/schema"
-import { PermissionTable } from "@/session/session.sql"
 import { SessionStatus } from "@/session/status"
-import { Database, eq } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Wildcard } from "@/util/wildcard"
 import { Deferred, Effect, Layer, Schema, ServiceMap } from "effect"
@@ -57,11 +53,6 @@ export type Request = z.infer<typeof Request>
 
 export const Reply = z.enum(["once", "always", "reject"])
 export type Reply = z.infer<typeof Reply>
-
-export const Approval = z.object({
-  projectID: ProjectID.zod,
-  patterns: z.string().array(),
-})
 
 export const Event = {
   Asked: BusEvent.define("permission.asked", Request),
@@ -128,19 +119,14 @@ export class PermissionService extends ServiceMap.Service<PermissionService, Per
   static readonly layer = Layer.effect(
     PermissionService,
     Effect.gen(function* () {
-      const { project } = yield* InstanceContext
-      const row = Database.use((db) =>
-        db.select().from(PermissionTable).where(eq(PermissionTable.project_id, project.id)).get(),
-      )
       const pending = new Map<PermissionID, PendingEntry>()
-      const approved: Ruleset = row?.data ?? []
 
       const ask = Effect.fn("PermissionService.ask")(function* (input: z.infer<typeof AskInput>) {
         const { ruleset, ...request } = input
         let needsAsk = false
 
         for (const pattern of request.patterns) {
-          const rule = evaluate(request.permission, pattern, ruleset, approved)
+          const rule = evaluate(request.permission, pattern, ruleset)
           log.info("evaluated", { permission: request.permission, pattern, action: rule })
           if (rule.action === "deny") {
             return yield* new DeniedError({
@@ -177,13 +163,13 @@ export class PermissionService extends ServiceMap.Service<PermissionService, Per
         if (!existing) return
 
         pending.delete(input.requestID)
-        void Bus.publish(Event.Replied, {
-          sessionID: existing.info.sessionID,
-          requestID: existing.info.id,
-          reply: input.reply,
-        })
 
         if (input.reply === "reject") {
+          void Bus.publish(Event.Replied, {
+            sessionID: existing.info.sessionID,
+            requestID: existing.info.id,
+            reply: "reject",
+          })
           yield* Deferred.fail(
             existing.deferred,
             input.message ? new CorrectedError({ feedback: input.message }) : new RejectedError(),
@@ -202,36 +188,36 @@ export class PermissionService extends ServiceMap.Service<PermissionService, Per
           return
         }
 
+        void Bus.publish(Event.Replied, {
+          sessionID: existing.info.sessionID,
+          requestID: existing.info.id,
+          reply: input.reply,
+        })
         yield* Deferred.succeed(existing.deferred, undefined)
-        if (input.reply === "once") return
 
-        for (const pattern of existing.info.always) {
-          approved.push({
+        // When "always" is replied, resolve matching pending requests in same session
+        if (input.reply === "always") {
+          const alwaysRules: Ruleset = existing.info.always.map((pattern) => ({
             permission: existing.info.permission,
             pattern,
-            action: "allow",
-          })
-        }
+            action: "allow" as const,
+          }))
 
-        for (const [id, item] of pending.entries()) {
-          if (item.info.sessionID !== existing.info.sessionID) continue
-          const ok = item.info.patterns.every(
-            (pattern) => evaluate(item.info.permission, pattern, approved).action === "allow",
-          )
-          if (!ok) continue
-          pending.delete(id)
-          void Bus.publish(Event.Replied, {
-            sessionID: item.info.sessionID,
-            requestID: item.info.id,
-            reply: "always",
-          })
-          yield* Deferred.succeed(item.deferred, undefined)
+          for (const [id, item] of pending.entries()) {
+            if (item.info.sessionID !== existing.info.sessionID) continue
+            const ok = item.info.patterns.every(
+              (pattern) => evaluate(item.info.permission, pattern, alwaysRules).action === "allow",
+            )
+            if (!ok) continue
+            pending.delete(id)
+            void Bus.publish(Event.Replied, {
+              sessionID: item.info.sessionID,
+              requestID: item.info.id,
+              reply: "always",
+            })
+            yield* Deferred.succeed(item.deferred, undefined)
+          }
         }
-
-        // TODO: we don't save the permission ruleset to disk yet until there's
-        // UI to manage it
-        // db().insert(PermissionTable).values({ projectID: Instance.project.id, data: s.approved })
-        //   .onConflictDoUpdate({ target: PermissionTable.projectID, set: { data: s.approved } }).run()
       })
 
       const list = Effect.fn("PermissionService.list")(function* () {

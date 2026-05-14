@@ -24,7 +24,6 @@ export namespace PermissionNext {
   export type Request = S.Request
   export const Reply = S.Reply
   export type Reply = S.Reply
-  export const Approval = S.Approval
   export const Event = S.Event
   export const Service = S.PermissionService
   export const RejectedError = S.RejectedError

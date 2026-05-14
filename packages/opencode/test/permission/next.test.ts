@@ -707,7 +707,7 @@ test("reply - reject with message throws CorrectedError", async () => {
   })
 })
 
-test("reply - always persists approval and resolves", async () => {
+test("reply - always resolves pending ask", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
@@ -732,22 +732,8 @@ test("reply - always persists approval and resolves", async () => {
       await expect(askPromise).resolves.toBeUndefined()
     },
   })
-  // Re-provide to reload state with stored permissions
-  await Instance.provide({
-    directory: tmp.path,
-    fn: async () => {
-      // Stored approval should allow without asking
-      const result = await PermissionNext.ask({
-        sessionID: SessionID.make("session_test2"),
-        permission: "bash",
-        patterns: ["ls"],
-        metadata: {},
-        always: [],
-        ruleset: [],
-      })
-      expect(result).toBeUndefined()
-    },
-  })
+  // Note: "always" no longer persists to project-level PermissionTable to prevent cross-agent leakage.
+  // Instead, "always" grants should be stored in session.permission for session-scoped persistence.
 })
 
 test("reply - reject cancels all pending for same session", async () => {
