@@ -67,7 +67,7 @@ export namespace Session {
       id: row.id,
       slug: row.slug,
       projectID: row.project_id,
-      workspaceID: row.workspace_id!,
+      workspaceID: row.workspace_id ?? undefined,
       directory: row.directory,
       parentID: row.parent_id ?? undefined,
       title: row.title,
@@ -126,7 +126,7 @@ export namespace Session {
       id: SessionID.zod,
       slug: z.string(),
       projectID: ProjectID.zod,
-      workspaceID: WorkspaceID.zod,
+      workspaceID: WorkspaceID.zod.optional(),
       directory: z.string(),
       parentID: SessionID.zod.optional(),
       summary: z
@@ -252,9 +252,13 @@ export namespace Session {
       const original = await get(input.sessionID)
       if (!original) throw new Error("session not found")
       const title = getForkedTitle(original.title)
+      const workspaceID = original.workspaceID ?? WorkspaceContext.workspaceID
+      if (!workspaceID) {
+        throw new Error("workspaceID is required to fork a session")
+      }
       const session = await createNext({
         directory: Instance.directory,
-        workspaceID: original.workspaceID,
+        workspaceID,
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
