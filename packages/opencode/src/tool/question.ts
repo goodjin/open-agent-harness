@@ -9,6 +9,15 @@ export const QuestionTool = Tool.define("question", {
     questions: z.array(Question.Info.omit({ custom: true })).describe("Questions to ask"),
   }),
   async execute(params, ctx) {
+    await ctx.ask({
+      permission: "question",
+      patterns: ["*"],
+      always: ["*"],
+      metadata: {
+        questions: params.questions.map((q) => q.question),
+      },
+    })
+
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: params.questions,
