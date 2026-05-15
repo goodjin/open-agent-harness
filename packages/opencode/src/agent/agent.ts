@@ -4,7 +4,6 @@ import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { generateObject, streamObject, type ModelMessage } from "ai"
 import { SystemPrompt } from "../session/system"
-import { Instance } from "../project/instance"
 import { Truncate } from "../tool/truncation"
 import { Auth } from "../auth"
 import { ProviderTransform } from "../provider/transform"
@@ -13,6 +12,7 @@ import PROMPT_GENERATE from "./generate.txt"
 import { PermissionNext } from "@/permission/next"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Plugin } from "@/plugin-stub"
+import { getRegistry } from "./registry"
 
 export namespace Agent {
   export const Info = z
@@ -42,10 +42,16 @@ export namespace Agent {
     })
   export type Info = z.infer<typeof Info>
 
-  const state = Instance.state(async () => {
-    const cfg = await Config.get()
-
+  /**
+   * Build a PermissionNext.Ruleset from allowed_tools and denied_tools arrays.
+   * This is a best-effort conversion - the original config had glob patterns,
+   * but templates only have tool names, so we use "*" as the pattern.
+   */
+  function buildPermission(allowed: string[] | undefined, denied: string[] | undefined): PermissionNext.Ruleset {
+    const rules: PermissionNext.Ruleset = []
     const whitelistedDirs = [Truncate.GLOB]
+
+    // Default rules
     const defaults = PermissionNext.fromConfig({
       "*": "allow",
       doom_loop: "ask",
@@ -56,7 +62,6 @@ export namespace Agent {
       question: "deny",
       plan_enter: "deny",
       plan_exit: "deny",
-      // mirrors github.com/github/gitignore Node.gitignore pattern for .env files
       read: {
         "*": "allow",
         "*.env": "ask",
@@ -64,86 +69,93 @@ export namespace Agent {
         "*.env.example": "allow",
       },
     })
-    const user = PermissionNext.fromConfig(cfg.permission ?? {})
 
-    const result: Record<string, Info> = {}
+    // Start with defaults
+    rules.push(...defaults)
 
-    for (const [key, value] of Object.entries(cfg.agent ?? {})) {
-      if (value.disable) {
-        delete result[key]
-        continue
+    // Add deny rules for denied_tools
+    if (denied) {
+      for (const tool of denied) {
+        rules.push({ permission: tool, action: "deny", pattern: "*" })
       }
-      let item = result[key]
-      if (!item)
-        item = result[key] = {
-          name: key,
-          mode: "all",
-          permission: PermissionNext.merge(defaults, user),
-          options: {},
-          native: false,
-        }
-      if (value.model) item.model = Provider.parseModel(value.model)
-      item.variant = value.variant ?? item.variant
-      item.prompt = value.prompt ?? item.prompt
-      item.description = value.description ?? item.description
-      item.temperature = value.temperature ?? item.temperature
-      item.topP = value.top_p ?? item.topP
-      item.mode = value.mode ?? item.mode
-      item.color = value.color ?? item.color
-      item.hidden = value.hidden ?? item.hidden
-      item.name = value.name ?? item.name
-      item.steps = value.steps ?? item.steps
-      item.options = mergeDeep(item.options, value.options ?? {})
-      item.permission = PermissionNext.merge(item.permission, PermissionNext.fromConfig(value.permission ?? {}))
     }
 
-    // Ensure Truncate.GLOB is allowed unless explicitly configured
-    for (const name in result) {
-      const agent = result[name]
-      const explicit = agent.permission.some((r) => {
-        if (r.permission !== "external_directory") return false
-        if (r.action !== "deny") return false
-        return r.pattern === Truncate.GLOB
-      })
-      if (explicit) continue
-
-      result[name].permission = PermissionNext.merge(
-        result[name].permission,
-        PermissionNext.fromConfig({ external_directory: { [Truncate.GLOB]: "allow" } }),
-      )
+    // Ensure Truncate.GLOB is allowed unless explicitly denied
+    const hasExplicitTruncateDeny = denied?.includes("external_directory")
+    if (!hasExplicitTruncateDeny) {
+      rules.push(...PermissionNext.fromConfig({ external_directory: { [Truncate.GLOB]: "allow" } }))
     }
 
-    return result
-  })
+    return rules
+  }
 
-  export async function get(agent: string) {
-    return state().then((x) => x[agent])
+  /**
+   * Convert workflow_mode to old mode format.
+   * - "auto" agents can act as primary (they run without user approval)
+   * - "manual" and "supervision" agents require user interaction
+   */
+  function workflowModeToMode(workflowMode: string | undefined): Info["mode"] {
+    if (workflowMode === "manual" || workflowMode === "supervision") return "all"
+    return "primary"
+  }
+
+  /**
+   * Transform AgentTemplateInfo to Agent.Info
+   */
+  function transformToInfo(template: { id: string; name: string; meta: { description?: string; model_preference?: { providerID: string; modelID: string }; workflow_mode?: string; allowed_tools?: string[]; denied_tools?: string[] } }): Info {
+    return {
+      name: template.id,
+      description: template.meta.description,
+      mode: workflowModeToMode(template.meta.workflow_mode),
+      permission: buildPermission(template.meta.allowed_tools, template.meta.denied_tools),
+      options: {},
+      model: template.meta.model_preference
+        ? {
+            providerID: ProviderID.make(template.meta.model_preference.providerID),
+            modelID: ModelID.make(template.meta.model_preference.modelID),
+          }
+        : undefined,
+    }
+  }
+
+  export async function get(agent: string): Promise<Info | undefined> {
+    const registry = getRegistry()
+    const template = await registry.get(agent)
+    if (!template) return undefined
+    return transformToInfo(template)
   }
 
   export async function list() {
+    const registry = getRegistry()
+    const agents = await registry.list()
     const cfg = await Config.get()
-    return pipe(
-      await state(),
-      values(),
-      sortBy([(x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"), "desc"]),
-    )
+
+    const infos = agents.map((a) => {
+      const template = { id: a.id, name: a.name, meta: { description: a.description, workflow_mode: a.mode } }
+      return transformToInfo(template)
+    })
+
+    return sortBy(infos, [
+      (x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"),
+      "desc",
+    ])
   }
 
   export async function defaultAgent() {
+    const registry = getRegistry()
     const cfg = await Config.get()
-    const agents = await state()
+    const agents = await registry.list()
 
     if (cfg.default_agent) {
-      const agent = agents[cfg.default_agent]
+      const agent = agents.find((a) => a.id === cfg.default_agent)
       if (!agent) throw new Error(`default agent "${cfg.default_agent}" not found`)
-      if (agent.mode === "subagent") throw new Error(`default agent "${cfg.default_agent}" is a subagent`)
-      if (agent.hidden === true) throw new Error(`default agent "${cfg.default_agent}" is hidden`)
-      return agent.name
+      if (agent.mode !== "auto") throw new Error(`default agent "${cfg.default_agent}" is not an auto agent`)
+      return agent.id
     }
 
-    const primaryVisible = Object.values(agents).find((a) => a.mode !== "subagent" && a.hidden !== true)
+    const primaryVisible = agents.find((a) => a.mode === "auto")
     if (!primaryVisible) return undefined
-    return primaryVisible.name
+    return primaryVisible.id
   }
 
   export async function generate(input: { description: string; model?: { providerID: ProviderID; modelID: ModelID } }) {
