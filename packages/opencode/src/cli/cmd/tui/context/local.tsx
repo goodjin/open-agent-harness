@@ -52,12 +52,20 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     })
 
     const agent = iife(() => {
-      // Use registry agents if available, otherwise fall back to server agents
-      const serverAgents = createMemo(() => sync.data.agent.filter((x) => x.mode !== "subagent" && !x.hidden))
-      const serverVisibleAgents = createMemo(() => sync.data.agent.filter((x) => !x.hidden))
+      // UI agent type returned by fromRegistry
+      interface UIAgent {
+        name: string
+        description: string
+        mode: "all" | "primary" | "subagent"
+        native: boolean
+        hidden: boolean
+        permission: unknown[]
+        color: string | undefined
+        model: { providerID: string; modelID: string } | undefined
+      }
 
       // Convert registry agents to UI format
-      const fromRegistry = createMemo(() =>
+      const fromRegistry = createMemo((): UIAgent[] =>
         registryAgents().map((a) => ({
           name: a.name,
           description: a.description,
@@ -70,15 +78,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         }))
       )
 
-      const agents = createMemo(() => {
-        const regAgents = fromRegistry()
-        return regAgents.length > 0 ? regAgents : serverAgents()
-      })
-
-      const visibleAgents = createMemo(() => {
-        const regAgents = fromRegistry()
-        return regAgents.length > 0 ? regAgents : serverVisibleAgents()
-      })
+      // TUI uses AgentRegistry exclusively - no fallback to server agents
+      const agents = fromRegistry
+      const visibleAgents = fromRegistry
 
       const [agentStore, setAgentStore] = createStore<{
         current: string
