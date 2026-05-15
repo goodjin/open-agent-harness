@@ -10,7 +10,7 @@ import { ProviderTransform } from "../provider/transform"
 
 import PROMPT_GENERATE from "./generate.txt"
 import { PermissionNext } from "@/permission/next"
-import { mergeDeep, pipe, sortBy, values } from "remeda"
+import { mergeDeep, pipe, values } from "remeda"
 import { Plugin } from "@/plugin-stub"
 import { getRegistry } from "./registry"
 
@@ -128,34 +128,21 @@ export namespace Agent {
   export async function list() {
     const registry = getRegistry()
     const agents = await registry.list()
-    const cfg = await Config.get()
 
-    const infos = agents.map((a) => {
+    return agents.map((a) => {
       const template = { id: a.id, name: a.name, meta: { description: a.description, workflow_mode: a.mode } }
       return transformToInfo(template)
     })
-
-    return sortBy(infos, [
-      (x) => (cfg.default_agent ? x.name === cfg.default_agent : x.name === "build"),
-      "desc",
-    ])
   }
 
   export async function defaultAgent() {
     const registry = getRegistry()
-    const cfg = await Config.get()
-    const agents = await registry.list()
-
-    if (cfg.default_agent) {
-      const agent = agents.find((a) => a.id === cfg.default_agent)
-      if (!agent) throw new Error(`default agent "${cfg.default_agent}" not found`)
-      if (agent.mode !== "auto") throw new Error(`default agent "${cfg.default_agent}" is not an auto agent`)
-      return agent.id
+    const effective = await registry.getEffectiveAgent()
+    if (!effective) return undefined
+    if (effective.meta.workflow_mode !== "auto") {
+      throw new Error(`default agent "${effective.id}" is not an auto agent`)
     }
-
-    const primaryVisible = agents.find((a) => a.mode === "auto")
-    if (!primaryVisible) return undefined
-    return primaryVisible.id
+    return effective.id
   }
 
   export async function generate(input: { description: string; model?: { providerID: ProviderID; modelID: ModelID } }) {
