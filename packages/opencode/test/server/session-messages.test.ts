@@ -6,6 +6,8 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { Log } from "../../src/util/log"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -40,80 +42,96 @@ describe("session messages endpoint", () => {
   test("returns cursor headers for older pages", async () => {
     await Instance.provide({
       directory: root,
-      fn: async () => {
-        const session = await Session.create({})
-        const ids = await fill(session.id, 5)
-        const app = Server.Default()
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const ids = await fill(session.id, 5)
+            const app = Server.Default()
 
-        const a = await app.request(`/session/${session.id}/message?limit=2`)
-        expect(a.status).toBe(200)
-        const aBody = (await a.json()) as MessageV2.WithParts[]
-        expect(aBody.map((item) => item.info.id)).toEqual(ids.slice(-2))
-        const cursor = a.headers.get("x-next-cursor")
-        expect(cursor).toBeTruthy()
-        expect(a.headers.get("link")).toContain('rel="next"')
+            const a = await app.request(`/session/${session.id}/message?limit=2`)
+            expect(a.status).toBe(200)
+            const aBody = (await a.json()) as MessageV2.WithParts[]
+            expect(aBody.map((item) => item.info.id)).toEqual(ids.slice(-2))
+            const cursor = a.headers.get("x-next-cursor")
+            expect(cursor).toBeTruthy()
+            expect(a.headers.get("link")).toContain('rel="next"')
 
-        const b = await app.request(`/session/${session.id}/message?limit=2&before=${encodeURIComponent(cursor!)}`)
-        expect(b.status).toBe(200)
-        const bBody = (await b.json()) as MessageV2.WithParts[]
-        expect(bBody.map((item) => item.info.id)).toEqual(ids.slice(-4, -2))
+            const b = await app.request(`/session/${session.id}/message?limit=2&before=${encodeURIComponent(cursor!)}`)
+            expect(b.status).toBe(200)
+            const bBody = (await b.json()) as MessageV2.WithParts[]
+            expect(bBody.map((item) => item.info.id)).toEqual(ids.slice(-4, -2))
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
   test("keeps full-history responses when limit is omitted", async () => {
     await Instance.provide({
       directory: root,
-      fn: async () => {
-        const session = await Session.create({})
-        const ids = await fill(session.id, 3)
-        const app = Server.Default()
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const ids = await fill(session.id, 3)
+            const app = Server.Default()
 
-        const res = await app.request(`/session/${session.id}/message`)
-        expect(res.status).toBe(200)
-        const body = (await res.json()) as MessageV2.WithParts[]
-        expect(body.map((item) => item.info.id)).toEqual(ids)
+            const res = await app.request(`/session/${session.id}/message`)
+            expect(res.status).toBe(200)
+            const body = (await res.json()) as MessageV2.WithParts[]
+            expect(body.map((item) => item.info.id)).toEqual(ids)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
   test("rejects invalid cursors and missing sessions", async () => {
     await Instance.provide({
       directory: root,
-      fn: async () => {
-        const session = await Session.create({})
-        const app = Server.Default()
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const app = Server.Default()
 
-        const bad = await app.request(`/session/${session.id}/message?limit=2&before=bad`)
-        expect(bad.status).toBe(400)
+            const bad = await app.request(`/session/${session.id}/message?limit=2&before=bad`)
+            expect(bad.status).toBe(400)
 
-        const miss = await app.request(`/session/ses_missing/message?limit=2`)
-        expect(miss.status).toBe(404)
+            const miss = await app.request(`/session/ses_missing/message?limit=2`)
+            expect(miss.status).toBe(404)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 
   test("does not truncate large legacy limit requests", async () => {
     await Instance.provide({
       directory: root,
-      fn: async () => {
-        const session = await Session.create({})
-        await fill(session.id, 520)
-        const app = Server.Default()
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await fill(session.id, 520)
+            const app = Server.Default()
 
-        const res = await app.request(`/session/${session.id}/message?limit=510`)
-        expect(res.status).toBe(200)
-        const body = (await res.json()) as MessageV2.WithParts[]
-        expect(body).toHaveLength(510)
+            const res = await app.request(`/session/${session.id}/message?limit=510`)
+            expect(res.status).toBe(200)
+            const body = (await res.json()) as MessageV2.WithParts[]
+            expect(body).toHaveLength(510)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 })

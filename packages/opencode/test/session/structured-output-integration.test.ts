@@ -5,6 +5,8 @@ import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { Instance } from "../../src/project/instance"
 import { MessageV2 } from "../../src/session/message-v2"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -16,7 +18,11 @@ const hasApiKey = !!process.env.ANTHROPIC_API_KEY
 async function withInstance<T>(fn: () => Promise<T>): Promise<T> {
   return Instance.provide({
     directory: projectRoot,
-    fn,
+    fn: async () =>
+      WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("test-workspace"),
+        fn,
+      }),
   })
 }
 

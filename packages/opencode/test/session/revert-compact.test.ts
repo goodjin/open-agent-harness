@@ -9,6 +9,8 @@ import { Log } from "../../src/util/log"
 import { Instance } from "../../src/project/instance"
 import { MessageID, PartID } from "../../src/session/schema"
 import { tmpdir } from "../fixture/fixture"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -18,10 +20,13 @@ describe("revert + compact workflow", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        // Create a session
-        const session = await Session.create({})
-        const sessionID = session.id
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            // Create a session
+            const session = await Session.create({})
+            const sessionID = session.id
 
         // Create a user message
         const userMsg1 = await Session.updateMessage({
@@ -186,7 +191,8 @@ describe("revert + compact workflow", () => {
 
         // Clean up
         await Session.remove(sessionID)
-      },
+          },
+        }),
     })
   })
 
@@ -194,15 +200,18 @@ describe("revert + compact workflow", () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
-      fn: async () => {
-        // Create a session
-        const session = await Session.create({})
-        const sessionID = session.id
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            // Create a session
+            const session = await Session.create({})
+            const sessionID = session.id
 
-        // Create initial messages
-        const userMsg = await Session.updateMessage({
-          id: MessageID.ascending(),
-          role: "user",
+            // Create initial messages
+            const userMsg = await Session.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
           sessionID,
           agent: "default",
           model: {
@@ -280,7 +289,8 @@ describe("revert + compact workflow", () => {
 
         // Clean up
         await Session.remove(sessionID)
-      },
+          },
+        }),
     })
   })
 })

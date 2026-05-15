@@ -4,6 +4,8 @@ import { Session } from "../../src/session"
 import { Log } from "../../src/util/log"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -12,25 +14,29 @@ describe("tui.selectSession endpoint", () => {
   test("should return 200 when called with valid session", async () => {
     await Instance.provide({
       directory: projectRoot,
-      fn: async () => {
-        // #given
-        const session = await Session.create({})
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            // #given
+            const session = await Session.create({})
 
-        // #when
-        const app = Server.Default()
-        const response = await app.request("/tui/select-session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionID: session.id }),
-        })
+            // #when
+            const app = Server.Default()
+            const response = await app.request("/tui/select-session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ sessionID: session.id }),
+            })
 
-        // #then
-        expect(response.status).toBe(200)
-        const body = await response.json()
-        expect(body).toBe(true)
+            // #then
+            expect(response.status).toBe(200)
+            const body = await response.json()
+            expect(body).toBe(true)
 
-        await Session.remove(session.id)
-      },
+            await Session.remove(session.id)
+          },
+        }),
     })
   })
 

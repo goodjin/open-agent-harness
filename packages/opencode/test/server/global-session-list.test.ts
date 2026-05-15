@@ -4,6 +4,8 @@ import { Project } from "../../src/project/project"
 import { Session } from "../../src/session"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 
 Log.init({ print: false })
 
@@ -14,11 +16,19 @@ describe("Session.listGlobal", () => {
 
     const firstSession = await Instance.provide({
       directory: first.path,
-      fn: async () => Session.create({ title: "first-session" }),
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => Session.create({ title: "first-session" }),
+        }),
     })
     const secondSession = await Instance.provide({
       directory: second.path,
-      fn: async () => Session.create({ title: "second-session" }),
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => Session.create({ title: "second-session" }),
+        }),
     })
 
     const sessions = [...Session.listGlobal({ limit: 200 })]
@@ -44,7 +54,11 @@ describe("Session.listGlobal", () => {
 
     const archived = await Instance.provide({
       directory: tmp.path,
-      fn: async () => Session.create({ title: "archived-session" }),
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => Session.create({ title: "archived-session" }),
+        }),
     })
 
     await Instance.provide({
@@ -68,12 +82,20 @@ describe("Session.listGlobal", () => {
 
     const first = await Instance.provide({
       directory: tmp.path,
-      fn: async () => Session.create({ title: "page-one" }),
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => Session.create({ title: "page-one" }),
+        }),
     })
     await new Promise((resolve) => setTimeout(resolve, 5))
     const second = await Instance.provide({
       directory: tmp.path,
-      fn: async () => Session.create({ title: "page-two" }),
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => Session.create({ title: "page-two" }),
+        }),
     })
 
     const page = [...Session.listGlobal({ directory: tmp.path, limit: 1 })]
