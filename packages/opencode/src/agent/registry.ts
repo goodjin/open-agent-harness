@@ -3,8 +3,57 @@ import { AgentTemplate as AgentTemplateSchema } from "./schema"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
+import { PermissionNext } from "../permission/next"
+import { Truncate } from "../tool/truncation"
 
 const log = Log.create({ service: "agent-registry" })
+
+/**
+ * Build a PermissionNext.Ruleset from allowed_tools and denied_tools arrays.
+ * This is a best-effort conversion - the original config had glob patterns,
+ * but templates only have tool names, so we use "*" as the pattern.
+ */
+function buildPermission(allowed: string[] | undefined, denied: string[] | undefined): PermissionNext.Ruleset {
+  const rules: PermissionNext.Ruleset = []
+  const whitelistedDirs = [Truncate.GLOB]
+
+  // Default rules
+  const defaults = PermissionNext.fromConfig({
+    "*": "allow",
+    doom_loop: "ask",
+    external_directory: {
+      "*": "ask",
+      ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
+    },
+    question: "deny",
+    plan_enter: "deny",
+    plan_exit: "deny",
+    read: {
+      "*": "allow",
+      "*.env": "ask",
+      "*.env.*": "ask",
+      "*.env.example": "allow",
+    },
+  })
+
+  // Start with defaults
+  rules.push(...defaults)
+
+  // Add deny rules for denied_tools
+  if (denied) {
+    for (const tool of denied) {
+      rules.push({ permission: tool, action: "deny", pattern: "*" })
+    }
+  }
+
+  // Ensure Truncate.GLOB is allowed unless explicitly denied
+  const hasExplicitTruncateDeny = denied?.includes("external_directory")
+  if (!hasExplicitTruncateDeny) {
+    rules.push(...PermissionNext.fromConfig({ external_directory: { [Truncate.GLOB]: "allow" } }))
+  }
+
+  return rules
+}
 
 /**
  * Agent metadata returned by list() - minimal info for display
@@ -25,6 +74,7 @@ export interface AgentTemplateInfo {
   meta: AgentTemplateSchema.Meta
   identity: string
   rules: string
+  permission: PermissionNext.Ruleset
 }
 
 /**
@@ -96,6 +146,7 @@ export class AgentRegistry {
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
+      permission: buildPermission(agent.meta.allowed_tools, agent.meta.denied_tools),
     }
   }
 
@@ -145,6 +196,7 @@ export class AgentRegistry {
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
+      permission: buildPermission(agent.meta.allowed_tools, agent.meta.denied_tools),
     }
   }
 

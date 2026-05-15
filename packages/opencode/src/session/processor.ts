@@ -1,7 +1,7 @@
 import { MessageV2 } from "./message-v2"
 import { Log } from "@/util/log"
 import { Session } from "."
-import { Agent } from "@/agent/agent"
+import { getRegistry } from "@/agent/registry"
 import { Snapshot } from "@/snapshot"
 import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
@@ -162,7 +162,8 @@ export namespace SessionProcessor {
                           JSON.stringify(p.state.input) === JSON.stringify(value.input),
                       )
                     ) {
-                      const agent = await Agent.get(input.assistantMessage.agent)
+                      const agent = await getRegistry().get(input.assistantMessage.agent)
+                      if (!agent) break
                       await PermissionNext.ask({
                         permission: "doom_loop",
                         patterns: [value.toolName],
