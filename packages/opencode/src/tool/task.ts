@@ -70,18 +70,10 @@ export const TaskTool = Tool.define("task", async (ctx) => {
           if (found) return found
         }
 
-        // Get parent session's permission for inheritance
-        const parentSession = await Session.get(ctx.sessionID).catch(() => undefined)
-        const parentPerm = parentSession?.permission ?? []
-
-        // Merge agent's permission with parent's session permission
-        // Parent session permission comes last so it takes precedence (last match wins)
-        const mergedPermission = PermissionNext.merge(agent.permission, parentPerm)
-
         return await Session.create({
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
-          permission: mergedPermission,
+          permission: agent.permission,
         })
       })
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
