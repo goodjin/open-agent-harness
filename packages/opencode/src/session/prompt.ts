@@ -417,6 +417,7 @@ export namespace SessionPrompt {
         )
         let executionError: Error | undefined
         const taskAgent = await Agent.get(task.agent)
+        if (!taskAgent) throw new Error(`Agent not found: ${task.agent}`)
         const taskCtx: Tool.Context = {
           agent: task.agent,
           messageID: assistantMessage.id,
@@ -559,6 +560,7 @@ export namespace SessionPrompt {
 
       // normal processing
       const agent = await Agent.get(lastUser.agent)
+      if (!agent) throw new Error(`Agent not found: ${lastUser.agent}`)
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
       msgs = await insertReminders({
@@ -1504,6 +1506,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       await SessionRevert.cleanup(session)
     }
     const agent = await Agent.get(input.agent)
+    if (!agent) throw new Error(`Agent not found: ${input.agent}`)
     const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
