@@ -7,7 +7,7 @@ import { Rpc } from "@/util/rpc"
 import { upgrade } from "@/cli/upgrade"
 import { Config } from "@/config/config"
 import { GlobalBus } from "@/bus/global"
-import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type Event, type EventEnvelope } from "@opencode-ai/sdk/v2"
 import type { BunWebSocketData } from "hono/bun"
 import { Flag } from "@/flag/flag"
 import { setTimeout as sleep } from "node:timers/promises"
@@ -44,7 +44,7 @@ const eventStream = {
   abort: undefined as AbortController | undefined,
 }
 
-const startEventStream = (input: { directory: string; workspaceID?: string }) => {
+const startEventStream = (input: { directory: string }) => {
   if (eventStream.abort) eventStream.abort.abort()
   const abort = new AbortController()
   eventStream.abort = abort
@@ -60,7 +60,6 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
   const sdk = createOpencodeClient({
     baseUrl: "http://opencode.internal",
     directory: input.directory,
-    experimental_workspaceID: input.workspaceID,
     fetch: fetchFn,
     signal,
   })
@@ -82,7 +81,7 @@ const startEventStream = (input: { directory: string; workspaceID?: string }) =>
       }
 
       for await (const event of events.stream) {
-        Rpc.emit("event", event as Event)
+        Rpc.emit("event", (event as EventEnvelope).payload as Event)
       }
 
       if (!signal.aborted) {
@@ -136,8 +135,8 @@ export const rpc = {
     Config.global.reset()
     await Instance.disposeAll()
   },
-  async setWorkspace(input: { workspaceID?: string }) {
-    startEventStream({ directory: process.cwd(), workspaceID: input.workspaceID })
+  async setWorkspace() {
+    startEventStream({ directory: process.cwd() })
   },
   async shutdown() {
     Log.Default.info("worker shutting down")

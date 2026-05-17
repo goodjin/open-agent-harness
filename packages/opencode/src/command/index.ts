@@ -27,7 +27,7 @@ export namespace Command {
       description: z.string().optional(),
       agent: z.string().optional(),
       model: z.string().optional(),
-      source: z.enum(["command", "mcp", "skill"]).optional(),
+      source: z.enum(["command", "mcp"]).optional(),
       // workaround for zod not supporting async functions natively so we use getters
       // https://zod.dev/v4/changelog?id=zfunction
       template: z.promise(z.string()).or(z.string()),

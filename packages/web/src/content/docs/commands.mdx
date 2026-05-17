@@ -257,8 +257,9 @@ This is shown as the description in the TUI when you type in the command.
 ### Agent
 
 Use the `agent` config to optionally specify which [agent](/docs/agents) should execute this command.
-If this is a [subagent](/docs/agents/#subagents) the command will trigger a subagent invocation by default.
-To disable this behavior, set `subtask` to `false`.
+This selects the agent for the command; it does not by itself force a child-session invocation.
+Use `subtask: true` when you want the command to run as a separate delegated child session.
+For compatibility, legacy non-primary/delegation-only agents can still default to this child-session style unless you set `subtask` to `false`.
 
 ```json title="opencode.json"
 {
@@ -276,9 +277,9 @@ This is an **optional** config option. If not specified, defaults to your curren
 
 ### Subtask
 
-Use the `subtask` boolean to force the command to trigger a [subagent](/docs/agents/#subagents) invocation.
-This is useful if you want the command to not pollute your primary context and will **force** the agent to act as a subagent,
-even if `mode` is set to `primary` on the [agent](/docs/agents) configuration.
+Use the `subtask` boolean to force the command to trigger a delegated child-session invocation.
+This is useful if you want the command to not pollute your primary context and will **force** the command to run as a separate child-session invocation.
+The target agent must be available for delegation, which is controlled by the agent's entry metadata; legacy `mode` values are mapped to compatible entry defaults.
 
 ```json title="opencode.json"
 {

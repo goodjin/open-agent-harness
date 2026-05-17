@@ -15,6 +15,20 @@ import type { Agent } from "../../src/agent/agent"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
 
+const ent = {
+  primary: true,
+  delegable: true,
+  mentionable: true,
+  default: true,
+  hidden: false,
+}
+const cap = {
+  purpose: "test",
+  tags: [],
+  cost: "low",
+  writes: true,
+} satisfies Agent.Info["capability"]
+
 describe("session.llm.hasToolCalls", () => {
   test("returns false for empty messages array", () => {
     expect(LLM.hasToolCalls([])).toBe(false)
@@ -272,6 +286,8 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          entry: ent,
+          capability: cap,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
@@ -373,6 +389,8 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          entry: ent,
+          capability: cap,
           options: {},
           permission: [{ permission: "question", pattern: "*", action: "deny" }],
         } satisfies Agent.Info
@@ -491,6 +509,8 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          entry: ent,
+          capability: cap,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.2,
@@ -613,6 +633,8 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          entry: ent,
+          capability: cap,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.4,
@@ -714,6 +736,8 @@ describe("session.llm.stream", () => {
         const agent = {
           name: "test",
           mode: "primary",
+          entry: ent,
+          capability: cap,
           options: {},
           permission: [{ permission: "*", pattern: "*", action: "allow" }],
           temperature: 0.3,

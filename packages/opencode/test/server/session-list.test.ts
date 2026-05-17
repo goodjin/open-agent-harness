@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
+import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
+import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -111,6 +113,63 @@ describe("Session.list", () => {
             expect(sessions.length).toBe(2)
           },
         }),
+    })
+  })
+
+  test("returns one session status", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            SessionStatus.set(session.id, { type: "running" })
+            const app = Server.Default()
+
+            const response = await app.request(`/session/${session.id}/status`)
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ type: "running" })
+
+            SessionStatus.set(session.id, { type: "idle" })
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("dismisses error status without abort route", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            SessionStatus.set(session.id, { type: "error", message: "boom" })
+            const app = Server.Default()
+
+            const response = await app.request(`/session/${session.id}/status/dismiss`, {
+              method: "POST",
+            })
+            expect(response.status).toBe(200)
+            expect(await response.json()).toEqual({ type: "idle" })
+            expect(SessionStatus.get(session.id)).toEqual({ type: "idle" })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("OpenAPI includes one session status path", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const specs = await Server.openapi()
+        expect(specs.paths["/session/{sessionID}/status"]?.get?.operationId).toBe("session.getStatus")
+        expect(specs.paths["/session/{sessionID}/status/dismiss"]?.post?.operationId).toBe("session.dismissStatus")
+      },
     })
   })
 })

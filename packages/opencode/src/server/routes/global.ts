@@ -10,6 +10,7 @@ import { Log } from "../../util/log"
 import { lazy } from "../../util/lazy"
 import { Config } from "../../config/config"
 import { errors } from "../error"
+import { Event, EventGateway } from "../event"
 
 const log = Log.create({ service: "server" })
 
@@ -50,50 +51,59 @@ export const GlobalRoutes = lazy(() =>
             content: {
               "text/event-stream": {
                 schema: resolver(
-                  z
-                    .object({
-                      directory: z.string(),
-                      payload: BusEvent.payloads(),
-                    })
-                    .meta({
-                      ref: "GlobalEvent",
-                    }),
+                  EventGateway.schema("GlobalEvent"),
                 ),
               },
             },
           },
         },
       }),
+      validator("query", EventGateway.Query),
       async (c) => {
+        const query = c.req.valid("query")
+        const filter = EventGateway.filter(query)
         log.info("global event connected")
         c.header("X-Accel-Buffering", "no")
         c.header("X-Content-Type-Options", "nosniff")
         return streamSSE(c, async (stream) => {
-          stream.writeSSE({
-            data: JSON.stringify({
-              payload: {
-                type: "server.connected",
-                properties: {},
-              },
-            }),
-          })
-          async function handler(event: any) {
+          async function handler(event: EventGateway.Envelope) {
+            await events.push(event)
+          }
+          const send = async (event: EventGateway.Envelope) => {
             await stream.writeSSE({
+              id: event.sequence.toString(),
               data: JSON.stringify(event),
             })
           }
+          const events = EventGateway.stream(filter, send)
           GlobalBus.on("event", handler)
+          await events.replay(() =>
+            EventGateway.record(
+                {
+                  directory: query.directory ?? "global",
+                  payload: {
+                    type: Event.Connected.type,
+                    properties: {},
+                },
+              },
+              { store: false },
+            ),
+          )
 
           // Send heartbeat every 10s to prevent stalled proxy streams.
           const heartbeat = setInterval(() => {
-            stream.writeSSE({
-              data: JSON.stringify({
-                payload: {
-                  type: "server.heartbeat",
-                  properties: {},
+            void send(
+              EventGateway.record(
+                  {
+                    directory: query.directory ?? "global",
+                    payload: {
+                      type: Event.Heartbeat.type,
+                    properties: {},
+                  },
                 },
-              }),
-            })
+                { store: false },
+              ),
+            )
           }, 10_000)
 
           await new Promise<void>((resolve) => {

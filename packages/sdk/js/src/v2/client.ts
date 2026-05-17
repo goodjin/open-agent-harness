@@ -5,13 +5,19 @@ import { type Config } from "./gen/client/types.gen.js"
 import { OpencodeClient } from "./gen/sdk.gen.js"
 export { type Config as OpencodeClientConfig, OpencodeClient }
 
-export function createOpencodeClient(config?: Config & { directory?: string; experimental_workspaceID?: string }) {
+type Fetch = typeof fetch & { preconnect?: unknown }
+
+export function createOpencodeClient(config?: Config & { directory?: string }) {
   if (!config?.fetch) {
-    const customFetch: any = (req: any) => {
-      // @ts-ignore
-      req.timeout = false
-      return fetch(req)
-    }
+    const customFetch = Object.assign(
+      (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        if (input instanceof Request) {
+          ;(input as Request & { timeout?: boolean }).timeout = false
+        }
+        return fetch(input, init)
+      },
+      { preconnect: (fetch as Fetch).preconnect },
+    )
     config = {
       ...config,
       fetch: customFetch,
@@ -24,13 +30,6 @@ export function createOpencodeClient(config?: Config & { directory?: string; exp
     config.headers = {
       ...config.headers,
       "x-opencode-directory": encodedDirectory,
-    }
-  }
-
-  if (config?.experimental_workspaceID) {
-    config.headers = {
-      ...config.headers,
-      "x-opencode-workspace": config.experimental_workspaceID,
     }
   }
 

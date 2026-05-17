@@ -5,22 +5,14 @@ import { useLocal } from "@tui/context/local"
 import { pipe, sumBy } from "remeda"
 import { useTheme } from "@tui/context/theme"
 import { SplitBorder } from "@tui/component/border"
-import type { AssistantMessage, Session } from "@opencode-ai/sdk/v2"
+import type { AssistantMessage, Session, SessionStatus } from "@opencode-ai/sdk/v2"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useKeybind } from "../../context/keybind"
-import { Flag } from "@/flag/flag"
 import { useTerminalDimensions } from "@opentui/solid"
 import { RGBA } from "@opentui/core"
 import { createColors, createFrames } from "../../ui/spinner"
-
-// Extended session status type that includes all 6 states
-type SessionStatusInfo =
-  | { type: "idle" }
-  | { type: "running" }
-  | { type: "waiting_permission" }
-  | { type: "waiting_user" }
-  | { type: "error"; message: string }
-  | { type: "retry"; attempt: number; message: string; next: number }
+import { HeaderStatus } from "./header-status"
+import { WorkflowProgress } from "./workflow-progress"
 
 const Title = (props: { session: Accessor<Session> }) => {
   const { theme } = useTheme()
@@ -42,17 +34,6 @@ const ContextInfo = (props: { context: Accessor<string | undefined>; cost: Acces
   )
 }
 
-const WorkspaceInfo = (props: { workspace: Accessor<string | undefined> }) => {
-  const { theme } = useTheme()
-  return (
-    <Show when={props.workspace()}>
-      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
-        {props.workspace()}
-      </text>
-    </Show>
-  )
-}
-
 const AgentInfo = (props: { agentName: Accessor<string | undefined>; agentColor: Accessor<RGBA> }) => {
   const { theme } = useTheme()
   return (
@@ -64,7 +45,18 @@ const AgentInfo = (props: { agentName: Accessor<string | undefined>; agentColor:
   )
 }
 
-const SessionStatusIndicator = (props: { status: Accessor<SessionStatusInfo> }) => {
+const WorkflowInfo = (props: { label: Accessor<string | undefined> }) => {
+  const { theme } = useTheme()
+  return (
+    <Show when={props.label()}>
+      <text fg={theme.textMuted} wrapMode="none" flexShrink={0}>
+        {props.label()}
+      </text>
+    </Show>
+  )
+}
+
+const SessionStatusIndicator = (props: { status: Accessor<SessionStatus> }) => {
   const { theme } = useTheme()
   const local = useLocal()
 
@@ -131,7 +123,16 @@ export function Header() {
   const sync = useSync()
   const session = createMemo(() => sync.session.get(route.sessionID)!)
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
-  const sessionStatus = createMemo(() => (sync.data.session_status[route.sessionID] ?? { type: "idle" }) as SessionStatusInfo)
+  const sessionStatus = createMemo(() => sync.data.session_status[route.sessionID] ?? { type: "idle" as const })
+  const status = createMemo(() =>
+    HeaderStatus.resolve({
+      current: sessionStatus(),
+      route: session(),
+      sessions: sync.data.session,
+      permission: sync.data.permission,
+      question: sync.data.question,
+    }),
+  )
 
   const cost = createMemo(() => {
     const total = pipe(
@@ -157,14 +158,6 @@ export function Header() {
     return result
   })
 
-  const workspace = createMemo(() => {
-    const id = session()?.workspaceID
-    if (!id) return "Workspace local"
-    const info = sync.workspace.get(id)
-    if (!info) return `Workspace ${id}`
-    return `Workspace ${id} (${info.type})`
-  })
-
   const local = useLocal()
   const currentAgentName = createMemo(() => local.agent.current()?.name)
   const currentAgentColor = createMemo(() => {
@@ -172,6 +165,7 @@ export function Header() {
     if (!name) return RGBA.fromInts(128, 128, 128, 255)
     return local.agent.color(name)
   })
+  const workflow = createMemo(() => WorkflowProgress.label(session()?.dsl_context))
 
   const { theme } = useTheme()
   const keybind = useKeybind()
@@ -197,22 +191,16 @@ export function Header() {
           <Match when={session()?.parentID}>
             <box flexDirection="column" gap={1}>
               <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={narrow() ? 1 : 0}>
-                {Flag.OPENCODE_EXPERIMENTAL_WORKSPACES ? (
-                  <box flexDirection="column">
-                    <text fg={theme.text}>
-                      <b>Subagent session</b>
-                    </text>
-                    <WorkspaceInfo workspace={workspace} />
-                  </box>
-                ) : (
-                  <text fg={theme.text}>
-                    <b>Subagent session</b>
-                  </text>
-                )}
+                <text fg={theme.text}>
+                  <b>Subagent session</b>
+                </text>
 
                 <ContextInfo context={context} cost={cost} />
               </box>
               <box flexDirection="row" gap={2}>
+                <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
+                <SessionStatusIndicator status={status} />
+                <WorkflowInfo label={workflow} />
                 <box
                   onMouseOver={() => setHover("parent")}
                   onMouseOut={() => setHover(null)}
@@ -248,21 +236,12 @@ export function Header() {
           </Match>
           <Match when={true}>
             <box flexDirection={narrow() ? "column" : "row"} justifyContent="space-between" gap={1}>
-              {Flag.OPENCODE_EXPERIMENTAL_WORKSPACES ? (
-                <box flexDirection="column">
-                  <box flexDirection="row" gap={2}>
-                    <Title session={session} />
-                    <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
-                  </box>
-                  <WorkspaceInfo workspace={workspace} />
-                </box>
-              ) : (
-                <box flexDirection="row" gap={2}>
-                  <Title session={session} />
-                  <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
-                  <SessionStatusIndicator status={sessionStatus} />
-                </box>
-              )}
+              <box flexDirection="row" gap={2}>
+                <Title session={session} />
+                <AgentInfo agentName={currentAgentName} agentColor={currentAgentColor} />
+                <SessionStatusIndicator status={status} />
+                <WorkflowInfo label={workflow} />
+              </box>
               <ContextInfo context={context} cost={cost} />
             </box>
           </Match>

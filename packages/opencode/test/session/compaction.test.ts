@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import { SessionCompaction } from "../../src/session/compaction"
 import { Token } from "../../src/util/token"
@@ -6,9 +6,25 @@ import { Instance } from "../../src/project/instance"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { Session } from "../../src/session"
-import type { Provider } from "../../src/provider/provider"
+import { Provider } from "../../src/provider/provider"
+import { MessageID, PartID } from "../../src/session/schema"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MemoryStore } from "../../src/memory"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
+import { LLM } from "../../src/session/llm"
 
 Log.init({ print: false })
+
+afterEach(() => {
+  // @ts-expect-error Bun mock restore is present on spies
+  LLM.stream.mockRestore?.()
+  // @ts-expect-error Bun mock restore is present on spies
+  MemoryStore.capture.mockRestore?.()
+  // @ts-expect-error Bun mock restore is present on spies
+  Provider.getModel.mockRestore?.()
+})
 
 function createModel(opts: {
   context: number
@@ -420,4 +436,144 @@ describe("session.getUsage", () => {
       expect(result.tokens.total).toBe(2000)
     },
   )
+})
+
+describe("session.compaction memory", () => {
+  test("compaction summary creates a memory candidate", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = await Session.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "default",
+              model: {
+                providerID: ProviderID.make("test"),
+                modelID: ModelID.make("test"),
+              },
+              time: {
+                created: Date.now(),
+              },
+            })
+            const assistant: MessageV2.Assistant = {
+              id: MessageID.ascending(),
+              role: "assistant",
+              sessionID: session.id,
+              parentID: user.id,
+              mode: "compaction",
+              agent: "compaction",
+              summary: true,
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: {
+                  read: 0,
+                  write: 0,
+                },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              time: {
+                created: Date.now(),
+              },
+              finish: "stop",
+            }
+            await Session.updateMessage(assistant)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: assistant.id,
+              sessionID: session.id,
+              type: "text",
+              text: "Compaction summary keeps qdrant adapter decisions.",
+            })
+
+            await MemoryStore.capture({ sessionID: session.id })
+            const memories = await MemoryStore.bySession(session.id)
+
+            expect(memories.some((memory) => memory.text.includes("qdrant adapter"))).toBe(true)
+          },
+        }),
+    })
+  })
+
+  test("capture failure does not fail compaction", async () => {
+    spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "text-start" as const }
+          yield { type: "text-delta" as const, text: "Compacted summary survives memory failure." }
+          yield { type: "text-end" as const }
+          yield {
+            type: "finish-step" as const,
+            finishReason: "stop",
+            usage: {
+              inputTokens: 10,
+              outputTokens: 5,
+              totalTokens: 15,
+            },
+          }
+          yield { type: "finish" as const }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+    spyOn(MemoryStore, "capture").mockImplementation(async () => {
+      throw new Error("capture failed")
+    })
+    spyOn(Provider, "getModel").mockImplementation(async () => createModel({ context: 100_000, output: 4_000 }))
+
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              role: "user",
+              sessionID: session.id,
+              agent: "default",
+              model: {
+                providerID: ProviderID.make("anthropic"),
+                modelID: ModelID.make("claude-3-5-haiku-latest"),
+              },
+              time: {
+                created: Date.now(),
+              },
+            })) as MessageV2.User
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: user.id,
+              sessionID: session.id,
+              type: "text",
+              text: "Please compact this conversation.",
+            })
+
+            const result = await SessionCompaction.process({
+              parentID: user.id,
+              messages: await Session.messages({ sessionID: session.id }),
+              sessionID: session.id,
+              abort: new AbortController().signal,
+              auto: false,
+            })
+
+            expect(result).toBe("continue")
+          },
+        }),
+    })
+  })
 })

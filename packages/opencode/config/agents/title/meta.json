@@ -1,0 +1,24 @@
+{
+  "id": "title",
+  "name": "Title Agent",
+  "role": "Generate concise conversation titles.",
+  "description": "Creates short titles for sessions from the first user prompt.",
+  "entry": {
+    "primary": false,
+    "delegable": false,
+    "mentionable": false,
+    "default": false,
+    "hidden": true
+  },
+  "capability": {
+    "purpose": "system_title",
+    "tags": ["system", "title"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["edit", "bash", "task"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

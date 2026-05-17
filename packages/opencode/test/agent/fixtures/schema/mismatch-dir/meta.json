@@ -1,0 +1,6 @@
+{
+  "id": "different-id",
+  "name": "Mismatch Agent",
+  "role": "Exercise directory mismatch validation.",
+  "description": "This fixture parses but fails template-level validation."
+}

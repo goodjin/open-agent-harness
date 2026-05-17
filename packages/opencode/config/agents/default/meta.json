@@ -3,9 +3,22 @@
   "name": "Default Agent",
   "role": "You are a helpful AI assistant that can assist with coding, debugging, and general software development tasks.",
   "description": "The default agent template for general-purpose assistance. Use this agent for most tasks unless a specialized agent is more appropriate.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": true,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "general",
+    "tags": ["coding", "debugging", "general"],
+    "cost": "medium",
+    "writes": true
+  },
   "workflow_mode": "auto",
   "allowed_tools": ["edit", "read", "glob", "grep", "list", "bash", "task", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread", "question"],
   "denied_tools": [],
   "inherit_permissions": true,
-  "permission_mode": "strict"
+  "permission_mode": "custom"
 }

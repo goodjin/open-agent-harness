@@ -18,6 +18,7 @@ import { Log } from "../../util/log"
 import { PermissionNext } from "@/permission/next"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { ForbiddenError, NotFoundError } from "@/storage/db"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 
@@ -91,6 +92,36 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const result = SessionStatus.list()
         return c.json(result)
+      },
+    )
+    .get(
+      "/:sessionID/status",
+      describeRoute({
+        summary: "Get single session status",
+        description: "Retrieve the current status for one session. Status is process-local and defaults to idle.",
+        operationId: "session.getStatus",
+        responses: {
+          200: {
+            description: "Get single session status",
+            content: {
+              "application/json": {
+                schema: resolver(SessionStatus.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.get.schema,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        return c.json(SessionStatus.get(sessionID))
       },
     )
     .get(
@@ -353,6 +384,36 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         const result = await Session.fork({ ...body, sessionID })
         return c.json(result)
+      },
+    )
+    .post(
+      "/:sessionID/status/dismiss",
+      describeRoute({
+        summary: "Dismiss session error status",
+        description: "Clear a terminal error status without aborting unrelated active work.",
+        operationId: "session.dismissStatus",
+        responses: {
+          200: {
+            description: "Current session status",
+            content: {
+              "application/json": {
+                schema: resolver(SessionStatus.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        return c.json(SessionStatus.dismiss(sessionID))
       },
     )
     .post(
@@ -1004,7 +1065,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 403, 404),
         },
       }),
       validator(
@@ -1017,10 +1078,15 @@ export const SessionRoutes = lazy(() =>
       validator("json", z.object({ response: PermissionNext.Reply })),
       async (c) => {
         const params = c.req.valid("param")
-        PermissionNext.reply({
+        const result = await PermissionNext.reply({
           requestID: params.permissionID,
+          sessionID: params.sessionID,
           reply: c.req.valid("json").response,
         })
+        if (result.type === "not_found") throw new NotFoundError({ message: `Permission request not found: ${params.permissionID}` })
+        if (result.type === "forbidden") {
+          throw new ForbiddenError({ message: `Permission request does not belong to the current session or workspace` })
+        }
         return c.json(true)
       },
     )
@@ -1039,7 +1105,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 403, 404),
         },
       }),
       validator(
@@ -1070,7 +1136,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 403, 404),
         },
       }),
       validator(
@@ -1092,6 +1158,42 @@ export const SessionRoutes = lazy(() =>
         return c.json(session)
       },
     )
+    .post(
+      "/:sessionID/restore/preview",
+      describeRoute({
+        summary: "Preview session checkpoint restore",
+        description: "Preview workspace file changes for a checkpoint restore without mutating files or session state.",
+        operationId: "session.restorePreview",
+        responses: {
+          200: {
+            description: "Restore preview",
+            content: {
+              "application/json": {
+                schema: resolver(SessionTimeline.Preview),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          hash: z.string(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        return c.json(await SessionTimeline.preview(sessionID, body.hash))
+      },
+    )
     .patch(
       "/:sessionID/dsl_context",
       describeRoute({
@@ -1107,7 +1209,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 403, 404),
         },
       }),
       validator(

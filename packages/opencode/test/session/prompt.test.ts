@@ -1,11 +1,15 @@
 import path from "path"
+import fs from "fs/promises"
 import { describe, expect, test } from "bun:test"
 import { fileURLToPath } from "url"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
+import { getRegistry, resetRegistry } from "../../src/agent/registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
+import { MessageID } from "../../src/session/schema"
+import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
@@ -13,7 +17,83 @@ import { WorkspaceID } from "../../src/control-plane/schema"
 
 Log.init({ print: false })
 
+async function agent(dir: string, id: string, cfg: Record<string, unknown> = {}) {
+  const root = path.join(dir, ".opencode", "agents", id)
+  await fs.mkdir(root, { recursive: true })
+  await Bun.write(
+    path.join(root, "meta.json"),
+    JSON.stringify({
+      id,
+      name: id,
+      role: `${id} role`,
+      description: `${id} agent`,
+      model_preference: {
+        providerID: "openai",
+        modelID: "gpt-5.2",
+      },
+      ...cfg,
+    }),
+  )
+  await Bun.write(path.join(root, "identity.md"), `# Identity\n\n${id} identity`)
+  await Bun.write(path.join(root, "rules.md"), `# Rules\n\n${id} rules`)
+}
+
 describe("session.prompt missing file", () => {
+  test("loop restores idle after completed assistant message", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              finish: "stop",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              time: { created: Date.now(), completed: Date.now() },
+              sessionID: session.id,
+            })
+
+            const msg = await SessionPrompt.loop({ sessionID: session.id })
+            expect(msg.info.role).toBe("assistant")
+            expect(SessionStatus.get(session.id).type).toBe("idle")
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("does not fail the prompt when a file part is missing", async () => {
     await using tmp = await tmpdir({
       git: true,
@@ -119,6 +199,46 @@ describe("session.prompt missing file", () => {
 })
 
 describe("session.prompt special characters", () => {
+  test("only resolves mentionable agent references", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      init: async (dir) => {
+        await agent(dir, "visible", {
+          entry: {
+            primary: false,
+            delegable: true,
+            mentionable: true,
+            default: false,
+            hidden: false,
+          },
+        })
+        await agent(dir, "quiet", {
+          entry: {
+            primary: false,
+            delegable: true,
+            mentionable: false,
+            default: false,
+            hidden: false,
+          },
+        })
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            resetRegistry()
+            const parts = await SessionPrompt.resolvePromptParts("Ask @visible and @quiet")
+
+            expect(parts.filter((part) => part.type === "agent").map((part) => part.name)).toEqual(["visible"])
+          },
+        }),
+    })
+  })
+
   test("handles filenames with # character", async () => {
     await using tmp = await tmpdir({
       git: true,
@@ -226,5 +346,49 @@ describe("session.prompt agent variant", () => {
       if (prev === undefined) delete process.env.OPENAI_API_KEY
       else process.env.OPENAI_API_KEY = prev
     }
+  })
+})
+
+describe("session.prompt agent switch", () => {
+  test("registry switch changes next prompt agent without dropping messages", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+    await agent(tmp.path, "plan")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            resetRegistry()
+            const registry = getRegistry()
+            const session = await Session.create({})
+
+            expect((await registry.switch("build"))?.id).toBe("build")
+            const first = await SessionPrompt.prompt({
+              sessionID: session.id,
+              noReply: true,
+              parts: [{ type: "text", text: "first" }],
+            })
+            if (first.info.role !== "user") throw new Error("expected user message")
+            expect(first.info.agent).toBe("build")
+
+            expect((await registry.switch("plan"))?.id).toBe("plan")
+            const second = await SessionPrompt.prompt({
+              sessionID: session.id,
+              noReply: true,
+              parts: [{ type: "text", text: "second" }],
+            })
+            if (second.info.role !== "user") throw new Error("expected user message")
+            expect(second.info.agent).toBe("plan")
+
+            const messages = await Session.messages({ sessionID: session.id })
+            expect(messages.map((item) => item.info.agent)).toEqual(["build", "plan"])
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
   })
 })

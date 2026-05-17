@@ -1,0 +1,24 @@
+{
+  "id": "summary",
+  "name": "Summary Agent",
+  "role": "Create concise session summaries that preserve the user's goal, decisions, and current state.",
+  "description": "Hidden system agent for creating session summaries.",
+  "entry": {
+    "primary": false,
+    "delegable": false,
+    "mentionable": false,
+    "default": false,
+    "hidden": true
+  },
+  "capability": {
+    "purpose": "system_summary",
+    "tags": ["system", "summary"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["edit", "write", "apply_patch", "bash", "task"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

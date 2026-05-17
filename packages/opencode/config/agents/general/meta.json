@@ -1,0 +1,24 @@
+{
+  "id": "general",
+  "name": "General Agent",
+  "role": "You are a general-purpose subagent for complex searches, multi-step investigation, and independent work units.",
+  "description": "Subagent for broad research, complex codebase questions, and parallel work units.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "general_research",
+    "tags": ["research", "investigation", "delegation"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}

@@ -9,7 +9,7 @@ import { PermissionID } from "../../src/permission/schema"
 
 // Helper to clean up pending permission requests
 async function rejectAll(message?: string) {
-  for (const req of await PermissionNext.list()) {
+  for (const req of await PermissionNext.list({ all: true })) {
     await PermissionNext.reply({
       requestID: req.id,
       reply: "reject",
@@ -20,11 +20,11 @@ async function rejectAll(message?: string) {
 
 async function waitForPending(count: number) {
   for (let i = 0; i < 20; i++) {
-    const list = await PermissionNext.list()
+    const list = await PermissionNext.list({ all: true })
     if (list.length === count) return list
     await Bun.sleep(0)
   }
-  return PermissionNext.list()
+  return PermissionNext.list({ all: true })
 }
 
 // Base context for tools

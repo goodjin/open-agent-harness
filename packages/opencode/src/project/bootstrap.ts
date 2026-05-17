@@ -1,4 +1,3 @@
-import { Plugin } from "../plugin-stub"
 import { Format } from "../format"
 import { LSP } from "../lsp"
 import { FileWatcherService } from "../file/watcher"
@@ -16,7 +15,6 @@ import { runPromiseInstance } from "@/effect/runtime"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
-  await Plugin.init()
   ShareNext.init()
   await Format.init()
   await LSP.init()

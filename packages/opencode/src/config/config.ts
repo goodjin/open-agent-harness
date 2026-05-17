@@ -1,7 +1,6 @@
 import { Log } from "../util/log"
 import path from "path"
 import { pathToFileURL, fileURLToPath } from "url"
-import { createRequire } from "module"
 import os from "os"
 import z from "zod"
 import { ModelsDev } from "../provider/models"
@@ -23,14 +22,12 @@ import {
 import { Instance } from "../project/instance"
 import { LSPServer } from "../lsp/server"
 import { BunProc } from "@/bun"
-import { Installation } from "@/installation"
 import { ConfigMarkdown } from "./markdown"
 import { constants, existsSync } from "fs"
 import { Bus } from "@/bus"
 import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { Glob } from "../util/glob"
-import { PackageRegistry } from "@/bun/registry"
 import { proxied } from "@/util/proxied"
 import { iife } from "@/util/iife"
 import { Account } from "@/account"
@@ -66,9 +63,6 @@ export namespace Config {
   // Custom merge function that concatenates array fields instead of replacing them
   function mergeConfigConcatArrays(target: Info, source: Info): Info {
     const merged = mergeDeep(target, source)
-    if (target.plugin && source.plugin) {
-      merged.plugin = Array.from(new Set([...target.plugin, ...source.plugin]))
-    }
     if (target.instructions && source.instructions) {
       merged.instructions = Array.from(new Set([...target.instructions, ...source.instructions]))
     }
@@ -83,7 +77,7 @@ export namespace Config {
     // 2) Global config (~/.config/opencode/opencode.json{,c})
     // 3) Custom config (OPENCODE_CONFIG)
     // 4) Project config (opencode.json{,c})
-    // 5) .opencode directories (.opencode/agents/, .opencode/commands/, .opencode/plugins/, .opencode/opencode.json{,c})
+    // 5) .opencode directories (.opencode/agents/, .opencode/commands/, .opencode/opencode.json{,c})
     // 6) Inline config (OPENCODE_CONFIG_CONTENT)
     // Managed config directory is enterprise-only and always overrides everything above.
     let result: Info = {}
@@ -129,7 +123,6 @@ export namespace Config {
 
     result.agent = result.agent || {}
     result.mode = result.mode || {}
-    result.plugin = result.plugin || []
 
     const directories = await ConfigPaths.directories(Instance.directory, Instance.worktree)
 
@@ -148,7 +141,6 @@ export namespace Config {
           // to satisfy the type checker
           result.agent ??= {}
           result.mode ??= {}
-          result.plugin ??= []
         }
       }
 
@@ -160,8 +152,8 @@ export namespace Config {
       )
 
       result.command = mergeDeep(result.command ?? {}, await loadCommand(dir))
+      result.agent = mergeDeep(result.agent, await loadAgent(dir))
       result.agent = mergeDeep(result.agent, await loadMode(dir))
-      result.plugin.push(...(await loadPlugin(dir)))
     }
 
     // Inline config content overrides all non-managed config sources.
@@ -203,9 +195,9 @@ export namespace Config {
     }
 
     // Load managed config files last (highest priority) - enterprise admin-controlled
-    // Kept separate from directories array to avoid write operations when installing plugins
+    // Kept separate from directories array to avoid write operations
     // which would fail on system directories requiring elevated permissions
-    // This way it only loads config file and not skills/plugins/commands
+    // This way it only loads config files and not project commands.
     if (existsSync(managedDir)) {
       for (const file of ["opencode.jsonc", "opencode.json"]) {
         result = mergeConfigConcatArrays(result, await loadFile(path.join(managedDir, file)))
@@ -255,8 +247,6 @@ export namespace Config {
       result.compaction = { ...result.compaction, prune: false }
     }
 
-    result.plugin = deduplicatePlugins(result.plugin ?? [])
-
     return {
       config: result,
       directories,
@@ -271,15 +261,10 @@ export namespace Config {
 
   export async function installDependencies(dir: string) {
     const pkg = path.join(dir, "package.json")
-    const targetVersion = Installation.isLocal() ? "*" : Installation.VERSION
 
     const json = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => ({
       dependencies: {},
     }))
-    json.dependencies = {
-      ...json.dependencies,
-      "@opencode-ai/plugin": targetVersion,
-    }
     await Filesystem.writeJson(pkg, json)
 
     const gitignore = path.join(dir, ".gitignore")
@@ -287,8 +272,8 @@ export namespace Config {
     if (!hasGitIgnore)
       await Filesystem.write(gitignore, ["node_modules", "package.json", "bun.lock", ".gitignore"].join("\n"))
 
-    // Install any additional dependencies defined in the package.json
-    // This allows local plugins and custom tools to use external packages
+    // Install any additional dependencies defined in the package.json.
+    // This allows local custom tools to use external packages.
     using _ = await Lock.write("bun-install")
     await BunProc.run(
       [
@@ -345,25 +330,7 @@ export namespace Config {
 
     const pkg = path.join(dir, "package.json")
     const pkgExists = await Filesystem.exists(pkg)
-    if (!pkgExists) return true
-
-    const parsed = await Filesystem.readJson<{ dependencies?: Record<string, string> }>(pkg).catch(() => null)
-    const dependencies = parsed?.dependencies ?? {}
-    const depVersion = dependencies["@opencode-ai/plugin"]
-    if (!depVersion) return true
-
-    const targetVersion = Installation.isLocal() ? "latest" : Installation.VERSION
-    if (targetVersion === "latest") {
-      const isOutdated = await PackageRegistry.isOutdated("@opencode-ai/plugin", depVersion, dir)
-      if (!isOutdated) return false
-      log.info("Cached version is outdated, proceeding with install", {
-        pkg: "@opencode-ai/plugin",
-        cachedVersion: depVersion,
-      })
-      return true
-    }
-    if (depVersion === targetVersion) return false
-    return true
+    return !pkgExists
   }
 
   function rel(item: string, patterns: string[]) {
@@ -418,6 +385,43 @@ export namespace Config {
     return result
   }
 
+  async function loadAgent(dir: string) {
+    const result: Record<string, Agent> = {}
+
+    for (const item of await Glob.scan("{agent,agents}/**/*.md", {
+      cwd: dir,
+      absolute: true,
+      dot: true,
+      symlink: true,
+    })) {
+      const md = await ConfigMarkdown.parse(item).catch(async (err) => {
+        const message = ConfigMarkdown.FrontmatterError.isInstance(err)
+          ? err.data.message
+          : `Failed to parse agent ${item}`
+        const { Session } = await import("@/session")
+        Bus.publish(Session.Event.Error, { error: new NamedError.Unknown({ message }).toObject() })
+        log.error("failed to load agent", { agent: item, err })
+        return undefined
+      })
+      if (!md) continue
+
+      const file = rel(item, ["/.opencode/agent/", "/.opencode/agents/", "/agent/", "/agents/"]) ?? path.basename(item)
+      const name = trim(file)
+      const config = {
+        name,
+        ...md.data,
+        prompt: md.content.trim(),
+      }
+      const parsed = Agent.safeParse(config)
+      if (parsed.success) {
+        result[config.name] = parsed.data
+        continue
+      }
+      throw new InvalidError({ path: item, issues: parsed.error.issues }, { cause: parsed.error })
+    }
+    return result
+  }
+
   async function loadMode(dir: string) {
     const result: Record<string, Agent> = {}
     for (const item of await Glob.scan("{mode,modes}/*.md", {
@@ -452,72 +456,6 @@ export namespace Config {
       }
     }
     return result
-  }
-
-  async function loadPlugin(dir: string) {
-    const plugins: string[] = []
-
-    for (const item of await Glob.scan("{plugin,plugins}/*.{ts,js}", {
-      cwd: dir,
-      absolute: true,
-      dot: true,
-      symlink: true,
-    })) {
-      plugins.push(pathToFileURL(item).href)
-    }
-    return plugins
-  }
-
-  /**
-   * Extracts a canonical plugin name from a plugin specifier.
-   * - For file:// URLs: extracts filename without extension
-   * - For npm packages: extracts package name without version
-   *
-   * @example
-   * getPluginName("file:///path/to/plugin/foo.js") // "foo"
-   * getPluginName("oh-my-opencode@2.4.3") // "oh-my-opencode"
-   * getPluginName("@scope/pkg@1.0.0") // "@scope/pkg"
-   */
-  export function getPluginName(plugin: string): string {
-    if (plugin.startsWith("file://")) {
-      return path.parse(new URL(plugin).pathname).name
-    }
-    const lastAt = plugin.lastIndexOf("@")
-    if (lastAt > 0) {
-      return plugin.substring(0, lastAt)
-    }
-    return plugin
-  }
-
-  /**
-   * Deduplicates plugins by name, with later entries (higher priority) winning.
-   * Priority order (highest to lowest):
-   * 1. Local plugin/ directory
-   * 2. Local opencode.json
-   * 3. Global plugin/ directory
-   * 4. Global opencode.json
-   *
-   * Since plugins are added in low-to-high priority order,
-   * we reverse, deduplicate (keeping first occurrence), then restore order.
-   */
-  export function deduplicatePlugins(plugins: string[]): string[] {
-    // seenNames: canonical plugin names for duplicate detection
-    // e.g., "oh-my-opencode", "@scope/pkg"
-    const seenNames = new Set<string>()
-
-    // uniqueSpecifiers: full plugin specifiers to return
-    // e.g., "oh-my-opencode@2.4.3", "file:///path/to/plugin.js"
-    const uniqueSpecifiers: string[] = []
-
-    for (const specifier of plugins.toReversed()) {
-      const name = getPluginName(specifier)
-      if (!seenNames.has(name)) {
-        seenNames.add(name)
-        uniqueSpecifiers.push(specifier)
-      }
-    }
-
-    return uniqueSpecifiers.toReversed()
   }
 
   export const McpLocal = z
@@ -640,9 +578,16 @@ export namespace Config {
           codesearch: PermissionAction.optional(),
           lsp: PermissionRule.optional(),
           doom_loop: PermissionAction.optional(),
-          skill: PermissionRule.optional(),
         })
         .catchall(PermissionRule)
+        .superRefine((val, ctx) => {
+          if (!("skill" in val)) return
+          ctx.addIssue({
+            code: "custom",
+            path: ["skill"],
+            message: "Skill permissions are unsupported. Move reusable behavior into agent templates or tools.",
+          })
+        })
         .or(PermissionAction),
     )
     .transform(permissionTransform)
@@ -659,15 +604,6 @@ export namespace Config {
     subtask: z.boolean().optional(),
   })
   export type Command = z.infer<typeof Command>
-
-  export const Skills = z.object({
-    paths: z.array(z.string()).optional().describe("Additional paths to skill folders"),
-    urls: z
-      .array(z.string())
-      .optional()
-      .describe("URLs to fetch skills from (e.g., https://example.com/.well-known/skills/)"),
-  })
-  export type Skills = z.infer<typeof Skills>
 
   export const Agent = z
     .object({
@@ -686,7 +622,9 @@ export namespace Config {
       hidden: z
         .boolean()
         .optional()
-        .describe("Hide this subagent from the @ autocomplete menu (default: false, only applies to mode: subagent)"),
+        .describe(
+          "Hide this agent from normal user-facing entry points such as primary switching, @ mention autocomplete, and delegation candidate lists (default: false)",
+        ),
       options: z.record(z.string(), z.any()).optional(),
       color: z
         .union([
@@ -1005,13 +943,11 @@ export namespace Config {
         .record(z.string(), Command)
         .optional()
         .describe("Command configuration, see https://opencode.ai/docs/commands"),
-      skills: Skills.optional().describe("Additional skill folder paths"),
       watcher: z
         .object({
           ignore: z.array(z.string()).optional(),
         })
         .optional(),
-      plugin: z.string().array().optional(),
       snapshot: z
         .boolean()
         .optional()
@@ -1262,23 +1198,6 @@ export namespace Config {
         await Filesystem.write(options.path, updated).catch(() => {})
       }
       const data = parsed.data
-      if (data.plugin && isFile) {
-        for (let i = 0; i < data.plugin.length; i++) {
-          const plugin = data.plugin[i]
-          try {
-            data.plugin[i] = import.meta.resolve!(plugin, options.path)
-          } catch (e) {
-            try {
-              // import.meta.resolve sometimes fails with newly created node_modules
-              const require = createRequire(options.path)
-              const resolvedPath = require.resolve(plugin)
-              data.plugin[i] = pathToFileURL(resolvedPath).href
-            } catch {
-              // Ignore, plugin might be a generic string identifier like "mcp-server"
-            }
-          }
-        }
-      }
       return data
     }
 

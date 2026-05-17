@@ -1,59 +1,15 @@
-import { AgentTemplateLoader, type AgentTemplate } from "./loader"
+import path from "path"
+import { AgentTemplateLoader, type AgentTemplate, type AgentTemplateStatus } from "./loader"
 import { AgentTemplate as AgentTemplateSchema } from "./schema"
 import { Config } from "../config/config"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
 import { PermissionNext } from "../permission/next"
-import { Truncate } from "../tool/truncation"
+import { Policy } from "../permission/policy"
+import { Global } from "../global"
+import { buildPolicy } from "./permission"
 
 const log = Log.create({ service: "agent-registry" })
-
-/**
- * Build a PermissionNext.Ruleset from allowed_tools and denied_tools arrays.
- * This is a best-effort conversion - the original config had glob patterns,
- * but templates only have tool names, so we use "*" as the pattern.
- */
-function buildPermission(allowed: string[] | undefined, denied: string[] | undefined): PermissionNext.Ruleset {
-  const rules: PermissionNext.Ruleset = []
-  const whitelistedDirs = [Truncate.GLOB]
-
-  // Default rules
-  const defaults = PermissionNext.fromConfig({
-    "*": "allow",
-    doom_loop: "ask",
-    external_directory: {
-      "*": "ask",
-      ...Object.fromEntries(whitelistedDirs.map((dir) => [dir, "allow"])),
-    },
-    question: "deny",
-    plan_enter: "deny",
-    plan_exit: "deny",
-    read: {
-      "*": "allow",
-      "*.env": "ask",
-      "*.env.*": "ask",
-      "*.env.example": "allow",
-    },
-  })
-
-  // Start with defaults
-  rules.push(...defaults)
-
-  // Add deny rules for denied_tools
-  if (denied) {
-    for (const tool of denied) {
-      rules.push({ permission: tool, action: "deny", pattern: "*" })
-    }
-  }
-
-  // Ensure Truncate.GLOB is allowed unless explicitly denied
-  const hasExplicitTruncateDeny = denied?.includes("external_directory")
-  if (!hasExplicitTruncateDeny) {
-    rules.push(...PermissionNext.fromConfig({ external_directory: { [Truncate.GLOB]: "allow" } }))
-  }
-
-  return rules
-}
 
 /**
  * Agent metadata returned by list() - minimal info for display
@@ -62,7 +18,9 @@ export interface AgentMetadata {
   id: string
   name: string
   description: string
-  mode: "auto" | "manual" | "supervision"
+  mode: "primary" | "subagent" | "all"
+  entry: AgentTemplateSchema.Entry
+  capability: AgentTemplateSchema.Capability
 }
 
 /**
@@ -71,10 +29,14 @@ export interface AgentMetadata {
 export interface AgentTemplateInfo {
   id: string
   name: string
+  mode: "primary" | "subagent" | "all"
+  entry: AgentTemplateSchema.Entry
+  capability: AgentTemplateSchema.Capability
   meta: AgentTemplateSchema.Meta
   identity: string
   rules: string
   permission: PermissionNext.Ruleset
+  policy: Policy.Model
 }
 
 /**
@@ -84,10 +46,11 @@ export interface AgentTemplateInfo {
 export class AgentRegistry {
   private loader: AgentTemplateLoader
   private cache: AgentTemplate[] | undefined
+  private signature: string | undefined
   private currentAgentId: string | undefined
 
-  constructor(baseDir?: string) {
-    this.loader = new AgentTemplateLoader(baseDir)
+  constructor(baseDir?: string | string[], fallbackDir?: string) {
+    this.loader = new AgentTemplateLoader(baseDir, fallbackDir)
   }
 
   /**
@@ -95,17 +58,39 @@ export class AgentRegistry {
    */
   invalidateCache(): void {
     this.cache = undefined
+    this.signature = undefined
   }
 
   /**
    * Load all agent templates, using cache if available
    */
   private async loadAll(): Promise<AgentTemplate[]> {
-    if (this.cache === undefined) {
+    const signature = await this.loader.signature()
+    if (this.cache === undefined || this.signature !== signature) {
       this.cache = await this.loader.loadAll()
+      this.signature = signature
       log.debug("loaded agent templates", { count: this.cache.length })
     }
     return this.cache
+  }
+
+  private eligible(agent: Pick<AgentTemplate, "meta">): boolean {
+    return agent.meta.entry.primary && agent.meta.entry.default && !agent.meta.entry.hidden && !agent.meta.hidden
+  }
+
+  private entry(agent: AgentTemplate, cfg: Config.Agent | undefined): AgentTemplateSchema.Entry | undefined {
+    if (cfg?.disable) return undefined
+    const mode = cfg?.mode
+    const entry = mode ? AgentTemplateSchema.EntryDefaults[mode] : agent.meta.entry
+    const hidden = cfg?.hidden ?? (agent.meta.entry.hidden || agent.meta.hidden)
+    return {
+      ...entry,
+      hidden,
+    }
+  }
+
+  async templates(dir?: string): Promise<AgentTemplateStatus[]> {
+    return await this.loader.inspect(dir)
   }
 
   /**
@@ -121,7 +106,9 @@ export class AgentRegistry {
         id: agent.id,
         name: agent.name,
         description: agent.meta.description,
-        mode: agent.meta.workflow_mode ?? "auto",
+        mode: AgentTemplateSchema.mode(agent.meta),
+        entry: agent.meta.entry,
+        capability: agent.meta.capability,
       }))
       .sort((a, b) => {
         // Sort default agent first, then alphabetically
@@ -139,14 +126,19 @@ export class AgentRegistry {
     const agents = await this.loadAll()
     const agent = agents.find((a) => a.id === id)
     if (!agent) return undefined
+    const policy = await buildPolicy(agent.meta)
 
     return {
       id: agent.id,
       name: agent.name,
+      mode: AgentTemplateSchema.mode(agent.meta),
+      entry: agent.meta.entry,
+      capability: agent.meta.capability,
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
-      permission: buildPermission(agent.meta.allowed_tools, agent.meta.denied_tools),
+      permission: Policy.toLegacy(policy),
+      policy,
     }
   }
 
@@ -167,6 +159,12 @@ export class AgentRegistry {
     if (!agent) {
       throw new Error(`Agent not found: ${id}`)
     }
+    const cfg = (await Config.get()).agent?.[id]
+    const entry = this.entry(agent, cfg)
+    if (!entry) throw new Error(`Agent not found: ${id}`)
+    if (!entry.primary) throw new Error(`Agent "${id}" is not a primary agent`)
+    if (entry.hidden) throw new Error(`Agent "${id}" is hidden`)
+    if (!entry.default) throw new Error(`Agent "${id}" is not default eligible`)
 
     await Config.update({ default_agent: id })
     log.info("set default agent", { id })
@@ -187,16 +185,21 @@ export class AgentRegistry {
     const agents = await this.loadAll()
     const agent = agents.find((a) => a.id === id)
     if (!agent) return undefined
+    const policy = await buildPolicy(agent.meta)
 
     this.currentAgentId = id
     log.info("switched agent", { id, name: agent.name })
     return {
       id: agent.id,
       name: agent.name,
+      mode: AgentTemplateSchema.mode(agent.meta),
+      entry: agent.meta.entry,
+      capability: agent.meta.capability,
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
-      permission: buildPermission(agent.meta.allowed_tools, agent.meta.denied_tools),
+      permission: Policy.toLegacy(policy),
+      policy,
     }
   }
 
@@ -204,9 +207,13 @@ export class AgentRegistry {
    * Get the effective agent to use - current switched agent or default
    */
   async getEffectiveAgent(): Promise<AgentTemplateInfo | undefined> {
-    const id = this.currentAgentId ?? (await this.getDefaultId())
-    if (!id) return undefined
-    return this.get(id)
+    if (this.currentAgentId) return this.get(this.currentAgentId)
+    const id = await this.getDefaultId()
+    const agent = id ? await this.get(id) : undefined
+    if (agent) return agent
+    const first = (await this.loadAll()).find((item) => this.eligible(item))
+    if (!first) return undefined
+    return this.get(first.id)
   }
 }
 
@@ -222,7 +229,7 @@ export function getRegistry(): AgentRegistry {
   const dir = Instance.directory
   let registry = registryByDirectory.get(dir)
   if (!registry) {
-    registry = new AgentRegistry()
+    registry = new AgentRegistry([path.join(Global.Path.config, "agents"), path.join(Instance.worktree, ".opencode", "agents")])
     registryByDirectory.set(dir, registry)
   }
   return registry

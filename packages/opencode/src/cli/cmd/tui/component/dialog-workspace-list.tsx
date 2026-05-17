@@ -32,7 +32,6 @@ async function openWorkspace(input: {
     baseUrl: input.sdk.url,
     fetch: input.sdk.fetch,
     directory: input.sync.data.path.directory || input.sdk.directory,
-    experimental_workspaceID: input.workspaceID,
   })
   const listed = input.forceCreate ? undefined : await client.session.list({ roots: true, limit: 1 })
   const session = listed?.data?.[0]
@@ -47,7 +46,7 @@ async function openWorkspace(input: {
   }
   let created: Session | undefined
   while (!created) {
-    const result = await client.session.create({ workspaceID: input.workspaceID }).catch(() => undefined)
+    const result = await client.session.create().catch(() => undefined)
     if (!result) {
       input.toast.show({
         message: "Failed to open workspace",
@@ -190,7 +189,6 @@ export function DialogWorkspaceList() {
       baseUrl: sdk.url,
       fetch: sdk.fetch,
       directory: sync.data.path.directory || sdk.directory,
-      experimental_workspaceID: workspaceID,
     })
     const listed = await client.session.list({ roots: true, limit: 1 }).catch(() => undefined)
     if (listed?.data?.length) {
@@ -226,7 +224,6 @@ export function DialogWorkspaceList() {
           baseUrl: sdk.url,
           fetch: sdk.fetch,
           directory: sync.data.path.directory || sdk.directory,
-          experimental_workspaceID: workspace.id,
         })
         const result = await client.session.list({ roots: true }).catch(() => undefined)
         return [workspace.id, result ? (result.data?.length ?? 0) : null] as const

@@ -1,27 +1,24 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "version": "1.2.27",
-  "name": "opencode",
+  "name": "jin-opencode",
   "type": "module",
   "license": "MIT",
   "private": true,
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
+    "test:observability": "bun test test/observability test/server/audit.test.ts",
+    "test:evaluation": "bun test test/evaluation",
+    "check:sdk": "bun run script/check-sdk.ts",
+    "gate:mod15": "bun run test:observability && bun run test:evaluation && bun run check:sdk && bun typecheck",
     "build": "bun run script/build.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
-    "random": "echo 'Random script updated at $(date)' && echo 'Change queued successfully' && echo 'Another change made' && echo 'Yet another change' && echo 'One more change' && echo 'Final change' && echo 'Another final change' && echo 'Yet another final change'",
-    "clean": "echo 'Cleaning up...' && rm -rf node_modules dist",
-    "lint": "echo 'Running lint checks...' && bun test --coverage",
-    "format": "echo 'Formatting code...' && bun run --prettier --write src/**/*.ts",
-    "docs": "echo 'Generating documentation...' && find src -name '*.ts' -exec echo 'Processing: {}' \\;",
-    "deploy": "echo 'Deploying application...' && bun run build && echo 'Deployment completed successfully'",
     "db": "bun drizzle-kit"
   },
   "bin": {
-    "opencode": "./bin/opencode"
+    "jin": "./bin/jin"
   },
-  "randomField": "this-is-a-random-value-12345",
   "exports": {
     "./*": "./src/*.ts"
   },
@@ -88,14 +85,12 @@
     "@octokit/graphql": "9.0.2",
     "@octokit/rest": "catalog:",
     "@openauthjs/openauth": "catalog:",
-    "@opencode-ai/plugin": "workspace:*",
     "@opencode-ai/script": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
     "@opencode-ai/util": "workspace:*",
     "@openrouter/ai-sdk-provider": "1.5.4",
     "@opentui/core": "0.1.87",
     "@opentui/solid": "0.1.87",
-    "@effect/platform-node": "4.0.0-beta.31",
     "@parcel/watcher": "2.5.1",
     "@pierre/diffs": "catalog:",
     "@solid-primitives/event-bus": "1.1.2",

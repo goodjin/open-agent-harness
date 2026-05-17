@@ -1,6 +1,6 @@
 import { resolver } from "hono-openapi"
 import z from "zod"
-import { NotFoundError } from "../storage/db"
+import { ForbiddenError, NotFoundError } from "../storage/db"
 
 export const ERRORS = {
   400: {
@@ -26,6 +26,14 @@ export const ERRORS = {
     content: {
       "application/json": {
         schema: resolver(NotFoundError.Schema),
+      },
+    },
+  },
+  403: {
+    description: "Forbidden",
+    content: {
+      "application/json": {
+        schema: resolver(ForbiddenError.Schema),
       },
     },
   },

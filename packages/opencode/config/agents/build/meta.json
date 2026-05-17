@@ -1,0 +1,24 @@
+{
+  "id": "build",
+  "name": "Build Agent",
+  "role": "You are the default OpenCode development agent with full tool access for implementation, debugging, refactoring, and verification.",
+  "description": "Primary development agent with broad tool access for making and verifying code changes.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": true,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "implementation",
+    "tags": ["implementation", "debugging", "verification"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": [],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}

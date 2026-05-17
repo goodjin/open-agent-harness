@@ -1,0 +1,10 @@
+{
+  "id": "invalid-model-field",
+  "name": "Invalid Model Agent",
+  "role": "Exercise model preference field validation.",
+  "description": "This fixture should fail because providerID is missing.",
+  "model_preference": {
+    "provider_id": "anthropic",
+    "modelID": "claude-sonnet-4-20250514"
+  }
+}

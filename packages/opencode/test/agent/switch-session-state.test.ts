@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import * as fs from "fs/promises"
 import path from "path"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
@@ -9,9 +10,46 @@ import { AgentRegistry, resetRegistry } from "../../src/agent/registry"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { ProviderID, ModelID } from "../../src/provider/schema"
+import { SessionPrompt } from "../../src/session/prompt"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
+
+async function write(dir: string, id: string) {
+  const root = path.join(dir, id)
+  await fs.mkdir(root, { recursive: true })
+  await fs.writeFile(
+    path.join(root, "meta.json"),
+    JSON.stringify({
+      id,
+      name: id,
+      role: "test",
+      description: `${id} agent`,
+    }),
+  )
+  await fs.writeFile(path.join(root, "identity.md"), "# Identity")
+  await fs.writeFile(path.join(root, "rules.md"), "# Rules")
+}
+
+async function project(dir: string, id: string) {
+  const root = path.join(dir, ".opencode", "agents", id)
+  await fs.mkdir(root, { recursive: true })
+  await fs.writeFile(
+    path.join(root, "meta.json"),
+    JSON.stringify({
+      id,
+      name: id,
+      role: "test",
+      description: `${id} agent`,
+      model_preference: {
+        providerID: "test",
+        modelID: "test",
+      },
+    }),
+  )
+  await fs.writeFile(path.join(root, "identity.md"), "# Identity")
+  await fs.writeFile(path.join(root, "rules.md"), "# Rules")
+}
 
 function createTestUserMessage(sessionID: string, agent: string): MessageV2.Info {
   return {
@@ -281,6 +319,88 @@ describe("agent switch preserves session state", () => {
             },
           }),
       })
+    })
+
+    test("registry-backed switch changes the next effective session agent", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-switch-test-"))
+      try {
+        await write(tmp, "build")
+        await write(tmp, "plan")
+        await Instance.provide({
+          directory: projectRoot,
+          fn: async () =>
+            WorkspaceContext.provide({
+              workspaceID: WorkspaceID.ascending(),
+              fn: async () => {
+                const registry = new AgentRegistry(tmp, "/nonexistent/fallback")
+                const session = await Session.create({})
+                const build = await registry.switch("build")
+                expect(build?.id).toBe("build")
+
+                const first = createTestUserMessage(session.id, (await registry.getEffectiveAgent())!.id)
+                await Session.updateMessage(first)
+
+                const plan = await registry.switch("plan")
+                expect(plan?.id).toBe("plan")
+
+                const second = createTestUserMessage(session.id, (await registry.getEffectiveAgent())!.id)
+                await Session.updateMessage(second)
+
+                const messages = await Session.messages({ sessionID: session.id })
+                expect(messages.map((item) => item.info.agent)).toEqual(["build", "plan"])
+                expect(registry.getCurrentId()).toBe("plan")
+
+                await Session.remove(session.id)
+              },
+            }),
+        })
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
+
+    test("submitting with selected non-default agent preserves message history", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-prompt-test-"))
+      try {
+        await project(tmp, "build")
+        await project(tmp, "plan")
+        await Instance.provide({
+          directory: tmp,
+          fn: async () =>
+            WorkspaceContext.provide({
+              workspaceID: WorkspaceID.ascending(),
+              fn: async () => {
+                resetRegistry()
+                const session = await Session.create({})
+
+                const first = await SessionPrompt.prompt({
+                  sessionID: session.id,
+                  agent: "build",
+                  noReply: true,
+                  parts: [{ type: "text", text: "first" }],
+                })
+                if (first.info.role !== "user") throw new Error("expected user message")
+                expect(first.info.agent).toBe("build")
+
+                const second = await SessionPrompt.prompt({
+                  sessionID: session.id,
+                  agent: "plan",
+                  noReply: true,
+                  parts: [{ type: "text", text: "second" }],
+                })
+                if (second.info.role !== "user") throw new Error("expected user message")
+                expect(second.info.agent).toBe("plan")
+
+                const messages = await Session.messages({ sessionID: session.id })
+                expect(messages.map((item) => item.info.agent)).toEqual(["build", "plan"])
+
+                await Session.remove(session.id)
+              },
+            }),
+        })
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
     })
   })
 })

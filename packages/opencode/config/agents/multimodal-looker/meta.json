@@ -1,0 +1,24 @@
+{
+  "id": "multimodal-looker",
+  "name": "multimodal-looker",
+  "role": "You interpret media files that cannot be read as plain text.",
+  "description": "Subagent for analyzing PDFs, images, diagrams, charts, and visual documents.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "media_interpretation",
+    "tags": ["media", "images", "documents"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read"],
+  "denied_tools": [],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

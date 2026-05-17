@@ -21,7 +21,7 @@ export namespace ProviderAuth {
       providerID: ProviderID.zod,
       method: z.number(),
     }),
-    async (input): Promise<Authorization | undefined> =>
+    async (input): Promise<Authorization> =>
       runPromiseInstance(S.ProviderAuthService.use((service) => service.authorize(input))),
   )
 

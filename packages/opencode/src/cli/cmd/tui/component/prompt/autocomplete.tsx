@@ -11,6 +11,7 @@ import { SplitBorder } from "@tui/component/border"
 import { useCommandDialog } from "@tui/component/dialog-command"
 import { useTerminalDimensions } from "@opentui/solid"
 import { Locale } from "@/util/locale"
+import { AgentEntry } from "@/agent/entry"
 import type { PromptInfo } from "./history"
 import { useFrecency } from "./frecency"
 
@@ -334,7 +335,7 @@ export function Autocomplete(props: {
   const agents = createMemo(() => {
     const agents = sync.data.agent
     return agents
-      .filter((agent) => !agent.hidden && agent.mode !== "primary")
+      .filter((agent) => AgentEntry.mentionable(agent))
       .map(
         (agent): AutocompleteOption => ({
           display: "@" + agent.name,
@@ -357,7 +358,6 @@ export function Autocomplete(props: {
     const results: AutocompleteOption[] = [...command.slashes()]
 
     for (const serverCommand of sync.data.command) {
-      if (serverCommand.source === "skill") continue
       const label = serverCommand.source === "mcp" ? ":mcp" : ""
       results.push({
         display: "/" + serverCommand.name + label,

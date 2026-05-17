@@ -17,7 +17,6 @@ import { Config } from "@/config/config"
 import { Instance } from "@/project/instance"
 import type { Agent } from "@/agent/agent"
 import type { MessageV2 } from "./message-v2"
-import { Plugin } from "@/plugin-stub"
 import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission/next"
@@ -44,6 +43,22 @@ export namespace LLM {
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
 
+  export function compose(input: Pick<StreamInput, "agent" | "model" | "system" | "user"> & { isCodex: boolean }) {
+    return [
+      [
+        // use agent prompt otherwise provider prompt
+        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
+        ...(input.agent.prompt ? [input.agent.prompt] : input.isCodex ? [] : SystemPrompt.provider(input.model)),
+        // any custom prompt passed into this call
+        ...input.system,
+        // any custom prompt from last user message
+        ...(input.user.system ? [input.user.system] : []),
+      ]
+        .filter((x) => x)
+        .join("\n"),
+    ]
+  }
+
   export async function stream(input: StreamInput) {
     const l = log
       .clone()
@@ -65,27 +80,9 @@ export namespace LLM {
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
 
-    const system = []
-    system.push(
-      [
-        // use agent prompt otherwise provider prompt
-        // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
-        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
-        // any custom prompt passed into this call
-        ...input.system,
-        // any custom prompt from last user message
-        ...(input.user.system ? [input.user.system] : []),
-      ]
-        .filter((x) => x)
-        .join("\n"),
-    )
+    const system = compose({ ...input, isCodex })
 
     const header = system[0]
-    await Plugin.trigger(
-      "experimental.chat.system.transform",
-      { sessionID: input.sessionID, model: input.model },
-      { system },
-    )
     // rejoin to maintain 2-part structure for caching if header unchanged
     if (system.length > 2 && system[0] === header) {
       const rest = system.slice(1)
@@ -112,38 +109,14 @@ export namespace LLM {
       options.instructions = SystemPrompt.instructions()
     }
 
-    const params = await Plugin.trigger(
-      "chat.params",
-      {
-        sessionID: input.sessionID,
-        agent: input.agent,
-        model: input.model,
-        provider,
-        message: input.user,
-      },
-      {
-        temperature: input.model.capabilities.temperature
-          ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
-          : undefined,
-        topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-        topK: ProviderTransform.topK(input.model),
-        options,
-      },
-    )
-
-    const { headers } = await Plugin.trigger(
-      "chat.headers",
-      {
-        sessionID: input.sessionID,
-        agent: input.agent,
-        model: input.model,
-        provider,
-        message: input.user,
-      },
-      {
-        headers: {},
-      },
-    )
+    const params = {
+      temperature: input.model.capabilities.temperature
+        ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
+        : undefined,
+      topP: input.agent.topP ?? ProviderTransform.topP(input.model),
+      topK: ProviderTransform.topK(input.model),
+      options,
+    }
 
     const maxOutputTokens =
       isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
@@ -220,7 +193,6 @@ export namespace LLM {
               }
             : undefined),
         ...input.model.headers,
-        ...headers,
       },
       maxRetries: input.retries ?? 0,
       messages: [

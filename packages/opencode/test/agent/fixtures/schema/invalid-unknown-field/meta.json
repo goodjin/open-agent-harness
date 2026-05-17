@@ -1,0 +1,7 @@
+{
+  "id": "invalid-unknown-field",
+  "name": "Unknown Field Agent",
+  "role": "Exercise strict schema validation.",
+  "description": "This fixture should fail because extra fields are frozen out.",
+  "unknown": true
+}

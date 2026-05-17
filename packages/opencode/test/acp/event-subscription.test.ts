@@ -10,16 +10,33 @@ import { tmpdir } from "../fixture/fixture"
 const originalDefaultAgent = Agent.defaultAgent
 const originalList = Agent.list
 const originalGet = Agent.get
+const ent = {
+  primary: true,
+  delegable: true,
+  mentionable: true,
+  default: true,
+  hidden: false,
+}
+const cap = {
+  purpose: "test",
+  tags: [],
+  cost: "low",
+  writes: true,
+} satisfies Agent.Info["capability"]
 Agent.defaultAgent = async () => "build"
-Agent.list = async () => [{ name: "build", description: "build", mode: "primary" as const, permission: [], options: {} }]
+Agent.list = async () => [
+  { name: "build", description: "build", mode: "primary" as const, entry: ent, capability: cap, permission: [], options: {} },
+]
 Agent.get = async (_name: string) =>
   ({
     name: "build",
     description: "build",
     mode: "primary",
+    entry: ent,
+    capability: cap,
     permission: [],
     options: {},
-  }) as any
+  }) satisfies Agent.Info
 
 // Restore original functions after tests
 afterAll(() => {

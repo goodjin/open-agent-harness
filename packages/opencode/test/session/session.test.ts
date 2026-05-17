@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import { Session } from "../../src/session"
 import { Bus } from "../../src/bus"
@@ -6,11 +6,21 @@ import { Log } from "../../src/util/log"
 import { Instance } from "../../src/project/instance"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID } from "../../src/session/schema"
+import { SessionProcessor } from "../../src/session/processor"
+import { SessionStatus } from "../../src/session/status"
+import { LLM } from "../../src/session/llm"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import type { Provider } from "../../src/provider/provider"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
+
+afterEach(() => {
+  // @ts-expect-error Bun mock restore is present on spies
+  LLM.stream.mockRestore?.()
+})
 
 describe("session.started event", () => {
   test("should emit session.started event when session is created", async () => {
@@ -79,6 +89,103 @@ describe("session.started event", () => {
           },
         }),
     })
+  })
+})
+
+describe("session processor lifecycle", () => {
+  test("propagates runtime errors after recording error status", async () => {
+    const err = new Error("processor exploded")
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "error" as const, error: err }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            const input = (await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)) as MessageV2.User
+
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "test",
+              agent: "test",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: projectRoot,
+                root: projectRoot,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            })) as MessageV2.Assistant
+
+            const processor = SessionProcessor.create({
+              assistantMessage: assistant,
+              sessionID: session.id,
+              model: {
+                id: "test",
+                providerID: "test",
+              } as Provider.Model,
+              abort: new AbortController().signal,
+            })
+
+            await expect(
+              processor.process({
+                user: input,
+                sessionID: session.id,
+                model: {} as Provider.Model,
+                agent: {
+                  name: "test",
+                  mode: "primary",
+                  permission: [],
+                  options: {},
+                },
+                system: [],
+                abort: new AbortController().signal,
+                messages: [],
+                tools: {},
+              } as unknown as LLM.StreamInput),
+            ).rejects.toBe(err)
+
+            expect(SessionStatus.get(session.id)).toEqual({ type: "error", message: "Error: processor exploded" })
+            const stored = await MessageV2.get({ sessionID: session.id, messageID: assistant.id })
+            expect(stored.info.role).toBe("assistant")
+            if (stored.info.role === "assistant") expect(stored.info.error).toBeDefined()
+
+            SessionStatus.set(session.id, { type: "idle" })
+            await Session.remove(session.id)
+          },
+        }),
+    })
+
+    stream.mockRestore()
   })
 })
 

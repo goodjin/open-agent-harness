@@ -1,5 +1,4 @@
-import { BusEvent } from "@/bus/bus-event"
-import { Bus } from "@/bus"
+import { GlobalBus } from "@/bus/global"
 import { Log } from "../util/log"
 import { describeRoute, generateSpecs, validator, resolver, openAPIRouteHandler } from "hono-openapi"
 import { Hono } from "hono"
@@ -22,11 +21,11 @@ import { Flag } from "../flag/flag"
 import { Command } from "../command"
 import { Global } from "../global"
 import { WorkspaceContext } from "../control-plane/workspace-context"
-import { WorkspaceID } from "../control-plane/schema"
 import { ProviderID } from "../provider/schema"
 import { WorkspaceRouterMiddleware } from "../control-plane/workspace-router-middleware"
 import { ProjectRoutes } from "./routes/project"
 import { SessionRoutes } from "./routes/session"
+import { SessionID } from "@/session/schema"
 import { PtyRoutes } from "./routes/pty"
 import { McpRoutes } from "./routes/mcp"
 import { FileRoutes } from "./routes/file"
@@ -42,9 +41,13 @@ import { errors } from "./error"
 import { Filesystem } from "@/util/filesystem"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
+import { WorkflowRoutes } from "./routes/workflow"
 import { GlobalRoutes } from "./routes/global"
+import { MemoryRoutes } from "./routes/memory"
+import { AuditRoutes } from "./routes/audit"
 import { MDNS } from "./mdns"
 import { lazy } from "@/util/lazy"
+import { Event, EventGateway } from "./event"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -55,6 +58,7 @@ export namespace Server {
   export const Default = lazy(() => createApp({}))
 
   export const createApp = (opts: { cors?: string[] }): Hono => {
+    const root = Filesystem.resolve(process.cwd())
     const app = new Hono()
     return app
       .onError((err, c) => {
@@ -66,6 +70,8 @@ export namespace Server {
           if (err instanceof NotFoundError) status = 404
           else if (err instanceof ForbiddenError) status = 403
           else if (err instanceof Provider.ModelNotFoundError) status = 400
+          else if (err.name.startsWith("ProviderAuth")) status = 400
+          else if (err.name.startsWith("WorkflowInvalid")) status = 400
           else if (err.name.startsWith("Worktree")) status = 400
           else status = 500
           return c.json(err.toObject(), { status })
@@ -193,23 +199,34 @@ export namespace Server {
       )
       .use(async (c, next) => {
         if (c.req.path === "/log") return next()
-        const rawWorkspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
-        const raw = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
-        const directory = Filesystem.resolve(
-          (() => {
-            try {
-              return decodeURIComponent(raw)
-            } catch {
-              return raw
-            }
-          })(),
+        const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
+        const current = (() => {
+          try {
+            return Instance.directory
+          } catch {
+            return root
+          }
+        })()
+        const dir = Filesystem.resolve(
+          raw
+            ? (() => {
+                try {
+                  return decodeURIComponent(raw)
+                } catch {
+                  return raw
+                }
+              })()
+            : current,
         )
+        if (dir !== current) {
+          throw new ForbiddenError({ message: `Directory must match the current instance directory` })
+        }
 
         return WorkspaceContext.provide({
-          workspaceID: rawWorkspaceID ? WorkspaceID.make(rawWorkspaceID) : undefined,
+          workspaceID: undefined,
           async fn() {
             return Instance.provide({
-              directory,
+              directory: current,
               init: InstanceBootstrap,
               async fn() {
                 return next()
@@ -237,7 +254,6 @@ export namespace Server {
           "query",
           z.object({
             directory: z.string().optional(),
-            workspace: z.string().optional(),
           }),
         ),
       )
@@ -246,6 +262,9 @@ export namespace Server {
       .route("/config", ConfigRoutes())
       .route("/experimental", ExperimentalRoutes())
       .route("/session", SessionRoutes())
+      .route("/workflow", WorkflowRoutes())
+      .route("/memory", MemoryRoutes())
+      .route("/audit", AuditRoutes())
       .route("/permission", PermissionRoutes())
       .route("/question", QuestionRoutes())
       .route("/provider", ProviderRoutes())
@@ -479,53 +498,76 @@ export namespace Server {
         "/event",
         describeRoute({
           summary: "Subscribe to events",
-          description: "Get events",
+          description: "Subscribe to canonical server events with replay and optional scope filters.",
           operationId: "event.subscribe",
           responses: {
             200: {
               description: "Event stream",
               content: {
                 "text/event-stream": {
-                  schema: resolver(BusEvent.payloads()),
+                  schema: resolver(EventGateway.schema()),
                 },
               },
             },
           },
         }),
+        validator("query", EventGateway.Query),
         async (c) => {
+          const query = c.req.valid("query")
+          const filter = EventGateway.filter(query, {
+            directory: Instance.directory,
+          })
           log.info("event connected")
           c.header("X-Accel-Buffering", "no")
           c.header("X-Content-Type-Options", "nosniff")
           return streamSSE(c, async (stream) => {
-            stream.writeSSE({
-              data: JSON.stringify({
-                type: "server.connected",
-                properties: {},
-              }),
-            })
-            const unsub = Bus.subscribeAll(async (event) => {
+            const send = async (event: EventGateway.Envelope) => {
               await stream.writeSSE({
+                id: event.sequence.toString(),
                 data: JSON.stringify(event),
               })
-              if (event.type === Bus.InstanceDisposed.type) {
+            }
+            const events = EventGateway.stream(filter, send)
+            const handler = async (event: EventGateway.Envelope) => {
+              const sent = await events.push(event)
+              if (sent && event.payload.type === "server.instance.disposed") {
                 stream.close()
               }
-            })
+            }
+            GlobalBus.on("event", handler)
+            await events.replay(() =>
+              EventGateway.record(
+                {
+                  directory: Instance.directory,
+                  payload: {
+                    type: Event.Connected.type,
+                    properties: {},
+                  },
+                },
+                { store: false },
+              ),
+            )
 
             // Send heartbeat every 10s to prevent stalled proxy streams.
             const heartbeat = setInterval(() => {
-              stream.writeSSE({
-                data: JSON.stringify({
-                  type: "server.heartbeat",
-                  properties: {},
-                }),
-              })
+              void send(
+                EventGateway.record(
+                  {
+                    directory: Instance.directory,
+                    payload: {
+                      type: Event.Heartbeat.type,
+                      properties: {},
+                    },
+                  },
+                  { store: false },
+                ),
+              )
             }, 10_000)
 
             await new Promise<void>((resolve) => {
               stream.onAbort(() => {
                 clearInterval(heartbeat)
-                unsub()
+                GlobalBus.off("event", handler)
                 resolve()
                 log.info("event disconnected")
               })

@@ -1,4 +1,4 @@
-import { createOpencodeClient, type Event } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type Event, type EventEnvelope } from "@opencode-ai/sdk/v2"
 import { createSimpleContext } from "./helper"
 import { createGlobalEmitter } from "@solid-primitives/event-bus"
 import { batch, onCleanup, onMount } from "solid-js"
@@ -18,7 +18,6 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
     events?: EventSource
   }) => {
     const abort = new AbortController()
-    let workspaceID: string | undefined
     let sse: AbortController | undefined
 
     function createSDK() {
@@ -28,7 +27,6 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
         directory: props.directory,
         fetch: props.fetch,
         headers: props.headers,
-        experimental_workspaceID: workspaceID,
       })
     }
 
@@ -81,7 +79,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
 
           for await (const event of events.stream) {
             if (ctrl.signal.aborted) break
-            handleEvent(event)
+            handleEvent((event as EventEnvelope).payload as Event)
           }
 
           if (timer) clearTimeout(timer)
@@ -113,11 +111,7 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       event: emitter,
       fetch: props.fetch ?? fetch,
       setWorkspace(next?: string) {
-        if (workspaceID === next) return
-        workspaceID = next
-        sdk = createSDK()
         props.events?.setWorkspace?.(next)
-        if (!props.events) startSSE()
       },
       url: props.url,
     }

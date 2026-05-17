@@ -1,0 +1,39 @@
+{
+  "feature": "feature-mod-15-observability-eval",
+  "tasks": ["T-1501", "T-1502", "T-1503", "T-1504", "T-1505", "T-1506", "T-1507", "T-1508"],
+  "status": "completed",
+  "specialist": "task-executor-work",
+  "started_at": "2026-05-17T00:00:00Z",
+  "completed_at": "2026-05-17T00:00:00Z",
+  "evidence": {
+    "files_changed": [
+      "packages/opencode/src/observability/audit.ts",
+      "packages/opencode/src/observability/metrics.ts",
+      "packages/opencode/src/observability/trace.ts",
+      "packages/opencode/src/evaluation/performance.ts",
+      "packages/opencode/src/server/routes/audit.ts",
+      "packages/opencode/src/server/server.ts",
+      "packages/opencode/src/agent/loader.ts",
+      "packages/opencode/src/permission/service.ts",
+      "packages/opencode/src/session/index.ts",
+      "packages/opencode/src/session/prompt.ts",
+      "packages/opencode/src/session/status.ts",
+      "packages/opencode/src/session/timeline.ts",
+      "packages/opencode/src/workflow/executor.ts",
+      "packages/opencode/src/memory/store.ts",
+      "packages/opencode/test/observability/audit.test.ts",
+      "packages/opencode/test/observability/metrics.test.ts",
+      "packages/opencode/test/observability/trace.test.ts",
+      "packages/opencode/test/server/audit.test.ts",
+      "packages/opencode/test/evaluation/performance.test.ts",
+      "packages/opencode/test/evaluation/failure.test.ts",
+      "packages/opencode/test/evaluation/regression.test.ts",
+      "packages/opencode/docs/observability-evaluation.md",
+      "packages/opencode/package.json",
+      "packages/sdk/openapi.json",
+      "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+      "packages/sdk/js/src/v2/gen/types.gen.ts"
+    ],
+    "description": "Implemented MOD-15 audit taxonomy, metrics, prompt/tool traces, audit query route, focused regression/performance/failure tests, phase gate scripts/docs, and regenerated SDK/OpenAPI."
+  }
+}

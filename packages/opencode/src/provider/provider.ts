@@ -7,7 +7,6 @@ import { NoSuchModelError, type Provider as SDK } from "ai"
 import { Log } from "../util/log"
 import { BunProc } from "../bun"
 import { Hash } from "../util/hash"
-import { Plugin } from "../plugin-stub"
 import { NamedError } from "@opencode-ai/util/error"
 import { ModelsDev } from "./models"
 import { Auth } from "../auth"
@@ -974,23 +973,6 @@ export namespace Provider {
       }
     }
 
-    for (const plugin of await Plugin.list()) {
-      if (!plugin.auth) continue
-      const providerID = ProviderID.make(plugin.auth.provider)
-      if (disabled.has(providerID)) continue
-
-      const auth = await Auth.get(providerID)
-      if (!auth) continue
-      if (!plugin.auth.loader) continue
-
-      if (auth) {
-        const options = await plugin.auth.loader(() => Auth.get(providerID) as any, database[plugin.auth.provider])
-        const opts = options ?? {}
-        const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
-        mergeProvider(providerID, patch)
-      }
-    }
-
     for (const [id, fn] of Object.entries(CUSTOM_LOADERS)) {
       const providerID = ProviderID.make(id)
       if (disabled.has(providerID)) continue
@@ -1138,26 +1120,7 @@ export namespace Provider {
         // Preserve custom fetch if it exists, wrap it with timeout logic
         const fetchFn = customFetch ?? fetch
         const opts = init ?? {}
-        
-        // 🔍 记录 URL 和 API Key 信息
-        console.log("\n" + "=".repeat(100))
-        console.log("📤 LLM API Request - URL & Auth")
-        console.log("=".repeat(100))
-        console.log("URL:", input)
-        console.log("Provider:", model.providerID)
-        console.log("Model:", model.id)
-        if (opts.headers) {
-          const headers = opts.headers as Record<string, string>
-          const auth = headers["Authorization"] || headers["authorization"]
-          if (auth) {
-            console.log("Authorization:", auth.substring(0, 50) + "...")
-          }
-        }
-        if (options["apiKey"]) {
-          console.log("API Key:", options["apiKey"].substring(0, 20) + "...")
-        }
-        console.log("=".repeat(100) + "\n")
-        
+
         const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
         const signals: AbortSignal[] = []
 

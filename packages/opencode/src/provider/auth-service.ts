@@ -1,9 +1,7 @@
-import type { AuthOuathResult } from "@opencode-ai/plugin"
 import { NamedError } from "@opencode-ai/util/error"
 import * as Auth from "@/auth/service"
 import { ProviderID } from "./schema"
-import { Effect, Layer, Record, ServiceMap, Struct } from "effect"
-import { filter, fromEntries, map, pipe } from "remeda"
+import { Effect, Layer, ServiceMap } from "effect"
 import z from "zod"
 
 export const Method = z
@@ -52,7 +50,7 @@ export type ProviderAuthError =
 export namespace ProviderAuthService {
   export interface Service {
     readonly methods: () => Effect.Effect<Record<string, Method[]>>
-    readonly authorize: (input: { providerID: ProviderID; method: number }) => Effect.Effect<Authorization | undefined>
+    readonly authorize: (input: { providerID: ProviderID; method: number }) => Effect.Effect<Authorization, ProviderAuthError>
     readonly callback: (input: {
       providerID: ProviderID
       method: number
@@ -68,20 +66,17 @@ export class ProviderAuthService extends ServiceMap.Service<ProviderAuthService,
     ProviderAuthService,
     Effect.gen(function* () {
       const auth = yield* Auth.AuthService
-      // Plugin system removed - no hooks available
-      const hooks: Record<string, { methods: Method[]; authorize?: () => Promise<AuthOuathResult>; callback?: (code?: string) => Promise<{ type: string; key?: string; access?: string; refresh?: string; expires?: number; accountId?: string }> }> = {}
-      const pending = new Map<ProviderID, AuthOuathResult>()
 
       const methods = Effect.fn("ProviderAuthService.methods")(function* () {
-        return Record.map(hooks, (item) => item.methods.map((method): Method => Struct.pick(method, ["type", "label"])))
+        void auth
+        return {}
       })
 
       const authorize = Effect.fn("ProviderAuthService.authorize")(function* (input: {
         providerID: ProviderID
         method: number
       }) {
-        // Plugin system removed - no authorization available
-        return undefined
+        return yield* Effect.fail(new OauthMissing({ providerID: input.providerID }))
       })
 
       const callback = Effect.fn("ProviderAuthService.callback")(function* (input: {
@@ -89,7 +84,6 @@ export class ProviderAuthService extends ServiceMap.Service<ProviderAuthService,
         method: number
         code?: string
       }) {
-        // Plugin system removed - cannot callback
         return yield* Effect.fail(new OauthMissing({ providerID: input.providerID }))
       })
 

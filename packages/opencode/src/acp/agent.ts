@@ -45,6 +45,7 @@ import { z } from "zod"
 import { LoadAPIKeyError } from "ai"
 import type { AssistantMessage, Event, OpencodeClient, SessionMessageResponse, ToolPart } from "@opencode-ai/sdk/v2"
 import { applyPatch } from "diff"
+import { AgentEntry } from "@/agent/entry"
 
 type ModeOption = { id: string; name: string; description?: string }
 type ModelOption = { modelId: string; name: string }
@@ -167,14 +168,14 @@ export namespace ACP {
     private async runEventSubscription() {
       while (true) {
         if (this.eventAbort.signal.aborted) return
-        const events = await this.sdk.global.event({
+        const events = await this.sdk.global.event(undefined, {
           signal: this.eventAbort.signal,
         })
         for await (const event of events.stream) {
           if (this.eventAbort.signal.aborted) return
-          const payload = (event as any)?.payload
+          const payload = event.payload
           if (!payload) continue
-          await this.handleEvent(payload as Event).catch((error) => {
+          await this.handleEvent(payload).catch((error) => {
             log.error("failed to handle event", { error, type: payload.type })
           })
         }
@@ -1120,7 +1121,7 @@ export namespace ACP {
         .then((resp) => resp.data!)
 
       return agents
-        .filter((agent) => agent.mode !== "subagent" && !agent.hidden)
+        .filter((agent) => AgentEntry.primary(agent))
         .map((agent) => ({
           id: agent.name,
           name: agent.name,

@@ -3,6 +3,8 @@ import { Log } from "../../src/util/log"
 import { WorkspaceServer } from "../../src/control-plane/workspace-server/server"
 import { parseSSE } from "../../src/control-plane/sse"
 import { GlobalBus } from "../../src/bus/global"
+import { EventGateway } from "../../src/server/event"
+import { createOpencodeClient, type EventEnvelope } from "@opencode-ai/sdk/v2"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
@@ -17,7 +19,7 @@ describe("control-plane/workspace-server SSE", () => {
     await using tmp = await tmpdir({ git: true })
     const app = WorkspaceServer.App()
     const stop = new AbortController()
-    const seen: unknown[] = []
+    const seen: EventGateway.Envelope[] = []
     try {
       const response = await app.request("/event", {
         signal: stop.signal,
@@ -36,18 +38,19 @@ describe("control-plane/workspace-server SSE", () => {
         }, 3000)
 
         void parseSSE(response.body!, stop.signal, (event) => {
-          seen.push(event)
-          const next = event as { type?: string }
-          if (next.type === "server.connected") {
+          const parsed = EventGateway.schema().safeParse(event)
+          if (!parsed.success) return
+          seen.push(parsed.data as EventGateway.Envelope)
+          if (parsed.data.payload.type === "server.connected") {
             GlobalBus.emit("event", {
               payload: {
-                type: "workspace.test",
-                properties: { ok: true },
+                type: "server.heartbeat",
+                properties: {},
               },
             })
             return
           }
-          if (next.type !== "workspace.test") return
+          if (parsed.data.payload.type !== "server.heartbeat") return
           clearTimeout(timeout)
           resolve()
         }).catch((error) => {
@@ -58,11 +61,34 @@ describe("control-plane/workspace-server SSE", () => {
 
       await done
 
-      expect(seen.some((event) => (event as { type?: string }).type === "server.connected")).toBe(true)
-      expect(seen).toContainEqual({
-        type: "workspace.test",
-        properties: { ok: true },
-      })
+      expect(seen.some((event) => event.payload.type === "server.connected")).toBe(true)
+      expect(seen.some((event) => event.payload.type === "server.heartbeat")).toBe(true)
+    } finally {
+      stop.abort()
+    }
+  })
+
+  test("streams canonical envelopes through the SDK client", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = WorkspaceServer.App()
+    const stop = new AbortController()
+    const client = createOpencodeClient({
+      baseUrl: "http://workspace.test",
+      directory: tmp.path,
+      fetch: ((input, init) => app.fetch(new Request(input, init))) as typeof fetch,
+    })
+
+    try {
+      const res = await client.event.subscribe({ directory: tmp.path }, { signal: stop.signal })
+      const seen: EventEnvelope[] = []
+
+      for await (const event of res.stream) {
+        seen.push(event)
+        if (event.payload.type === "server.connected") break
+      }
+
+      expect(seen[0].sequence).toBeNumber()
+      expect(seen[0].payload.type).toBe("server.connected")
     } finally {
       stop.abort()
     }

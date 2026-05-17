@@ -12,6 +12,7 @@ import { Filesystem } from "../../util/filesystem"
 import { Instance } from "../../project/instance"
 import { EOL } from "os"
 import type { Argv } from "yargs"
+import type { AgentTemplateStatus } from "../../agent/loader"
 
 type AgentMode = "all" | "primary" | "subagent"
 
@@ -207,7 +208,7 @@ const AgentCreateCommand = cmd({
         }
 
         // Write meta.json
-        const meta: AgentTemplate.Meta = {
+        const meta: AgentTemplate.MetaInput = {
           id: agentId,
           name: generated.identifier,
           role: generated.systemPrompt.slice(0, 200), // Use first 200 chars as role
@@ -276,11 +277,23 @@ ${generated.systemPrompt}
 const AgentListCommand = cmd({
   command: "list",
   describe: "list all available agents",
-  async handler() {
+  builder: (yargs: Argv) =>
+    yargs.option("templates", {
+      type: "boolean",
+      describe: "list agent template paths and validation state",
+    }),
+  async handler(args) {
     await Instance.provide({
       directory: process.cwd(),
       async fn() {
         const registry = getRegistry()
+        if (args.templates) {
+          const templates = await registry.templates()
+          printTemplates(templates)
+          if (templates.some((template) => !template.valid)) process.exit(1)
+          return
+        }
+
         const agents = await registry.list()
         const cfg = await import("../../config/config").then((m) => m.Config.get())
         const defaultAgent = cfg.default_agent
@@ -306,9 +319,40 @@ const AgentListCommand = cmd({
   },
 })
 
+const AgentValidateCommand = cmd({
+  command: "validate <path>",
+  describe: "validate an agent template directory",
+  builder: (yargs: Argv) =>
+    yargs.positional("path", {
+      type: "string",
+      describe: "agent template directory, or a directory containing templates",
+      demandOption: true,
+    }),
+  async handler(args) {
+    await Instance.provide({
+      directory: process.cwd(),
+      async fn() {
+        const registry = getRegistry()
+        const templates = await registry.templates(path.resolve(String(args.path)))
+        printTemplates(templates)
+        if (templates.length === 0 || templates.some((template) => !template.valid)) process.exit(1)
+      },
+    })
+  },
+})
+
+function printTemplates(templates: AgentTemplateStatus[]) {
+  for (const template of templates) {
+    process.stdout.write(`${template.valid ? "valid" : "invalid"} ${template.source} ${template.dir}` + EOL)
+    if (template.id) process.stdout.write(`  ID: ${template.id}` + EOL)
+    for (const error of template.errors) process.stdout.write(`  Error: ${error}` + EOL)
+  }
+  process.stdout.write(`${templates.length} template(s)` + EOL)
+}
+
 export const AgentCommand = cmd({
   command: "agent",
   describe: "manage agents",
-  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).demandCommand(),
+  builder: (yargs) => yargs.command(AgentCreateCommand).command(AgentListCommand).command(AgentValidateCommand).demandCommand(),
   async handler() {},
 })

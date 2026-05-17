@@ -18,7 +18,6 @@ import { Bus } from "../bus"
 import { ProviderTransform } from "../provider/transform"
 import { SystemPrompt } from "./system"
 import { InstructionPrompt } from "./instruction"
-import { Plugin } from "../plugin-stub"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
@@ -48,6 +47,9 @@ import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
 import { decodeDataUrl } from "@/util/data-url"
+import { Metrics } from "@/observability/metrics"
+import { Trace } from "@/observability/trace"
+import { AgentEntry } from "@/agent/entry"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -61,6 +63,23 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+
+type McpResult = {
+  content: (
+    | { type: "text"; text: string }
+    | { type: "image"; mimeType: string; data: string }
+    | {
+        type: "resource"
+        resource: {
+          uri: string
+          text?: string
+          blob?: string
+          mimeType?: string
+        }
+      }
+  )[]
+  metadata?: Record<string, unknown>
+}
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
@@ -208,7 +227,7 @@ export namespace SessionPrompt {
         const stats = await fs.stat(filepath).catch(() => undefined)
         if (!stats) {
           const agent = await Agent.get(name)
-          if (agent) {
+          if (agent && AgentEntry.mentionable(agent)) {
             parts.push({
               type: "agent",
               name: agent.name,
@@ -270,11 +289,23 @@ export namespace SessionPrompt {
     return
   }
 
+  function finish(sessionID: SessionID) {
+    const s = state()
+    delete s[sessionID]
+    const status = SessionStatus.get(sessionID)
+    if (status.type === "error") return
+    SessionStatus.set(sessionID, { type: "idle" })
+  }
+
   export const LoopInput = z.object({
     sessionID: SessionID.zod,
     resume_existing: z.boolean().optional(),
   })
   export const loop = fn(LoopInput, async (input) => {
+    return Trace.run("session.prompt.loop", { sessionID: input.sessionID }, () => loopInner(input))
+  })
+
+  async function loopInner(input: z.infer<typeof LoopInput>) {
     const { sessionID, resume_existing } = input
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
@@ -285,7 +316,7 @@ export namespace SessionPrompt {
       })
     }
 
-    using _ = defer(() => cancel(sessionID))
+    using _ = defer(() => finish(sessionID))
 
     // Structured output state
     // Note: On session resumption, state is reset but outputFormat is preserved
@@ -406,15 +437,6 @@ export namespace SessionPrompt {
           subagent_type: task.agent,
           command: task.command,
         }
-        await Plugin.trigger(
-          "tool.execute.before",
-          {
-            tool: "task",
-            sessionID,
-            callID: part.id,
-          },
-          { args: taskArgs },
-        )
         let executionError: Error | undefined
         const taskAgent = await Agent.get(task.agent)
         if (!taskAgent) throw new Error(`Agent not found: ${task.agent}`)
@@ -440,6 +462,7 @@ export namespace SessionPrompt {
             await PermissionNext.ask({
               ...req,
               sessionID: sessionID,
+              workspaceID: session.workspaceID,
               ruleset: PermissionNext.merge(taskAgent.permission, session.permission ?? []),
             })
           },
@@ -455,16 +478,6 @@ export namespace SessionPrompt {
           sessionID,
           messageID: assistantMessage.id,
         }))
-        await Plugin.trigger(
-          "tool.execute.after",
-          {
-            tool: "task",
-            sessionID,
-            callID: part.id,
-            args: taskArgs,
-          },
-          result,
-        )
         assistantMessage.finish = "tool-calls"
         assistantMessage.time.completed = Date.now()
         await Session.updateMessage(assistantMessage)
@@ -651,8 +664,6 @@ export namespace SessionPrompt {
         }
       }
 
-      await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
-
       // Build system prompt, adding structured output instruction if needed
       const system = [
         ...(await SystemPrompt.environment(model)),
@@ -732,7 +743,7 @@ export namespace SessionPrompt {
       return item
     }
     throw new Error("Impossible")
-  })
+  }
 
   async function lastModel(sessionID: SessionID) {
     for await (const item of MessageV2.stream(sessionID)) {
@@ -783,6 +794,7 @@ export namespace SessionPrompt {
         await PermissionNext.ask({
           ...req,
           sessionID: input.session.id,
+          workspaceID: input.session.workspaceID,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
           ruleset: PermissionNext.merge(input.agent.permission, input.session.permission ?? []),
         })
@@ -800,18 +812,20 @@ export namespace SessionPrompt {
         inputSchema: jsonSchema(schema as any),
         async execute(args, options) {
           const ctx = context(args, options)
-          await Plugin.trigger(
-            "tool.execute.before",
-            {
-              tool: item.id,
-              sessionID: ctx.sessionID,
-              callID: ctx.callID,
+          const start = Date.now()
+          const span = Trace.begin("tool.call", { tool: item.id, sessionID: input.session.id })
+          const result = await item.execute(args, ctx).then(
+            (value) => {
+              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "completed" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "completed" }, start)
+              return value
             },
-            {
-              args,
+            (err: unknown) => {
+              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "error" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "error" }, start)
+              throw err
             },
-          )
-          const result = await item.execute(args, ctx)
+          ).finally(() => Trace.end(span.id))
           const output = {
             ...result,
             attachments: result.attachments?.map((attachment) => ({
@@ -821,16 +835,6 @@ export namespace SessionPrompt {
               messageID: input.processor.message.id,
             })),
           }
-          await Plugin.trigger(
-            "tool.execute.after",
-            {
-              tool: item.id,
-              sessionID: ctx.sessionID,
-              callID: ctx.callID,
-              args,
-            },
-            output,
-          )
           return output
         },
       })
@@ -842,21 +846,9 @@ export namespace SessionPrompt {
 
       const transformed = ProviderTransform.schema(input.model, asSchema(item.inputSchema).jsonSchema)
       item.inputSchema = jsonSchema(transformed)
-      // Wrap execute to add plugin hooks and format output
+      // Wrap execute to apply permission checks and format output.
       item.execute = async (args, opts) => {
         const ctx = context(args, opts)
-
-        await Plugin.trigger(
-          "tool.execute.before",
-          {
-            tool: key,
-            sessionID: ctx.sessionID,
-            callID: opts.toolCallId,
-          },
-          {
-            args,
-          },
-        )
 
         await ctx.ask({
           permission: key,
@@ -865,18 +857,20 @@ export namespace SessionPrompt {
           always: ["*"],
         })
 
-        const result = await execute(args, opts)
-
-        await Plugin.trigger(
-          "tool.execute.after",
-          {
-            tool: key,
-            sessionID: ctx.sessionID,
-            callID: opts.toolCallId,
-            args,
+        const start = Date.now()
+        const span = Trace.begin("tool.call", { tool: key, sessionID: input.session.id })
+        const result = await (execute(args, opts) as Promise<McpResult>).then(
+          (value) => {
+            Metrics.emit("opencode_tool_call_total", { tool: key, status: "completed" })
+            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "completed" }, start)
+            return value
           },
-          result,
-        )
+          (err: unknown) => {
+            Metrics.emit("opencode_tool_call_total", { tool: key, status: "error" })
+            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "error" }, start)
+            throw err
+          },
+        ).finally(() => Trace.end(span.id))
 
         const textParts: string[] = []
         const attachments: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[] = []
@@ -1304,21 +1298,6 @@ export namespace SessionPrompt {
       }),
     ).then((x) => x.flat().map(assign))
 
-    await Plugin.trigger(
-      "chat.message",
-      {
-        sessionID: input.sessionID,
-        agent: input.agent,
-        model: input.model,
-        messageID: input.messageID,
-        variant: input.variant,
-      },
-      {
-        message: info,
-        parts,
-      },
-    )
-
     await Session.updateMessage(info)
     for (const part of parts) {
       await Session.updatePart(part)
@@ -1631,11 +1610,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const args = matchingInvocation?.args
 
     const cwd = Instance.directory
-    const shellEnv = await Plugin.trigger(
-      "shell.env",
-      { cwd, sessionID: input.sessionID, callID: part.callID },
-      { env: {} },
-    )
     const proc = spawn(shell, args, {
       cwd,
       detached: process.platform !== "win32",
@@ -1643,7 +1617,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       stdio: ["ignore", "pipe", "pipe"],
       env: {
         ...process.env,
-        ...shellEnv.env,
         TERM: "dumb",
       },
     })
@@ -1834,7 +1807,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
     const agent = agentName ? await Agent.get(agentName) : undefined
     if (!agent) {
-      const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
+      const available = await Agent.list().then((agents) => agents.filter((a) => AgentEntry.primary(a)).map((a) => a.name))
       const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
       const error = new NamedError.Unknown({ message: `Agent not found: "${agentName ?? "undefined"}".${hint}` })
       Bus.publish(Session.Event.Error, {
@@ -1845,7 +1818,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
 
     const templateParts = await resolvePromptParts(template)
-    const isSubtask = (agent.mode === "subagent" && command.subtask !== false) || command.subtask === true
+    const isSubtask = command.subtask === true || (command.subtask !== false && AgentEntry.subtask(agent))
     const parts = isSubtask
       ? [
           {
@@ -1869,16 +1842,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         ? Provider.parseModel(input.model)
         : await lastModel(input.sessionID)
       : taskModel
-
-    await Plugin.trigger(
-      "command.execute.before",
-      {
-        command: input.command,
-        sessionID: input.sessionID,
-        arguments: input.arguments,
-      },
-      { parts },
-    )
 
     const result = (await prompt({
       sessionID: input.sessionID,

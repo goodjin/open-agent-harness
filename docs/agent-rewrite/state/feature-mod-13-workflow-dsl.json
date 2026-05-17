@@ -1,0 +1,40 @@
+{
+  "task_id": "feature-mod-13-workflow-dsl/T-1301~T-1310",
+  "status": "completed",
+  "specialist": "task-executor-work",
+  "session_id": "codex-workflow-dsl",
+  "started_at": "2026-05-16T15:50:00Z",
+  "completed_at": "2026-05-16T16:40:41Z",
+  "evidence": {
+    "files_changed": [
+      "packages/opencode/src/workflow/schema.ts",
+      "packages/opencode/src/workflow/parser.ts",
+      "packages/opencode/src/workflow/loader.ts",
+      "packages/opencode/src/workflow/state.ts",
+      "packages/opencode/src/workflow/executor.ts",
+      "packages/opencode/src/server/routes/workflow.ts",
+      "packages/opencode/src/server/server.ts",
+      "packages/opencode/src/cli/cmd/tui/routes/session/header.tsx",
+      "packages/opencode/src/cli/cmd/tui/routes/session/workflow-progress.ts",
+      "packages/opencode/config/workflows/two-step.json",
+      "packages/opencode/test/workflow/schema.test.ts",
+      "packages/opencode/test/workflow/parser-loader.test.ts",
+      "packages/opencode/test/workflow/executor.test.ts",
+      "packages/opencode/test/server/workflow-routes.test.ts",
+      "packages/opencode/test/cli/tui/header.test.ts",
+      "packages/sdk/openapi.json",
+      "packages/sdk/js/src/v2/gen/sdk.gen.ts",
+      "packages/sdk/js/src/v2/gen/types.gen.ts"
+    ],
+    "lines_added": 10663,
+    "lines_deleted": 3553,
+    "chars_added": 41970,
+    "description": "Implemented workflow DSL schema, discovery, parser, dsl_context state, executor, permission guards, checkpoints, pause/resume, HTTP routes, SDK/OpenAPI generation, and minimal TUI progress display."
+  },
+  "verification": {
+    "focused_tests": "52/52 passed",
+    "opencode_typecheck": "passed",
+    "sdk_js_typecheck": "passed",
+    "sdk_generation": "passed"
+  }
+}

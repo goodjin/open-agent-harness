@@ -21,7 +21,6 @@ import { SessionPrompt } from "./prompt"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
-import { WorkspaceContext } from "../control-plane/workspace-context"
 import { ProjectID } from "../project/schema"
 import { WorkspaceID } from "../control-plane/schema"
 import { SessionID, MessageID, PartID } from "./schema"
@@ -32,6 +31,7 @@ import { PermissionNext } from "@/permission/next"
 import { Global } from "@/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/util/iife"
+import { Metrics } from "@/observability/metrics"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -225,20 +225,14 @@ export namespace Session {
         parentID: SessionID.zod.optional(),
         title: z.string().optional(),
         permission: Info.shape.permission,
-        workspaceID: WorkspaceID.zod.optional(),
       })
       .optional(),
     async (input) => {
-      const workspaceID = input?.workspaceID ?? WorkspaceContext.workspaceID
-      if (!workspaceID) {
-        throw new Error("workspaceID is required to create a session")
-      }
       return createNext({
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
         permission: input?.permission,
-        workspaceID,
       })
     },
   )
@@ -252,13 +246,14 @@ export namespace Session {
       const original = await get(input.sessionID)
       if (!original) throw new Error("session not found")
       const title = getForkedTitle(original.title)
-      const workspaceID = original.workspaceID ?? WorkspaceContext.workspaceID
-      if (!workspaceID) {
-        throw new Error("workspaceID is required to fork a session")
+      if (original.directory !== Instance.directory) {
+        throw new ForbiddenError({
+          message: `Session ${input.sessionID} does not belong to the current directory`,
+        })
       }
       const session = await createNext({
         directory: Instance.directory,
-        workspaceID,
+        workspaceID: original.workspaceID,
         title,
       })
       const msgs = await messages({ sessionID: input.sessionID })
@@ -309,7 +304,7 @@ export namespace Session {
     id?: SessionID
     title?: string
     parentID?: SessionID
-    workspaceID: WorkspaceID
+    workspaceID?: WorkspaceID
     directory: string
     permission?: PermissionNext.Ruleset
   }) {
@@ -337,6 +332,10 @@ export namespace Session {
         }),
       )
     })
+    Metrics.emit("opencode_session_lifecycle_total", {
+      event: "created",
+      status: "idle",
+    })
     const cfg = await Config.get()
     if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto"))
       share(result.id).catch(() => {
@@ -358,9 +357,11 @@ export namespace Session {
   export const get = fn(SessionID.zod, async (id) => {
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     if (!row) throw new NotFoundError({ message: `Session not found: ${id}` })
-    const contextWorkspace = WorkspaceContext.workspaceID
-    if (contextWorkspace && row.workspace_id && row.workspace_id !== contextWorkspace) {
-      throw new ForbiddenError({ message: `Session ${id} does not belong to the current workspace` })
+    if (row.project_id !== Instance.project.id) {
+      throw new ForbiddenError({ message: `Session ${id} does not belong to the current project` })
+    }
+    if (row.directory !== Instance.directory) {
+      throw new ForbiddenError({ message: `Session ${id} does not belong to the current directory` })
     }
     return fromRow(row)
   })
@@ -535,6 +536,17 @@ export namespace Session {
     }),
     async (input) => {
       return Database.use((db) => {
+        const prev = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
+        if (!prev) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const old = fromRow(prev)
+        if (old.projectID !== Instance.project.id) {
+          throw new ForbiddenError({ message: `Session ${input.sessionID} does not belong to the current project` })
+        }
+        if (old.directory !== Instance.directory) {
+          throw new ForbiddenError({
+            message: `Session ${input.sessionID} does not belong to the current directory`,
+          })
+        }
         const row = db
           .update(SessionTable)
           .set({
@@ -578,7 +590,6 @@ export namespace Session {
 
   export function* list(input?: {
     directory?: string
-    workspaceID?: WorkspaceID
     roots?: boolean
     start?: number
     search?: string
@@ -586,13 +597,9 @@ export namespace Session {
   }) {
     const project = Instance.project
     const conditions = [eq(SessionTable.project_id, project.id)]
+    const directory = input?.directory ?? Instance.directory
 
-    if (WorkspaceContext.workspaceID) {
-      conditions.push(eq(SessionTable.workspace_id, WorkspaceContext.workspaceID))
-    }
-    if (input?.directory) {
-      conditions.push(eq(SessionTable.directory, input.directory))
-    }
+    conditions.push(eq(SessionTable.directory, directory))
     if (input?.roots) {
       conditions.push(isNull(SessionTable.parent_id))
     }
@@ -694,7 +701,13 @@ export namespace Session {
       db
         .select()
         .from(SessionTable)
-        .where(and(eq(SessionTable.project_id, project.id), eq(SessionTable.parent_id, parentID)))
+        .where(
+          and(
+            eq(SessionTable.project_id, project.id),
+            eq(SessionTable.directory, Instance.directory),
+            eq(SessionTable.parent_id, parentID),
+          ),
+        )
         .all(),
     )
     return rows.map(fromRow)

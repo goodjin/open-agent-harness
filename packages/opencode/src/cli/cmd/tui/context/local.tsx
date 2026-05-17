@@ -1,5 +1,5 @@
 import { createStore } from "solid-js/store"
-import { batch, createEffect, createMemo, createSignal } from "solid-js"
+import { batch, createEffect, createMemo } from "solid-js"
 import { useSync } from "@tui/context/sync"
 import { useTheme } from "@tui/context/theme"
 import { uniqueBy } from "remeda"
@@ -13,7 +13,7 @@ import { useArgs } from "./args"
 import { useSDK } from "./sdk"
 import { RGBA } from "@opentui/core"
 import { Filesystem } from "@/util/filesystem"
-import { AgentRegistry, type AgentMetadata } from "@/agent/registry"
+import { LocalAgent } from "./agent-state"
 
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
@@ -35,58 +35,25 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       }
     }
 
-    // Agent registry for config/agents/ based agents
-    const registryBaseDir = sdk.directory ? path.join(sdk.directory, "config", "agents") : undefined
-    const registry = new AgentRegistry(registryBaseDir)
-    const [registryAgents, setRegistryAgents] = createSignal<AgentMetadata[]>([])
-
-    // Load agents from registry when sync completes
-    createEffect(() => {
-      if (sync.status === "complete" || sync.status === "partial") {
-        registry.list().then((agents) => {
-          setRegistryAgents(agents)
-        }).catch(() => {
-          // Fall back to server agents if registry fails
-        })
-      }
-    })
-
     const agent = iife(() => {
-      // UI agent type returned by fromRegistry
-      interface UIAgent {
-        name: string
-        description: string
-        mode: "all" | "primary" | "subagent"
-        native: boolean
-        hidden: boolean
-        permission: unknown[]
-        color: string | undefined
-        model: { providerID: string; modelID: string } | undefined
-      }
-
-      // Convert registry agents to UI format
-      const fromRegistry = createMemo((): UIAgent[] =>
-        registryAgents().map((a) => ({
-          name: a.name,
-          description: a.description,
-          mode: "all" as const,
-          native: false,
-          hidden: false,
-          permission: [],
-          color: undefined,
-          model: undefined,
-        }))
-      )
-
-      // TUI uses AgentRegistry exclusively - no fallback to server agents
-      const agents = fromRegistry
-      const visibleAgents = fromRegistry
+      const agents = createMemo(() => LocalAgent.list(sync.data.agent))
+      const withDefault = createMemo(() => LocalAgent.fallback(agents()))
+      const visibleAgents = withDefault
 
       const [agentStore, setAgentStore] = createStore<{
-        current: string
+        current: string | undefined
+        selected: boolean
       }>({
-        current: agents()[0]?.name ?? "",
+        current: undefined,
+        selected: false,
       })
+
+      createEffect(() => {
+        const list = withDefault()
+        if (agentStore.selected) return
+        setAgentStore("current", LocalAgent.pick({ list, config: sync.data.config.default_agent }))
+      })
+
       const { theme } = useTheme()
       const colors = createMemo(() => [
         theme.secondary,
@@ -99,27 +66,35 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       ])
       return {
         list() {
-          return agents()
+          return withDefault()
         },
         current() {
-          return agents().find((x) => x.name === agentStore.current) ?? agents()[0]
+          return withDefault().find((x) => x.name === agentStore.current) ?? withDefault()[0]
         },
         set(name: string) {
-          if (!agents().some((x) => x.name === name))
+          if (!withDefault().some((x) => x.name === name))
             return toast.show({
               variant: "warning",
               message: `Agent not found: ${name}`,
               duration: 3000,
             })
-          setAgentStore("current", name)
+          setAgentStore({
+            current: name,
+            selected: true,
+          })
         },
         move(direction: 1 | -1) {
           batch(() => {
-            let next = agents().findIndex((x) => x.name === agentStore.current) + direction
-            if (next < 0) next = agents().length - 1
-            if (next >= agents().length) next = 0
-            const value = agents()[next]
-            if (value) setAgentStore("current", value.name)
+            const list = withDefault()
+            let next = list.findIndex((x) => x.name === agentStore.current) + direction
+            if (next < 0) next = list.length - 1
+            if (next >= list.length) next = 0
+            const value = list[next]
+            if (value)
+              setAgentStore({
+                current: value.name,
+                selected: true,
+              })
           })
         },
         color(name: string) {

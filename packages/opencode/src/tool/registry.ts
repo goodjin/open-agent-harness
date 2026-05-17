@@ -16,9 +16,7 @@ import { Tool } from "./tool"
 import { Instance } from "../project/instance"
 import { Config } from "../config/config"
 import path from "path"
-import { type ToolContext as PluginToolContext, type ToolDefinition } from "@opencode-ai/plugin"
 import z from "zod"
-import { Plugin } from "../plugin-stub"
 import { ProviderID, type ModelID } from "../provider/schema"
 import { WebSearchTool } from "./websearch"
 import { CodeSearchTool } from "./codesearch"
@@ -34,6 +32,17 @@ import { pathToFileURL } from "url"
 export namespace ToolRegistry {
   const log = Log.create({ service: "tool.registry" })
 
+  type CustomContext = Tool.Context & {
+    directory: string
+    worktree: string
+  }
+
+  type CustomDefinition = {
+    description: string
+    args: z.ZodRawShape
+    execute: (args: unknown, ctx: CustomContext) => string | Promise<string>
+  }
+
   export const state = Instance.state(async () => {
     const custom = [] as Tool.Info[]
 
@@ -45,35 +54,28 @@ export namespace ToolRegistry {
     if (matches.length) await Config.waitForDependencies()
     for (const match of matches) {
       const namespace = path.basename(match, path.extname(match))
-      const mod = await import(pathToFileURL(match).href)
-      for (const [id, def] of Object.entries<ToolDefinition>(mod)) {
-        custom.push(fromPlugin(id === "default" ? namespace : `${namespace}_${id}`, def))
-      }
-    }
-
-    const plugins = await Plugin.list()
-    for (const plugin of plugins) {
-      for (const [id, def] of Object.entries(plugin.tool ?? {})) {
-        custom.push(fromPlugin(id, def))
+      const mod = (await import(pathToFileURL(match).href)) as Record<string, CustomDefinition>
+      for (const [id, def] of Object.entries(mod)) {
+        custom.push(from(id === "default" ? namespace : `${namespace}_${id}`, def))
       }
     }
 
     return { custom }
   })
 
-  function fromPlugin(id: string, def: ToolDefinition): Tool.Info {
+  function from(id: string, def: CustomDefinition): Tool.Info {
     return {
       id,
       init: async (initCtx) => ({
         parameters: z.object(def.args),
         description: def.description,
         execute: async (args, ctx) => {
-          const pluginCtx = {
+          const custom = {
             ...ctx,
             directory: Instance.directory,
             worktree: Instance.worktree,
-          } as unknown as PluginToolContext
-          const result = await def.execute(args as any, pluginCtx)
+          }
+          const result = await def.execute(args, custom)
           const out = await Truncate.output(result, {}, initCtx?.agent)
           return {
             title: "",
@@ -158,7 +160,6 @@ export namespace ToolRegistry {
             description: tool.description,
             parameters: tool.parameters,
           }
-          await Plugin.trigger("tool.definition", { toolID: t.id }, output)
           return {
             id: t.id,
             ...tool,

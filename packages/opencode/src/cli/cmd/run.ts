@@ -26,6 +26,7 @@ import { TaskTool } from "../../tool/task"
 import { BashTool } from "../../tool/bash"
 import { TodoWriteTool } from "../../tool/todo"
 import { Locale } from "../../util/locale"
+import { AgentEntry } from "../../agent/entry"
 
 type ToolProps<T extends Tool.Info> = {
   input: Tool.InferParameters<T>
@@ -436,20 +437,21 @@ export const RunCommand = cmd({
         const toggles = new Map<string, boolean>()
 
         for await (const event of events.stream) {
+          const payload = event.payload
           if (
-            event.type === "message.updated" &&
-            event.properties.info.role === "assistant" &&
+            payload.type === "message.updated" &&
+            payload.properties.info.role === "assistant" &&
             args.format !== "json" &&
             toggles.get("start") !== true
           ) {
             UI.empty()
-            UI.println(`> ${event.properties.info.agent} · ${event.properties.info.modelID}`)
+            UI.println(`> ${payload.properties.info.agent} · ${payload.properties.info.modelID}`)
             UI.empty()
             toggles.set("start", true)
           }
 
-          if (event.type === "message.part.updated") {
-            const part = event.properties.part
+          if (payload.type === "message.part.updated") {
+            const part = payload.properties.part
             if (part.sessionID !== sessionID) continue
 
             if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
@@ -512,8 +514,8 @@ export const RunCommand = cmd({
             }
           }
 
-          if (event.type === "session.error") {
-            const props = event.properties
+          if (payload.type === "session.error") {
+            const props = payload.properties
             if (props.sessionID !== sessionID || !props.error) continue
             let err = String(props.error.name)
             if ("data" in props.error && props.error.data && "message" in props.error.data) {
@@ -525,15 +527,15 @@ export const RunCommand = cmd({
           }
 
           if (
-            event.type === "session.status" &&
-            event.properties.sessionID === sessionID &&
-            event.properties.status.type === "idle"
+            payload.type === "session.status" &&
+            payload.properties.sessionID === sessionID &&
+            payload.properties.status.type === "idle"
           ) {
             break
           }
 
-          if (event.type === "permission.asked") {
-            const permission = event.properties
+          if (payload.type === "permission.asked") {
+            const permission = payload.properties
             if (permission.sessionID !== sessionID) continue
             UI.println(
               UI.Style.TEXT_WARNING_BOLD + "!",
@@ -578,11 +580,11 @@ export const RunCommand = cmd({
             return undefined
           }
 
-          if (agent.mode === "subagent") {
+          if (!AgentEntry.primary(agent)) {
             UI.println(
               UI.Style.TEXT_WARNING_BOLD + "!",
               UI.Style.TEXT_NORMAL,
-              `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+              `agent "${args.agent}" is not a primary agent. Falling back to default agent`,
             )
             return undefined
           }
@@ -599,11 +601,11 @@ export const RunCommand = cmd({
           )
           return undefined
         }
-        if (entry.mode === "subagent") {
+        if (!AgentEntry.primary(entry)) {
           UI.println(
             UI.Style.TEXT_WARNING_BOLD + "!",
             UI.Style.TEXT_NORMAL,
-            `agent "${args.agent}" is a subagent, not a primary agent. Falling back to default agent`,
+            `agent "${args.agent}" is not a primary agent. Falling back to default agent`,
           )
           return undefined
         }

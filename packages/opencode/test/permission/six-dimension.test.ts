@@ -1,13 +1,16 @@
 import { afterEach, test, expect } from "bun:test"
 import { Effect } from "effect"
+import { Capability } from "../../src/permission/capability"
 import { PermissionNext } from "../../src/permission/next"
+import { Policy } from "../../src/permission/policy"
+import { SixDim } from "../../src/permission/six-dim"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { SessionID } from "../../src/session/schema"
 
 // Helper to clean up pending permission requests
 async function rejectAll(message?: string) {
-  for (const req of await PermissionNext.list()) {
+  for (const req of await PermissionNext.list({ all: true })) {
     await PermissionNext.reply({
       requestID: req.id,
       reply: "reject",
@@ -18,6 +21,36 @@ async function rejectAll(message?: string) {
 
 afterEach(async () => {
   await Instance.disposeAll()
+})
+
+test("production six-dimensional matcher matches permission and pattern", () => {
+  const cap = Capability.make("bash", "git status")
+  const match = SixDim.match({ permission: "bash", pattern: "git *" }, cap)
+  expect(match).toEqual({
+    dimension: true,
+    permission: true,
+    pattern: true,
+  })
+  expect(SixDim.matches({ permission: "webfetch", pattern: "*" }, cap)).toBe(false)
+})
+
+test("production six-dimensional matcher does not cross explicit dimensions", () => {
+  const cap = Capability.make("bash", "git status")
+  expect(SixDim.matches({ dimension: "network", permission: "*", pattern: "*" }, cap)).toBe(false)
+  expect(SixDim.matches({ dimension: "command", permission: "*", pattern: "*" }, cap)).toBe(true)
+})
+
+test("production six-dimensional matcher treats dimensionless wildcard as global", () => {
+  expect(SixDim.matches({ permission: "*", pattern: "*" }, Capability.make("bash", "git status"))).toBe(true)
+  expect(SixDim.matches({ permission: "*", pattern: "*" }, Capability.make("webfetch", "https://example.com"))).toBe(true)
+})
+
+test("policy dimension wildcard does not cross dimensions accidentally", () => {
+  const policy = Policy.parse({
+    rules: [{ dimension: "command", permission: "*", pattern: "*", action: "allow", source: "user" }],
+  })
+  expect(Policy.evaluate(policy, "bash", "git status").action).toBe("allow")
+  expect(Policy.evaluate(policy, "webfetch", "https://example.com").action).toBe("ask")
 })
 
 // ============================================================================

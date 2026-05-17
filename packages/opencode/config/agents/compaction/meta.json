@@ -1,0 +1,24 @@
+{
+  "id": "compaction",
+  "name": "Compaction Agent",
+  "role": "Summarize conversation history so another agent can continue the session accurately.",
+  "description": "Creates compact continuation summaries for long sessions.",
+  "entry": {
+    "primary": false,
+    "delegable": false,
+    "mentionable": false,
+    "default": false,
+    "hidden": true
+  },
+  "capability": {
+    "purpose": "system_compaction",
+    "tags": ["system", "compaction"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["edit", "bash", "task"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

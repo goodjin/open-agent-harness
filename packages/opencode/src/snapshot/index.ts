@@ -140,30 +140,31 @@ export namespace Snapshot {
         nothrow: true,
       },
     )
-    if (result.code === 0) {
-      const checkout = await Process.run(
-        ["git", "-c", "core.longpaths=true", "-c", "core.symlinks=true", ...args(git, ["checkout-index", "-a", "-f"])],
-        {
-          cwd: Instance.worktree,
-          nothrow: true,
-        },
-      )
-      if (checkout.code === 0) return
+    if (result.code !== 0) {
       log.error("failed to restore snapshot", {
         snapshot,
-        exitCode: checkout.code,
-        stderr: checkout.stderr.toString(),
-        stdout: checkout.stdout.toString(),
+        exitCode: result.code,
+        stderr: result.stderr.toString(),
+        stdout: result.stdout.toString(),
       })
-      return
+      throw new Error(`Failed to restore snapshot: ${snapshot}`)
     }
 
+    const checkout = await Process.run(
+      ["git", "-c", "core.longpaths=true", "-c", "core.symlinks=true", ...args(git, ["checkout-index", "-a", "-f"])],
+      {
+        cwd: Instance.worktree,
+        nothrow: true,
+      },
+    )
+    if (checkout.code === 0) return
     log.error("failed to restore snapshot", {
       snapshot,
-      exitCode: result.code,
-      stderr: result.stderr.toString(),
-      stdout: result.stdout.toString(),
+      exitCode: checkout.code,
+      stderr: checkout.stderr.toString(),
+      stdout: checkout.stdout.toString(),
     })
+    throw new Error(`Failed to restore snapshot: ${snapshot}`)
   }
 
   export async function revert(patches: Patch[]) {

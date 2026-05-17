@@ -1,0 +1,6 @@
+{
+  "id": "duplicate",
+  "name": "Duplicate Agent A",
+  "role": "Exercise duplicate id validation.",
+  "description": "First duplicate fixture."
+}

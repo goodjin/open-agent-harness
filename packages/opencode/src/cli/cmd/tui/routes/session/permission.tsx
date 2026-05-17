@@ -18,6 +18,7 @@ import { useDialog } from "../../ui/dialog"
 import { useTuiConfig } from "../../context/tui-config"
 
 type PermissionStage = "permission" | "always" | "reject"
+type Trace = NonNullable<PermissionRequest["trace"]>[number]
 
 function normalizePath(input?: string) {
   if (!input) return ""
@@ -123,6 +124,35 @@ function TextBody(props: { title: string; description?: string; icon?: string })
         </box>
       </Show>
     </>
+  )
+}
+
+function TraceBody(props: { request: PermissionRequest }) {
+  const { theme } = useTheme()
+  const trace = createMemo(() => props.request.trace ?? [])
+  return (
+    <Show when={trace().length > 0}>
+      <box paddingLeft={1} gap={1}>
+        <text fg={theme.textMuted}>Decision trace</text>
+        <box>
+          <For each={trace()}>
+            {(item: Trace) => {
+              const rule = item.rule
+              const src = rule.source ?? "default"
+              const match = item.matched.length
+              return (
+                <text fg={theme.textMuted}>
+                  {item.action + " " + item.pattern + " from " + src + " rule " + rule.permission + ":" + rule.pattern}
+                  <span style={{ fg: theme.text }}>
+                    {" (" + match + " matched)"}
+                  </span>
+                </text>
+              )
+            }}
+          </For>
+        </box>
+      </box>
+    </Show>
   )
 }
 
@@ -410,6 +440,12 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
           }
 
           const current = info()
+          const content = (
+            <box flexDirection="column" gap={1}>
+              {current.body}
+              <TraceBody request={props.request} />
+            </box>
+          )
 
           const header = () => (
             <box flexDirection="column" gap={0}>
@@ -426,11 +462,11 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
             </box>
           )
 
-          const body = (
+          return (
             <Prompt
               title="Permission required"
               header={header()}
-              body={current.body}
+              body={content}
               options={{ once: "Allow once", always: "Allow always", reject: "Reject" }}
               escapeKey="reject"
               fullscreen
@@ -457,8 +493,6 @@ export function PermissionPrompt(props: { request: PermissionRequest }) {
               }}
             />
           )
-
-          return body
         })()}
       </Match>
     </Switch>

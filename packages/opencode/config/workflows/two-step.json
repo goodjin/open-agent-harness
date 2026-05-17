@@ -1,0 +1,22 @@
+{
+  "id": "two-step",
+  "name": "Two Step",
+  "description": "Minimal built-in workflow used as a smoke fixture.",
+  "version": "1",
+  "steps": [
+    {
+      "id": "first",
+      "agent": "primary",
+      "outputs": {
+        "first": "done"
+      }
+    },
+    {
+      "id": "second",
+      "agent": "primary",
+      "outputs": {
+        "second": "$first"
+      }
+    }
+  ]
+}

@@ -11,10 +11,10 @@ import { Log } from "../util/log"
 import { SessionProcessor } from "./processor"
 import { fn } from "@/util/fn"
 import { Agent } from "@/agent/agent"
-import { Plugin } from "@/plugin-stub"
 import { Config } from "@/config/config"
 import { ProviderTransform } from "@/provider/transform"
 import { ModelID, ProviderID } from "@/provider/schema"
+import { MemoryStore } from "@/memory"
 
 export namespace SessionCompaction {
   const log = Log.create({ service: "session.compaction" })
@@ -51,8 +51,6 @@ export namespace SessionCompaction {
   export const PRUNE_MINIMUM = 20_000
   export const PRUNE_PROTECT = 40_000
 
-  const PRUNE_PROTECTED_TOOLS = ["skill"]
-
   // goes backwards through parts until there are 40_000 tokens worth of tool
   // calls. then erases output of previous tool calls. idea is to throw away old
   // tool calls that are no longer relevant.
@@ -75,8 +73,6 @@ export namespace SessionCompaction {
         const part = msg.parts[partIndex]
         if (part.type === "tool")
           if (part.state.status === "completed") {
-            if (PRUNE_PROTECTED_TOOLS.includes(part.tool)) continue
-
             if (part.state.time.compacted) break loop
             const estimate = Token.estimate(part.state.output)
             total += estimate
@@ -130,7 +126,8 @@ export namespace SessionCompaction {
     }
 
     const agent = await Agent.get("compaction")
-    const model = agent?.model
+    if (!agent) throw new Error("Compaction agent not found")
+    const model = agent.model
       ? await Provider.getModel(agent.model.providerID, agent.model.modelID)
       : await Provider.getModel(userMessage.model.providerID, userMessage.model.modelID)
     const msg = (await Session.updateMessage({
@@ -165,12 +162,6 @@ export namespace SessionCompaction {
       model,
       abort: input.abort,
     })
-    // Allow plugins to inject context or replace compaction prompt
-    const compacting = await Plugin.trigger(
-      "experimental.session.compacting",
-      { sessionID: input.sessionID },
-      { context: [], prompt: undefined },
-    )
     const defaultPrompt = `Provide a detailed prompt for continuing our conversation above.
 Focus on information that would be helpful for continuing the conversation, including what we did, what we're doing, which files we're working on, and what we're going to do next.
 The summary that you construct will be used so that another agent can read it and continue the work.
@@ -199,9 +190,8 @@ When constructing the summary, try to stick to this template:
 [Construct a structured list of relevant files that have been read, edited, or created that pertain to the task at hand. If all the files in a directory are relevant, include the path to the directory.]
 ---`
 
-    const promptText = compacting.prompt ?? [defaultPrompt, ...compacting.context].join("\n\n")
+    const promptText = defaultPrompt
     const msgs = structuredClone(messages)
-    await Plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
     const result = await processor.process({
       user: userMessage,
       agent,
@@ -292,6 +282,9 @@ When constructing the summary, try to stick to this template:
       }
     }
     if (processor.message.error) return "stop"
+    await MemoryStore.capture({ sessionID: input.sessionID }).catch((err) => {
+      log.warn("memory capture failed", { err })
+    })
     Bus.publish(Event.Compacted, { sessionID: input.sessionID })
     return "continue"
   }

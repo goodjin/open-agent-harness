@@ -23,9 +23,6 @@ export namespace WorkspaceServer {
       .use(async (c, next) => {
         const rawWorkspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
         const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
-        if (rawWorkspaceID == null) {
-          throw new Error("workspaceID parameter is required")
-        }
         if (raw == null) {
           throw new Error("directory parameter is required")
         }
@@ -39,7 +36,7 @@ export namespace WorkspaceServer {
         })()
 
         return WorkspaceContext.provide({
-          workspaceID: WorkspaceID.make(rawWorkspaceID),
+          workspaceID: rawWorkspaceID ? WorkspaceID.make(rawWorkspaceID) : undefined,
           async fn() {
             return Instance.provide({
               directory,

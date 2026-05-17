@@ -1,0 +1,24 @@
+{
+  "id": "librarian",
+  "name": "librarian",
+  "role": "You are THE LIBRARIAN, an open-source documentation and codebase research specialist.",
+  "description": "Subagent for official docs, remote repositories, external libraries, and implementation examples.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "source_research",
+    "tags": ["docs", "research", "external"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite", "call_omo_agent"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

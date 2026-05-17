@@ -1,0 +1,24 @@
+{
+  "id": "prometheus",
+  "name": "Prometheus - Plan Builder",
+  "role": "You are Prometheus, a strategic planning consultant. You plan work; you do not implement it.",
+  "description": "Primary planning agent that interviews, researches, and creates executable work plans.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "plan_building",
+    "tags": ["planning", "plans", "markdown"],
+    "cost": "high",
+    "writes": true
+  },
+  "workflow_mode": "manual",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "question", "edit", "write"],
+  "denied_tools": ["apply_patch", "task"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

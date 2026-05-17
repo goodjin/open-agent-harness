@@ -7,14 +7,7 @@ import { useKeyboard } from "@opentui/solid"
 import { useKeybind } from "../../context/keybind"
 import { useDialog } from "../../ui/dialog"
 import { SplitBorder } from "../../component/border"
-
-type SessionStatusInfo =
-  | { type: "idle" }
-  | { type: "running" }
-  | { type: "waiting_permission" }
-  | { type: "waiting_user" }
-  | { type: "error"; message: string }
-  | { type: "retry"; attempt: number; message: string; next: number }
+import type { SessionStatus } from "@opencode-ai/sdk/v2"
 
 export function ErrorBanner(props: { sessionID: string }) {
   const sdk = useSDK()
@@ -23,9 +16,7 @@ export function ErrorBanner(props: { sessionID: string }) {
   const keybind = useKeybind()
   const dialog = useDialog()
 
-  const sessionStatus = createMemo(
-    () => (sync.data.session_status[props.sessionID] ?? { type: "idle" }) as SessionStatusInfo,
-  )
+  const sessionStatus = createMemo((): SessionStatus => sync.data.session_status[props.sessionID] ?? { type: "idle" })
 
   const isError = createMemo(() => sessionStatus().type === "error")
   const errorMessage = createMemo(() => {
@@ -34,8 +25,7 @@ export function ErrorBanner(props: { sessionID: string }) {
   })
 
   const handleDismiss = () => {
-    // Reset session status to idle to dismiss the error banner
-    sdk.client.session.abort({ sessionID: props.sessionID }).catch(() => {})
+    sdk.client.session.dismissStatus({ sessionID: props.sessionID }).catch(() => {})
   }
 
   useKeyboard((evt) => {

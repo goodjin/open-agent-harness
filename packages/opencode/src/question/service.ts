@@ -2,6 +2,7 @@ import { Deferred, Effect, Layer, Schema, ServiceMap } from "effect"
 import { Bus } from "@/bus"
 import { BusEvent } from "@/bus/bus-event"
 import { SessionID, MessageID } from "@/session/schema"
+import { SessionStatus } from "@/session/status"
 import { Log } from "@/util/log"
 import z from "zod"
 import { QuestionID } from "./schema"
@@ -104,6 +105,16 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
     QuestionService,
     Effect.gen(function* () {
       const pending = new Map<QuestionID, PendingEntry>()
+      const status = new Map<string, SessionStatus.Info>()
+
+      function restore(sessionID: SessionID) {
+        if (Array.from(pending.values()).some((item) => item.info.sessionID === sessionID)) return
+        const current = SessionStatus.get(sessionID)
+        if (current.type !== "waiting_user") return
+        const prior = status.get(sessionID) ?? { type: "idle" }
+        status.delete(sessionID)
+        SessionStatus.set(sessionID, prior)
+      }
 
       const ask = Effect.fn("QuestionService.ask")(function* (input: {
         sessionID: SessionID
@@ -121,12 +132,16 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
           tool: input.tool,
         }
         pending.set(id, { info, deferred })
+        const current = SessionStatus.get(input.sessionID)
+        if (current.type !== "waiting_user") status.set(input.sessionID, current)
+        SessionStatus.set(input.sessionID, { type: "waiting_user" })
         Bus.publish(Event.Asked, info)
 
         return yield* Effect.ensuring(
           Deferred.await(deferred),
           Effect.sync(() => {
             pending.delete(id)
+            restore(input.sessionID)
           }),
         )
       })

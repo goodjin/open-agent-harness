@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import { Bus } from "../../src/bus"
 import { Session } from "../../src/session"
 import { SessionTimeline } from "../../src/session/timeline"
 import { Instance } from "../../src/project/instance"
@@ -7,9 +8,17 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID } from "../../src/session/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
+import { Snapshot } from "../../src/snapshot"
 import { tmpdir } from "../fixture/fixture"
 
 const projectRoot = path.join(__dirname, "../..")
+
+async function snap(dir: string) {
+  await Bun.write(path.join(dir, "checkpoint.txt"), "checkpoint\n")
+  const hash = await Snapshot.track()
+  if (!hash) throw new Error("snapshot hash missing")
+  return hash
+}
 
 describe("VAL-SESSION-009: Timeline checkpoint save", () => {
   test("checkpoints are saved at step boundaries with git hash and timestamp", async () => {
@@ -121,6 +130,187 @@ describe("VAL-SESSION-009: Timeline checkpoint save", () => {
 })
 
 describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
+  test("restore rejects a checkpoint hash from another session", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            await Bun.write(path.join(tmp.path, "test.txt"), "original")
+            const hash = await Snapshot.track()
+            if (!hash) throw new Error("snapshot hash missing")
+            const first = await Session.create({})
+            const second = await Session.create({})
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: first.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: first.id,
+              type: "step-start",
+              snapshot: hash,
+            })
+
+            await expect(SessionTimeline.restore(second.id, hash)).rejects.toThrow()
+
+            await Session.remove(first.id)
+            await Session.remove(second.id)
+          },
+        }),
+    })
+  })
+
+  test("preview reports changed files without restoring", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const file = path.join(tmp.path, "preview.txt")
+            await Bun.write(file, "before\n")
+            const hash = await Snapshot.track()
+            if (!hash) throw new Error("snapshot hash missing")
+            const session = await Session.create({})
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: hash,
+            })
+
+            await Bun.write(file, "after\n")
+            const preview = await SessionTimeline.preview(session.id, hash)
+
+            expect(preview.checkpoint.hash).toBe(hash)
+            expect(preview.files).toContain(file.replaceAll("\\", "/"))
+            expect(preview.diff).toContain("after")
+            expect(await Bun.file(file).text()).toBe("after\n")
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("restore publishes an audit event", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            await Bun.write(path.join(tmp.path, "audit.txt"), "before\n")
+            const hash = await Snapshot.track()
+            if (!hash) throw new Error("snapshot hash missing")
+            const session = await Session.create({})
+            const messageID = MessageID.ascending()
+            await Session.updateMessage({
+              id: messageID,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: hash,
+            })
+            const events: Array<{ sessionID: string; hash: string; type: "restore" }> = []
+            const unsub = Bus.subscribe(SessionTimeline.Event.Audit, (event) => events.push(event.properties))
+
+            await SessionTimeline.restore(session.id, hash)
+            unsub()
+
+            expect(events).toContainEqual({
+              type: "restore",
+              sessionID: session.id,
+              hash,
+            })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("restore rejects invalid checkpoint trees without audit or file mutation", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const file = path.join(tmp.path, "invalid.txt")
+            await Bun.write(file, "before\n")
+            const session = await Session.create({})
+            const hash = "invalid-checkpoint-tree"
+            const msg = MessageID.ascending()
+            await Session.updateMessage({
+              id: msg,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "user",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msg,
+              sessionID: session.id,
+              type: "step-start",
+              snapshot: hash,
+            })
+            await Bun.write(file, "after\n")
+            const events: Array<{ sessionID: string; hash: string; type: "restore" }> = []
+            const unsub = Bus.subscribe(SessionTimeline.Event.Audit, (event) => events.push(event.properties))
+
+            await expect(SessionTimeline.restore(session.id, hash)).rejects.toThrow()
+            unsub()
+
+            expect(await Bun.file(file).text()).toBe("after\n")
+            expect(events).toEqual([])
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("restore reverts workspace files to checkpoint state", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -129,9 +319,10 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
-            // Create a file in the workspace
-            const testFile = path.join(tmp.path, "test.txt")
-            await Bun.write(testFile, "original content")
+            const file = path.join(tmp.path, "test.txt")
+            await Bun.write(file, "original content")
+            const hash = await Snapshot.track()
+            if (!hash) throw new Error("snapshot hash missing")
 
             const session = await Session.create({})
 
@@ -152,18 +343,15 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
             })
 
-            // Modify the file
-            await Bun.write(testFile, "modified content")
-            const modifiedContent = await Bun.file(testFile).text()
-            expect(modifiedContent).toBe("modified content")
+            await Bun.write(file, "modified content")
+            expect(await Bun.file(file).text()).toBe("modified content")
 
-            // Note: Snapshot.restore is idempotent - calling it with the same hash
-            // multiple times will result in the same state
-            const restored = await SessionTimeline.restore(session.id, "abc123")
+            const restored = await SessionTimeline.restore(session.id, hash)
             expect(restored.id).toBe(session.id)
+            expect(await Bun.file(file).text()).toBe("original content")
 
             await Session.remove(session.id)
           },
@@ -179,6 +367,7 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const session = await Session.create({})
 
             const messageID = MessageID.ascending()
@@ -198,12 +387,11 @@ describe("VAL-SESSION-010: Timeline checkpoint restore", () => {
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
             })
 
-            // Restore twice - both should succeed
-            const restored1 = await SessionTimeline.restore(session.id, "abc123")
-            const restored2 = await SessionTimeline.restore(session.id, "abc123")
+            const restored1 = await SessionTimeline.restore(session.id, hash)
+            const restored2 = await SessionTimeline.restore(session.id, hash)
             expect(restored1.id).toBe(restored2.id)
 
             await Session.remove(session.id)
@@ -304,6 +492,7 @@ describe("VAL-SESSION-014: dsl_context workflow state preservation", () => {
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const session = await Session.create({})
 
             const dslContext = {
@@ -334,11 +523,10 @@ describe("VAL-SESSION-014: dsl_context workflow state preservation", () => {
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
             })
 
-            // Restore (even though it doesn't actually do anything to dsl_context)
-            await SessionTimeline.restore(session.id, "abc123")
+            await SessionTimeline.restore(session.id, hash)
 
             // dsl_context should be preserved
             const afterRestore = await Session.get(session.id)
@@ -410,6 +598,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const originalPermission = [
               { permission: "edit", pattern: "*.ts", action: "allow" as const },
               { permission: "read", pattern: "*", action: "allow" as const },
@@ -434,7 +623,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
               permission: originalPermission,
             })
 
@@ -448,11 +637,10 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
             })
 
             // Verify permission was modified
-            let sessionData = await Session.get(session.id)
+            const sessionData = await Session.get(session.id)
             expect(sessionData.permission).toEqual(modifiedPermission)
 
-            // Restore from checkpoint
-            const restored = await SessionTimeline.restore(session.id, "abc123")
+            const restored = await SessionTimeline.restore(session.id, hash)
 
             // Permission should be restored to original
             expect(restored.permission).toEqual(originalPermission)
@@ -471,6 +659,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const originalDslContext = {
               vars: { counter: 10, important: "value" },
               history: [{ step: 1, action: "test" }],
@@ -501,7 +690,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
               dsl_context: originalDslContext,
             })
 
@@ -516,11 +705,10 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
             })
 
             // Verify dsl_context was modified
-            let sessionData = await Session.get(session.id)
+            const sessionData = await Session.get(session.id)
             expect(sessionData.dsl_context).toEqual(modifiedDslContext)
 
-            // Restore from checkpoint
-            const restored = await SessionTimeline.restore(session.id, "abc123")
+            const restored = await SessionTimeline.restore(session.id, hash)
 
             // dsl_context should be restored to original
             expect(restored.dsl_context).toEqual(originalDslContext)
@@ -539,6 +727,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const originalPermission = [
               { permission: "bash", pattern: "/bin/ls", action: "allow" as const },
             ]
@@ -572,7 +761,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
               permission: originalPermission,
               dsl_context: originalDslContext,
             })
@@ -594,8 +783,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               dsl_context: modifiedDslContext,
             })
 
-            // Restore from checkpoint
-            const restored = await SessionTimeline.restore(session.id, "abc123")
+            const restored = await SessionTimeline.restore(session.id, hash)
 
             // Both should be restored to original
             expect(restored.permission).toEqual(originalPermission)
@@ -615,6 +803,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
         WorkspaceContext.provide({
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
+            const hash = await snap(tmp.path)
             const session = await Session.create({})
 
             const messageID = MessageID.ascending()
@@ -635,7 +824,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               messageID,
               sessionID: session.id,
               type: "step-start",
-              snapshot: "abc123",
+              snapshot: hash,
             })
 
             // Modify permission and dsl_context after checkpoint
@@ -655,8 +844,7 @@ describe("VAL-CROSS-007: Timeline restore recovers session state and permissions
               dsl_context: modifiedDslContext,
             })
 
-            // Restore from checkpoint without permission/dsl_context
-            const restored = await SessionTimeline.restore(session.id, "abc123")
+            const restored = await SessionTimeline.restore(session.id, hash)
 
             // Since checkpoint didn't have permission/dsl_context, they should NOT be restored
             // (they stay as modified)

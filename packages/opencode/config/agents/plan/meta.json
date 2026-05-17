@@ -1,0 +1,24 @@
+{
+  "id": "plan",
+  "name": "Plan Agent",
+  "role": "You are OpenCode's planning and analysis agent. You inspect, reason, and propose without modifying the workspace.",
+  "description": "Primary read-only planning agent for analysis, design, review, and implementation plans.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "planning_analysis",
+    "tags": ["planning", "analysis", "review"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "manual",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "question"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

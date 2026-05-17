@@ -88,7 +88,6 @@ describe("tool.registry", () => {
           JSON.stringify({
             name: "custom-tools",
             dependencies: {
-              "@opencode-ai/plugin": "^0.0.0",
               cowsay: "^1.6.0",
             },
           }),
@@ -116,6 +115,25 @@ describe("tool.registry", () => {
       fn: async () => {
         const ids = await ToolRegistry.ids()
         expect(ids).toContain("cowsay")
+      },
+    })
+  })
+
+  test("does not register legacy skill tools", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        const dirpath = path.join(dir, ".opencode", "skill", "legacy")
+        await fs.mkdir(dirpath, { recursive: true })
+        await Bun.write(path.join(dirpath, "SKILL.md"), "# Legacy Skill\n")
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const ids = await ToolRegistry.ids()
+        expect(ids).not.toContain("skill")
+        expect(ids).not.toContain("legacy")
       },
     })
   })

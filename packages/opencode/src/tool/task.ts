@@ -11,6 +11,7 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
+import { AgentEntry } from "@/agent/entry"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -26,7 +27,7 @@ const parameters = z.object({
 })
 
 export const TaskTool = Tool.define("task", async (ctx) => {
-  const agents = await Agent.list().then((x) => x.filter((a) => a.mode !== "primary"))
+  const agents = await Agent.list().then((x) => x.filter((a) => AgentEntry.delegable(a)))
 
   // Filter agents by permissions if agent provided
   const caller = ctx?.agent

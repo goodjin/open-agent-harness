@@ -11,6 +11,7 @@ import { getAdaptor } from "./adaptors"
 import { WorkspaceInfo } from "./types"
 import { WorkspaceID } from "./schema"
 import { parseSSE } from "./sse"
+import { EventGateway } from "@/server/event"
 
 export namespace Workspace {
   export const Event = {
@@ -121,9 +122,13 @@ export namespace Workspace {
         continue
       }
       await parseSSE(res.body, stop, (event) => {
+        const parsed = EventGateway.schema().safeParse(event)
+        const payload = parsed.success ? parsed.data.payload : EventGateway.payload(event) ? event : undefined
+        if (!payload) return
         GlobalBus.emit("event", {
           directory: space.id,
-          payload: event,
+          workspaceID: space.id,
+          payload,
         })
       })
       // Wait 250ms and retry if SSE connection fails

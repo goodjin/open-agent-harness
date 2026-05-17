@@ -36,7 +36,6 @@ import { useTextareaKeybindings } from "../textarea-keybindings"
 
 export type PromptProps = {
   sessionID?: string
-  workspaceID?: string
   visible?: boolean
   disabled?: boolean
   onSubmit?: () => void
@@ -520,9 +519,7 @@ export function Prompt(props: PromptProps) {
 
     let sessionID = props.sessionID
     if (sessionID == null) {
-      const res = await sdk.client.session.create({
-        workspaceID: props.workspaceID,
-      })
+      const res = await sdk.client.session.create()
 
       if (res.error) {
         console.log("Creating a session failed:", res.error)
@@ -901,6 +898,18 @@ export function Prompt(props: PromptProps) {
                   if (keybind.match("history_previous", e) && input.visualCursor.visualRow === 0) input.cursorOffset = 0
                   if (keybind.match("history_next", e) && input.visualCursor.visualRow === input.height - 1)
                     input.cursorOffset = input.plainText.length
+
+                  // Handle agent cycling (Tab)
+                  if (keybind.match("agent_cycle", e)) {
+                    local.agent.move(1)
+                    e.preventDefault()
+                    return
+                  }
+                  if (keybind.match("agent_cycle_reverse", e)) {
+                    local.agent.move(-1)
+                    e.preventDefault()
+                    return
+                  }
                 }
               }}
               onSubmit={submit}

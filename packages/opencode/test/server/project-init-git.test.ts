@@ -14,7 +14,15 @@ Log.init({ print: false })
 
 afterEach(async () => {
   await resetDatabase()
+  await Instance.disposeAll()
 })
+
+function route(app: ReturnType<typeof Server.Default>, dir: string, input: RequestInfo | URL, init?: RequestInit) {
+  return Instance.provide({
+    directory: dir,
+    fn: () => app.request(input, init),
+  })
+}
 
 describe("project.initGit endpoint", () => {
   test("initializes git and reloads immediately", async () => {
@@ -29,11 +37,8 @@ describe("project.initGit endpoint", () => {
     GlobalBus.on("event", fn)
 
     try {
-      const init = await app.request("/project/git/init", {
+      const init = await route(app, tmp.path, "/project/git/init", {
         method: "POST",
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
       })
       const body = await init.json()
       expect(init.status).toBe(200)
@@ -49,11 +54,7 @@ describe("project.initGit endpoint", () => {
       )
       expect(await Filesystem.exists(path.join(tmp.path, ".git", "opencode"))).toBe(false)
 
-      const current = await app.request("/project/current", {
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
-      })
+      const current = await route(app, tmp.path, "/project/current")
       expect(current.status).toBe(200)
       expect(await current.json()).toMatchObject({
         id: "global",
@@ -85,11 +86,8 @@ describe("project.initGit endpoint", () => {
     GlobalBus.on("event", fn)
 
     try {
-      const init = await app.request("/project/git/init", {
+      const init = await route(app, tmp.path, "/project/git/init", {
         method: "POST",
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
       })
       expect(init.status).toBe(200)
       expect(await init.json()).toMatchObject({
@@ -101,11 +99,7 @@ describe("project.initGit endpoint", () => {
       ).toBe(0)
       expect(reloadSpy).toHaveBeenCalledTimes(0)
 
-      const current = await app.request("/project/current", {
-        headers: {
-          "x-opencode-directory": tmp.path,
-        },
-      })
+      const current = await route(app, tmp.path, "/project/current")
       expect(current.status).toBe(200)
       expect(await current.json()).toMatchObject({
         vcs: "git",

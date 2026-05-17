@@ -1,0 +1,24 @@
+{
+  "id": "atlas",
+  "name": "Atlas - Plan Executor",
+  "role": "You are Atlas, a primary orchestrator that coordinates specialized agents to complete todo lists and work plans.",
+  "description": "Primary plan executor that coordinates multi-step task completion and verification.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "plan_execution",
+    "tags": ["execution", "coordination", "plans"],
+    "cost": "high",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": [],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}

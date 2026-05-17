@@ -2,6 +2,22 @@
 
 The goal is to let a single instance of OpenCode run sessions for multiple projects and different worktrees per project.
 
+### identity boundaries
+
+- Project identity is `ProjectID`. Git worktrees and separate clones with the same root commit share the same project id.
+- Workspace identity is the resolved working directory. `process.cwd()` is the default workspace for local clients, and a request may switch workspace by passing a different `directory`.
+- `WorkspaceID` is legacy metadata only. Stored sessions may still carry `workspace_id` for compatibility, but it is not a user-facing runtime selector and is not a permission or session access boundary.
+- Worktree identity is its canonical directory. Worktrees are not interchangeable with `ProjectID`; separate worktrees under the same project id remain isolated by directory.
+
+### current implementation gaps
+
+| Area | Current state | Follow-up |
+|---|---|---|
+| Project routes | `GET /project`, `POST /project/init`, and project-scoped session list/get/create exist for the current instance project. | Extend the same project scope to all remaining session mutation/message routes. |
+| Directory scope | Session create/fork/get/list are bound to `Instance.directory`; same-directory access does not require `workspaceID`, and cross-directory access is forbidden. | Keep legacy `workspace_id` fields readable without using them as guards. |
+| Directory query compatibility | `?directory=` and `x-opencode-directory` select the active directory for HTTP clients. | Prefer directory selection over any `workspace` query/header. |
+| File routes | Project session file find/read/status routes assert the session belongs to the current directory before touching files. | Add project-scoped parity for text search, symbol search, and file listing if clients need them. |
+
 ### api
 
 ```

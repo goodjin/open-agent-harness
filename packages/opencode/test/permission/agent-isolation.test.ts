@@ -11,11 +11,11 @@ afterEach(async () => {
 
 async function waitForPending(count: number) {
   for (let i = 0; i < 20; i++) {
-    const list = await PermissionNext.list()
+    const list = await PermissionNext.list({ all: true })
     if (list.length === count) return list
     await Bun.sleep(0)
   }
-  return PermissionNext.list()
+  return PermissionNext.list({ all: true })
 }
 
 // ============================================================================

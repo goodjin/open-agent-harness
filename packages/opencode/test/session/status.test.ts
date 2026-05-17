@@ -121,6 +121,24 @@ describe("session state machine", () => {
     })
   })
 
+  test("allows nested permission and user waits", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-nested-wait" as SessionID
+        SessionStatus.set(sessionID, { type: "running" })
+        SessionStatus.set(sessionID, { type: "waiting_permission" })
+        SessionStatus.set(sessionID, { type: "waiting_user" })
+        expect(SessionStatus.get(sessionID).type).toBe("waiting_user")
+
+        SessionStatus.set(sessionID, { type: "waiting_permission" })
+        expect(SessionStatus.get(sessionID).type).toBe("waiting_permission")
+
+        SessionStatus.set(sessionID, { type: "idle" })
+      },
+    })
+  })
+
   test("VAL-SESSION-006: Running to error transition", async () => {
     await Instance.provide({
       directory: projectRoot,
@@ -299,6 +317,7 @@ describe("session state machine", () => {
       fn: async () => {
         const sessionID = "test-session-id" as SessionID
         const nextTime = Date.now() + 5000
+        SessionStatus.set(sessionID, { type: "running" })
         SessionStatus.set(sessionID, { type: "retry", attempt: 3, message: "rate limited", next: nextTime })
 
         const status = SessionStatus.get(sessionID)
@@ -308,6 +327,39 @@ describe("session state machine", () => {
           expect(status.message).toBe("rate limited")
           expect(status.next).toBe(nextTime)
         }
+        SessionStatus.set(sessionID, { type: "idle" })
+      },
+    })
+  })
+
+  test("rejects invalid transitions with clear error", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-invalid" as SessionID
+        expect(() =>
+          SessionStatus.set(sessionID, { type: "retry", attempt: 1, message: "rate limited", next: Date.now() }),
+        ).toThrow("Invalid session status transition: idle -> retry")
+      },
+    })
+  })
+
+  test("status is volatile across instance restart", async () => {
+    const sessionID = "test-session-restart" as SessionID
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        SessionStatus.set(sessionID, { type: "running" })
+        expect(SessionStatus.get(sessionID).type).toBe("running")
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        expect(SessionStatus.get(sessionID).type).toBe("idle")
       },
     })
   })

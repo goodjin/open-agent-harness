@@ -10,28 +10,34 @@ import { PermissionID } from "../../src/permission/schema"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 import { MessageID, SessionID } from "../../src/session/schema"
+import { SessionStatus } from "../../src/session/status"
+import { WorkspaceID } from "../../src/control-plane/schema"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 
 afterEach(async () => {
   await Instance.disposeAll()
 })
 
 async function rejectAll(message?: string) {
-  for (const req of await PermissionNext.list()) {
-    await PermissionNext.reply({
-      requestID: req.id,
-      reply: "reject",
-      message,
-    })
+  for (const req of await PermissionNext.list({ all: true })) {
+    const fn = () =>
+      PermissionNext.reply({
+        requestID: req.id,
+        reply: "reject",
+        message,
+      })
+    if (req.workspaceID) await WorkspaceContext.provide({ workspaceID: req.workspaceID, fn })
+    else await fn()
   }
 }
 
 async function waitForPending(count: number) {
   for (let i = 0; i < 20; i++) {
-    const list = await PermissionNext.list()
+    const list = await PermissionNext.list({ all: true })
     if (list.length === count) return list
     await Bun.sleep(0)
   }
-  return PermissionNext.list()
+  return PermissionNext.list({ all: true })
 }
 
 // fromConfig tests
@@ -373,6 +379,16 @@ test("evaluate - merges multiple rulesets", () => {
   // approved comes after config, so rm should be denied
   const result = PermissionNext.evaluate("bash", "rm", config, approved)
   expect(result.action).toBe("deny")
+})
+
+test("trace - returns decision rule and matched rules", () => {
+  const trace = PermissionNext.trace("bash", "rm -rf /", [
+    { permission: "*", pattern: "*", action: "ask" },
+    { permission: "bash", pattern: "rm *", action: "deny" },
+  ])
+  expect(trace.action).toBe("deny")
+  expect(trace.rule.pattern).toBe("rm *")
+  expect(trace.matched.map((rule) => rule.action)).toEqual(["ask", "deny"])
 })
 
 // disabled tests
@@ -860,6 +876,157 @@ test("reply - always keeps other session pending", async () => {
   })
 })
 
+test("list - scopes pending approvals by directory and session", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const a = WorkspaceID.make("wrk_a")
+      const b = WorkspaceID.make("wrk_b")
+      const session = SessionID.make("session_scoped")
+      const other = SessionID.make("session_other")
+      const asks = [
+        WorkspaceContext.provide({
+          workspaceID: a,
+          fn: () =>
+            PermissionNext.ask({
+              id: PermissionID.make("per_scope_a"),
+              sessionID: session,
+              workspaceID: a,
+              permission: "bash",
+              patterns: ["ls"],
+              metadata: {},
+              always: [],
+              ruleset: [],
+            }),
+        }).catch(() => undefined),
+        WorkspaceContext.provide({
+          workspaceID: a,
+          fn: () =>
+            PermissionNext.ask({
+              id: PermissionID.make("per_scope_other"),
+              sessionID: other,
+              workspaceID: a,
+              permission: "bash",
+              patterns: ["ls"],
+              metadata: {},
+              always: [],
+              ruleset: [],
+            }),
+        }).catch(() => undefined),
+        WorkspaceContext.provide({
+          workspaceID: b,
+          fn: () =>
+            PermissionNext.ask({
+              id: PermissionID.make("per_scope_b"),
+              sessionID: session,
+              workspaceID: b,
+              permission: "bash",
+              patterns: ["ls"],
+              metadata: {},
+              always: [],
+              ruleset: [],
+            }),
+        }).catch(() => undefined),
+      ]
+
+      await waitForPending(3)
+      expect(
+        await WorkspaceContext.provide({
+          workspaceID: a,
+          fn: () => PermissionNext.list({ sessionID: session }),
+        }),
+      ).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: PermissionID.make("per_scope_a") }),
+        expect.objectContaining({ id: PermissionID.make("per_scope_b") }),
+      ]))
+      expect(
+        await WorkspaceContext.provide({
+          workspaceID: b,
+          fn: () => PermissionNext.list({ sessionID: session }),
+        }),
+      ).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: PermissionID.make("per_scope_a") }),
+        expect.objectContaining({ id: PermissionID.make("per_scope_b") }),
+      ]))
+
+      await rejectAll()
+      await Promise.all(asks)
+    },
+  })
+})
+
+test("reply - always only resolves matching patterns in same directory and session", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const workspaceID = WorkspaceID.make("wrk_match")
+      const sessionID = SessionID.make("session_match")
+      const a = WorkspaceContext.provide({
+        workspaceID,
+        fn: () =>
+          PermissionNext.ask({
+            id: PermissionID.make("per_match_a"),
+            sessionID,
+            workspaceID,
+            permission: "bash",
+            patterns: ["ls"],
+            metadata: {},
+            always: ["ls"],
+            ruleset: [],
+          }),
+      })
+      const b = WorkspaceContext.provide({
+        workspaceID,
+        fn: () =>
+          PermissionNext.ask({
+            id: PermissionID.make("per_match_b"),
+            sessionID,
+            workspaceID,
+            permission: "bash",
+            patterns: ["cat file"],
+            metadata: {},
+            always: [],
+            ruleset: [],
+          }),
+      }).catch((err) => err)
+      const c = WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_other"),
+        fn: () =>
+          PermissionNext.ask({
+            id: PermissionID.make("per_match_c"),
+            sessionID,
+            workspaceID: WorkspaceID.make("wrk_other"),
+            permission: "bash",
+            patterns: ["ls"],
+            metadata: {},
+            always: [],
+            ruleset: [],
+          }),
+      }).catch((err) => err)
+
+      await waitForPending(3)
+      await WorkspaceContext.provide({
+        workspaceID,
+        fn: () =>
+          PermissionNext.reply({
+            requestID: PermissionID.make("per_match_a"),
+            reply: "always",
+          }),
+      })
+
+      await expect(a).resolves.toBeUndefined()
+      expect((await PermissionNext.list({ all: true })).map((item) => item.id).sort()).toEqual([
+        PermissionID.make("per_match_b"),
+      ])
+      await rejectAll()
+      expect(await b).toBeInstanceOf(PermissionNext.RejectedError)
+      expect(await c).toBeUndefined()
+    },
+  })
+})
+
 test("reply - publishes replied event", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
@@ -904,16 +1071,238 @@ test("reply - publishes replied event", async () => {
   })
 })
 
-test("reply - does nothing for unknown requestID", async () => {
+test("reply - publishes audit events for asked and replied", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
     fn: async () => {
+      const events: Array<{ type: string; requestID: PermissionID }> = []
+      const unsub = Bus.subscribe(PermissionNext.Event.Audit, (event) => {
+        events.push({ type: event.properties.type, requestID: event.properties.requestID })
+      })
+      const ask = PermissionNext.ask({
+        id: PermissionID.make("per_audit"),
+        sessionID: SessionID.make("session_audit"),
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      })
+
+      await waitForPending(1)
       await PermissionNext.reply({
+        requestID: PermissionID.make("per_audit"),
+        reply: "once",
+      })
+
+      await expect(ask).resolves.toBeUndefined()
+      expect(events).toEqual([
+        { type: "asked", requestID: PermissionID.make("per_audit") },
+        { type: "replied", requestID: PermissionID.make("per_audit") },
+      ])
+      unsub()
+    },
+  })
+})
+
+test("ask - sets waiting_permission and restores prior status after once", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = SessionID.make("session_status_once")
+      SessionStatus.set(sessionID, { type: "running" })
+      const ask = PermissionNext.ask({
+        id: PermissionID.make("per_status_once"),
+        sessionID,
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      })
+
+      await waitForPending(1)
+      expect(SessionStatus.get(sessionID).type).toBe("waiting_permission")
+      await PermissionNext.reply({
+        requestID: PermissionID.make("per_status_once"),
+        reply: "once",
+      })
+
+      await expect(ask).resolves.toBeUndefined()
+      expect(SessionStatus.get(sessionID).type).toBe("running")
+      SessionStatus.set(sessionID, { type: "idle" })
+    },
+  })
+})
+
+test("ask - restores prior status after always and reject", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const always = SessionID.make("session_status_always")
+      SessionStatus.set(always, { type: "running" })
+      const ask = PermissionNext.ask({
+        id: PermissionID.make("per_status_always"),
+        sessionID: always,
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: ["ls"],
+        ruleset: [],
+      })
+
+      await waitForPending(1)
+      await PermissionNext.reply({
+        requestID: PermissionID.make("per_status_always"),
+        reply: "always",
+      })
+
+      await expect(ask).resolves.toBeUndefined()
+      expect(SessionStatus.get(always).type).toBe("running")
+      SessionStatus.set(always, { type: "idle" })
+
+      const reject = SessionID.make("session_status_reject")
+      SessionStatus.set(reject, { type: "running" })
+      const denied = PermissionNext.ask({
+        id: PermissionID.make("per_status_reject"),
+        sessionID: reject,
+        permission: "bash",
+        patterns: ["rm"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      })
+
+      await waitForPending(1)
+      await PermissionNext.reply({
+        requestID: PermissionID.make("per_status_reject"),
+        reply: "reject",
+      })
+
+      await denied.catch(() => undefined)
+      expect(SessionStatus.get(reject).type).toBe("running")
+      SessionStatus.set(reject, { type: "idle" })
+    },
+  })
+})
+
+test("ask - restores original status when always resolves multiple pending requests", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = SessionID.make("session_status_multi")
+      SessionStatus.set(sessionID, { type: "running" })
+      const a = PermissionNext.ask({
+        id: PermissionID.make("per_status_multi_a"),
+        sessionID,
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      })
+      const b = PermissionNext.ask({
+        id: PermissionID.make("per_status_multi_b"),
+        sessionID,
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: ["ls"],
+        ruleset: [],
+      })
+
+      await waitForPending(2)
+      expect(SessionStatus.get(sessionID).type).toBe("waiting_permission")
+      await PermissionNext.reply({
+        requestID: PermissionID.make("per_status_multi_b"),
+        reply: "always",
+      })
+
+      await expect(a).resolves.toBeUndefined()
+      await expect(b).resolves.toBeUndefined()
+      expect(SessionStatus.get(sessionID).type).toBe("running")
+      SessionStatus.set(sessionID, { type: "idle" })
+    },
+  })
+})
+
+test("reply - reports not_found for unknown requestID", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const result = await PermissionNext.reply({
         requestID: PermissionID.make("per_unknown"),
         reply: "once",
       })
+      expect(result).toEqual({ type: "not_found" })
       expect(await PermissionNext.list()).toHaveLength(0)
+    },
+  })
+})
+
+test("reply - allows legacy workspace scoped request in same directory", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const workspaceID = WorkspaceID.make("wrk_forbid_a")
+      const ask = WorkspaceContext.provide({
+        workspaceID,
+        fn: () =>
+          PermissionNext.ask({
+            id: PermissionID.make("per_forbid_workspace"),
+            sessionID: SessionID.make("session_forbid_workspace"),
+            workspaceID,
+            permission: "bash",
+            patterns: ["ls"],
+            metadata: {},
+            always: [],
+            ruleset: [],
+          }),
+      }).catch((err) => err)
+
+      await waitForPending(1)
+      expect(await PermissionNext.reply({ requestID: PermissionID.make("per_forbid_workspace"), reply: "once" })).toEqual({
+        type: "applied",
+      })
+      expect(await ask).toBeUndefined()
+    },
+  })
+})
+
+test("list - shows legacy workspace scoped requests in current directory", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const workspaceID = WorkspaceID.make("wrk_hidden")
+      const ask = WorkspaceContext.provide({
+        workspaceID,
+        fn: () =>
+          PermissionNext.ask({
+            id: PermissionID.make("per_hidden_workspace"),
+            sessionID: SessionID.make("session_hidden_workspace"),
+            workspaceID,
+            permission: "bash",
+            patterns: ["ls"],
+            metadata: {},
+            always: [],
+            ruleset: [],
+          }),
+      }).catch((err) => err)
+
+      await waitForPending(1)
+      expect(await PermissionNext.list()).toEqual([expect.objectContaining({ id: PermissionID.make("per_hidden_workspace") })])
+      await WorkspaceContext.provide({
+        workspaceID,
+        fn: () => PermissionNext.reply({ requestID: PermissionID.make("per_hidden_workspace"), reply: "reject" }),
+      })
+      expect(await ask).toBeInstanceOf(PermissionNext.RejectedError)
     },
   })
 })

@@ -1,0 +1,126 @@
+{
+  "mission_id": "opencode-agent-entry-capability",
+  "mission_description": "Split agent invocation surfaces and dispatch metadata from legacy mode by adding entry and capability semantics to agent templates, runtime info, packaged configs, UI filtering, and documentation.",
+  "status": "completed",
+  "created_at": "2026-05-17T12:03:12Z",
+  "updated_at": "2026-05-17T14:24:08Z",
+  "features": [
+    {
+      "id": "feature-entry-schema-runtime",
+      "description": "Add entry and capability schema/runtime compatibility",
+      "skillName": "task-executor-work",
+      "preconditions": [],
+      "expectedBehavior": [
+        "AgentTemplate.Meta accepts entry and capability with defaults",
+        "Legacy mode maps to entry and explicit entry wins",
+        "Agent.Info and registry expose entry and capability while preserving derived mode",
+        "Default-agent eligibility uses entry.primary, entry.default, and entry.hidden"
+      ],
+      "verificationSteps": [
+        "bun typecheck",
+        "bun test test/agent --timeout 30000"
+      ],
+      "fulfills": ["T-03A3", "T-03A4", "T-03A5", "T-03A6"],
+      "test_refs": [
+        "packages/opencode/test/agent/schema.test.ts",
+        "packages/opencode/test/agent/registry.test.ts",
+        "packages/opencode/test/agent/switch-session-state.test.ts"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "PASS after final re-review: legacy primary mode, eligible default search, setDefault config-overlay hidden/subagent/disabled rejection, and regression coverage are in place.",
+      "status": "completed",
+      "worker_session_ids": ["019e35d2-6b78-7e23-8497-327e19b756cd", "019e363f-d59e-76f3-9a21-fa0ec74c14cd", "019e3644-f456-7080-98c9-ffac3eac2afb", "019e3647-a44d-7580-83bc-f266b8e94066"],
+      "plan_doc": "docs/agent-rewrite/00-revised-dev-plan.md",
+      "task_ref": "T-03A3~T-03A6"
+    },
+    {
+      "id": "feature-agent-template-migration",
+      "description": "Migrate packaged agent templates to entry and capability",
+      "skillName": "task-executor-work",
+      "preconditions": ["feature-entry-schema-runtime"],
+      "expectedBehavior": [
+        "All packaged agent meta.json files use entry and capability",
+        "Mode remains only as legacy compatibility where needed",
+        "Built-in agent target matrix in docs matches packaged template metadata"
+      ],
+      "verificationSteps": [
+        "bun test test/agent/loader.test.ts test/agent/schema.test.ts --timeout 30000"
+      ],
+      "fulfills": ["T-03A8"],
+      "test_refs": [
+        "packages/opencode/test/agent/loader.test.ts",
+        "packages/opencode/test/agent/schema.test.ts"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "PASS: packaged template entry/capability matrix matches docs, no legacy mode/top-level hidden remains, loader regression asserts metadata semantics.",
+      "status": "completed",
+      "worker_session_ids": ["019e363d-f4ad-7eb3-ad89-4783eff609c5"],
+      "plan_doc": "docs/agent-rewrite/02-agent-author-schema.md",
+      "task_ref": "Built-in agent target entries"
+    },
+    {
+      "id": "feature-entry-ui-dispatch",
+      "description": "Use entry flags for primary picker, mention autocomplete, and delegation candidates",
+      "skillName": "task-executor-work",
+      "preconditions": ["feature-entry-schema-runtime"],
+      "expectedBehavior": [
+        "Primary agent switch surfaces filter by entry.primary and not hidden",
+        "Mention autocomplete filters by entry.mentionable and not hidden",
+        "Delegation candidate construction filters by entry.delegable and not hidden",
+        "Legacy mode fallback still works for older agent payloads"
+      ],
+      "verificationSteps": [
+        "bun typecheck",
+        "bun test test/agent test/cli/tui --timeout 30000"
+      ],
+      "fulfills": ["T-03A7"],
+      "test_refs": [
+        "packages/opencode/test/cli/tui",
+        "packages/opencode/test/agent"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "PASS: primary, mention/autocomplete, task/delegation, command subtask, ACP, and run validation use AgentEntry semantics with legacy fallback.",
+      "status": "completed",
+      "worker_session_ids": ["019e363d-f50b-7002-99e3-9435c8842914"],
+      "plan_doc": "docs/agent-rewrite/00-revised-dev-plan.md",
+      "task_ref": "T-03A7"
+    },
+    {
+      "id": "feature-entry-docs-sdk",
+      "description": "Update command docs and regenerate SDK when API shape changes",
+      "skillName": "task-executor-work",
+      "preconditions": ["feature-entry-schema-runtime", "feature-agent-template-migration", "feature-entry-ui-dispatch"],
+      "expectedBehavior": [
+        "Command/subtask docs describe invocation style rather than permanent subagent type",
+        "OpenAPI and JavaScript SDK reflect entry and capability if /agent shape changes",
+        "Generated SDK files are up to date"
+      ],
+      "verificationSteps": [
+        "./packages/sdk/js/script/build.ts",
+        "bun typecheck"
+      ],
+      "fulfills": ["T-03A9", "T-03A10"],
+      "test_refs": [
+        "packages/sdk/js/src/v2/gen/types.gen.ts",
+        "packages/sdk/openapi.json"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "PASS after narrow re-review: commands docs separate agent selection from explicit subtask child-session invocation; config hidden description and generated SDK/OpenAPI use entry-point visibility semantics.",
+      "status": "completed",
+      "worker_session_ids": ["019e3649-795c-74a2-ba29-45a0c8b4ca75", "019e364e-9b14-7832-a19d-400a5631b891"],
+      "plan_doc": "docs/agent-rewrite/00-revised-dev-plan.md",
+      "task_ref": "T-03A9~T-03A10"
+    }
+  ],
+  "gates": {
+    "coverage": "passed",
+    "implementation": "passed",
+    "test": "passed",
+    "review": "passed",
+    "archive": "passed"
+  }
+}

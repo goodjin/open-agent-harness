@@ -6,7 +6,6 @@ import { Log } from "../util/log"
 import { Instance } from "../project/instance"
 import { lazy } from "@opencode-ai/util/lazy"
 import { Shell } from "@/shell/shell"
-import { Plugin } from "@/plugin-stub"
 import { PtyID } from "./schema"
 
 export namespace Pty {
@@ -126,11 +125,9 @@ export namespace Pty {
     }
 
     const cwd = input.cwd || Instance.directory
-    const shellEnv = await Plugin.trigger("shell.env", { cwd }, { env: {} })
     const env = {
       ...process.env,
       ...input.env,
-      ...shellEnv.env,
       TERM: "xterm-256color",
       OPENCODE_TERMINAL: "1",
     } as Record<string, string>

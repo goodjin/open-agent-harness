@@ -31,7 +31,11 @@ const TestAdaptor: Adaptor = {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {
         const encoder = new TextEncoder()
-        controller.enqueue(encoder.encode('data: {"type":"remote.ready","properties":{}}\n\n'))
+        controller.enqueue(
+          encoder.encode(
+            'data: {"sequence":1,"time":1,"payload":{"type":"server.heartbeat","properties":{}}}\n\n',
+          ),
+        )
         controller.close()
       },
     })
@@ -79,9 +83,10 @@ describe("control-plane/workspace.startSyncing", () => {
     )
 
     const done = new Promise<void>((resolve) => {
-      const listener = (event: { directory?: string; payload: { type: string } }) => {
+      const listener = (event: { directory?: string; workspaceID?: WorkspaceID; payload: { type: string } }) => {
         if (event.directory !== id1) return
-        if (event.payload.type !== "remote.ready") return
+        if (event.workspaceID !== id1) return
+        if (event.payload.type !== "server.heartbeat") return
         GlobalBus.off("event", listener)
         resolve()
       }

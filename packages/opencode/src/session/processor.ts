@@ -7,7 +7,6 @@ import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
 import { SessionStatus } from "./status"
-import { Plugin } from "@/plugin-stub"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
 import { Config } from "@/config/config"
@@ -16,6 +15,7 @@ import { PermissionNext } from "@/permission/next"
 import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
+import { MemoryStore } from "@/memory"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -48,6 +48,7 @@ export namespace SessionProcessor {
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
+          let failure: unknown
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
@@ -324,16 +325,6 @@ export namespace SessionProcessor {
                 case "text-end":
                   if (currentText) {
                     currentText.text = currentText.text.trimEnd()
-                    const textOutput = await Plugin.trigger(
-                      "experimental.text.complete",
-                      {
-                        sessionID: input.sessionID,
-                        messageID: input.assistantMessage.id,
-                        partID: currentText.id,
-                      },
-                      { text: currentText.text },
-                    )
-                    currentText.text = textOutput.text
                     currentText.time = {
                       start: Date.now(),
                       end: Date.now(),
@@ -386,7 +377,11 @@ export namespace SessionProcessor {
                 sessionID: input.assistantMessage.sessionID,
                 error: input.assistantMessage.error,
               })
-              SessionStatus.set(input.sessionID, { type: "idle" })
+              SessionStatus.set(input.sessionID, {
+                type: "error",
+                message: "message" in error.data ? error.data.message : error.name,
+              })
+              failure = e
             }
           }
           if (snapshot) {
@@ -422,9 +417,15 @@ export namespace SessionProcessor {
           }
           input.assistantMessage.time.completed = Date.now()
           await Session.updateMessage(input.assistantMessage)
+          if (failure) throw failure
           if (needsCompaction) return "compact"
           if (blocked) return "stop"
           if (input.assistantMessage.error) return "stop"
+          if (!input.assistantMessage.summary) {
+            await MemoryStore.capture({ sessionID: input.sessionID }).catch((err) => {
+              log.warn("memory capture failed", { err })
+            })
+          }
           return "continue"
         }
       },

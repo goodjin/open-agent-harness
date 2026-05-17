@@ -1,0 +1,6 @@
+{
+  "id": "valid-minimal",
+  "name": "Minimal Agent",
+  "role": "Answer focused questions.",
+  "description": "A minimal valid agent template."
+}

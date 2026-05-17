@@ -36,7 +36,7 @@ process.env["XDG_STATE_HOME"] = path.join(dir, "state")
 process.env["OPENCODE_MODELS_PATH"] = path.join(import.meta.dir, "tool", "fixtures", "models-api.json")
 
 // Set test home directory to isolate tests from user's actual home directory
-// This prevents tests from picking up real user configs/skills from ~/.claude/skills
+// This prevents tests from picking up real user config from the home directory
 const testHome = path.join(dir, "home")
 await fs.mkdir(testHome, { recursive: true })
 process.env["OPENCODE_TEST_HOME"] = testHome
@@ -44,7 +44,6 @@ process.env["OPENCODE_TEST_HOME"] = testHome
 // Set test managed config directory to isolate tests from system managed settings
 const testManagedConfigDir = path.join(dir, "managed")
 process.env["OPENCODE_TEST_MANAGED_CONFIG_DIR"] = testManagedConfigDir
-process.env["OPENCODE_DISABLE_DEFAULT_PLUGINS"] = "true"
 
 // Write the cache version file to prevent global/index.ts from clearing the cache
 const cacheDir = path.join(dir, "cache", "opencode")

@@ -1,0 +1,15 @@
+{
+  "id": "valid-full",
+  "name": "Full Agent",
+  "role": "Build and verify code changes.",
+  "description": "A complete valid agent template.",
+  "model_preference": {
+    "providerID": "anthropic",
+    "modelID": "claude-sonnet-4-20250514"
+  },
+  "workflow_mode": "supervision",
+  "allowed_tools": ["read", "edit", "bash"],
+  "denied_tools": ["webfetch"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}
