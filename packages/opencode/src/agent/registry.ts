@@ -21,6 +21,7 @@ export interface AgentMetadata {
   mode: "primary" | "subagent" | "all"
   entry: AgentTemplateSchema.Entry
   capability: AgentTemplateSchema.Capability
+  runner: AgentTemplateSchema.Runner
 }
 
 /**
@@ -32,6 +33,7 @@ export interface AgentTemplateInfo {
   mode: "primary" | "subagent" | "all"
   entry: AgentTemplateSchema.Entry
   capability: AgentTemplateSchema.Capability
+  runner: AgentTemplateSchema.Runner
   meta: AgentTemplateSchema.Meta
   identity: string
   rules: string
@@ -109,6 +111,7 @@ export class AgentRegistry {
         mode: AgentTemplateSchema.mode(agent.meta),
         entry: agent.meta.entry,
         capability: agent.meta.capability,
+        runner: agent.meta.runner,
       }))
       .sort((a, b) => {
         // Sort default agent first, then alphabetically
@@ -134,6 +137,7 @@ export class AgentRegistry {
       mode: AgentTemplateSchema.mode(agent.meta),
       entry: agent.meta.entry,
       capability: agent.meta.capability,
+      runner: agent.meta.runner,
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
@@ -195,6 +199,7 @@ export class AgentRegistry {
       mode: AgentTemplateSchema.mode(agent.meta),
       entry: agent.meta.entry,
       capability: agent.meta.capability,
+      runner: agent.meta.runner,
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,

@@ -303,6 +303,43 @@ describe("AgentTemplate.Meta", () => {
     })
   })
 
+  describe("runner field validation", () => {
+    test("valid runner values pass", () => {
+      const base = {
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+      }
+
+      expect(AgentTemplate.Meta.safeParse({ ...base, runner: "chat" }).success).toBe(true)
+      expect(AgentTemplate.Meta.safeParse({ ...base, runner: "workflow" }).success).toBe(true)
+    })
+
+    test("invalid runner fails", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+        runner: "batch",
+      })
+
+      expect(result.success).toBe(false)
+    })
+
+    test("runner defaults to chat", () => {
+      const result = AgentTemplate.Meta.parse({
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+      })
+
+      expect(result.runner).toBe("chat")
+    })
+  })
+
   describe("allowed_tools and denied_tools field validation", () => {
     test("valid allowed_tools array passes", () => {
       const valid = {
@@ -615,6 +652,7 @@ describe("AgentTemplate.Meta", () => {
             writes: true,
           },
           hidden: false,
+          runner: "chat",
           workflow_mode: "auto",
           allowed_tools: [],
           denied_tools: [],
@@ -648,6 +686,7 @@ describe("AgentTemplate.Meta", () => {
           writes: false,
         },
         mode: "primary",
+        runner: "workflow",
         workflow_mode: "auto",
         allowed_tools: ["edit", "read", "glob", "grep", "bash"],
         denied_tools: ["webfetch", "mcp"],
@@ -665,6 +704,7 @@ describe("AgentTemplate.Meta", () => {
         expect(result.data.capability.cost).toBe("high")
         expect(result.data.capability.writes).toBe(false)
         expect(result.data.mode).toBe("primary")
+        expect(result.data.runner).toBe("workflow")
         expect(result.data.workflow_mode).toBe("auto")
         expect(result.data.allowed_tools).toEqual(["edit", "read", "glob", "grep", "bash"])
         expect(result.data.denied_tools).toEqual(["webfetch", "mcp"])

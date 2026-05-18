@@ -15721,6 +15721,14 @@
             },
             "additionalProperties": false
           },
+          "runner": {
+            "default": "chat",
+            "type": "string",
+            "enum": [
+              "chat",
+              "workflow"
+            ]
+          },
           "native": {
             "type": "boolean"
           },

@@ -2202,6 +2202,7 @@ export type Agent = {
     cost?: "low" | "medium" | "high"
     writes?: boolean
   }
+  runner?: "chat" | "workflow"
   native?: boolean
   hidden?: boolean
   topP?: number
