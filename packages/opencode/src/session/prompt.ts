@@ -38,6 +38,7 @@ import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/util/error"
 import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
+import { SessionRunner } from "./runner"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
 import { PermissionNext } from "@/permission/next"
@@ -582,7 +583,7 @@ export namespace SessionPrompt {
         session,
       })
 
-      const processor = SessionProcessor.create({
+      const processor = SessionRunner.create({
         assistantMessage: (await Session.updateMessage({
           id: MessageID.ascending(),
           parentID: lastUser.id,

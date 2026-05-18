@@ -93,6 +93,7 @@ describe("AgentTemplateLoader", () => {
         metis: ["pre_planning", "medium", false, false, true, true, false, false],
         momus: ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
+        "workflow-runner": ["workflow_orchestration", "low", true, false, false, false, false, true],
       } as const
       const agents = await loader.loadAll()
 
@@ -113,6 +114,32 @@ describe("AgentTemplateLoader", () => {
           hidden: row[7],
         })
       })
+    })
+
+    test("package templates default to chat runner except workflow-runner", async () => {
+      const agents = await loader.loadAll()
+
+      for (const agent of agents.filter((item) => item.source === "package")) {
+        expect(agent.meta.runner).toBe(agent.id === "workflow-runner" ? "workflow" : "chat")
+      }
+    })
+
+    test("workflow-runner package template exposes workflow metadata", async () => {
+      const agents = await loader.loadAll()
+      const agent = agents.find((item) => item.id === "workflow-runner")
+
+      expect(agent).toBeDefined()
+      expect(agent?.meta.runner).toBe("workflow")
+      expect(agent?.meta.capability.purpose).toBe("workflow_orchestration")
+      expect(agent?.identity).toContain("workflow DAG")
+      expect(agent?.rules).toContain("workflow runtime")
+    })
+
+    test("registry exposes workflow-runner runner metadata", async () => {
+      const registry = new AgentRegistry()
+      const agent = await registry.get("workflow-runner")
+
+      expect(agent?.runner).toBe("workflow")
     })
 
     test("loads package templates before user templates so user overrides package", async () => {

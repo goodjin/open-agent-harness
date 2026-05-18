@@ -36,6 +36,7 @@ const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
       writes: true,
     },
     hidden: false,
+    runner: "chat",
     workflow_mode: "auto",
     allowed_tools: ["edit", "read", "glob", "grep", "list", "bash", "task", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread", "question"],
     denied_tools: [],

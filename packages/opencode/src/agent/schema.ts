@@ -11,6 +11,10 @@ export namespace AgentTemplate {
   export const RuntimeMode = z.enum(["primary", "subagent", "all"])
   export type RuntimeMode = z.infer<typeof RuntimeMode>
 
+  // Runner controls which session runtime handles the agent.
+  export const Runner = z.enum(["chat", "workflow"])
+  export type Runner = z.infer<typeof Runner>
+
   export const Entry = z
     .object({
       primary: z.boolean().default(true),
@@ -152,6 +156,7 @@ export namespace AgentTemplate {
       entry: Entry.optional().describe("Where the agent can be used"),
       capability: Capability.default(CapabilityDefaults).describe("What the agent is good for"),
       hidden: z.boolean().default(false).describe("Whether to hide the agent from interactive pickers"),
+      runner: Runner.default("chat").describe("Which session runtime handles this agent"),
       workflow_mode: WorkflowMode.default("auto").describe("How the agent executes workflows"),
       allowed_tools: z.array(Text).default([]).describe("List of tools the agent is allowed to use"),
       denied_tools: z.array(Text).default([]).describe("List of tools the agent is denied from using"),
@@ -221,5 +226,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "model_preference" | "mode" | "entry" | "capability" | "hidden" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode">
+  export type OptionalFields = Pick<Meta, "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode">
 }

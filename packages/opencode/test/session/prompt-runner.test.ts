@@ -1,0 +1,91 @@
+import { describe, expect, spyOn, test } from "bun:test"
+import path from "path"
+import { Instance } from "../../src/project/instance"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
+import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID } from "../../src/session/schema"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import { SessionPrompt } from "../../src/session/prompt"
+import { SessionRunner } from "../../src/session/runner"
+import type { LLM } from "../../src/session/llm"
+import { resetRegistry } from "../../src/agent/registry"
+import { Log } from "../../src/util/log"
+
+const root = path.join(__dirname, "../..")
+Log.init({ print: false })
+
+describe("SessionPrompt runner wiring", () => {
+  test("session loop routes workflow-runner through SessionRunner", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace"),
+            fn: async () => {
+              resetRegistry()
+              const seen: string[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push(stream.agent.runner ?? "chat")
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Runner wiring test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "workflow-runner",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "run workflow",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(hook).toHaveBeenCalledTimes(1)
+                expect(seen).toEqual(["workflow"])
+                expect(msg.info.role).toBe("assistant")
+                expect(msg.info.agent).toBe("workflow-runner")
+
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+})

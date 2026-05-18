@@ -1,0 +1,39 @@
+{
+  "task_id": "workflow-runtime-runner",
+  "status": "completed",
+  "specialist": "task-executor-work",
+  "session_id": "codex-workflow-runtime-runner",
+  "started_at": "2026-05-18T00:00:00Z",
+  "completed_at": "2026-05-18T01:08:20Z",
+  "evidence": {
+    "files_changed": [
+      "packages/opencode/config/agents/workflow-runner/meta.json",
+      "packages/opencode/config/agents/workflow-runner/identity.md",
+      "packages/opencode/config/agents/workflow-runner/rules.md",
+      "packages/opencode/docs/workflow-runner.md",
+      "packages/opencode/src/agent/agent.ts",
+      "packages/opencode/src/agent/loader.ts",
+      "packages/opencode/src/agent/registry.ts",
+      "packages/opencode/src/agent/schema.ts",
+      "packages/opencode/src/session/prompt.ts",
+      "packages/opencode/src/session/runner.ts",
+      "packages/opencode/test/agent/loader.test.ts",
+      "packages/opencode/test/agent/schema.test.ts",
+      "packages/opencode/test/session/prompt-runner.test.ts",
+      "packages/opencode/test/session/runner.test.ts",
+      "packages/sdk/openapi.json",
+      "packages/sdk/js/src/v2/gen/types.gen.ts",
+      ".claude/orchestration/workflow-runtime-runner/features.json",
+      ".claude/orchestration/workflow-runtime-runner/state.json"
+    ],
+    "lines_added": 325,
+    "lines_deleted": 2,
+    "description": "Added workflow-runner packaged metadata and docs, introduced chat/workflow runner metadata, surfaced it through loader/registry/agent info, added a session runner dispatcher that keeps ordinary chat behavior on the chat path while selecting workflow for workflow-runner, restored unrelated bun.lock ghostty-web drift, regenerated SDK/OpenAPI output for the Agent runner schema, and added a SessionPrompt loop wiring test for workflow-runner dispatch."
+  },
+  "verification": {
+    "tests": "bun test test/agent/schema.test.ts test/agent/loader.test.ts test/session/runner.test.ts test/session/prompt-runner.test.ts --timeout 30000",
+    "typecheck": "bun typecheck",
+    "diff": "git diff --check",
+    "sdk": "./packages/sdk/js/script/build.ts"
+  }
+}
