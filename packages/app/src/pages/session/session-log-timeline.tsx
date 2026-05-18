@@ -164,6 +164,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
     loading: true,
     error: undefined as string | undefined,
     logs: [] as Log[],
+    open: {} as Record<string, boolean>,
   })
 
   const rows = createMemo(() => store.logs.map((log) => ({ log, summary: describeLog(log) })))
@@ -191,7 +192,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   createEffect(() => {
     let active = true
     props.sessionID
-    setStore({ loading: true, error: undefined, logs: [] })
+    setStore({ loading: true, error: undefined, logs: [], open: {} })
     void load().catch((err) => {
       if (!active) return
       setStore({
@@ -281,7 +282,11 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                             </For>
                           </div>
                         </Show>
-                        <details class="mt-2">
+                        <details
+                          class="mt-2"
+                          open={store.open[row.log.id] === true}
+                          onToggle={(event) => setStore("open", row.log.id, event.currentTarget.open)}
+                        >
                           <summary class="cursor-default text-11-regular text-text-weaker">
                             {language.t("session.logs.details")}
                           </summary>

@@ -38,6 +38,27 @@ describe("session log timeline", () => {
     })
   })
 
+  test("describes detailed llm events", () => {
+    expect(
+      describeLog(
+        record("llm", 3, "llm.start", {
+          providerID: "openai",
+          modelID: "gpt-test",
+          messages: 4,
+          tools: 2,
+          request: {
+            system: ["system prompt"],
+            messages: [{ role: "user", content: "hello" }],
+          },
+        }),
+      ),
+    ).toEqual({
+      title: "LLM request started",
+      detail: "openai / gpt-test",
+      meta: ["4 messages", "2 tools"],
+    })
+  })
+
   test("merges records by id and orders the timeline by time", () => {
     const logs = mergeLogs(
       [

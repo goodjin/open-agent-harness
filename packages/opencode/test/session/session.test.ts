@@ -100,6 +100,12 @@ describe("session processor lifecycle", () => {
       return {
         fullStream: (async function* () {
           yield { type: "start" as const }
+          yield { type: "reasoning-start" as const, id: "reasoning" }
+          yield { type: "reasoning-delta" as const, id: "reasoning", text: "hidden thought" }
+          yield { type: "reasoning-end" as const, id: "reasoning" }
+          yield { type: "text-start" as const }
+          yield { type: "text-delta" as const, text: "visible answer" }
+          yield { type: "text-end" as const }
           yield { type: "error" as const, error: err }
         })(),
       } as unknown as Awaited<ReturnType<typeof LLM.stream>>
@@ -168,18 +174,35 @@ describe("session processor lifecycle", () => {
                   permission: [],
                   options: {},
                 },
-                system: [],
+                system: ["system prompt"],
                 abort: new AbortController().signal,
-                messages: [],
+                messages: [{ role: "user", content: "hello prompt" }],
                 tools: {},
               } as unknown as LLM.StreamInput),
             ).rejects.toBe(err)
 
             expect(SessionStatus.get(session.id)).toEqual({ type: "error", message: "Error: processor exploded" })
-            expect((await SessionLog.list({ sessionID: session.id })).map((item) => item.type)).toEqual([
+            const logs = await SessionLog.list({ sessionID: session.id })
+            expect(logs.map((item) => item.type)).toEqual([
               "llm.start",
+              "reasoning.start",
+              "reasoning.end",
+              "text.start",
+              "text.end",
               "llm.error",
             ])
+            expect(logs.find((item) => item.type === "llm.start")?.data).toMatchObject({
+              request: {
+                system: ["system prompt"],
+                messages: [{ role: "user", content: "hello prompt" }],
+              },
+            })
+            expect(logs.find((item) => item.type === "reasoning.end")?.data).toMatchObject({
+              text: "hidden thought",
+            })
+            expect(logs.find((item) => item.type === "text.end")?.data).toMatchObject({
+              text: "visible answer",
+            })
             const stored = await MessageV2.get({ sessionID: session.id, messageID: assistant.id })
             expect(stored.info.role).toBe("assistant")
             if (stored.info.role === "assistant") expect(stored.info.error).toBeDefined()

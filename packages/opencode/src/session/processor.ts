@@ -54,6 +54,13 @@ export namespace SessionProcessor {
             type,
             data,
           }).catch((err) => log.warn("session log failed", { err }))
+        const prompt = (input: LLM.StreamInput) => ({
+          system: input.system,
+          messages: input.messages,
+          user: input.user,
+          toolChoice: input.toolChoice,
+          tools: Object.keys(input.tools),
+        })
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
@@ -69,6 +76,7 @@ export namespace SessionProcessor {
               attempt,
               messages: streamInput.messages.length,
               tools: Object.keys(streamInput.tools).length,
+              request: prompt(streamInput),
             })
             const stream = await LLM.stream(streamInput)
 
@@ -129,6 +137,7 @@ export namespace SessionProcessor {
                       partID: part.id,
                       streamID: value.id,
                       chars: part.text.length,
+                      text: part.text,
                     })
                     delete reasoningMap[value.id]
                   }
@@ -385,7 +394,11 @@ export namespace SessionProcessor {
                     }
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
                     await Session.updatePart(currentText)
-                    await record("debug", "text.end", { partID: currentText.id, chars: currentText.text.length })
+                    await record("debug", "text.end", {
+                      partID: currentText.id,
+                      chars: currentText.text.length,
+                      text: currentText.text,
+                    })
                   }
                   currentText = undefined
                   break
