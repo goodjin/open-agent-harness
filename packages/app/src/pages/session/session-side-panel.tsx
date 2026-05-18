@@ -26,8 +26,6 @@ import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 
 export function SessionSidePanel(props: {
-  sessionPanel: () => JSX.Element
-  composerPanel: () => JSX.Element
   reviewPanel: () => JSX.Element
   logPanel: () => JSX.Element
   activeDiff?: string
@@ -45,8 +43,7 @@ export function SessionSidePanel(props: {
 
   const reviewOpen = createMemo(() => isDesktop())
   const fileOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
-  const open = createMemo(() => isDesktop())
-  const sessionTab = createMemo(() => isDesktop())
+  const open = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const reviewTab = createMemo(() => isDesktop())
   const logTab = createMemo(() => isDesktop() && !!params.id)
   const fileTab = createMemo(() => isDesktop() && fileOpen())
@@ -132,7 +129,6 @@ export function SessionSidePanel(props: {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    session: sessionTab,
     review: reviewTab,
     hasReview,
     logs: logTab,
@@ -144,7 +140,7 @@ export function SessionSidePanel(props: {
   const activeFileTab = tabState.activeFileTab
 
   const select = (value: string) => {
-    if (value === "session" || value === "review" || value === "logs") {
+    if (value === "review" || value === "logs") {
       tabs().setActive(value)
       return
     }
@@ -214,12 +210,12 @@ export function SessionSidePanel(props: {
         aria-label={language.t("session.panel.reviewAndFiles")}
         aria-hidden={!open()}
         inert={!open()}
-        class="relative min-w-0 h-full flex-1 overflow-hidden bg-background-base"
+        class="relative min-w-0 h-full w-[min(48vw,760px)] shrink-0 overflow-hidden bg-background-base"
         classList={{
           "pointer-events-none": !open(),
         }}
       >
-        <div class="size-full flex">
+        <div class="size-full flex border-l border-border-weaker-base">
           <div
             aria-hidden={!reviewOpen()}
             inert={!reviewOpen()}
@@ -245,11 +241,6 @@ export function SessionSidePanel(props: {
                         onCleanup(stop)
                       }}
                     >
-                      <Show when={sessionTab()}>
-                        <Tabs.Trigger value="session">
-                          <div>{language.t("session.tab.session")}</div>
-                        </Tabs.Trigger>
-                      </Show>
                       <Show when={reviewTab()}>
                         <Tabs.Trigger value="review">
                           <div class="flex items-center gap-1.5">
@@ -331,15 +322,6 @@ export function SessionSidePanel(props: {
                       </div>
                     </Tabs.List>
                   </div>
-
-                  <Show when={sessionTab()}>
-                    <Tabs.Content value="session" class="flex flex-col h-full overflow-hidden contain-strict">
-                      <Show when={activeTab() === "session"}>
-                        {props.sessionPanel()}
-                        {props.composerPanel()}
-                      </Show>
-                    </Tabs.Content>
-                  </Show>
 
                   <Show when={reviewTab()}>
                     <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">

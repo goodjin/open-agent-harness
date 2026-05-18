@@ -413,7 +413,6 @@ export default function Page() {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    session: isDesktop,
     review: reviewTab,
     hasReview,
   })
@@ -1788,9 +1787,11 @@ export default function Page() {
             </div>
           }
         >
+          <div class="@container relative flex flex-col min-h-0 h-full bg-background-stronger flex-1 min-w-0">
+            {sessionPanel()}
+            {composerPanel()}
+          </div>
           <SessionSidePanel
-            sessionPanel={sessionPanel}
-            composerPanel={composerPanel}
             reviewPanel={reviewPanel}
             logPanel={logPanel}
             activeDiff={tree.activeDiff}
