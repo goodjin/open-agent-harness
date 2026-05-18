@@ -59,9 +59,43 @@ export namespace Workflow {
     .meta({ ref: "WorkflowErrorPolicy" })
   export type ErrorPolicy = z.infer<typeof ErrorPolicy>
 
+  export const StepType = z
+    .enum([
+      "task",
+      "research",
+      "planning",
+      "design",
+      "implementation",
+      "debug",
+      "test",
+      "review",
+      "gate",
+      "documentation",
+      "build",
+      "release",
+      "decision",
+      "manual",
+    ])
+    .meta({ ref: "WorkflowStepType" })
+  export type StepType = z.infer<typeof StepType>
+
+  export const Verification = z
+    .object({
+      required: z.boolean().default(false),
+      must_pass: z.array(z.string().min(1)).default([]),
+      commands: z.array(z.string().min(1)).default([]),
+      artifacts: z.array(z.string().min(1)).default([]),
+      notes: z.array(z.string().min(1)).default([]),
+      justification: z.string().min(1).optional(),
+    })
+    .strict()
+    .meta({ ref: "WorkflowVerification" })
+  export type Verification = z.infer<typeof Verification>
+
   export const Step = z
     .object({
       id: z.string().min(1),
+      type: StepType.default("task"),
       agent: z.string().min(1).default("primary"),
       prompt: z.string().optional(),
       mutates: z.boolean().default(false),
@@ -71,6 +105,7 @@ export namespace Workflow {
       guards: z.array(Guard).default([]),
       next: z.union([z.string().min(1), z.array(Branch).min(1)]).optional(),
       error_policy: ErrorPolicy.optional(),
+      verification: Verification.optional(),
     })
     .strict()
     .meta({ ref: "WorkflowStep" })
@@ -90,9 +125,11 @@ export namespace Workflow {
     .strict()
     .superRefine((workflow, ctx) => {
       const ids = new Set<string>()
+      const steps = new Map<string, Step>()
       for (const step of workflow.steps) {
         if (!ids.has(step.id)) {
           ids.add(step.id)
+          steps.set(step.id, step)
           continue
         }
         ctx.addIssue({
@@ -100,6 +137,42 @@ export namespace Workflow {
           path: ["steps"],
           message: `Duplicate workflow step id: ${step.id}`,
         })
+      }
+
+      for (const [index, step] of workflow.steps.entries()) {
+        if (!step.verification) continue
+        if (step.verification.required && step.verification.must_pass.length === 0 && !step.verification.justification) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["steps", index, "verification"],
+            message: `Workflow step ${step.id} requires verification but does not define must_pass or justification`,
+          })
+        }
+        for (const ref of step.verification.must_pass) {
+          const target = steps.get(ref)
+          if (!target) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["steps", index, "verification", "must_pass"],
+              message: `Workflow step ${step.id} references missing verification step: ${ref}`,
+            })
+            continue
+          }
+          if (target.id === step.id) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["steps", index, "verification", "must_pass"],
+              message: `Workflow step ${step.id} cannot verify itself`,
+            })
+          }
+          if (!["test", "review", "gate"].includes(target.type)) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["steps", index, "verification", "must_pass"],
+              message: `Workflow step ${step.id} verification target ${target.id} must be a test, review, or gate step`,
+            })
+          }
+        }
       }
     })
     .meta({ ref: "WorkflowDefinition" })

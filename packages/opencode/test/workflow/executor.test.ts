@@ -47,6 +47,56 @@ describe("workflow executor", () => {
     })
   })
 
+  test("runs missing verification steps before completing", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "verify",
+      name: "Verify",
+      steps: [
+        {
+          id: "build",
+          type: "implementation",
+          outputs: { built: true },
+          next: "ship",
+          verification: {
+            required: true,
+            must_pass: ["test"],
+          },
+        },
+        {
+          id: "test",
+          type: "test",
+          outputs: { tested: true },
+        },
+        {
+          id: "ship",
+          type: "release",
+          outputs: { shipped: "$tested" },
+        },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "verify" })
+
+            expect(state.status).toBe("completed")
+            expect(state.current).toBe("test")
+            expect(state.variables.built).toBe(true)
+            expect(state.variables.shipped).toBeUndefined()
+            expect(state.variables.tested).toBe(true)
+            expect(state.completed).toEqual(["build", "ship", "test"])
+          },
+        }),
+    })
+  })
+
   test("denies unsafe permission transitions", async () => {
     await using tmp = await tmpdir()
     const space = WorkspaceID.ascending()

@@ -14855,6 +14855,13 @@
               "type": "number"
             }
           },
+          "completed": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "pause": {
             "$ref": "#/components/schemas/WorkflowPause"
           },
