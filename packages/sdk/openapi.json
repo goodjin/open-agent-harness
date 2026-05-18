@@ -2613,6 +2613,138 @@
         ]
       }
     },
+    "/session/{sessionID}/log": {
+      "get": {
+        "operationId": "session.log",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            }
+          }
+        ],
+        "summary": "Get session log",
+        "description": "Retrieve structured runtime log records for a session, sorted chronologically.",
+        "tags": [
+          "Session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Session log records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "sessionID": {
+                        "type": "string",
+                        "pattern": "^ses.*"
+                      },
+                      "messageID": {
+                        "type": "string",
+                        "pattern": "^msg.*"
+                      },
+                      "partID": {
+                        "type": "string",
+                        "pattern": "^prt.*"
+                      },
+                      "level": {
+                        "type": "string",
+                        "enum": [
+                          "debug",
+                          "info",
+                          "warn",
+                          "error"
+                        ]
+                      },
+                      "type": {
+                        "type": "string"
+                      },
+                      "data": {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      "time": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "sessionID",
+                      "level",
+                      "type",
+                      "data",
+                      "time"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.log({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}": {
       "get": {
         "operationId": "session.get",
@@ -9615,6 +9747,77 @@
           "properties"
         ]
       },
+      "Event.session.log.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.log.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "info": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "sessionID": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg.*"
+                  },
+                  "partID": {
+                    "type": "string",
+                    "pattern": "^prt.*"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "debug",
+                      "info",
+                      "warn",
+                      "error"
+                    ]
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "time": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "sessionID",
+                  "level",
+                  "type",
+                  "data",
+                  "time"
+                ]
+              }
+            },
+            "required": [
+              "info"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "properties"
+        ]
+      },
       "AuditEvent": {
         "anyOf": [
           {
@@ -12984,6 +13187,9 @@
           },
           {
             "$ref": "#/components/schemas/Event.question.rejected"
+          },
+          {
+            "$ref": "#/components/schemas/Event.session.log.created"
           },
           {
             "$ref": "#/components/schemas/Event.observability.audit.recorded"

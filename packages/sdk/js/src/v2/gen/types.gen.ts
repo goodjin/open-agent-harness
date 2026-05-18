@@ -185,6 +185,24 @@ export type EventQuestionRejected = {
   }
 }
 
+export type EventSessionLogCreated = {
+  type: "session.log.created"
+  properties: {
+    info: {
+      id: string
+      sessionID: string
+      messageID?: string
+      partID?: string
+      level: "debug" | "info" | "warn" | "error"
+      type: string
+      data: {
+        [key: string]: unknown
+      }
+      time: number
+    }
+  }
+}
+
 export type AuditEvent =
   | {
       type: "permission.asked"
@@ -1115,6 +1133,7 @@ export type Event =
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
+  | EventSessionLogCreated
   | EventObservabilityAuditRecorded
   | EventPermissionAsked
   | EventPermissionReplied
@@ -3951,6 +3970,52 @@ export type SessionGetStatusResponses = {
 }
 
 export type SessionGetStatusResponse = SessionGetStatusResponses[keyof SessionGetStatusResponses]
+
+export type SessionLogData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+    cursor?: string
+    limit?: number
+  }
+  url: "/session/{sessionID}/log"
+}
+
+export type SessionLogErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLogError = SessionLogErrors[keyof SessionLogErrors]
+
+export type SessionLogResponses = {
+  /**
+   * Session log records
+   */
+  200: Array<{
+    id: string
+    sessionID: string
+    messageID?: string
+    partID?: string
+    level: "debug" | "info" | "warn" | "error"
+    type: string
+    data: {
+      [key: string]: unknown
+    }
+    time: number
+  }>
+}
+
+export type SessionLogResponse = SessionLogResponses[keyof SessionLogResponses]
 
 export type SessionDeleteData = {
   body?: never

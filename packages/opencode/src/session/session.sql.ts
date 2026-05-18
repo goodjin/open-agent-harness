@@ -10,6 +10,7 @@ import { Timestamps } from "../storage/schema.sql"
 
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
 type InfoData = Omit<MessageV2.Info, "id" | "sessionID">
+type LogData = Record<string, unknown>
 
 export const SessionTable = sqliteTable(
   "session",
@@ -73,6 +74,27 @@ export const PartTable = sqliteTable(
   (table) => [
     index("part_message_id_id_idx").on(table.message_id, table.id),
     index("part_session_idx").on(table.session_id),
+  ],
+)
+
+export const SessionLogTable = sqliteTable(
+  "session_log",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    message_id: text().$type<MessageID>(),
+    part_id: text().$type<PartID>(),
+    level: text().notNull(),
+    type: text().notNull(),
+    data: text({ mode: "json" }).notNull().$type<LogData>(),
+    time_created: integer().notNull(),
+  },
+  (table) => [
+    index("session_log_session_time_id_idx").on(table.session_id, table.time_created, table.id),
+    index("session_log_time_idx").on(table.time_created),
   ],
 )
 

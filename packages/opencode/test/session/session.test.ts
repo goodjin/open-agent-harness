@@ -7,6 +7,7 @@ import { Instance } from "../../src/project/instance"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID } from "../../src/session/schema"
 import { SessionProcessor } from "../../src/session/processor"
+import { SessionLog } from "../../src/session/log"
 import { SessionStatus } from "../../src/session/status"
 import { LLM } from "../../src/session/llm"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -175,6 +176,10 @@ describe("session processor lifecycle", () => {
             ).rejects.toBe(err)
 
             expect(SessionStatus.get(session.id)).toEqual({ type: "error", message: "Error: processor exploded" })
+            expect((await SessionLog.list({ sessionID: session.id })).map((item) => item.type)).toEqual([
+              "llm.start",
+              "llm.error",
+            ])
             const stored = await MessageV2.get({ sessionID: session.id, messageID: assistant.id })
             expect(stored.info.role).toBe("assistant")
             if (stored.info.role === "assistant") expect(stored.info.error).toBeDefined()

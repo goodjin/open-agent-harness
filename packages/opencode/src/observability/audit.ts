@@ -3,6 +3,7 @@ import { BusEvent } from "@/bus/bus-event"
 import { WorkspaceID } from "@/control-plane/schema"
 import { Instance } from "@/project/instance"
 import { ProjectID } from "@/project/schema"
+import { SessionLog } from "@/session/log"
 import { SessionID } from "@/session/schema"
 import z from "zod"
 
@@ -224,6 +225,15 @@ export namespace Audit {
     }
     state().records.push(record)
     const output = publicize(record)
+    if (output.sessionID) {
+      await SessionLog.emit({
+        sessionID: output.sessionID,
+        level: "info",
+        type: output.event.type,
+        data: output.event,
+        time: output.time,
+      }).catch(() => undefined)
+    }
     await Bus.publish(Event.Recorded, output)
     return output
   }

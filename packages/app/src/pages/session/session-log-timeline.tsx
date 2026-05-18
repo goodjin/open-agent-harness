@@ -1,4 +1,4 @@
-import type { AuditRecord } from "@opencode-ai/sdk/v2/client"
+import type { SessionLogResponse } from "@opencode-ai/sdk/v2/client"
 import { Button } from "@opencode-ai/ui/button"
 import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
@@ -11,6 +11,7 @@ type Summary = {
   detail?: string
   meta: string[]
 }
+type Log = SessionLogResponse[number]
 
 const label = (value: string) =>
   value
@@ -18,70 +19,138 @@ const label = (value: string) =>
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ")
 
-export function describeLog(record: AuditRecord): Summary {
-  const event = record.event
-  switch (event.type) {
+const text = (value: unknown) => (typeof value === "string" ? value : undefined)
+const count = (value: unknown) => (typeof value === "number" ? value : undefined)
+const list = (value: unknown) => (Array.isArray(value) ? value.filter((item) => typeof item === "string") : [])
+const filled = (value: string | undefined): value is string => Boolean(value)
+
+export function describeLog(record: Log): Summary {
+  const data = record.data
+  switch (record.type) {
     case "permission.asked":
       return {
         title: "Permission requested",
-        detail: event.permission,
+        detail: text(data.permission),
         meta: [
-          `${event.patternCount} ${event.patternCount === 1 ? "pattern" : "patterns"}`,
-          event.patternKinds.join(", "),
+          `${count(data.patternCount) ?? 0} ${data.patternCount === 1 ? "pattern" : "patterns"}`,
+          list(data.patternKinds).join(", "),
         ],
       }
     case "permission.replied":
       return {
         title: "Permission replied",
-        detail: event.reply,
-        meta: event.feedback ? ["feedback"] : [],
+        detail: text(data.reply),
+        meta: data.feedback ? ["feedback"] : [],
       }
     case "restore.completed":
       return {
         title: "Restore completed",
-        detail: event.hash,
+        detail: text(data.hash),
         meta: [],
       }
     case "workflow.started":
       return {
         title: "Workflow started",
-        detail: event.workflowID,
-        meta: [event.runID],
+        detail: text(data.workflowID),
+        meta: [text(data.runID)].filter(filled),
       }
     case "workflow.paused":
       return {
         title: "Workflow paused",
-        detail: event.step,
-        meta: [event.status, event.workflowID, event.runID],
+        detail: text(data.step),
+        meta: [text(data.status), text(data.workflowID), text(data.runID)].filter(filled),
       }
     case "workflow.completed":
       return {
         title: "Workflow completed",
-        detail: event.workflowID,
-        meta: [event.runID],
+        detail: text(data.workflowID),
+        meta: [text(data.runID)].filter(filled),
       }
     case "workflow.failed":
       return {
         title: "Workflow failed",
-        detail: event.step,
-        meta: [event.workflowID, event.runID],
+        detail: text(data.step),
+        meta: [text(data.workflowID), text(data.runID)].filter(filled),
       }
     case "memory.captured":
       return {
         title: "Memory captured",
-        detail: `${event.count} ${event.count === 1 ? "memory" : "memories"}`,
+        detail: `${count(data.count) ?? 0} ${data.count === 1 ? "memory" : "memories"}`,
         meta: [],
       }
     case "memory.failed":
       return {
         title: "Memory failed",
-        detail: event.reason,
+        detail: text(data.reason),
         meta: [],
       }
+    case "llm.start":
+      return {
+        title: "LLM request started",
+        detail: [text(data.providerID), text(data.modelID)].filter(filled).join(" / "),
+        meta: [`${count(data.messages) ?? 0} messages`, `${count(data.tools) ?? 0} tools`],
+      }
+    case "llm.finish":
+      return {
+        title: "LLM request finished",
+        detail: text(data.finish),
+        meta: [`$${(count(data.cost) ?? 0).toFixed(4)}`],
+      }
+    case "llm.error":
+      return {
+        title: "LLM request failed",
+        detail: text(data.error),
+        meta: [],
+      }
+    case "llm.retry":
+      return {
+        title: "LLM request retrying",
+        detail: text(data.message),
+        meta: [`attempt ${count(data.attempt) ?? 0}`, `${count(data.delay) ?? 0}ms`],
+      }
+    case "tool.start":
+      return {
+        title: "Tool started",
+        detail: text(data.tool),
+        meta: [text(data.callID)].filter(filled),
+      }
+    case "tool.finish":
+      return {
+        title: "Tool finished",
+        detail: text(data.title) ?? text(data.tool),
+        meta: [text(data.callID)].filter(filled),
+      }
+    case "tool.error":
+      return {
+        title: "Tool failed",
+        detail: text(data.error),
+        meta: [text(data.tool), text(data.callID)].filter(filled),
+      }
+    case "reasoning.start":
+      return { title: "Reasoning started", meta: [text(data.partID)].filter(filled) }
+    case "reasoning.end":
+      return { title: "Reasoning finished", meta: [`${count(data.chars) ?? 0} chars`] }
+    case "text.start":
+      return { title: "Text started", meta: [text(data.partID)].filter(filled) }
+    case "text.end":
+      return { title: "Text finished", meta: [`${count(data.chars) ?? 0} chars`] }
+    case "step.start":
+      return { title: "Step started", meta: [text(data.snapshot)].filter(filled) }
+    case "step.finish":
+      return {
+        title: "Step finished",
+        detail: text(data.reason),
+        meta: [`$${(count(data.cost) ?? 0).toFixed(4)}`],
+      }
+  }
+
+  return {
+    title: label(record.type),
+    meta: [],
   }
 }
 
-export function mergeLogs(current: AuditRecord[], incoming: AuditRecord[]) {
+export function mergeLogs(current: Log[], incoming: Log[]) {
   const logs = new Map(incoming.map((log) => [log.id, log]))
   for (const log of current) logs.set(log.id, log)
   return [...logs.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
@@ -94,7 +163,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   const [store, setStore] = createStore({
     loading: true,
     error: undefined as string | undefined,
-    logs: [] as AuditRecord[],
+    logs: [] as Log[],
   })
 
   const rows = createMemo(() => store.logs.map((log) => ({ log, summary: describeLog(log) })))
@@ -104,10 +173,10 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   const load = async () => {
     const run = ++seq
     setStore({ loading: true, error: undefined })
-    const logs: AuditRecord[] = []
+    const logs: Log[] = []
     let cursor: string | undefined
     while (true) {
-      const res = await sdk.client.audit.list({ sessionID: props.sessionID, cursor, limit })
+      const res = await sdk.client.session.log({ sessionID: props.sessionID, cursor, limit })
       const next = res.data ?? []
       logs.push(...next)
       if (next.length < limit) break
@@ -137,8 +206,8 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   })
 
   createEffect(() => {
-    const unsub = sdk.event.on("observability.audit.recorded", (event) => {
-      const log = event.properties
+    const unsub = sdk.event.on("session.log.created", (event) => {
+      const log = event.properties.info
       if (log.sessionID !== props.sessionID) return
       setStore("logs", reconcile(mergeLogs([log], store.logs)))
     })
@@ -195,7 +264,8 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                       <div class="min-w-0 -mt-0.5">
                         <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <div class="text-13-medium text-text-strong">{row.summary.title}</div>
-                          <div class="text-11-regular text-text-weaker">{label(row.log.event.type)}</div>
+                          <div class="text-11-regular text-text-weaker">{label(row.log.type)}</div>
+                          <div class="text-11-regular text-text-weaker">{row.log.level}</div>
                         </div>
                         <Show when={row.summary.detail}>
                           <div class="mt-1 text-12-regular text-text-base break-words">{row.summary.detail}</div>
@@ -216,7 +286,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                             {language.t("session.logs.details")}
                           </summary>
                           <pre class="mt-2 overflow-auto rounded bg-background-base p-2 text-11-regular text-text-base">
-                            {JSON.stringify(row.log.event, null, 2)}
+                            {JSON.stringify(row.log.data, null, 2)}
                           </pre>
                         </details>
                       </div>

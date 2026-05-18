@@ -173,6 +173,8 @@ import type {
   SessionInitErrors,
   SessionInitResponses,
   SessionListResponses,
+  SessionLogErrors,
+  SessionLogResponses,
   SessionMessageErrors,
   SessionMessageResponses,
   SessionMessagesErrors,
@@ -1656,6 +1658,40 @@ export class Session3 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionGetStatusResponses, SessionGetStatusErrors, ThrowOnError>({
       url: "/session/{sessionID}/status",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get session log
+   *
+   * Retrieve structured runtime log records for a session, sorted chronologically.
+   */
+  public log<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      cursor?: string
+      limit?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "cursor" },
+            { in: "query", key: "limit" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionLogResponses, SessionLogErrors, ThrowOnError>({
+      url: "/session/{sessionID}/log",
       ...options,
       ...params,
     })

@@ -8,6 +8,7 @@ import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
+import { SessionLog } from "../../session/log"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { SessionTimeline } from "../../session/timeline"
@@ -148,6 +149,46 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         await Session.get(sessionID)
         return c.json(SessionStatus.get(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/log",
+      describeRoute({
+        summary: "Get session log",
+        description: "Retrieve structured runtime log records for a session, sorted chronologically.",
+        tags: ["Session"],
+        operationId: "session.log",
+        responses: {
+          200: {
+            description: "Session log records",
+            content: {
+              "application/json": {
+                schema: resolver(SessionLog.Info.array()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.get.schema,
+        }),
+      ),
+      validator(
+        "query",
+        z.object({
+          cursor: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(5000).optional(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const query = c.req.valid("query")
+        await Session.get(sessionID)
+        await SessionLog.remove({ sessionID })
+        return c.json(await SessionLog.list({ sessionID, cursor: query.cursor, limit: query.limit }))
       },
     )
     .get(

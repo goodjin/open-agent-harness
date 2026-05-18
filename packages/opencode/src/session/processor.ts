@@ -6,6 +6,7 @@ import { Snapshot } from "@/snapshot"
 import { SessionSummary } from "./summary"
 import { Bus } from "@/bus"
 import { SessionRetry } from "./retry"
+import { SessionLog } from "./log"
 import { SessionStatus } from "./status"
 import type { Provider } from "@/provider/provider"
 import { LLM } from "./llm"
@@ -45,6 +46,14 @@ export namespace SessionProcessor {
       },
       async process(streamInput: LLM.StreamInput) {
         log.info("process")
+        const record = (level: SessionLog.Emit["level"], type: string, data: Record<string, unknown> = {}) =>
+          SessionLog.emit({
+            sessionID: input.sessionID,
+            messageID: input.assistantMessage.id,
+            level,
+            type,
+            data,
+          }).catch((err) => log.warn("session log failed", { err }))
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
@@ -52,6 +61,15 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            await record("info", "llm.start", {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+              agent: streamInput.agent.name,
+              mode: streamInput.agent.mode,
+              attempt,
+              messages: streamInput.messages.length,
+              tools: Object.keys(streamInput.tools).length,
+            })
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -78,6 +96,7 @@ export namespace SessionProcessor {
                   }
                   reasoningMap[value.id] = reasoningPart
                   await Session.updatePart(reasoningPart)
+                  await record("debug", "reasoning.start", { partID: reasoningPart.id, streamID: value.id })
                   break
 
                 case "reasoning-delta":
@@ -106,6 +125,11 @@ export namespace SessionProcessor {
                     }
                     if (value.providerMetadata) part.metadata = value.providerMetadata
                     await Session.updatePart(part)
+                    await record("debug", "reasoning.end", {
+                      partID: part.id,
+                      streamID: value.id,
+                      chars: part.text.length,
+                    })
                     delete reasoningMap[value.id]
                   }
                   break
@@ -125,6 +149,7 @@ export namespace SessionProcessor {
                     },
                   })
                   toolcalls[value.id] = part as MessageV2.ToolPart
+                  await record("debug", "tool.input.start", { partID: part.id, callID: value.id, tool: value.toolName })
                   break
 
                 case "tool-input-delta":
@@ -149,6 +174,12 @@ export namespace SessionProcessor {
                       metadata: value.providerMetadata,
                     })
                     toolcalls[value.toolCallId] = part as MessageV2.ToolPart
+                    await record("info", "tool.start", {
+                      partID: part.id,
+                      callID: value.toolCallId,
+                      tool: value.toolName,
+                      input: value.input,
+                    })
 
                     const parts = await MessageV2.parts(input.assistantMessage.id)
                     const lastThree = parts.slice(-DOOM_LOOP_THRESHOLD)
@@ -198,6 +229,14 @@ export namespace SessionProcessor {
                         attachments: value.output.attachments,
                       },
                     })
+                    await record("info", "tool.finish", {
+                      partID: match.id,
+                      callID: value.toolCallId,
+                      tool: match.tool,
+                      title: value.output.title,
+                      output: value.output.output,
+                      metadata: value.output.metadata,
+                    })
 
                     delete toolcalls[value.toolCallId]
                   }
@@ -219,6 +258,12 @@ export namespace SessionProcessor {
                         },
                       },
                     })
+                    await record("warn", "tool.error", {
+                      partID: match.id,
+                      callID: value.toolCallId,
+                      tool: match.tool,
+                      error: (value.error as Error).toString(),
+                    })
 
                     if (
                       value.error instanceof PermissionNext.RejectedError ||
@@ -231,12 +276,13 @@ export namespace SessionProcessor {
                   break
                 }
                 case "error":
+                  await record("error", "llm.error", { error: (value.error as Error).toString() })
                   throw value.error
 
                 case "start-step":
                   snapshot = await Snapshot.track()
                   const session = await Session.get(input.sessionID)
-                  await Session.updatePart({
+                  const step = await Session.updatePart({
                     id: PartID.ascending(),
                     messageID: input.assistantMessage.id,
                     sessionID: input.sessionID,
@@ -245,6 +291,7 @@ export namespace SessionProcessor {
                     permission: session.permission,
                     dsl_context: session.dsl_context,
                   })
+                  await record("debug", "step.start", { partID: step.id, snapshot })
                   break
 
                 case "finish-step":
@@ -256,7 +303,7 @@ export namespace SessionProcessor {
                   input.assistantMessage.finish = value.finishReason
                   input.assistantMessage.cost += usage.cost
                   input.assistantMessage.tokens = usage.tokens
-                  await Session.updatePart({
+                  const finish = await Session.updatePart({
                     id: PartID.ascending(),
                     reason: value.finishReason,
                     snapshot: await Snapshot.track(),
@@ -265,6 +312,12 @@ export namespace SessionProcessor {
                     type: "step-finish",
                     tokens: usage.tokens,
                     cost: usage.cost,
+                  })
+                  await record("info", "step.finish", {
+                    partID: finish.id,
+                    reason: value.finishReason,
+                    cost: usage.cost,
+                    tokens: usage.tokens,
                   })
                   await Session.updateMessage(input.assistantMessage)
                   if (snapshot) {
@@ -306,6 +359,7 @@ export namespace SessionProcessor {
                     metadata: value.providerMetadata,
                   }
                   await Session.updatePart(currentText)
+                  await record("debug", "text.start", { partID: currentText.id })
                   break
 
                 case "text-delta":
@@ -331,11 +385,17 @@ export namespace SessionProcessor {
                     }
                     if (value.providerMetadata) currentText.metadata = value.providerMetadata
                     await Session.updatePart(currentText)
+                    await record("debug", "text.end", { partID: currentText.id, chars: currentText.text.length })
                   }
                   currentText = undefined
                   break
 
                 case "finish":
+                  await record("info", "llm.finish", {
+                    finish: input.assistantMessage.finish,
+                    cost: input.assistantMessage.cost,
+                    tokens: input.assistantMessage.tokens,
+                  })
                   break
 
                 default:
@@ -363,6 +423,12 @@ export namespace SessionProcessor {
               if (retry !== undefined) {
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
+                await record("warn", "llm.retry", {
+                  attempt,
+                  delay,
+                  error: error.name,
+                  message: "message" in error.data ? error.data.message : error.name,
+                })
                 SessionStatus.set(input.sessionID, {
                   type: "retry",
                   attempt,
