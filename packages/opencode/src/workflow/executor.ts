@@ -78,6 +78,7 @@ export namespace WorkflowExecutor {
       total: item.workflow.steps.length,
       variables,
       attempts: {},
+      completed: [],
       time: {
         started: now,
         updated: now,
@@ -162,7 +163,7 @@ export namespace WorkflowExecutor {
     workflow: WorkflowParser.Definition,
     state: WorkflowState.Info,
     resumed?: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean },
-  ) {
+  ): Promise<WorkflowState.Info> {
     const steps = new Map(workflow.steps.map((step) => [step.id, step]))
     let current = state
 
@@ -199,7 +200,7 @@ export namespace WorkflowExecutor {
       }
       current = attempted.state
       const next = transition(workflow, step, current, (await bound(sessionID)).permission, resumed)
-      if (next.status === "complete") return complete(sessionID, current)
+      if (next.status === "complete") return finish(sessionID, workflow, current)
       if (next.status !== "next") return pause(sessionID, current, next)
       current = {
         ...current,
@@ -284,6 +285,7 @@ export namespace WorkflowExecutor {
     const next = {
       ...base,
       variables,
+      completed: [...new Set([...base.completed, step.id])],
     }
     await save(await bound(sessionID), next)
     return next
@@ -300,11 +302,16 @@ export namespace WorkflowExecutor {
     if (step.branches.length === 0) {
       const next = workflow.steps[step.index + 1]
       if (!next) return { status: "complete" as const }
+      if (state.completed.includes(next.id)) return { status: "complete" as const }
       return { status: "next" as const, step: next }
     }
     for (const [index, branch] of step.branches.entries()) {
       const gate = match(branch.guards, state, permission, index, resumed)
-      if (gate.status === "allow") return { status: "next" as const, step: steps.get(branch.step)! }
+      if (gate.status === "allow") {
+        const next = steps.get(branch.step)!
+        if (state.completed.includes(next.id)) return { status: "complete" as const }
+        return { status: "next" as const, step: next }
+      }
       if (gate.status !== "miss") return gate
     }
     return { status: "complete" as const }
@@ -401,7 +408,7 @@ export namespace WorkflowExecutor {
     if (policy.strategy === "retry" && (next.attempts[step.id] ?? 0) < policy.max_attempts) return next
     if (policy.strategy === "continue") {
       const item = workflow.steps[step.index + 1]
-      if (!item) return complete(sessionID, next)
+      if (!item) return finish(sessionID, workflow, next)
       const state: WorkflowState.Info = {
         ...next,
         current: item.id,
@@ -412,6 +419,35 @@ export namespace WorkflowExecutor {
       return state
     }
     return error(sessionID, next, reason)
+  }
+
+  async function finish(
+    sessionID: SessionID,
+    workflow: WorkflowParser.Definition,
+    state: WorkflowState.Info,
+  ): Promise<WorkflowState.Info> {
+    const step = pending(workflow, state)
+    if (!step) return complete(sessionID, state)
+    const next: WorkflowState.Info = {
+      ...state,
+      current: step.id,
+      step: step.index,
+      time: { ...state.time, updated: Date.now() },
+    }
+    await save(await bound(sessionID), next)
+    return advance(sessionID, workflow, next)
+  }
+
+  function pending(workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
+    const done = new Set(state.completed)
+    const steps = new Map(workflow.steps.map((step) => [step.id, step]))
+    for (const step of workflow.steps) {
+      if (!done.has(step.id)) continue
+      for (const id of step.verification?.must_pass ?? []) {
+        if (done.has(id)) continue
+        return steps.get(id)
+      }
+    }
   }
 
   function value(input: unknown, variables: Record<string, unknown>) {

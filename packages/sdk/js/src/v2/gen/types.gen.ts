@@ -1990,6 +1990,7 @@ export type WorkflowRun = {
   attempts?: {
     [key: string]: number
   }
+  completed?: Array<string>
   pause?: WorkflowPause
   error?: string
   checkpoint?: string

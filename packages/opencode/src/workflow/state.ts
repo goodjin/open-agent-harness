@@ -48,6 +48,7 @@ export namespace WorkflowState {
       total: z.number().int().min(1),
       variables: z.record(z.string(), z.unknown()).default({}),
       attempts: z.record(z.string(), z.number()).default({}),
+      completed: z.array(z.string()).default([]),
       pause: Pause.optional(),
       error: z.string().optional(),
       checkpoint: z.string().optional(),

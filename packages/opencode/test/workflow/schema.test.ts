@@ -19,13 +19,26 @@ describe("workflow schema", () => {
       steps: [
         {
           id: "read",
+          type: "research",
           guards: [{ type: "permission", permission: "read", pattern: "*" }],
           outputs: { done: true },
           next: "write",
         },
         {
           id: "write",
+          type: "implementation",
           mutates: true,
+          verification: {
+            required: true,
+            must_pass: ["test"],
+            commands: ["bun test"],
+            artifacts: ["test-report"],
+          },
+        },
+        {
+          id: "test",
+          type: "test",
+          outputs: { passed: true },
         },
       ],
     })
@@ -49,5 +62,78 @@ describe("workflow schema", () => {
         steps: [{ id: "same" }, { id: "same" }],
       }).success,
     ).toBe(false)
+  })
+
+  test("validates verification targets", () => {
+    expect(
+      Workflow.Definition.safeParse({
+        id: "missing-verification",
+        name: "Missing Verification",
+        steps: [
+          {
+            id: "build",
+            type: "implementation",
+            verification: {
+              required: true,
+              must_pass: ["test"],
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false)
+
+    expect(
+      Workflow.Definition.safeParse({
+        id: "wrong-target",
+        name: "Wrong Target",
+        steps: [
+          {
+            id: "build",
+            type: "implementation",
+            verification: {
+              required: true,
+              must_pass: ["docs"],
+            },
+          },
+          {
+            id: "docs",
+            type: "documentation",
+          },
+        ],
+      }).success,
+    ).toBe(false)
+
+    expect(
+      Workflow.Definition.safeParse({
+        id: "unjustified",
+        name: "Unjustified",
+        steps: [
+          {
+            id: "build",
+            type: "implementation",
+            verification: {
+              required: true,
+            },
+          },
+        ],
+      }).success,
+    ).toBe(false)
+
+    expect(
+      Workflow.Definition.safeParse({
+        id: "justified",
+        name: "Justified",
+        steps: [
+          {
+            id: "build",
+            type: "implementation",
+            verification: {
+              required: true,
+              justification: "Documentation-only change.",
+            },
+          },
+        ],
+      }).success,
+    ).toBe(true)
   })
 })
