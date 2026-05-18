@@ -136,7 +136,8 @@ export function SessionHeader() {
   const language = useLanguage()
   const sync = useSync()
   const terminal = useTerminal()
-  const { params, view } = useSessionLayout()
+  const { params, tabs, view } = useSessionLayout()
+  const tab = createMemo(() => tabs().active())
 
   const projectDirectory = createMemo(() => decode64(params.dir) ?? "")
   const project = createMemo(() => {
@@ -443,12 +444,15 @@ export function SessionHeader() {
                     <Button
                       variant="ghost"
                       class="group/review-toggle titlebar-icon w-8 h-6 p-0 box-border"
-                      onClick={() => view().reviewPanel.toggle()}
+                      onClick={() => {
+                        view().reviewPanel.open()
+                        tabs().setActive("review")
+                      }}
                       aria-label={language.t("command.review.toggle")}
-                      aria-expanded={view().reviewPanel.opened()}
+                      aria-expanded={tab() === "review"}
                       aria-controls="review-panel"
                     >
-                      <Icon size="small" name={view().reviewPanel.opened() ? "review-active" : "review"} />
+                      <Icon size="small" name={tab() === "review" ? "review-active" : "review"} />
                     </Button>
                   </TooltipKeybind>
 
@@ -459,18 +463,27 @@ export function SessionHeader() {
                     <Button
                       variant="ghost"
                       class="titlebar-icon w-8 h-6 p-0 box-border"
-                      onClick={() => layout.fileTree.toggle()}
+                      onClick={() => {
+                        layout.fileTree.open()
+                        tabs().setActive(layout.fileTree.tab())
+                      }}
                       aria-label={language.t("command.fileTree.toggle")}
-                      aria-expanded={layout.fileTree.opened()}
+                      aria-expanded={
+                        layout.fileTree.opened() && (tab() === "changes" || tab() === "all")
+                      }
                       aria-controls="file-tree-panel"
                     >
                       <div class="relative flex items-center justify-center size-4">
                         <Icon
                           size="small"
-                          name={layout.fileTree.opened() ? "file-tree-active" : "file-tree"}
+                          name={
+                            layout.fileTree.opened() && (tab() === "changes" || tab() === "all")
+                              ? "file-tree-active"
+                              : "file-tree"
+                          }
                           classList={{
-                            "text-icon-strong": layout.fileTree.opened(),
-                            "text-icon-weak": !layout.fileTree.opened(),
+                            "text-icon-strong": layout.fileTree.opened() && (tab() === "changes" || tab() === "all"),
+                            "text-icon-weak": !layout.fileTree.opened() || (tab() !== "changes" && tab() !== "all"),
                           }}
                         />
                       </div>

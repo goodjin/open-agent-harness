@@ -13,17 +13,21 @@ type TabsInput = {
   tabs: Accessor<Tabs>
   pathFromTab: (tab: string) => string | undefined
   normalizeTab: (tab: string) => string
+  session?: Accessor<boolean>
   review?: Accessor<boolean>
   hasReview?: Accessor<boolean>
   logs?: Accessor<boolean>
+  files?: Accessor<boolean>
 }
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
 
 export const createSessionTabs = (input: TabsInput) => {
+  const session = input.session ?? (() => false)
   const review = input.review ?? (() => false)
   const hasReview = input.hasReview ?? (() => false)
   const logs = input.logs ?? (() => false)
+  const files = input.files ?? (() => false)
   const contextOpen = createMemo(() => input.tabs().active() === "context" || input.tabs().all().includes("context"))
   const openedTabs = createMemo(
     () => {
@@ -32,7 +36,8 @@ export const createSessionTabs = (input: TabsInput) => {
         .tabs()
         .all()
         .flatMap((tab) => {
-          if (tab === "context" || tab === "review" || tab === "logs") return []
+          if (tab === "session" || tab === "context" || tab === "review" || tab === "logs") return []
+          if ((tab === "changes" || tab === "all") && files()) return []
           const value = input.pathFromTab(tab) ? input.normalizeTab(tab) : tab
           if (seen.has(value)) return []
           seen.add(value)
@@ -44,11 +49,14 @@ export const createSessionTabs = (input: TabsInput) => {
   )
   const activeTab = createMemo(() => {
     const active = input.tabs().active()
+    if (active === "session" && session()) return active
     if (active === "context") return active
     if (active === "review" && review()) return active
     if (active === "logs" && logs()) return active
+    if ((active === "changes" || active === "all") && files()) return active
     if (active && input.pathFromTab(active)) return input.normalizeTab(active)
 
+    if (session()) return "session"
     const first = openedTabs()[0]
     if (first) return first
     if (contextOpen()) return "context"

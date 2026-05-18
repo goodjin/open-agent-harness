@@ -178,4 +178,25 @@ describe("createSessionTabs", () => {
       dispose()
     })
   })
+
+  test("uses session as the default unified tab", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: ["file://src/a.ts", "session"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+        session: () => true,
+      })
+
+      expect(result.activeTab()).toBe("session")
+      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
+      expect(result.activeFileTab()).toBeUndefined()
+      dispose()
+    })
+  })
 })

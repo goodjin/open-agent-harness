@@ -69,8 +69,10 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
+    session: actions.review,
     review: actions.review,
     hasReview,
+    files: actions.review,
   })
   const activeFileTab = tabState.activeFileTab
   const closableTab = tabState.closableTab
@@ -305,13 +307,19 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         id: "review.toggle",
         title: language.t("command.review.toggle"),
         keybind: "mod+shift+r",
-        onSelect: () => view().reviewPanel.toggle(),
+        onSelect: () => {
+          view().reviewPanel.open()
+          tabs().setActive("review")
+        },
       }),
       viewCommand({
         id: "fileTree.toggle",
         title: language.t("command.fileTree.toggle"),
         keybind: "mod+\\",
-        onSelect: () => layout.fileTree.toggle(),
+        onSelect: () => {
+          layout.fileTree.open()
+          tabs().setActive(layout.fileTree.tab())
+        },
       }),
       viewCommand({
         id: "input.focus",
