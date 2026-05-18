@@ -11,7 +11,7 @@ const log = Log.create({ service: "agent-loader" })
  * Built-in default agent - always available regardless of how the package is distributed.
  * Used as a fallback when no agents are found from any directory.
  */
-const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
+export const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
   id: "default",
   name: "Default Agent",
   dir: "<builtin>",

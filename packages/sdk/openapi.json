@@ -2458,6 +2458,98 @@
         ]
       }
     },
+    "/session/descendants": {
+      "post": {
+        "operationId": "session.descendantsBatch",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Get session descendants for multiple roots",
+        "tags": [
+          "Session"
+        ],
+        "description": "Retrieve all nested child sessions for the specified parent sessions in one directory scan.",
+        "responses": {
+          "200": {
+            "description": "List of descendants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Session"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    }
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendantsBatch({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/status": {
       "get": {
         "operationId": "session.getStatus",
@@ -2756,7 +2848,7 @@
         "tags": [
           "Session"
         ],
-        "description": "Retrieve all child sessions that were forked from the specified parent session.",
+        "description": "Retrieve direct child sessions for the specified parent session.",
         "responses": {
           "200": {
             "description": "List of children",
@@ -2796,6 +2888,85 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/descendants": {
+      "get": {
+        "operationId": "session.descendants",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get session descendants",
+        "tags": [
+          "Session"
+        ],
+        "description": "Retrieve all nested child sessions for the specified parent session.",
+        "responses": {
+          "200": {
+            "description": "List of descendants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Session"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendants({\n  ...\n})"
           }
         ]
       }
@@ -6648,6 +6819,423 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.callback({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/agent/manage": {
+      "get": {
+        "operationId": "agent.manage.list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List manageable agents",
+        "description": "List all agent templates and management state, including disabled agents.",
+        "responses": {
+          "200": {
+            "description": "Manageable agents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentManageInfo"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.list({\n  ...\n})"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "agent.manage.create",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Create an agent template",
+        "description": "Create a user or project agent template.",
+        "responses": {
+          "200": {
+            "description": "Created agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManageInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentManageSaveInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.create({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/agent/manage/validate": {
+      "post": {
+        "operationId": "agent.manage.validate",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Validate an agent template",
+        "description": "Validate agent template metadata before saving.",
+        "responses": {
+          "200": {
+            "description": "Validation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManageValidateOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentManageValidateInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.validate({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/agent/manage/{id}": {
+      "get": {
+        "operationId": "agent.manage.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get manageable agent",
+        "description": "Get one agent template with management state.",
+        "responses": {
+          "200": {
+            "description": "Manageable agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManageInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.get({\n  ...\n})"
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "agent.manage.update",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Update an agent template",
+        "description": "Update a user or project agent template, creating an override for package templates.",
+        "responses": {
+          "200": {
+            "description": "Updated agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManageInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentManagePatchInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.update({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/agent/manage/{id}/state": {
+      "patch": {
+        "operationId": "agent.manage.state",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Update agent state",
+        "description": "Enable or disable an agent through config overlay state.",
+        "responses": {
+          "200": {
+            "description": "Updated agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentManageInfo"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentManageStateInput"
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.state({\n  ...\n})"
           }
         ]
       }
@@ -13234,6 +13822,13 @@
               }
             }
           },
+          "plugin": {
+            "description": "Plugins configured in opencode.json",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "snapshot": {
             "description": "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
             "type": "boolean"
@@ -15416,6 +16011,1080 @@
           "url",
           "method",
           "instructions"
+        ]
+      },
+      "AgentManageEffective": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "primary",
+              "subagent",
+              "all"
+            ]
+          },
+          "entry": {
+            "type": "object",
+            "properties": {
+              "primary": {
+                "default": true,
+                "type": "boolean"
+              },
+              "delegable": {
+                "default": true,
+                "type": "boolean"
+              },
+              "mentionable": {
+                "default": true,
+                "type": "boolean"
+              },
+              "default": {
+                "default": true,
+                "type": "boolean"
+              },
+              "hidden": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "capability": {
+            "type": "object",
+            "properties": {
+              "purpose": {
+                "default": "general",
+                "type": "string",
+                "minLength": 1
+              },
+              "tags": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "cost": {
+                "default": "medium",
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "writes": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "runner": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "workflow"
+            ]
+          },
+          "hidden": {
+            "type": "boolean"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "model": {
+            "type": "string"
+          },
+          "variant": {
+            "type": "string"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#[0-9a-fA-F]{6}$"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "secondary",
+                  "accent",
+                  "success",
+                  "warning",
+                  "error",
+                  "info"
+                ]
+              }
+            ]
+          },
+          "permission": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "name",
+          "description",
+          "mode",
+          "entry",
+          "capability",
+          "runner",
+          "hidden",
+          "disabled"
+        ]
+      },
+      "AgentManageDiagnostic": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "package",
+              "user",
+              "project"
+            ]
+          },
+          "dir": {
+            "type": "string"
+          },
+          "field": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "message"
+        ]
+      },
+      "AgentManageInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "package",
+              "user",
+              "project"
+            ]
+          },
+          "editable": {
+            "type": "boolean"
+          },
+          "dir": {
+            "type": "string"
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "Unique identifier for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "description": "Role definition for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "description": "Description of what the agent does",
+                "type": "string",
+                "minLength": 1
+              },
+              "model_preference": {
+                "description": "Preferred model configuration",
+                "type": "object",
+                "properties": {
+                  "providerID": {
+                    "description": "Provider ID (e.g., anthropic, openai)",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelID": {
+                    "description": "Model ID (e.g., claude-sonnet-4-20250514)",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "providerID",
+                  "modelID"
+                ],
+                "additionalProperties": false
+              },
+              "mode": {
+                "description": "How the agent can be invoked at runtime",
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "subagent",
+                  "all"
+                ]
+              },
+              "entry": {
+                "description": "Where the agent can be used",
+                "type": "object",
+                "properties": {
+                  "primary": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "delegable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "mentionable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "default": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "capability": {
+                "description": "What the agent is good for",
+                "default": {
+                  "purpose": "general",
+                  "tags": [],
+                  "cost": "medium",
+                  "writes": true
+                },
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "default": "general",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tags": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "cost": {
+                    "default": "medium",
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "writes": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "hidden": {
+                "description": "Whether to hide the agent from interactive pickers",
+                "default": false,
+                "type": "boolean"
+              },
+              "runner": {
+                "description": "Which session runtime handles this agent",
+                "default": "chat",
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "workflow"
+                ]
+              },
+              "workflow_mode": {
+                "description": "How the agent executes workflows",
+                "default": "auto",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual",
+                  "supervision"
+                ]
+              },
+              "allowed_tools": {
+                "description": "List of tools the agent is allowed to use",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "denied_tools": {
+                "description": "List of tools the agent is denied from using",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "inherit_permissions": {
+                "description": "Whether to inherit permissions from parent agent",
+                "default": true,
+                "type": "boolean"
+              },
+              "permission_mode": {
+                "description": "Permission mode for the agent",
+                "default": "strict",
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "lax",
+                  "custom"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "description"
+            ],
+            "additionalProperties": false
+          },
+          "identity": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "string"
+          },
+          "effective": {
+            "$ref": "#/components/schemas/AgentManageEffective"
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentManageDiagnostic"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "disabled",
+          "source",
+          "editable",
+          "meta",
+          "identity",
+          "rules",
+          "effective",
+          "diagnostics"
+        ]
+      },
+      "AgentManageValidateOutput": {
+        "type": "object",
+        "properties": {
+          "valid": {
+            "type": "boolean"
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "Unique identifier for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "description": "Role definition for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "description": "Description of what the agent does",
+                "type": "string",
+                "minLength": 1
+              },
+              "model_preference": {
+                "description": "Preferred model configuration",
+                "type": "object",
+                "properties": {
+                  "providerID": {
+                    "description": "Provider ID (e.g., anthropic, openai)",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelID": {
+                    "description": "Model ID (e.g., claude-sonnet-4-20250514)",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "providerID",
+                  "modelID"
+                ],
+                "additionalProperties": false
+              },
+              "mode": {
+                "description": "How the agent can be invoked at runtime",
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "subagent",
+                  "all"
+                ]
+              },
+              "entry": {
+                "description": "Where the agent can be used",
+                "type": "object",
+                "properties": {
+                  "primary": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "delegable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "mentionable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "default": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "capability": {
+                "description": "What the agent is good for",
+                "default": {
+                  "purpose": "general",
+                  "tags": [],
+                  "cost": "medium",
+                  "writes": true
+                },
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "default": "general",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tags": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "cost": {
+                    "default": "medium",
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "writes": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "hidden": {
+                "description": "Whether to hide the agent from interactive pickers",
+                "default": false,
+                "type": "boolean"
+              },
+              "runner": {
+                "description": "Which session runtime handles this agent",
+                "default": "chat",
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "workflow"
+                ]
+              },
+              "workflow_mode": {
+                "description": "How the agent executes workflows",
+                "default": "auto",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual",
+                  "supervision"
+                ]
+              },
+              "allowed_tools": {
+                "description": "List of tools the agent is allowed to use",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "denied_tools": {
+                "description": "List of tools the agent is denied from using",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "inherit_permissions": {
+                "description": "Whether to inherit permissions from parent agent",
+                "default": true,
+                "type": "boolean"
+              },
+              "permission_mode": {
+                "description": "Permission mode for the agent",
+                "default": "strict",
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "lax",
+                  "custom"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "description"
+            ],
+            "additionalProperties": false
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentManageDiagnostic"
+            }
+          }
+        },
+        "required": [
+          "valid",
+          "diagnostics"
+        ]
+      },
+      "AgentManageValidateInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "project",
+            "type": "string",
+            "enum": [
+              "user",
+              "project"
+            ]
+          },
+          "action": {
+            "default": "update",
+            "type": "string",
+            "enum": [
+              "create",
+              "update"
+            ]
+          },
+          "meta": {},
+          "identity": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "AgentManageSaveInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "project",
+            "type": "string",
+            "enum": [
+              "user",
+              "project"
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "Unique identifier for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "description": "Role definition for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "description": "Description of what the agent does",
+                "type": "string",
+                "minLength": 1
+              },
+              "model_preference": {
+                "description": "Preferred model configuration",
+                "type": "object",
+                "properties": {
+                  "providerID": {
+                    "description": "Provider ID (e.g., anthropic, openai)",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelID": {
+                    "description": "Model ID (e.g., claude-sonnet-4-20250514)",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "providerID",
+                  "modelID"
+                ],
+                "additionalProperties": false
+              },
+              "mode": {
+                "description": "How the agent can be invoked at runtime",
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "subagent",
+                  "all"
+                ]
+              },
+              "entry": {
+                "description": "Where the agent can be used",
+                "type": "object",
+                "properties": {
+                  "primary": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "delegable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "mentionable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "default": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "capability": {
+                "description": "What the agent is good for",
+                "default": {
+                  "purpose": "general",
+                  "tags": [],
+                  "cost": "medium",
+                  "writes": true
+                },
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "default": "general",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tags": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "cost": {
+                    "default": "medium",
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "writes": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "hidden": {
+                "description": "Whether to hide the agent from interactive pickers",
+                "default": false,
+                "type": "boolean"
+              },
+              "runner": {
+                "description": "Which session runtime handles this agent",
+                "default": "chat",
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "workflow"
+                ]
+              },
+              "workflow_mode": {
+                "description": "How the agent executes workflows",
+                "default": "auto",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual",
+                  "supervision"
+                ]
+              },
+              "allowed_tools": {
+                "description": "List of tools the agent is allowed to use",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "denied_tools": {
+                "description": "List of tools the agent is denied from using",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "inherit_permissions": {
+                "description": "Whether to inherit permissions from parent agent",
+                "default": true,
+                "type": "boolean"
+              },
+              "permission_mode": {
+                "description": "Permission mode for the agent",
+                "default": "strict",
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "lax",
+                  "custom"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "description"
+            ],
+            "additionalProperties": false
+          },
+          "identity": {
+            "default": "",
+            "type": "string"
+          },
+          "rules": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "meta"
+        ]
+      },
+      "AgentManagePatchInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "project",
+            "type": "string",
+            "enum": [
+              "user",
+              "project"
+            ]
+          },
+          "meta": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "description": "Unique identifier for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "role": {
+                "description": "Role definition for the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "description": {
+                "description": "Description of what the agent does",
+                "type": "string",
+                "minLength": 1
+              },
+              "model_preference": {
+                "description": "Preferred model configuration",
+                "type": "object",
+                "properties": {
+                  "providerID": {
+                    "description": "Provider ID (e.g., anthropic, openai)",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "modelID": {
+                    "description": "Model ID (e.g., claude-sonnet-4-20250514)",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "providerID",
+                  "modelID"
+                ],
+                "additionalProperties": false
+              },
+              "mode": {
+                "description": "How the agent can be invoked at runtime",
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "subagent",
+                  "all"
+                ]
+              },
+              "entry": {
+                "description": "Where the agent can be used",
+                "type": "object",
+                "properties": {
+                  "primary": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "delegable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "mentionable": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "default": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "capability": {
+                "description": "What the agent is good for",
+                "default": {
+                  "purpose": "general",
+                  "tags": [],
+                  "cost": "medium",
+                  "writes": true
+                },
+                "type": "object",
+                "properties": {
+                  "purpose": {
+                    "default": "general",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "tags": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "cost": {
+                    "default": "medium",
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "writes": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "hidden": {
+                "description": "Whether to hide the agent from interactive pickers",
+                "default": false,
+                "type": "boolean"
+              },
+              "runner": {
+                "description": "Which session runtime handles this agent",
+                "default": "chat",
+                "type": "string",
+                "enum": [
+                  "chat",
+                  "workflow"
+                ]
+              },
+              "workflow_mode": {
+                "description": "How the agent executes workflows",
+                "default": "auto",
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "manual",
+                  "supervision"
+                ]
+              },
+              "allowed_tools": {
+                "description": "List of tools the agent is allowed to use",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "denied_tools": {
+                "description": "List of tools the agent is denied from using",
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "inherit_permissions": {
+                "description": "Whether to inherit permissions from parent agent",
+                "default": true,
+                "type": "boolean"
+              },
+              "permission_mode": {
+                "description": "Permission mode for the agent",
+                "default": "strict",
+                "type": "string",
+                "enum": [
+                  "strict",
+                  "lax",
+                  "custom"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "role",
+              "description"
+            ],
+            "additionalProperties": false
+          },
+          "identity": {
+            "type": "string"
+          },
+          "rules": {
+            "type": "string"
+          }
+        }
+      },
+      "AgentManageStateInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "default": "project",
+            "type": "string",
+            "enum": [
+              "user",
+              "project"
+            ]
+          },
+          "disabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "disabled"
         ]
       },
       "Symbol": {

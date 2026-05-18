@@ -1,0 +1,41 @@
+{
+  "task_id": "feature-mod-18-workflow-runner-agent",
+  "status": "completed",
+  "specialist": "task-executor-work",
+  "session_id": "codex-workflow-runner-agent",
+  "started_at": "2026-05-18T00:00:00Z",
+  "completed_at": "2026-05-18T00:00:00Z",
+  "scope": {
+    "goal": "Add the first workflow-specific orchestration agent for durable workflow DAG DSL generation and decision handling.",
+    "included": [
+      "Create packaged workflow-runner agent template.",
+      "Document Workflow Runner responsibilities, boundaries, and first-version workflow DAG scope.",
+      "Link Workflow Runner design from the workflow DSL design and implementation plan.",
+      "Add loader coverage so packaged agent target semantics include workflow-runner."
+    ],
+    "excluded": [
+      "Session processor runner dispatch, tracked by feature-mod-19-workflow-runtime-runner.",
+      "Workflow runtime DAG execution rewrite.",
+      "Generic DSL runtime design."
+    ]
+  },
+  "evidence": {
+    "files_changed": [
+      "packages/opencode/config/agents/workflow-runner/meta.json",
+      "packages/opencode/config/agents/workflow-runner/identity.md",
+      "packages/opencode/config/agents/workflow-runner/rules.md",
+      "packages/opencode/test/agent/loader.test.ts",
+      "docs/agent-rewrite/00-revised-dev-plan.md",
+      "docs/agent-rewrite/02-agent-author-schema.md",
+      "docs/agent-rewrite/06-workflow-dsl-design.md",
+      "docs/agent-rewrite/07-workflow-dsl-implementation-plan.md",
+      "docs/agent-rewrite/08-workflow-runner-agent.md",
+      "docs/agent-rewrite/state/feature-mod-18-workflow-runner-agent.json"
+    ],
+    "description": "Implemented the Workflow Runner agent template and aligned documentation with the workflow DAG DSL design."
+  },
+  "verification": {
+    "focused_tests": "bun test test/agent/schema.test.ts test/agent/loader.test.ts --timeout 30000",
+    "result": "passed"
+  }
+}

@@ -56,4 +56,26 @@ describe("trimSessions", () => {
       "root-2",
     ])
   })
+
+  test("keeps full descendant closure for retained sessions", () => {
+    const now = 1_000_000
+    const list = [
+      session({ id: "root", created: now - 1000 }),
+      session({ id: "z-root", created: now - 30_000_000 }),
+      session({ id: "child", parentID: "root", created: now - 20_000_000 }),
+      session({ id: "grand", parentID: "child", created: now - 20_000_000 }),
+      session({ id: "perm", parentID: "z-root", created: now - 20_000_000 }),
+      session({ id: "perm-grand", parentID: "perm", created: now - 20_000_000 }),
+    ]
+
+    const result = trimSessions(list, {
+      limit: 1,
+      permission: {
+        perm: [{ id: "perm-1" } as PermissionRequest],
+      },
+      now,
+    })
+
+    expect(result.map((x) => x.id)).toEqual(["child", "grand", "perm", "perm-grand", "root"])
+  })
 })

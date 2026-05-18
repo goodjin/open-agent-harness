@@ -40,7 +40,7 @@ describe("app session cache", () => {
       permission: Record<string, PermissionRequest[] | undefined>
       question: Record<string, QuestionRequest[] | undefined>
     } = {
-      session_status: { ses_1: { type: "busy" } as SessionStatus },
+      session_status: { ses_1: { type: "running" } as SessionStatus },
       session_diff: { ses_1: [] },
       todo: { ses_1: [] as Todo[] },
       message: {},

@@ -46,11 +46,35 @@ export function trimSessions(
   const recent = takeRecentSessions(roots.slice(limit), SESSION_RECENT_LIMIT, cutoff)
   const keepRoots = [...base, ...recent]
   const keepRootIds = new Set(keepRoots.map((s) => s.id))
-  const keepChildren = children.filter((s) => {
-    if (s.parentID && keepRootIds.has(s.parentID)) return true
-    const perms = options.permission[s.id] ?? []
-    if (perms.length > 0) return true
-    return sessionUpdatedAt(s) > cutoff
-  })
-  return [...keepRoots, ...keepChildren].sort((a, b) => cmp(a.id, b.id))
+  const by = children.reduce((acc, session) => {
+    if (!session.parentID) return acc
+    const list = acc.get(session.parentID)
+    if (list) {
+      list.push(session)
+      return acc
+    }
+    acc.set(session.parentID, [session])
+    return acc
+  }, new Map<string, Session[]>())
+  const keep = new Set(keepRootIds)
+  const add = (id: string) => {
+    for (const session of by.get(id) ?? []) {
+      if (keep.has(session.id)) continue
+      keep.add(session.id)
+      add(session.id)
+    }
+  }
+  for (const id of keepRootIds) add(id)
+  for (const session of children) {
+    if (session.parentID && keep.has(session.parentID)) {
+      keep.add(session.id)
+      add(session.id)
+      continue
+    }
+    const perms = options.permission[session.id] ?? []
+    if (perms.length === 0 && sessionUpdatedAt(session) <= cutoff) continue
+    keep.add(session.id)
+    add(session.id)
+  }
+  return all.filter((s) => keep.has(s.id)).sort((a, b) => cmp(a.id, b.id))
 }

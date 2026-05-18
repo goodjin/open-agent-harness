@@ -30,7 +30,7 @@ import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./global-sync/event-reducer"
 import { createRefreshQueue } from "./global-sync/queue"
 import { clearSessionPrefetchDirectory } from "./global-sync/session-prefetch"
-import { estimateRootSessionTotal, loadRootSessionsWithFallback } from "./global-sync/session-load"
+import { estimateRootSessionTotal, loadSessionTreeWithFallback } from "./global-sync/session-load"
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
@@ -60,7 +60,7 @@ function createGlobalSync() {
   const sdkCache = new Map<string, OpencodeClient>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
-  const sessionMeta = new Map<string, { limit: number }>()
+  const sessionMeta = new Map<string, { limit: number; roots: Set<string> }>()
 
   const [projectCache, setProjectCache, projectInit] = persisted(
     Persist.global("globalSync.project", ["globalSync.project.v1"]),
@@ -199,18 +199,26 @@ function createGlobalSync() {
     }
 
     const limit = Math.max(store.limit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
-    const promise = loadRootSessionsWithFallback({
+    const promise = loadSessionTreeWithFallback({
       directory,
       limit,
+      loaded: meta?.roots,
       list: (query) => globalSDK.client.session.list(query),
+      descendants: (query) =>
+        globalSDK.client.session.descendantsBatch({
+          directory: query.directory,
+          ids: query.ids,
+        }),
     })
       .then((x) => {
         const nonArchived = (x.data ?? [])
           .filter((s) => !!s?.id)
           .filter((s) => !s.time?.archived)
           .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        const roots = nonArchived.filter((s) => !s.parentID)
         const limit = store.limit
-        const childSessions = store.session.filter((s) => !!s.parentID)
+        const ids = new Set(nonArchived.map((s) => s.id))
+        const childSessions = store.session.filter((s) => !!s.parentID && !ids.has(s.id))
         const sessions = trimSessions([...nonArchived, ...childSessions], {
           limit,
           permission: store.permission,
@@ -218,14 +226,14 @@ function createGlobalSync() {
         setStore(
           "sessionTotal",
           estimateRootSessionTotal({
-            count: nonArchived.length,
+            count: roots.length,
             limit: x.limit,
             limited: x.limited,
           }),
         )
         setStore("session", reconcile(sessions, { key: "id" }))
         cleanupDroppedSessionCaches(store, setStore, sessions, setSessionTodo)
-        sessionMeta.set(directory, { limit })
+        sessionMeta.set(directory, { limit, roots: new Set(x.ids) })
       })
       .catch((err) => {
         console.error("Failed to load sessions", err)

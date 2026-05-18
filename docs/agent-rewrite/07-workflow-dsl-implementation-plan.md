@@ -2,6 +2,8 @@
 
 This plan implements `docs/agent-rewrite/06-workflow-dsl-design.md` in small phases.
 
+The Workflow Runner agent behavior is defined in `docs/agent-rewrite/08-workflow-runner-agent.md`.
+
 ## Phase 1: Durable DAG Schema
 
 Goal: introduce the target data model without changing all execution behavior at once.
@@ -11,13 +13,16 @@ Tasks:
 - add workflow run schema with `nodes` instead of only linear `steps`
 - add node state schema for `nodes/<id>.json`
 - add decision schema for `decisions/*.json`
+- add verification schema for implementation nodes, including `required`, `must_pass`, and expected commands/artifacts
 - add status enums and transition validation
 - add DAG validation for duplicate ids, missing dependencies, and cycles
+- validate that every `verification.must_pass` reference points to a `test`, `review`, or `gate` node
 - keep existing step workflow support behind compatibility parsing
 
 Verification:
 
 - schema tests cover valid workflow, invalid node refs, cycles, duplicate ids, and invalid transitions
+- schema tests reject verification references to missing or non-verification nodes
 - compatibility tests prove existing workflow fixtures still parse or produce a clear migration error
 
 ## Phase 2: Durable Run Materialization
@@ -48,14 +53,17 @@ Tasks:
 - schedule serial and parallel-ready nodes through runtime limits
 - update node files for `ready`, `running`, and terminal states
 - cancel or pause downstream nodes when required dependencies fail
+- prevent workflow completion while required test, review, or gate nodes are incomplete
+- route failed verification nodes to deterministic retry or Decision Agent handling
 - keep permission guards as runtime checks
 
 Verification:
 
 - integration test runs a linear DAG
 - integration test identifies parallel-ready nodes
-- scheduler tests prove DSL does not control concurrency
+- scheduler tests prove workflow DSL does not control concurrency
 - failure tests pause affected downstream nodes
+- gate tests prove implementation success alone does not complete a workflow when required verification is pending
 
 ## Phase 4: Agent Routing
 
@@ -77,12 +85,13 @@ Verification:
 
 ## Phase 5: Planner And Worker Contracts
 
-Goal: make agent behavior match the DSL boundary.
+Goal: make agent behavior match the workflow DSL boundary.
 
 Tasks:
 
 - add Planner rules for when to generate workflow
 - add Planner rules for required workflow intent fields
+- add Planner rules that implementation work with behavior changes must include separate test/review/gate nodes or explicitly justify why verification is not required
 - add Worker rules for node-only execution
 - add Worker result protocol for `success`, `failed`, `blocked`, and `needs_replan`
 - expose assigned node file paths to worker sessions
@@ -90,10 +99,32 @@ Tasks:
 Verification:
 
 - prompt snapshot tests include Planner workflow rules
+- prompt snapshot tests include verification node generation rules for implementation tasks
 - prompt snapshot tests confirm Worker rules do not include workflow generation instructions
 - worker integration test updates only the assigned node file
 
-## Phase 6: Decision Handling
+## Phase 6: Runtime Runner Dispatch
+
+Goal: route only workflow-specific agents through a workflow runner while all other agents keep the existing chat/session loop.
+
+Tasks:
+
+- add an explicit runtime runner discriminator for agents, such as `runner: "chat" | "workflow"`
+- default all existing agents to the current chat runner
+- map `workflow-runner` to the workflow runner
+- update session processing to dispatch by runner without changing normal agent behavior
+- make the workflow runner decide whether workflow mode is warranted and fall back to chat behavior when it is not
+- pass workflow runner requests through workflow create/validate/start/status operations instead of free-form file mutation
+- keep worker node execution on the existing chat runner with a node assignment prompt
+
+Verification:
+
+- session tests prove ordinary agents still use the existing chat path
+- workflow-runner tests prove the workflow runner path is selected
+- fallback tests prove workflow-runner can answer normally when workflow mode is not warranted
+- worker invocation tests prove delegated workers do not receive workflow generation rules
+
+## Phase 7: Decision Handling
 
 Goal: let Planner act as the first Decision Agent for failures and blockers.
 
@@ -112,7 +143,7 @@ Verification:
 - invalid decision leaves workflow in `needs_decision`
 - abort decision cancels unscheduled downstream nodes
 
-## Phase 7: UI And API
+## Phase 8: UI And API
 
 Goal: expose durable workflow runs and node progress.
 

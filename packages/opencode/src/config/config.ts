@@ -948,6 +948,7 @@ export namespace Config {
           ignore: z.array(z.string()).optional(),
         })
         .optional(),
+      plugin: z.array(z.string()).optional().describe("Plugins configured in opencode.json"),
       snapshot: z
         .boolean()
         .optional()

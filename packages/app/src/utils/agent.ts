@@ -1,8 +1,32 @@
+import type { Agent } from "@opencode-ai/sdk/v2"
+
+type Entry = {
+  mode?: Agent["mode"]
+  hidden?: boolean
+  entry?: Agent["entry"]
+}
+
 const defaults: Record<string, string> = {
   ask: "var(--icon-agent-ask-base)",
   build: "var(--icon-agent-build-base)",
   docs: "var(--icon-agent-docs-base)",
   plan: "var(--icon-agent-plan-base)",
+}
+
+export function agentHidden(item: Entry) {
+  return item.entry?.hidden === true || item.hidden === true
+}
+
+export function agentPrimary(item: Entry) {
+  return (item.entry?.primary ?? item.mode !== "subagent") && !agentHidden(item)
+}
+
+export function agentMentionable(item: Entry) {
+  return (item.entry?.mentionable ?? item.mode !== "primary") && !agentHidden(item)
+}
+
+export function agentDelegable(item: Entry) {
+  return (item.entry?.delegable ?? item.mode !== "primary") && !agentHidden(item)
 }
 
 export function agentColor(name: string, custom?: string) {

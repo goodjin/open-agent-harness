@@ -121,10 +121,16 @@ export type RootLoadArgs = {
   list: (query: { directory: string; roots: true; limit?: number }) => Promise<{ data?: Session[] }>
 }
 
+export type TreeLoadArgs = RootLoadArgs & {
+  loaded?: Set<string>
+  descendants: (query: { directory: string; ids: string[] }) => Promise<{ data?: Session[] }>
+}
+
 export type RootLoadResult = {
   data?: Session[]
   limit: number
   limited: boolean
+  ids: string[]
 }
 
 export const MAX_DIR_STORES = 30

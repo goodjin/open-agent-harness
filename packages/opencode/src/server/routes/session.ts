@@ -94,6 +94,32 @@ export const SessionRoutes = lazy(() =>
         return c.json(result)
       },
     )
+    .post(
+      "/descendants",
+      describeRoute({
+        summary: "Get session descendants for multiple roots",
+        tags: ["Session"],
+        description: "Retrieve all nested child sessions for the specified parent sessions in one directory scan.",
+        operationId: "session.descendantsBatch",
+        responses: {
+          200: {
+            description: "List of descendants",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info.array()),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("json", Session.descendantsBatch.schema),
+      async (c) => {
+        const body = c.req.valid("json")
+        const session = await Session.descendantsBatch(body)
+        return c.json(session)
+      },
+    )
     .get(
       "/:sessionID/status",
       describeRoute({
@@ -161,7 +187,7 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Get session children",
         tags: ["Session"],
-        description: "Retrieve all child sessions that were forked from the specified parent session.",
+        description: "Retrieve direct child sessions for the specified parent session.",
         operationId: "session.children",
         responses: {
           200: {
@@ -184,6 +210,37 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const session = await Session.children(sessionID)
+        return c.json(session)
+      },
+    )
+    .get(
+      "/:sessionID/descendants",
+      describeRoute({
+        summary: "Get session descendants",
+        tags: ["Session"],
+        description: "Retrieve all nested child sessions for the specified parent session.",
+        operationId: "session.descendants",
+        responses: {
+          200: {
+            description: "List of descendants",
+            content: {
+              "application/json": {
+                schema: resolver(Session.Info.array()),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.descendants.schema,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const session = await Session.descendants(sessionID)
         return c.json(session)
       },
     )
@@ -1083,9 +1140,12 @@ export const SessionRoutes = lazy(() =>
           sessionID: params.sessionID,
           reply: c.req.valid("json").response,
         })
-        if (result.type === "not_found") throw new NotFoundError({ message: `Permission request not found: ${params.permissionID}` })
+        if (result.type === "not_found")
+          throw new NotFoundError({ message: `Permission request not found: ${params.permissionID}` })
         if (result.type === "forbidden") {
-          throw new ForbiddenError({ message: `Permission request does not belong to the current session or workspace` })
+          throw new ForbiddenError({
+            message: `Permission request does not belong to the current session or workspace`,
+          })
         }
         return c.json(true)
       },

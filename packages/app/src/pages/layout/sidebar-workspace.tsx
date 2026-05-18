@@ -17,7 +17,13 @@ import { type LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
-import { childMapByParent, sortedRootSessions } from "./helpers"
+import {
+  childMapByParent,
+  effectiveSessionExpansion,
+  sessionLineage,
+  sortedRootSessions,
+  visibleSessionTree,
+} from "./helpers"
 
 type InlineEditorComponent = (props: {
   id: string
@@ -244,62 +250,77 @@ const WorkspaceSessionList = (props: {
   showNew: Accessor<boolean>
   loading: Accessor<boolean>
   sessions: Accessor<Session[]>
+  all: Accessor<Session[]>
   children: Accessor<Map<string, string[]>>
   hasMore: Accessor<boolean>
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
-}): JSX.Element => (
-  <nav class="flex flex-col gap-1">
-    <Show when={props.showNew()}>
-      <NewSessionItem
-        slug={props.slug()}
-        mobile={props.mobile}
-        sidebarExpanded={props.ctx.sidebarExpanded}
-        clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-        setHoverSession={props.ctx.setHoverSession}
-      />
-    </Show>
-    <Show when={props.loading()}>
-      <SessionSkeleton />
-    </Show>
-    <For each={props.sessions()}>
-      {(session) => (
-        <SessionItem
-          session={session}
-          list={props.sessions()}
-          navList={props.ctx.navList}
+}): JSX.Element => {
+  const params = useParams()
+  const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+  const lineage = createMemo(() => sessionLineage(props.all(), params.id))
+  const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
+  const nav = createMemo(() =>
+    visibleSessionTree(props.sessions(), props.all(), props.children(), open()).map((item) => item.session),
+  )
+  const set = (id: string, value: boolean) => setExpanded(id, value)
+
+  return (
+    <nav class="flex flex-col gap-1">
+      <Show when={props.showNew()}>
+        <NewSessionItem
           slug={props.slug()}
           mobile={props.mobile}
-          popover={props.popover}
-          children={props.children()}
           sidebarExpanded={props.ctx.sidebarExpanded}
-          sidebarHovering={props.ctx.sidebarHovering}
-          nav={props.ctx.nav}
-          hoverSession={props.ctx.hoverSession}
-          setHoverSession={props.ctx.setHoverSession}
           clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-          prefetchSession={props.ctx.prefetchSession}
-          archiveSession={props.ctx.archiveSession}
+          setHoverSession={props.ctx.setHoverSession}
         />
-      )}
-    </For>
-    <Show when={props.hasMore()}>
-      <div class="relative w-full py-1">
-        <Button
-          variant="ghost"
-          class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
-          size="large"
-          onClick={(e: MouseEvent) => {
-            props.loadMore()
-            ;(e.currentTarget as HTMLButtonElement).blur()
-          }}
-        >
-          {props.language.t("common.loadMore")}
-        </Button>
-      </div>
-    </Show>
-  </nav>
-)
+      </Show>
+      <Show when={props.loading()}>
+        <SessionSkeleton />
+      </Show>
+      <For each={props.sessions()}>
+        {(session) => (
+          <SessionItem
+            session={session}
+            list={props.all()}
+            navList={nav}
+            slug={props.slug()}
+            mobile={props.mobile}
+            popover={props.popover}
+            expanded={() => expanded}
+            lineage={lineage}
+            setExpanded={set}
+            children={props.children()}
+            sidebarExpanded={props.ctx.sidebarExpanded}
+            sidebarHovering={props.ctx.sidebarHovering}
+            nav={props.ctx.nav}
+            hoverSession={props.ctx.hoverSession}
+            setHoverSession={props.ctx.setHoverSession}
+            clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
+            prefetchSession={props.ctx.prefetchSession}
+            archiveSession={props.ctx.archiveSession}
+          />
+        )}
+      </For>
+      <Show when={props.hasMore()}>
+        <div class="relative w-full py-1">
+          <Button
+            variant="ghost"
+            class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
+            size="large"
+            onClick={(e: MouseEvent) => {
+              props.loadMore()
+              ;(e.currentTarget as HTMLButtonElement).blur()
+            }}
+          >
+            {props.language.t("common.loadMore")}
+          </Button>
+        </div>
+      </Show>
+    </nav>
+  )
+}
 
 export const SortableWorkspace = (props: {
   ctx: WorkspaceSidebarContext
@@ -444,6 +465,7 @@ export const SortableWorkspace = (props: {
             showNew={showNew}
             loading={loading}
             sessions={sessions}
+            all={() => workspaceStore.session}
             children={children}
             hasMore={hasMore}
             loadMore={loadMore}
@@ -492,6 +514,7 @@ export const LocalWorkspace = (props: {
         showNew={() => false}
         loading={loading}
         sessions={sessions}
+        all={() => workspace().store.session}
         children={children}
         hasMore={hasMore}
         loadMore={loadMore}

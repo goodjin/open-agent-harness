@@ -1482,6 +1482,10 @@ export type Config = {
     ignore?: Array<string>
   }
   /**
+   * Plugins configured in opencode.json
+   */
+  plugin?: Array<string>
+  /**
    * Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.
    */
   snapshot?: boolean
@@ -2115,6 +2119,413 @@ export type ProviderAuthAuthorization = {
   url: string
   method: "auto" | "code"
   instructions: string
+}
+
+export type AgentManageEffective = {
+  name: string
+  description: string
+  mode: "primary" | "subagent" | "all"
+  entry: {
+    primary?: boolean
+    delegable?: boolean
+    mentionable?: boolean
+    default?: boolean
+    hidden?: boolean
+  }
+  capability: {
+    purpose?: string
+    tags?: Array<string>
+    cost?: "low" | "medium" | "high"
+    writes?: boolean
+  }
+  runner: "chat" | "workflow"
+  hidden: boolean
+  disabled: boolean
+  model?: string
+  variant?: string
+  color?: string | "primary" | "secondary" | "accent" | "success" | "warning" | "error" | "info"
+  permission?: {
+    [key: string]: unknown
+  }
+}
+
+export type AgentManageDiagnostic = {
+  level: "error" | "warning"
+  message: string
+  source?: "builtin" | "package" | "user" | "project"
+  dir?: string
+  field?: string
+}
+
+export type AgentManageInfo = {
+  id: string
+  name: string
+  disabled: boolean
+  source: "builtin" | "package" | "user" | "project"
+  editable: boolean
+  dir?: string
+  meta: {
+    /**
+     * Unique identifier for the agent
+     */
+    id: string
+    /**
+     * Display name of the agent
+     */
+    name: string
+    /**
+     * Role definition for the agent
+     */
+    role: string
+    /**
+     * Description of what the agent does
+     */
+    description: string
+    /**
+     * Preferred model configuration
+     */
+    model_preference?: {
+      /**
+       * Provider ID (e.g., anthropic, openai)
+       */
+      providerID: string
+      /**
+       * Model ID (e.g., claude-sonnet-4-20250514)
+       */
+      modelID: string
+    }
+    /**
+     * How the agent can be invoked at runtime
+     */
+    mode?: "primary" | "subagent" | "all"
+    /**
+     * Where the agent can be used
+     */
+    entry?: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+      default?: boolean
+      hidden?: boolean
+    }
+    /**
+     * What the agent is good for
+     */
+    capability?: {
+      purpose?: string
+      tags?: Array<string>
+      cost?: "low" | "medium" | "high"
+      writes?: boolean
+    }
+    /**
+     * Whether to hide the agent from interactive pickers
+     */
+    hidden?: boolean
+    /**
+     * Which session runtime handles this agent
+     */
+    runner?: "chat" | "workflow"
+    /**
+     * How the agent executes workflows
+     */
+    workflow_mode?: "auto" | "manual" | "supervision"
+    /**
+     * List of tools the agent is allowed to use
+     */
+    allowed_tools?: Array<string>
+    /**
+     * List of tools the agent is denied from using
+     */
+    denied_tools?: Array<string>
+    /**
+     * Whether to inherit permissions from parent agent
+     */
+    inherit_permissions?: boolean
+    /**
+     * Permission mode for the agent
+     */
+    permission_mode?: "strict" | "lax" | "custom"
+  }
+  identity: string
+  rules: string
+  effective: AgentManageEffective
+  diagnostics: Array<AgentManageDiagnostic>
+}
+
+export type AgentManageValidateOutput = {
+  valid: boolean
+  meta?: {
+    /**
+     * Unique identifier for the agent
+     */
+    id: string
+    /**
+     * Display name of the agent
+     */
+    name: string
+    /**
+     * Role definition for the agent
+     */
+    role: string
+    /**
+     * Description of what the agent does
+     */
+    description: string
+    /**
+     * Preferred model configuration
+     */
+    model_preference?: {
+      /**
+       * Provider ID (e.g., anthropic, openai)
+       */
+      providerID: string
+      /**
+       * Model ID (e.g., claude-sonnet-4-20250514)
+       */
+      modelID: string
+    }
+    /**
+     * How the agent can be invoked at runtime
+     */
+    mode?: "primary" | "subagent" | "all"
+    /**
+     * Where the agent can be used
+     */
+    entry?: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+      default?: boolean
+      hidden?: boolean
+    }
+    /**
+     * What the agent is good for
+     */
+    capability?: {
+      purpose?: string
+      tags?: Array<string>
+      cost?: "low" | "medium" | "high"
+      writes?: boolean
+    }
+    /**
+     * Whether to hide the agent from interactive pickers
+     */
+    hidden?: boolean
+    /**
+     * Which session runtime handles this agent
+     */
+    runner?: "chat" | "workflow"
+    /**
+     * How the agent executes workflows
+     */
+    workflow_mode?: "auto" | "manual" | "supervision"
+    /**
+     * List of tools the agent is allowed to use
+     */
+    allowed_tools?: Array<string>
+    /**
+     * List of tools the agent is denied from using
+     */
+    denied_tools?: Array<string>
+    /**
+     * Whether to inherit permissions from parent agent
+     */
+    inherit_permissions?: boolean
+    /**
+     * Permission mode for the agent
+     */
+    permission_mode?: "strict" | "lax" | "custom"
+  }
+  diagnostics: Array<AgentManageDiagnostic>
+}
+
+export type AgentManageValidateInput = {
+  scope?: "user" | "project"
+  action?: "create" | "update"
+  meta: unknown
+  identity?: string
+  rules?: string
+}
+
+export type AgentManageSaveInput = {
+  scope?: "user" | "project"
+  meta: {
+    /**
+     * Unique identifier for the agent
+     */
+    id: string
+    /**
+     * Display name of the agent
+     */
+    name: string
+    /**
+     * Role definition for the agent
+     */
+    role: string
+    /**
+     * Description of what the agent does
+     */
+    description: string
+    /**
+     * Preferred model configuration
+     */
+    model_preference?: {
+      /**
+       * Provider ID (e.g., anthropic, openai)
+       */
+      providerID: string
+      /**
+       * Model ID (e.g., claude-sonnet-4-20250514)
+       */
+      modelID: string
+    }
+    /**
+     * How the agent can be invoked at runtime
+     */
+    mode?: "primary" | "subagent" | "all"
+    /**
+     * Where the agent can be used
+     */
+    entry?: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+      default?: boolean
+      hidden?: boolean
+    }
+    /**
+     * What the agent is good for
+     */
+    capability?: {
+      purpose?: string
+      tags?: Array<string>
+      cost?: "low" | "medium" | "high"
+      writes?: boolean
+    }
+    /**
+     * Whether to hide the agent from interactive pickers
+     */
+    hidden?: boolean
+    /**
+     * Which session runtime handles this agent
+     */
+    runner?: "chat" | "workflow"
+    /**
+     * How the agent executes workflows
+     */
+    workflow_mode?: "auto" | "manual" | "supervision"
+    /**
+     * List of tools the agent is allowed to use
+     */
+    allowed_tools?: Array<string>
+    /**
+     * List of tools the agent is denied from using
+     */
+    denied_tools?: Array<string>
+    /**
+     * Whether to inherit permissions from parent agent
+     */
+    inherit_permissions?: boolean
+    /**
+     * Permission mode for the agent
+     */
+    permission_mode?: "strict" | "lax" | "custom"
+  }
+  identity?: string
+  rules?: string
+}
+
+export type AgentManagePatchInput = {
+  scope?: "user" | "project"
+  meta?: {
+    /**
+     * Unique identifier for the agent
+     */
+    id: string
+    /**
+     * Display name of the agent
+     */
+    name: string
+    /**
+     * Role definition for the agent
+     */
+    role: string
+    /**
+     * Description of what the agent does
+     */
+    description: string
+    /**
+     * Preferred model configuration
+     */
+    model_preference?: {
+      /**
+       * Provider ID (e.g., anthropic, openai)
+       */
+      providerID: string
+      /**
+       * Model ID (e.g., claude-sonnet-4-20250514)
+       */
+      modelID: string
+    }
+    /**
+     * How the agent can be invoked at runtime
+     */
+    mode?: "primary" | "subagent" | "all"
+    /**
+     * Where the agent can be used
+     */
+    entry?: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+      default?: boolean
+      hidden?: boolean
+    }
+    /**
+     * What the agent is good for
+     */
+    capability?: {
+      purpose?: string
+      tags?: Array<string>
+      cost?: "low" | "medium" | "high"
+      writes?: boolean
+    }
+    /**
+     * Whether to hide the agent from interactive pickers
+     */
+    hidden?: boolean
+    /**
+     * Which session runtime handles this agent
+     */
+    runner?: "chat" | "workflow"
+    /**
+     * How the agent executes workflows
+     */
+    workflow_mode?: "auto" | "manual" | "supervision"
+    /**
+     * List of tools the agent is allowed to use
+     */
+    allowed_tools?: Array<string>
+    /**
+     * List of tools the agent is denied from using
+     */
+    denied_tools?: Array<string>
+    /**
+     * Whether to inherit permissions from parent agent
+     */
+    inherit_permissions?: boolean
+    /**
+     * Permission mode for the agent
+     */
+    permission_mode?: "strict" | "lax" | "custom"
+  }
+  identity?: string
+  rules?: string
+}
+
+export type AgentManageStateInput = {
+  scope?: "user" | "project"
+  disabled: boolean
 }
 
 export type Symbol = {
@@ -3471,6 +3882,43 @@ export type SessionStatusResponses = {
 
 export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusResponses]
 
+export type SessionDescendantsBatchData = {
+  body?: {
+    ids: Array<string>
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/descendants"
+}
+
+export type SessionDescendantsBatchErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDescendantsBatchError = SessionDescendantsBatchErrors[keyof SessionDescendantsBatchErrors]
+
+export type SessionDescendantsBatchResponses = {
+  /**
+   * List of descendants
+   */
+  200: Array<Session>
+}
+
+export type SessionDescendantsBatchResponse = SessionDescendantsBatchResponses[keyof SessionDescendantsBatchResponses]
+
 export type SessionGetStatusData = {
   body?: never
   path: {
@@ -3640,6 +4088,43 @@ export type SessionChildrenResponses = {
 }
 
 export type SessionChildrenResponse = SessionChildrenResponses[keyof SessionChildrenResponses]
+
+export type SessionDescendantsData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/descendants"
+}
+
+export type SessionDescendantsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDescendantsError = SessionDescendantsErrors[keyof SessionDescendantsErrors]
+
+export type SessionDescendantsResponses = {
+  /**
+   * List of descendants
+   */
+  200: Array<Session>
+}
+
+export type SessionDescendantsResponse = SessionDescendantsResponses[keyof SessionDescendantsResponses]
 
 export type SessionTodoData = {
   body?: never
@@ -5279,6 +5764,210 @@ export type ProviderOauthCallbackResponses = {
 }
 
 export type ProviderOauthCallbackResponse = ProviderOauthCallbackResponses[keyof ProviderOauthCallbackResponses]
+
+export type AgentManageListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage"
+}
+
+export type AgentManageListErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+}
+
+export type AgentManageListError = AgentManageListErrors[keyof AgentManageListErrors]
+
+export type AgentManageListResponses = {
+  /**
+   * Manageable agents
+   */
+  200: Array<AgentManageInfo>
+}
+
+export type AgentManageListResponse = AgentManageListResponses[keyof AgentManageListResponses]
+
+export type AgentManageCreateData = {
+  body: AgentManageSaveInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage"
+}
+
+export type AgentManageCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+}
+
+export type AgentManageCreateError = AgentManageCreateErrors[keyof AgentManageCreateErrors]
+
+export type AgentManageCreateResponses = {
+  /**
+   * Created agent
+   */
+  200: AgentManageInfo
+}
+
+export type AgentManageCreateResponse = AgentManageCreateResponses[keyof AgentManageCreateResponses]
+
+export type AgentManageValidateData = {
+  body: AgentManageValidateInput
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage/validate"
+}
+
+export type AgentManageValidateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+}
+
+export type AgentManageValidateError = AgentManageValidateErrors[keyof AgentManageValidateErrors]
+
+export type AgentManageValidateResponses = {
+  /**
+   * Validation result
+   */
+  200: AgentManageValidateOutput
+}
+
+export type AgentManageValidateResponse = AgentManageValidateResponses[keyof AgentManageValidateResponses]
+
+export type AgentManageGetData = {
+  body?: never
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage/{id}"
+}
+
+export type AgentManageGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type AgentManageGetError = AgentManageGetErrors[keyof AgentManageGetErrors]
+
+export type AgentManageGetResponses = {
+  /**
+   * Manageable agent
+   */
+  200: AgentManageInfo
+}
+
+export type AgentManageGetResponse = AgentManageGetResponses[keyof AgentManageGetResponses]
+
+export type AgentManageUpdateData = {
+  body: AgentManagePatchInput
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage/{id}"
+}
+
+export type AgentManageUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type AgentManageUpdateError = AgentManageUpdateErrors[keyof AgentManageUpdateErrors]
+
+export type AgentManageUpdateResponses = {
+  /**
+   * Updated agent
+   */
+  200: AgentManageInfo
+}
+
+export type AgentManageUpdateResponse = AgentManageUpdateResponses[keyof AgentManageUpdateResponses]
+
+export type AgentManageStateData = {
+  body: AgentManageStateInput
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/agent/manage/{id}/state"
+}
+
+export type AgentManageStateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type AgentManageStateError = AgentManageStateErrors[keyof AgentManageStateErrors]
+
+export type AgentManageStateResponses = {
+  /**
+   * Updated agent
+   */
+  200: AgentManageInfo
+}
+
+export type AgentManageStateResponse = AgentManageStateResponses[keyof AgentManageStateResponses]
 
 export type FindTextData = {
   body?: never

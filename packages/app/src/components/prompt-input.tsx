@@ -37,6 +37,7 @@ import { usePlatform } from "@/context/platform"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { promptEnabled, promptProbe } from "@/testing/prompt"
+import { agentMentionable } from "@/utils/agent"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
 import { createPromptAttachments } from "./prompt-input/attachments"
 import { ACCEPTED_FILE_TYPES } from "./prompt-input/files"
@@ -524,7 +525,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const agentList = createMemo(() =>
     sync.data.agent
-      .filter((agent) => !agent.hidden && agent.mode !== "primary")
+      .filter(agentMentionable)
       .map((agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name })),
   )
   const agentNames = createMemo(() => local.agent.list().map((agent) => agent.name))

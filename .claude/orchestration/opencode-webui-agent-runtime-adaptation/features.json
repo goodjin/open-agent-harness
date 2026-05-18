@@ -1,0 +1,121 @@
+{
+  "mission_id": "opencode-webui-agent-runtime-adaptation",
+  "mission_description": "Adapt packages/app WebUI to the rewritten agent runtime with nested session tree workbench and first-class agent manager.",
+  "status": "in_progress",
+  "created_at": "2026-05-18T01:03:01Z",
+  "updated_at": "2026-05-18T02:32:00Z",
+  "features": [
+    {
+      "id": "feature-webui-research",
+      "description": "Research WebUI session tree and agent manager gaps",
+      "skillName": "research-work",
+      "preconditions": [],
+      "expectedBehavior": [
+        "Current WebUI session hierarchy behavior is mapped",
+        "Current agent UI/API capability and gaps are mapped",
+        "Implementation tasks and verification points are identified"
+      ],
+      "verificationSteps": [
+        "Review research outputs for both Session Tree Workbench and Agent Manager"
+      ],
+      "fulfills": [
+        "scope-normalization"
+      ],
+      "test_refs": [],
+      "test_status": "not_applicable",
+      "audit_status": "passed",
+      "audit_notes": "Research completed by Session Tree and Agent Manager explorers. Session tree gaps: root-only initial loading, no recursive sidebar renderer, direct-children-only API, trim loses grandchildren. Agent manager gaps: runtime has schema/read support but lacks management/write/disable API and Settings tab.",
+      "status": "completed",
+      "worker_session_ids": [
+        "019e389b-7b02-7941-a202-c5d350ab6337",
+        "019e389b-7b5b-75a1-a5ca-dab47637b157"
+      ],
+      "plan_doc": "docs/webui-agent-runtime-adaptation/00-dev-plan.md",
+      "task_ref": "R-0101~R-0102"
+    },
+    {
+      "id": "feature-webui-session-tree",
+      "description": "MOD-W01 Session Tree Workbench",
+      "skillName": "task-executor-work",
+      "preconditions": [
+        "feature-webui-research"
+      ],
+      "expectedBehavior": [
+        "Nested sessions render as a multi-level tree",
+        "Every child session is navigable and interactive",
+        "Session state indicators propagate through the tree without hiding child blockers"
+      ],
+      "verificationSteps": [
+        "Run affected packages/app tests for layout/sidebar/session tree behavior",
+        "Run packages/app typecheck"
+      ],
+      "fulfills": [
+        "nested-session-webui"
+      ],
+      "test_refs": [
+        "packages/app/src/pages/layout/helpers.test.ts",
+        "packages/app/src/pages/layout/sidebar-items.test.tsx",
+        "packages/app/src/pages/session"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "Final re-review PASS: descendants loading uses a single descendantsBatch call for new roots, backend scans current directory once with project/directory guard, and recursive tree render/nav share effective expanded state with active lineage. Focused app/backend tests passed; opencode, sdk, and app typechecks now pass after the follow-up SDK Config.plugin/SSE options drift fix.",
+      "status": "completed",
+      "worker_session_ids": [
+        "019e389e-ce69-7da0-b3d3-f657b65f3e98",
+        "019e38a6-36db-7b70-8c98-bcbf46b2216e",
+        "019e38a8-cd43-7ac3-9b62-57a41a37b021",
+        "019e38ad-e7a2-7cc3-8fe7-f47fa4d2d523"
+      ],
+      "plan_doc": "docs/webui-agent-runtime-adaptation/00-dev-plan.md",
+      "task_ref": "T-W0101~T-W0108"
+    },
+    {
+      "id": "feature-webui-agent-manager",
+      "description": "MOD-W02 Agent Manager",
+      "skillName": "task-executor-work",
+      "preconditions": [
+        "feature-webui-research"
+      ],
+      "expectedBehavior": [
+        "Settings exposes an Agents management tab",
+        "Users can list, create, edit, disable, and enable agents",
+        "Agent permission mode and entry flags match the new runtime schema"
+      ],
+      "verificationSteps": [
+        "Run backend agent route tests if routes are added",
+        "Regenerate SDK if OpenAPI changes",
+        "Run affected packages/app tests for settings agent manager",
+        "Run packages/opencode and packages/app typecheck as applicable"
+      ],
+      "fulfills": [
+        "agent-manager-webui"
+      ],
+      "test_refs": [
+        "packages/opencode/test/agent",
+        "packages/opencode/test/server",
+        "packages/app/src/components/settings-agents.test.tsx"
+      ],
+      "test_status": "passed",
+      "audit_status": "passed",
+      "audit_notes": "MOD-W02 completed. Backend/API/SDK phase exposes /agent/manage list/get/validate/create/update/state, includes builtin fallback default, writes package/builtin edits as user/project overrides, keeps disabled agents visible in manage and hidden from regular /agent, and validate action=create reports duplicate ids. WebUI Settings now has an Agents tab with list/create/edit/enable/disable; form defaults to custom independent permissions, preserves unseen metadata such as workflow_mode/model_preference on no-op saves, clears identity/rules with empty strings, and toggles state using the clicked agent source scope. Focused backend/app tests passed; opencode, sdk, and app typechecks pass.",
+      "status": "completed",
+      "worker_session_ids": [
+        "019e38b2-d7bc-7d33-a5d0-ba19f2d9ebac",
+        "019e38b9-3e22-7f80-97de-2940afc236cd",
+        "019e38bc-f33f-79b0-8501-b1101109d179",
+        "019e38c2-1233-7d61-bfaf-4df233d7e3f3",
+        "019e38ce-9c0d-7e03-86d0-91701471b5e3"
+      ],
+      "plan_doc": "docs/webui-agent-runtime-adaptation/00-dev-plan.md",
+      "task_ref": "T-W0201~T-W0212"
+    }
+  ],
+  "gates": {
+    "coverage": "passed",
+    "implementation": "passed",
+    "test": "passed",
+    "review": "passed",
+    "archive": "completed"
+  }
+}

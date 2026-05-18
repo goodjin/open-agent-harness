@@ -3,6 +3,22 @@
 import { client } from "./client.gen.js"
 import { buildClientParams, type Client, type Options as Options2, type TDataShape } from "./client/index.js"
 import type {
+  AgentManageCreateErrors,
+  AgentManageCreateResponses,
+  AgentManageGetErrors,
+  AgentManageGetResponses,
+  AgentManageListErrors,
+  AgentManageListResponses,
+  AgentManagePatchInput,
+  AgentManageSaveInput,
+  AgentManageStateErrors,
+  AgentManageStateInput,
+  AgentManageStateResponses,
+  AgentManageUpdateErrors,
+  AgentManageUpdateResponses,
+  AgentManageValidateErrors,
+  AgentManageValidateInput,
+  AgentManageValidateResponses,
   AgentPartInput,
   AppAgentsResponses,
   AppLogErrors,
@@ -142,6 +158,10 @@ import type {
   SessionDeleteMessageErrors,
   SessionDeleteMessageResponses,
   SessionDeleteResponses,
+  SessionDescendantsBatchErrors,
+  SessionDescendantsBatchResponses,
+  SessionDescendantsErrors,
+  SessionDescendantsResponses,
   SessionDiffResponses,
   SessionDismissStatusErrors,
   SessionDismissStatusResponses,
@@ -1573,6 +1593,45 @@ export class Session3 extends HeyApiClient {
   }
 
   /**
+   * Get session descendants for multiple roots
+   *
+   * Retrieve all nested child sessions for the specified parent sessions in one directory scan.
+   */
+  public descendantsBatch<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      ids?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "ids" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionDescendantsBatchResponses,
+      SessionDescendantsBatchErrors,
+      ThrowOnError
+    >({
+      url: "/session/descendants",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
    * Get single session status
    *
    * Retrieve the current status for one session. Status is process-local and defaults to idle.
@@ -1706,7 +1765,7 @@ export class Session3 extends HeyApiClient {
   /**
    * Get session children
    *
-   * Retrieve all child sessions that were forked from the specified parent session.
+   * Retrieve direct child sessions for the specified parent session.
    */
   public children<ThrowOnError extends boolean = false>(
     parameters: {
@@ -1728,6 +1787,36 @@ export class Session3 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionChildrenResponses, SessionChildrenErrors, ThrowOnError>({
       url: "/session/{sessionID}/children",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get session descendants
+   *
+   * Retrieve all nested child sessions for the specified parent session.
+   */
+  public descendants<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionDescendantsResponses, SessionDescendantsErrors, ThrowOnError>({
+      url: "/session/{sessionID}/descendants",
       ...options,
       ...params,
     })
@@ -3310,6 +3399,210 @@ export class Provider extends HeyApiClient {
   }
 }
 
+export class Manage extends HeyApiClient {
+  /**
+   * List manageable agents
+   *
+   * List all agent templates and management state, including disabled agents.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<AgentManageListResponses, AgentManageListErrors, ThrowOnError>({
+      url: "/agent/manage",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Create an agent template
+   *
+   * Create a user or project agent template.
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      agentManageSaveInput: AgentManageSaveInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { key: "agentManageSaveInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<AgentManageCreateResponses, AgentManageCreateErrors, ThrowOnError>({
+      url: "/agent/manage",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Validate an agent template
+   *
+   * Validate agent template metadata before saving.
+   */
+  public validate<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      agentManageValidateInput: AgentManageValidateInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { key: "agentManageValidateInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<AgentManageValidateResponses, AgentManageValidateErrors, ThrowOnError>(
+      {
+        url: "/agent/manage/validate",
+        ...options,
+        ...params,
+        headers: {
+          "Content-Type": "application/json",
+          ...options?.headers,
+          ...params.headers,
+        },
+      },
+    )
+  }
+
+  /**
+   * Get manageable agent
+   *
+   * Get one agent template with management state.
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<AgentManageGetResponses, AgentManageGetErrors, ThrowOnError>({
+      url: "/agent/manage/{id}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Update an agent template
+   *
+   * Update a user or project agent template, creating an override for package templates.
+   */
+  public update<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      agentManagePatchInput: AgentManagePatchInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { key: "agentManagePatchInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).patch<AgentManageUpdateResponses, AgentManageUpdateErrors, ThrowOnError>({
+      url: "/agent/manage/{id}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Update agent state
+   *
+   * Enable or disable an agent through config overlay state.
+   */
+  public state<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string
+      directory?: string
+      agentManageStateInput: AgentManageStateInput
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "query", key: "directory" },
+            { key: "agentManageStateInput", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).patch<AgentManageStateResponses, AgentManageStateErrors, ThrowOnError>({
+      url: "/agent/manage/{id}/state",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Agent extends HeyApiClient {
+  private _manage?: Manage
+  get manage(): Manage {
+    return (this._manage ??= new Manage({ client: this.client }))
+  }
+}
+
 export class Find extends HeyApiClient {
   /**
    * Find text
@@ -4407,6 +4700,11 @@ export class OpencodeClient extends HeyApiClient {
   private _provider?: Provider
   get provider(): Provider {
     return (this._provider ??= new Provider({ client: this.client }))
+  }
+
+  private _agent?: Agent
+  get agent(): Agent {
+    return (this._agent ??= new Agent({ client: this.client }))
   }
 
   private _find?: Find

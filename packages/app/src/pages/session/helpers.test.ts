@@ -157,4 +157,25 @@ describe("createSessionTabs", () => {
       dispose()
     })
   })
+
+  test("keeps logs out of sortable file tabs", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: "logs" as string | undefined,
+        all: ["logs", "file://src/a.ts"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+        logs: () => true,
+      })
+
+      expect(result.activeTab()).toBe("logs")
+      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+  })
 })

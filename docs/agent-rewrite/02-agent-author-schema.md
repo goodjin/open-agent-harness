@@ -183,6 +183,7 @@ The packaged agents should migrate to these entry/capability shapes:
 | `title` | hidden, not delegable, not mentionable | system title generation; writes false; cost low |
 | `summary` | hidden, not delegable, not mentionable | system summary generation; writes false; cost low |
 | `sisyphus` | primary, delegable, mentionable, default candidate | orchestration and implementation oversight; writes true; cost high |
+| `workflow-runner` | primary, delegable, mentionable, not default | durable workflow DAG orchestration and recovery decisions; writes true; cost high |
 | `hephaestus` | primary, delegable, mentionable | deep autonomous implementation; writes true; cost high |
 | `prometheus` | primary, delegable, mentionable | plan building; writes markdown/plans only by convention; cost high |
 | `atlas` | primary, delegable, mentionable | plan execution and coordination; writes true; cost high |

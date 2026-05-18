@@ -9,10 +9,13 @@ import {
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import {
   displayName,
+  effectiveSessionExpansion,
   effectiveWorkspaceOrder,
   errorMessage,
   hasProjectPermissions,
   latestRootSession,
+  sessionLineage,
+  visibleSessionTree,
   workspaceKey,
 } from "./helpers"
 
@@ -196,6 +199,59 @@ describe("layout workspace helpers", () => {
     )
 
     expect(result?.id).toBe("root")
+  })
+
+  test("builds active session lineage across grandchildren", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "child", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "child" }),
+    ]
+
+    expect([...sessionLineage(list, "grand")]).toEqual(["child", "root"])
+  })
+
+  test("flattens visible session tree with nested expansion", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "other", directory: "/workspace" }),
+      session({ id: "child", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "child" }),
+    ]
+    const map = new Map([
+      ["root", ["child"]],
+      ["child", ["grand"]],
+    ])
+
+    expect(
+      visibleSessionTree([list[0], list[1]], list, map, new Set(["root", "child"])).map((item) => item.session.id),
+    ).toEqual(["root", "child", "grand", "other"])
+    expect(visibleSessionTree([list[0]], list, map, new Set(["root"])).map((item) => item.session.id)).toEqual([
+      "root",
+      "child",
+    ])
+  })
+
+  test("keeps active grandchild ancestors expanded in nav order after collapse", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "other", directory: "/workspace" }),
+      session({ id: "child", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "child" }),
+    ]
+    const map = new Map([
+      ["root", ["child"]],
+      ["child", ["grand"]],
+    ])
+    const expanded = effectiveSessionExpansion({ root: false, child: false }, sessionLineage(list, "grand"))
+
+    expect([...expanded]).toEqual(["child", "root"])
+    expect(visibleSessionTree([list[0], list[1]], list, map, expanded).map((item) => item.session.id)).toEqual([
+      "root",
+      "child",
+      "grand",
+      "other",
+    ])
   })
 
   test("formats fallback project display name", () => {

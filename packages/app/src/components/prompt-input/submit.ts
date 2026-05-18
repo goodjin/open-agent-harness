@@ -57,7 +57,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
 
   const setBusy = () => {
     if (!input.optimisticBusy) return
-    setStore("session_status", input.draft.sessionID, { type: "busy" })
+    setStore("session_status", input.draft.sessionID, { type: "running" })
   }
 
   const setIdle = () => {
@@ -298,9 +298,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const currentAgent = local.agent.current()
     const variant = local.model.variant.current()
     if (!currentModel || !currentAgent) {
+      const title = !currentAgent
+        ? language.t("prompt.toast.agentRequired.title")
+        : !currentModel
+          ? language.t("prompt.toast.modelRequired.title")
+          : language.t("prompt.toast.modelAgentRequired.title")
+      const description = !currentAgent
+        ? language.t("prompt.toast.agentRequired.description")
+        : !currentModel
+          ? language.t("prompt.toast.modelRequired.description")
+          : language.t("prompt.toast.modelAgentRequired.description")
       showToast({
-        title: language.t("prompt.toast.modelAgentRequired.title"),
-        description: language.t("prompt.toast.modelAgentRequired.description"),
+        title,
+        description,
       })
       return
     }
@@ -499,7 +509,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (!worktree || worktree.status !== "pending") return true
 
       if (sessionDirectory === projectDirectory) {
-        sync.set("session_status", session.id, { type: "busy" })
+        sync.set("session_status", session.id, { type: "running" })
       }
 
       const controller = new AbortController()

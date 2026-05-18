@@ -4,7 +4,7 @@
 
 Workflow DSL is the durable orchestration contract for multi-step agent work.
 
-The DSL should not try to predefine every possible workflow. It defines the structure, constraints, state files, and result protocol that let an orchestrator agent generate a task-specific workflow and let the runtime execute, resume, audit, and repair it.
+The workflow DSL should not try to predefine every possible workflow. It defines the structure, constraints, state files, and result protocol that let an orchestrator agent generate a task-specific workflow and let the runtime execute, resume, audit, and repair it.
 
 The same format must support both:
 
@@ -13,7 +13,7 @@ The same format must support both:
 
 ## Design Principles
 
-- The DSL describes orchestration state, not provider scheduling limits.
+- The workflow DSL describes orchestration state, not provider scheduling limits.
 - The workflow file is a run record, not only a reusable template.
 - The runtime owns validation, state transitions, scheduling, and permissions.
 - The Planner owns workflow generation and later decision-making when execution cannot proceed deterministically.
@@ -55,6 +55,8 @@ Worker agents do not create workflows. They execute one assigned node and update
 
 ## Roles
 
+Agent role details are defined in `docs/agent-rewrite/08-workflow-runner-agent.md`.
+
 ### Planner / Orchestrator
 
 The Planner is allowed to create the initial workflow and persist it before execution starts. It defines the DAG, node goals, dependencies, node types, success criteria, input references, and failure policies.
@@ -67,7 +69,7 @@ The Worker should not know the full workflow generation rules. It only needs the
 
 ### Decision Agent
 
-The Decision Agent handles exceptional execution states. In the first implementation, this can be the same agent as Planner. The runtime should still treat it as a separate role so a future Recovery agent can replace it without changing the DSL.
+The Decision Agent handles exceptional execution states. In the first implementation, this can be the same agent as Planner. The runtime should still treat it as a separate role so a future Recovery agent can replace it without changing the workflow DSL.
 
 The Decision Agent may choose one of a bounded set of actions:
 
@@ -97,7 +99,7 @@ The runtime must:
 - use atomic writes for state files
 - append state changes to an event log when possible
 
-Concurrency is not part of the DSL. The DAG exposes which nodes may run together; the scheduler decides how many actually run.
+Concurrency is not part of the workflow DSL. The DAG exposes which nodes may run together; the scheduler decides how many actually run.
 
 ## Planner Generation Contract
 
@@ -234,6 +236,20 @@ Example:
       "title": "Verify the change",
       "file": "nodes/test.json",
       "depends_on": ["implement"]
+    },
+    {
+      "id": "review",
+      "type": "review",
+      "title": "Review implementation and verification",
+      "file": "nodes/review.json",
+      "depends_on": ["test"]
+    },
+    {
+      "id": "gate",
+      "type": "gate",
+      "title": "Accept workflow result",
+      "file": "nodes/gate.json",
+      "depends_on": ["review"]
     }
   ],
   "policies": {
@@ -272,13 +288,14 @@ Initial node type enum:
 - `debug`
 - `test`
 - `review`
+- `gate`
 - `documentation`
 - `build`
 - `release`
 - `decision`
 - `manual`
 
-The mapping should be configurable. For example, `implementation` may route to a coding-capable agent, while `review` may route to a review agent. The DSL should allow an optional requested agent, but the runtime should still resolve the final agent.
+The mapping should be configurable. For example, `implementation` may route to a coding-capable agent, while `review` may route to a review agent. The workflow DSL should allow an optional requested agent, but the runtime should still resolve the final agent.
 
 Routing should use this precedence:
 
@@ -288,6 +305,92 @@ Routing should use this precedence:
 4. default delegable agent for the current model/provider
 
 An agent is eligible only if its entry metadata allows delegation and its permission profile can satisfy the node's expected writes and tools.
+
+## Verification And Gates
+
+Implementation nodes should not silently absorb testing and review. The DSL should represent verification in two layers:
+
+- node properties define required acceptance and verification gates
+- dedicated `test`, `review`, or `gate` nodes execute those gates
+
+This makes verification schedulable, retryable, auditable, and recoverable. It also lets the runtime distinguish:
+
+- implementation completed but tests failed
+- tests passed but review failed
+- review passed but final gate needs a user or policy decision
+
+Recommended pattern:
+
+```txt
+implement -> test -> review -> gate -> next
+```
+
+For broader changes:
+
+```txt
+             -> unit_test
+implement -> typecheck -> review -> gate -> next
+             -> integration_test
+```
+
+Implementation node example:
+
+```json
+{
+  "id": "implement",
+  "type": "implementation",
+  "title": "Apply the code change",
+  "file": "nodes/implement.json",
+  "depends_on": ["research"],
+  "verification": {
+    "required": true,
+    "strategy": "separate_nodes",
+    "must_pass": ["test", "review"],
+    "commands": ["bun typecheck"],
+    "notes": [
+      "Add or update focused tests for changed behavior.",
+      "Do not mark implementation accepted until test and review nodes pass."
+    ]
+  }
+}
+```
+
+Test node example:
+
+```json
+{
+  "id": "test",
+  "type": "test",
+  "title": "Verify changed behavior",
+  "file": "nodes/test.json",
+  "depends_on": ["implement"],
+  "success_criteria": [
+    "Focused tests for changed behavior pass.",
+    "Typecheck passes from the relevant package directory."
+  ]
+}
+```
+
+Review node example:
+
+```json
+{
+  "id": "review",
+  "type": "review",
+  "title": "Review implementation and tests",
+  "file": "nodes/review.json",
+  "depends_on": ["test"],
+  "success_criteria": [
+    "Implementation satisfies the workflow goal.",
+    "Tests cover the critical behavior and failure paths.",
+    "No unrelated refactors or regressions are introduced."
+  ]
+}
+```
+
+Gate nodes are optional but useful when multiple verification branches must converge or when a user/policy decision is required before downstream work starts.
+
+The runtime should treat `verification.must_pass` as an acceptance contract. A node with unmet required verification must not be considered accepted for workflow completion, even if its own execution status is `success`.
 
 ## Node File
 
@@ -309,6 +412,7 @@ Recommended fields:
 | `agent` | no | runtime | Requested and resolved agent/session data. |
 | `input` | no | Planner/runtime | Referenced node files and artifacts. |
 | `success_criteria` | yes | Planner | Node completion criteria. |
+| `verification` | no | Planner/runtime | Required test/review/gate contract for this node's output. |
 | `failure_policy` | no | Planner/runtime | Node-specific failure behavior. |
 | `progress` | no | Worker | Mutable progress summary. |
 | `result` | no | Worker | Structured success or partial result. |
@@ -347,6 +451,15 @@ Example while running:
     "The implementation satisfies the workflow goal.",
     "Changed files are listed in the result."
   ],
+  "verification": {
+    "required": true,
+    "strategy": "separate_nodes",
+    "must_pass": ["test", "review"],
+    "commands": ["bun typecheck"],
+    "notes": [
+      "Verification is executed by separate nodes, not swallowed by this implementation node."
+    ]
+  },
   "failure_policy": {
     "on_failure": "ask_decision",
     "max_attempts": 2,
@@ -497,6 +610,8 @@ The runtime should first apply deterministic policy:
 - retry retryable errors within `max_attempts`
 - skip nodes only when policy explicitly permits it
 - cancel downstream nodes when a required dependency is cancelled or failed
+- route failed `test`, `review`, or `gate` nodes to Decision Agent before accepting upstream implementation nodes
+- block workflow completion while any required `verification.must_pass` node is not successful
 
 When deterministic policy cannot decide, the runtime asks the Decision Agent. The Decision Agent reads:
 
@@ -613,7 +728,7 @@ If `workflow.json` references a missing node file, the workflow should enter `ne
 
 ## Schema Boundaries
 
-The DSL should avoid becoming a programming language. Do not add arbitrary loops, general expressions, or unbounded code execution to workflow files.
+The workflow DSL should avoid becoming a programming language. Do not add arbitrary loops, general expressions, or unbounded code execution to workflow files.
 
 Allowed control flow for the first DAG design:
 
@@ -623,7 +738,7 @@ Allowed control flow for the first DAG design:
 - bounded retry policy
 - Decision Agent mutations after runtime validation
 
-Anything more complex should be represented by adding or modifying nodes through a Decision action, not by embedding a script language into the DSL.
+Anything more complex should be represented by adding or modifying nodes through a Decision action, not by embedding a script language into the workflow DSL.
 
 ## Static Workflows
 
@@ -638,6 +753,6 @@ The current MOD-13 implementation has sequential and branching workflows with `s
 - move from linear `steps` to DAG `nodes`
 - split workflow definition from per-node durable state files
 - route by node type and agent capability instead of fixed step agent id
-- remove concurrency from the DSL
+- remove concurrency from the workflow DSL
 - use Planner as the first Decision Agent implementation
 - keep checkpoint and permission guard behavior as runtime policies

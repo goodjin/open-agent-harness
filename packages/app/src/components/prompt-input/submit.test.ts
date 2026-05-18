@@ -18,12 +18,16 @@ const optimistic: Array<{
 const optimisticSeeded: boolean[] = []
 const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
+const sentPrompt: Array<{ directory: string; sessionID: string }> = []
 const sentShell: string[] = []
 const syncedDirectories: string[] = []
+const toasts: Array<{ title?: string; description?: string }> = []
 
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
 let variant: string | undefined
+let currentModel: { id: string; provider: { id: string } } | undefined
+let currentAgent: { name: string } | undefined
 
 const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 
@@ -45,7 +49,10 @@ const clientFor = (directory: string) => {
         return { data: undefined }
       },
       prompt: async () => ({ data: undefined }),
-      promptAsync: async () => ({ data: undefined }),
+      promptAsync: async (input: { sessionID: string }) => {
+        sentPrompt.push({ directory, sessionID: input.sessionID })
+        return { data: undefined }
+      },
       command: async () => ({ data: undefined }),
       abort: async () => ({ data: undefined }),
     },
@@ -71,7 +78,10 @@ beforeAll(async () => {
   }))
 
   mock.module("@opencode-ai/ui/toast", () => ({
-    showToast: () => 0,
+    showToast: (toast: { title?: string; description?: string }) => {
+      toasts.push(toast)
+      return 0
+    },
   }))
 
   mock.module("@opencode-ai/util/encode", () => ({
@@ -81,11 +91,11 @@ beforeAll(async () => {
   mock.module("@/context/local", () => ({
     useLocal: () => ({
       model: {
-        current: () => ({ id: "model", provider: { id: "provider" } }),
+        current: () => currentModel,
         variant: { current: () => variant },
       },
       agent: {
-        current: () => ({ name: "agent" }),
+        current: () => currentAgent,
       },
       session: {
         promote(directory: string, sessionID: string) {
@@ -208,11 +218,15 @@ beforeEach(() => {
   optimistic.length = 0
   optimisticSeeded.length = 0
   promoted.length = 0
+  sentPrompt.length = 0
   params = {}
   sentShell.length = 0
   syncedDirectories.length = 0
+  toasts.length = 0
   selected = "/repo/worktree-a"
   variant = undefined
+  currentModel = { id: "model", provider: { id: "provider" } }
+  currentAgent = { name: "agent" }
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
 
@@ -314,6 +328,95 @@ describe("prompt submit worktree selection", () => {
         variant: "high",
       },
     })
+  })
+
+  test("sends followup prompts to the active child session", async () => {
+    params = { id: "child" }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "child" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
+    expect(optimistic[0]?.sessionID).toBe("child")
+  })
+
+  test("shows an agent-specific toast when only the agent is missing", async () => {
+    currentAgent = undefined
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(toasts).toEqual([
+      {
+        title: "prompt.toast.agentRequired.title",
+        description: "prompt.toast.agentRequired.description",
+      },
+    ])
+    expect(sentPrompt).toEqual([])
+  })
+
+  test("shows a model-specific toast when only the model is missing", async () => {
+    currentModel = undefined
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+
+    expect(toasts).toEqual([
+      {
+        title: "prompt.toast.modelRequired.title",
+        description: "prompt.toast.modelRequired.description",
+      },
+    ])
+    expect(sentPrompt).toEqual([])
   })
 
   test("seeds new sessions before optimistic prompts are added", async () => {

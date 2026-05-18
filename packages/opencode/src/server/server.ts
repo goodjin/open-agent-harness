@@ -48,6 +48,7 @@ import { AuditRoutes } from "./routes/audit"
 import { MDNS } from "./mdns"
 import { lazy } from "@/util/lazy"
 import { Event, EventGateway } from "./event"
+import { AgentRoutes } from "./routes/agent"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -200,7 +201,7 @@ export namespace Server {
       .use(async (c, next) => {
         if (c.req.path === "/log") return next()
         const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
-        const current = (() => {
+        const base = (() => {
           try {
             return Instance.directory
           } catch {
@@ -216,17 +217,14 @@ export namespace Server {
                   return raw
                 }
               })()
-            : current,
+            : base,
         )
-        if (dir !== current) {
-          throw new ForbiddenError({ message: `Directory must match the current instance directory` })
-        }
 
         return WorkspaceContext.provide({
           workspaceID: undefined,
           async fn() {
             return Instance.provide({
-              directory: current,
+              directory: dir,
               init: InstanceBootstrap,
               async fn() {
                 return next()
@@ -268,6 +266,7 @@ export namespace Server {
       .route("/permission", PermissionRoutes())
       .route("/question", QuestionRoutes())
       .route("/provider", ProviderRoutes())
+      .route("/agent", AgentRoutes())
       .route("/", FileRoutes())
       .route("/mcp", McpRoutes())
       .route("/tui", TuiRoutes())

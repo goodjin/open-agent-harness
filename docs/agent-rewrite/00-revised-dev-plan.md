@@ -47,7 +47,7 @@ The revised plan treats the current code as a phase-1 prototype and focuses firs
 | B1 | Finish Agent template system | schema, loader, registry, prompts, TUI | default and custom agents work end to end |
 | B2 | Remove Skill/Plugin cleanly | config, auth, providers, tools, docs | no runtime dependency on removed systems |
 | B3 | Formalize Permission v2 | capability, policy, inheritance, six dimensions | tool gates enforce policy with tests |
-| B4 | Finish Session/Timeline | states, workspace, checkpoint, dsl context | restore recovers files, permissions, workflow state |
+| B4 | Finish Session/Timeline | states, workspace, checkpoint, workflow context | restore recovers files, permissions, workflow state |
 | B5 | Canonical protocol and SDK | routes, events, replay, SDK | TUI/Web/SDK consume same contract |
 | B6 | TUI Workbench adaptation | agent switch, statuses, permission UX | visible terminal workflows verified |
 | B7 | Workflow DSL foundation | schema, parser, executor, recovery | simple workflows run and resume |
@@ -224,7 +224,7 @@ Current `mode: primary | subagent | all` mixes independent concepts: main conver
 | T-1102 | interface | Add event replay from sequence id. | Replay test returns missed events in order. |
 | T-1103 | interface | Add session-scoped event subscription filtering. | Subscriber receives only requested session events. |
 | T-1104 | interface | Add workspace-scoped event filtering. | Workspace tests prevent cross-workspace event leakage. |
-| T-1105 | interface | Include DSL and permission events in gateway. | Gateway emits state, permission, checkpoint events. |
+| T-1105 | interface | Include workflow DSL and permission events in gateway. | Gateway emits state, permission, checkpoint events. |
 | T-1106 | interface | Update OpenAPI docs for new routes. | Generated OpenAPI includes new schemas. |
 | T-1107 | interface | Regenerate JavaScript SDK. | SDK compiles and includes new methods. |
 | T-1108 | library | Add contract tests between server routes and SDK client. | SDK calls exercise real server route handlers. |
@@ -246,6 +246,7 @@ Current `mode: primary | subagent | all` mixes independent concepts: main conver
 
 Design reference: `docs/agent-rewrite/06-workflow-dsl-design.md`.
 Implementation plan: `docs/agent-rewrite/07-workflow-dsl-implementation-plan.md`.
+Agent design: `docs/agent-rewrite/08-workflow-runner-agent.md`.
 
 | Task | Delivery | Scope | Verification |
 |---|---|---|---|
@@ -258,9 +259,10 @@ Implementation plan: `docs/agent-rewrite/07-workflow-dsl-implementation-plan.md`
 | T-1307 | library | Add guard evaluation with permission gate. | Guard test denies unsafe transition. |
 | T-1308 | library | Add checkpoint creation before mutating nodes. | Workflow restore returns to prior node state. |
 | T-1309 | library | Add pause/resume for waiting_user and waiting_permission. | Resume test continues after approval/user answer. |
-| T-1310 | interface | Add workflow run/list/status endpoints. | Route tests cover create, status, abort, and resumed durable runs. |
-| T-1311 | presentation | Show workflow progress in TUI if enabled. | User can see current node and paused reason. |
-| T-1312 | library | Add Decision Agent recovery hook using Planner first. | Failure tests cover retry, add node, replan, and abort decisions. |
+| T-1310 | library | Add runtime runner dispatch for `chat` and `workflow`. | Ordinary agents keep chat behavior; `workflow-runner` enters workflow runner path. |
+| T-1311 | interface | Add workflow run/list/status endpoints. | Route tests cover create, status, abort, and resumed durable runs. |
+| T-1312 | presentation | Show workflow progress in TUI if enabled. | User can see current node and paused reason. |
+| T-1313 | library | Add Decision Agent recovery hook using Planner first. | Failure tests cover retry, add node, replan, and abort decisions. |
 
 ## Module MOD-14: Memory System
 
@@ -358,7 +360,7 @@ Must pass after B5:
 
 Must pass after B7:
 
-- DSL schema/parser/executor tests.
+- workflow DSL schema/parser/executor tests.
 - Resume from `waiting_permission` and checkpoint restore tests.
 - At least one workflow visible in TUI or CLI.
 

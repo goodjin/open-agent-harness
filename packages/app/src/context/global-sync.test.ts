@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./global-sync/eviction"
-import { estimateRootSessionTotal, loadRootSessionsWithFallback } from "./global-sync/session-load"
+import {
+  estimateRootSessionTotal,
+  loadRootSessionsWithFallback,
+  loadSessionTreeWithFallback,
+} from "./global-sync/session-load"
 
 describe("pickDirectoriesToEvict", () => {
   test("keeps pinned stores and evicts idle stores", () => {
@@ -60,6 +64,56 @@ describe("loadRootSessionsWithFallback", () => {
       { directory: "dir", roots: true, limit: 25 },
       { directory: "dir", roots: true },
     ])
+  })
+})
+
+describe("loadSessionTreeWithFallback", () => {
+  test("loads descendants in one batch and merges them", async () => {
+    const calls: string[][] = []
+    const result = await loadSessionTreeWithFallback({
+      directory: "dir",
+      limit: 10,
+      list: async () => ({
+        data: [
+          { id: "root-a", time: { created: 1, updated: 1 } },
+          { id: "root-b", time: { created: 2, updated: 2 } },
+        ] as never,
+      }),
+      descendants: async (query) => {
+        calls.push(query.ids)
+        return {
+          data: [{ id: "child", parentID: "root-a", time: { created: 3, updated: 3 } }] as never,
+        }
+      },
+    })
+
+    expect(calls).toEqual([["root-a", "root-b"]])
+    expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b", "child"])
+  })
+
+  test("loads descendants only for roots not loaded before", async () => {
+    const calls: string[][] = []
+    const result = await loadSessionTreeWithFallback({
+      directory: "dir",
+      limit: 10,
+      loaded: new Set(["root-a"]),
+      list: async () => ({
+        data: [
+          { id: "root-a", time: { created: 1, updated: 1 } },
+          { id: "root-b", time: { created: 2, updated: 2 } },
+        ] as never,
+      }),
+      descendants: async (query) => {
+        calls.push(query.ids)
+        return {
+          data: [{ id: "child-b", parentID: "root-b", time: { created: 3, updated: 3 } }] as never,
+        }
+      },
+    })
+
+    expect(calls).toEqual([["root-b"]])
+    expect(result.ids).toEqual(["root-a", "root-b"])
+    expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b", "child-b"])
   })
 })
 

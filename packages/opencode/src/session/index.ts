@@ -9,7 +9,20 @@ import { Config } from "../config/config"
 import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
-import { Database, NotFoundError, ForbiddenError, eq, and, or, gte, isNull, desc, like, inArray, lt } from "../storage/db"
+import {
+  Database,
+  NotFoundError,
+  ForbiddenError,
+  eq,
+  and,
+  or,
+  gte,
+  isNull,
+  desc,
+  like,
+  inArray,
+  lt,
+} from "../storage/db"
 import type { SQL } from "../storage/db"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
 import { ProjectTable } from "../project/project.sql"
@@ -696,6 +709,7 @@ export namespace Session {
   }
 
   export const children = fn(SessionID.zod, async (parentID) => {
+    await get(parentID)
     const project = Instance.project
     const rows = Database.use((db) =>
       db
@@ -711,6 +725,55 @@ export namespace Session {
         .all(),
     )
     return rows.map(fromRow)
+  })
+
+  export const descendantsBatch = fn(z.object({ ids: SessionID.zod.array().min(1) }), async (input) => {
+    const project = Instance.project
+    const ids = [...new Set(input.ids)]
+    const roots = Database.use((db) => db.select().from(SessionTable).where(inArray(SessionTable.id, ids)).all())
+    const found = new Set(roots.map((row) => row.id))
+    const missing = ids.find((id) => !found.has(id))
+    if (missing) throw new NotFoundError({ message: `Session not found: ${missing}` })
+
+    const other = roots.find((row) => row.project_id !== project.id)
+    if (other) {
+      throw new ForbiddenError({ message: `Session ${other.id} does not belong to the current project` })
+    }
+    const foreign = roots.find((row) => row.directory !== Instance.directory)
+    if (foreign) {
+      throw new ForbiddenError({ message: `Session ${foreign.id} does not belong to the current directory` })
+    }
+
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(SessionTable)
+        .where(and(eq(SessionTable.project_id, project.id), eq(SessionTable.directory, Instance.directory)))
+        .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
+        .all(),
+    )
+    const map = rows.reduce((acc, row) => {
+      if (!row.parent_id) return acc
+      const list = acc.get(row.parent_id)
+      if (list) {
+        list.push(row)
+        return acc
+      }
+      acc.set(row.parent_id, [row])
+      return acc
+    }, new Map<SessionID, typeof rows>())
+    const seen = new Set<SessionID>()
+    const visit = (id: SessionID): Info[] =>
+      (map.get(id) ?? []).flatMap((row) => {
+        if (seen.has(row.id)) return []
+        seen.add(row.id)
+        return [fromRow(row), ...visit(row.id)]
+      })
+    return ids.flatMap(visit)
+  })
+
+  export const descendants = fn(SessionID.zod, async (parentID) => {
+    return descendantsBatch({ ids: [parentID] })
   })
 
   export const remove = fn(SessionID.zod, async (sessionID) => {

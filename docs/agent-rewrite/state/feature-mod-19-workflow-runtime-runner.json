@@ -1,0 +1,41 @@
+{
+  "task_id": "feature-mod-19-workflow-runtime-runner",
+  "status": "planned",
+  "specialist": "task-executor-work",
+  "session_id": "codex-workflow-runtime-runner",
+  "created_at": "2026-05-18T00:00:00Z",
+  "scope": {
+    "goal": "Add runtime runner dispatch so workflow-runner can use a workflow-specific execution path while all other agents keep the current chat/session loop.",
+    "included": [
+      "Add an agent runtime runner discriminator, defaulting existing agents to chat.",
+      "Map workflow-runner to the workflow runner path.",
+      "Update session processing to dispatch by runner.",
+      "Implement workflow-runner fallback to normal chat behavior when workflow mode is not warranted.",
+      "Route workflow-worthy requests through workflow create, validate, start, status, and decision operations.",
+      "Keep worker node execution on the existing chat runner with node assignment prompts."
+    ],
+    "excluded": [
+      "Generic DSL runtime design.",
+      "Replacing all existing workflow executor internals in one step.",
+      "Changing ordinary agent behavior except for runner selection metadata defaults."
+    ]
+  },
+  "implementation_targets": [
+    "packages/opencode/src/agent/schema.ts",
+    "packages/opencode/src/agent/loader.ts",
+    "packages/opencode/src/agent/registry.ts",
+    "packages/opencode/src/session/processor.ts",
+    "packages/opencode/src/workflow/",
+    "packages/opencode/test/agent/",
+    "packages/opencode/test/session/",
+    "packages/opencode/test/workflow/"
+  ],
+  "verification": {
+    "required": [
+      "bun typecheck from packages/opencode",
+      "focused agent schema/loader tests",
+      "focused session processor tests for chat vs workflow runner dispatch",
+      "focused workflow runner tests for fallback and workflow-worthy routing"
+    ]
+  }
+}

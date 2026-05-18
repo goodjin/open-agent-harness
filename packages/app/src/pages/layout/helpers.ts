@@ -54,6 +54,52 @@ export const childMapByParent = (sessions: Session[]) => {
   return map
 }
 
+export const sessionLineage = (sessions: Session[], id?: string) => {
+  if (!id) return new Set<string>()
+  const parent = new Map(sessions.map((s) => [s.id, s.parentID]))
+  const seen = new Set<string>()
+  const list: string[] = []
+  let next = parent.get(id)
+  while (next && !seen.has(next)) {
+    seen.add(next)
+    list.push(next)
+    next = parent.get(next)
+  }
+  return new Set(list)
+}
+
+export type SessionTreeItem = {
+  session: Session
+  depth: number
+}
+
+export const visibleSessionTree = (
+  roots: Session[],
+  sessions: Session[],
+  children: Map<string, string[]>,
+  expanded: Set<string>,
+) => {
+  const by = new Map(sessions.map((s) => [s.id, s]))
+  const walk = (session: Session, depth: number): SessionTreeItem[] => [
+    { session, depth },
+    ...(expanded.has(session.id)
+      ? (children.get(session.id) ?? [])
+          .map((id) => by.get(id))
+          .filter((item): item is Session => !!item && !item.time?.archived)
+          .flatMap((item) => walk(item, depth + 1))
+      : []),
+  ]
+  return roots.flatMap((session) => walk(session, 0))
+}
+
+export const effectiveSessionExpansion = (expanded: Record<string, boolean>, lineage: Set<string>) =>
+  new Set([
+    ...Object.entries(expanded)
+      .filter((item) => item[1])
+      .map((item) => item[0]),
+    ...lineage,
+  ])
+
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree)
 
