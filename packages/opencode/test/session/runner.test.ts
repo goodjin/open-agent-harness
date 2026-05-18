@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -9,6 +9,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID } from "../../src/session/schema"
 import { SessionRunner } from "../../src/session/runner"
+import { LLM } from "../../src/session/llm"
 import { WorkflowState } from "../../src/workflow/state"
 import { tmpdir } from "../fixture/fixture"
 
@@ -141,5 +142,106 @@ describe("SessionRunner", () => {
           },
         }),
     })
+  })
+
+  test("workflow runner persists and runs workflow returned by chat", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      id: "generated",
+      name: "Generated",
+      steps: [{ id: "review", outputs: { reviewed: "$input" } }],
+    }
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "text-start" }
+          yield { type: "text-delta", text: `\`\`\`json\n${JSON.stringify(data)}\n\`\`\`` }
+          yield { type: "text-end" }
+          yield {
+            type: "finish-step",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "workflow-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "workflow-runner",
+                agent: "workflow-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "workflow-runner",
+                  runner: "workflow",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "review toolbar buttons" }],
+                tools: {},
+              })
+              const state = WorkflowState.read((await Session.get(session.id)).dsl_context)
+
+              expect(result).toBe("stop")
+              expect(await Bun.file(path.join(tmp.path, ".opencode", "workflows", "generated.json")).exists()).toBe(true)
+              expect(state?.workflowID).toBe("generated")
+              expect(state?.variables.reviewed).toBe("review toolbar buttons")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
   })
 })

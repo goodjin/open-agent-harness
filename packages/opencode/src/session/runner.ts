@@ -4,8 +4,12 @@ import { SessionProcessor } from "./processor"
 import { WorkflowExecutor } from "@/workflow/executor"
 import type { WorkflowState } from "@/workflow/state"
 import { Session } from "."
-import { PartID, SessionID } from "./schema"
-import { SessionStatus } from "./status"
+import { MessageID, PartID, SessionID } from "./schema"
+import { MessageV2 } from "./message-v2"
+import { WorkflowParser } from "@/workflow/parser"
+import { Filesystem } from "@/util/filesystem"
+import { Instance } from "@/project/instance"
+import path from "path"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -60,6 +64,7 @@ export namespace SessionRunner {
           })
       : await start(sessionID, text)
 
+    if (!next) return chat.process(stream).then((result) => generated(chat, stream, result))
     await output(chat, next)
     return "stop"
   }
@@ -77,38 +82,67 @@ export namespace SessionRunner {
   }
 
   async function start(sessionID: SessionID, text: string | undefined) {
-    const workflows = await WorkflowExecutor.list()
-    const match = workflows.find((item) => text?.split(/\s+/).includes(item.id))
-    const workflow = match ?? (workflows.length === 1 ? workflows[0] : undefined)
-    if (!workflow) {
-      const msg = workflows.length
-        ? `Workflow runner needs a workflow id. Available workflows: ${workflows.map((item) => item.id).join(", ")}.`
-        : "Workflow runner did not find any available workflows."
-      SessionStatus.set(sessionID, { type: "idle" })
-      return {
-        runID: "workflow_unstarted",
-        workflowID: "",
-        workflowName: "Workflow Runner",
-        status: "error",
-        current: "",
-        step: 0,
-        total: 1,
-        variables: {},
-        attempts: {},
-        completed: [],
-        error: msg,
-        time: {
-          started: Date.now(),
-          updated: Date.now(),
-          completed: Date.now(),
-        },
-      } satisfies WorkflowState.Info
-    }
-    return WorkflowExecutor.run({
-      sessionID,
-      workflowID: workflow.id,
-      variables: input(text),
+    const workflow = (await WorkflowExecutor.list()).find((item) => text?.split(/\s+/).includes(item.id))
+    if (!workflow) return
+    return WorkflowExecutor.run({ sessionID, workflowID: workflow.id, variables: input(text) })
+  }
+
+  async function generated(chat: SessionProcessor.Info, stream: LLM.StreamInput, result: SessionProcessor.Result) {
+    if (chat.message.error) return result
+    if (!chat.message.finish || ["tool-calls", "unknown"].includes(chat.message.finish)) return result
+    const workflow = await detect(chat.message.id)
+    if (!workflow) return result
+
+    await persist(workflow.data)
+    const state = await WorkflowExecutor.run({
+      sessionID: SessionID.make(stream.sessionID),
+      workflowID: workflow.workflow.id,
+      variables: input(
+        stream.messages
+          .slice()
+          .reverse()
+          .flatMap((msg) => (msg.role === "user" && typeof msg.content === "string" ? [msg.content] : []))[0]
+          ?.trim(),
+      ),
     })
+    await output(chat, state)
+    return "stop"
+  }
+
+  async function detect(messageID: MessageID) {
+    const text = (await MessageV2.parts(messageID))
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+    for (const data of candidates(text)) {
+      const parsed = parse(data)
+      if (parsed) return parsed
+    }
+  }
+
+  function candidates(text: string) {
+    const result: string[] = []
+    const blocks = text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)
+    for (const block of blocks) result.push(block[1]!.trim())
+    result.push(text.trim())
+    const start = text.indexOf("{")
+    const end = text.lastIndexOf("}")
+    if (start >= 0 && end > start) result.push(text.slice(start, end + 1))
+    return [...new Set(result)].filter((item) => item.length > 0)
+  }
+
+  function parse(data: string): { data: unknown; workflow: WorkflowParser.Definition } | undefined {
+    try {
+      const json = JSON.parse(data)
+      return { data: json, workflow: WorkflowParser.parse(json) }
+    } catch {
+      return undefined
+    }
+  }
+
+  async function persist(data: unknown) {
+    const workflow = WorkflowParser.parse(data)
+    await Filesystem.writeJson(path.join(Instance.directory, ".opencode", "workflows", `${workflow.id}.json`), data)
+    return workflow
   }
 
   function input(text: string | undefined) {
