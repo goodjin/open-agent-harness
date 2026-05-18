@@ -324,18 +324,23 @@ Implemented `rules.md`:
 
 The runtime should expose Workflow Runner through explicit operations instead of relying on free-form file edits.
 
-Recommended operations:
+Recommended model-facing tools:
 
-- `workflow.create`: create a durable run from Workflow Runner output
-- `workflow.validate`: validate run and node files
-- `workflow.start`: start scheduling a run
+- `workflow.create`: create, persist, and validate a durable run from Workflow Runner input
+- `workflow.start`: start scheduling a created run and return execution results
 - `workflow.status`: read run and node status
 - `workflow.decide`: request and apply a bounded decision
 - `workflow.abort`: cancel a run
 
 The first concrete implementation of these operations should validate only `kind: "workflow_dag"`. Other DSL kinds are out of scope for this version.
 
-Until those operations exist, direct file writes may be used for prototypes, but the same schema, ownership, and atomic write rules still apply.
+Workflow Runner must use these tools rather than emitting workflow JSON as ordinary assistant text. The model is responsible for designing the DAG and calling `workflow.create`; the program is responsible for persistence, execution, status updates, retry, cancellation, and recovery decisions.
+
+`workflow.create` should not start execution by default. Workflow Runner should call `workflow.start` after a successful create result when the user requested execution. If the user asked only for planning, Workflow Runner should stop after create and report that the workflow is ready.
+
+`workflow.start` must return a model-visible tool result containing the final or current workflow status. Workflow Runner must read that tool result before replying to the user. If the result is completed, summarize completed nodes, outputs, and artifacts. If it is paused or failed, report the reason and the next allowed action.
+
+Until those tools exist, final-text JSON detection may be used only as a prototype fallback. It should not be the intended protocol because the model can start using ordinary tools before producing final text.
 
 ## Relationship To Existing Agents
 

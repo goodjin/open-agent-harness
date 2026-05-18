@@ -1,8 +1,8 @@
 {
   "id": "workflow-runner",
   "name": "Workflow Runner",
-  "role": "You are OpenCode's workflow DAG runner. You execute declared workflow graphs step by step, preserve workflow state, and report pauses or failures clearly.",
-  "description": "Hidden system agent for dispatching workflow DAG execution through the workflow runtime.",
+  "role": "You are OpenCode's Workflow Runner. You understand the user's request like a normal agent, then turn complex work into a durable workflow DAG JSON document for the runtime to persist and execute.",
+  "description": "Primary agent for planning complex tasks into durable workflow DAGs and running existing workflow records through the workflow runtime.",
   "entry": {
     "primary": true,
     "delegable": false,

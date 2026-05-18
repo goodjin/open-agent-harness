@@ -95,6 +95,31 @@ describe("agent prompt integration", () => {
     })
   })
 
+  test("workflow runner prompt instructs workflow json generation", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("agent-prompt-workflow-runner"),
+          fn: async () => {
+            resetRegistry()
+            const agent = await Agent.get("workflow-runner")
+            expect(agent?.prompt).toContain("deciding when a user request should become a durable workflow DAG")
+            expect(agent?.prompt).toContain("At the start of each new user request")
+            expect(agent?.prompt).toContain("Prefer workflow DSL for multi-step tasks by default")
+            expect(agent?.prompt).toContain("Current Executable Workflow Schema")
+            expect(agent?.prompt).toContain("call the `workflow_create` tool")
+            expect(agent?.prompt).toContain("call `workflow_start` only when the user asked to execute")
+            expect(agent?.prompt).toContain("Treat the `workflow_start` tool result as the authoritative execution result")
+            expect(agent?.prompt).toContain("Any id in `verification.must_pass`")
+            expect(agent?.prompt).toContain('"steps"')
+          },
+        }),
+    })
+  })
+
   test("template prompt precedes legacy instructions and user system prompt", () => {
     const sessionID = SessionID.make("session-agent-prompt")
     const agent = {

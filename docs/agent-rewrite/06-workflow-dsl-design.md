@@ -101,17 +101,69 @@ The runtime must:
 
 Concurrency is not part of the workflow DSL. The DAG exposes which nodes may run together; the scheduler decides how many actually run.
 
+## Workflow Tool Contract
+
+Workflow generation must use a tool protocol, similar to the existing `todowrite` protocol.
+
+The Planner / Workflow Runner does not create workflow files by free-form text and does not execute workflow steps by itself. It calls a runtime-owned tool with a structured workflow definition. The runtime validates, persists, schedules, resumes, and reports progress.
+
+Initial tool surface:
+
+- `workflow.create`: submit a workflow DAG definition for the current user request
+- `workflow.start`: start a previously created workflow run
+- `workflow.status`: read the current workflow run and node status
+- `workflow.decide`: submit a bounded recovery decision when execution is blocked
+- `workflow.abort`: cancel a workflow run
+
+`workflow.create` should:
+
+- accept only the current executable workflow schema
+- validate the schema before any execution starts
+- assign or validate a unique workflow id
+- persist the workflow definition before scheduling any node
+- create or reference per-node state records
+- return a structured status containing workflow id, run id, status, validation result, and next action
+- default to `status: "created"` or `status: "ready"`, not execution
+
+`workflow.start` should:
+
+- accept a `run_id` created by `workflow.create`
+- start scheduling only after the workflow has been persisted and validated
+- return a model-visible structured execution result
+- include workflow id, run id, status, completed nodes, active nodes, failed nodes, outputs, artifacts, and any pause/error reason
+
+The tool result returned by `workflow.start` is the handoff back to the model. The model should use that result to produce the final user-facing response or to request a bounded decision if the workflow paused or failed.
+
+The model-facing contract is therefore:
+
+- decide whether workflow mode is warranted
+- if warranted, call `workflow.create` exactly once with the workflow DAG
+- call `workflow.start` after `workflow.create` succeeds only when the user asked to execute the work
+- do not call `workflow.start` when the user only asked to design, plan, preview, or save a workflow
+- do not output workflow JSON as ordinary prose
+- do not call read/edit/bash/task tools to execute workflow steps before the workflow runtime assigns execution
+- after `workflow.start` returns, read the tool result and summarize the execution outcome for the user
+- if not warranted, proceed with normal chat/tool behavior
+
+The program-facing contract is:
+
+- recognize workflow creation from the tool call, not from assistant text parsing
+- treat the tool call result as the source of truth for persistence and execution
+- drive the execution loop after `workflow.start`
+- return terminal, paused, or failed workflow execution status to the model as tool output
+- expose progress to the UI from runtime state, not from model-written summaries
+
 ## Planner Generation Contract
 
 When a Planner generates a workflow, it must:
 
 - decide that workflow mode is warranted using the generation criteria above
-- create a unique run directory
-- write `workflow.json`
-- create one node file for every initial node
-- validate DAG ids, dependency references, and cycles
-- validate every node type against the supported enum
-- persist all files before asking the runtime to execute
+- call `workflow.create` with the workflow definition
+- let the runtime create the unique run directory or durable run record
+- let the runtime write `workflow.json` and per-node state records
+- let the runtime validate DAG ids, dependency references, cycles, and node types
+- wait for the tool result before assuming the workflow exists
+- call `workflow.start` only when execution should begin immediately
 
 The Planner must include enough intent for later recovery:
 

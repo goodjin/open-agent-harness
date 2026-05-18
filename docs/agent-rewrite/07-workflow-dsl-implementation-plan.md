@@ -113,8 +113,14 @@ Tasks:
 - default all existing agents to the current chat runner
 - map `workflow-runner` to the workflow runner
 - update session processing to dispatch by runner without changing normal agent behavior
+- expose a `workflow.create` tool to workflow-runner agents
+- expose a `workflow.start` tool to start created workflow runs
 - make the workflow runner decide whether workflow mode is warranted and fall back to chat behavior when it is not
-- pass workflow runner requests through workflow create/validate/start/status operations instead of free-form file mutation
+- require workflow-runner to call `workflow.create` before using ordinary execution tools for workflow-worthy tasks
+- have the runtime validate and persist the workflow from `workflow.create`
+- have the runtime start scheduling only from `workflow.start` or an explicit trusted auto-start policy
+- return workflow execution results to the model as the `workflow.start` tool result
+- pass workflow runner requests through workflow create/validate/start/status operations instead of assistant text parsing or free-form file mutation
 - keep worker node execution on the existing chat runner with a node assignment prompt
 
 Verification:
@@ -122,6 +128,9 @@ Verification:
 - session tests prove ordinary agents still use the existing chat path
 - workflow-runner tests prove the workflow runner path is selected
 - fallback tests prove workflow-runner can answer normally when workflow mode is not warranted
+- workflow tool tests prove `workflow.create` validates and persists a generated DAG without starting it by default
+- workflow tool tests prove `workflow.start` starts execution and returns model-visible workflow results
+- workflow-runner tests prove tool calls start execution without relying on final assistant text parsing
 - worker invocation tests prove delegated workers do not receive workflow generation rules
 
 ## Phase 7: Decision Handling

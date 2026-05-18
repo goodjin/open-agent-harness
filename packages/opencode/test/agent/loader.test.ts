@@ -132,7 +132,7 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.meta.runner).toBe("workflow")
       expect(agent?.meta.capability.purpose).toBe("workflow_orchestration")
       expect(agent?.identity).toContain("workflow DAG")
-      expect(agent?.rules).toContain("workflow runtime")
+      expect(agent?.rules).toContain("workflow.create")
     })
 
     test("registry exposes workflow-runner runner metadata", async () => {
