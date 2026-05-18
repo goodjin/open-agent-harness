@@ -95,6 +95,11 @@ describe("workflow tools", () => {
             expect(result.metadata.state.completed).toEqual(["first", "second"])
             expect(result.metadata.state.variables.second).toBe("done")
             expect(output.status).toBe("completed")
+            expect(output.summary.total).toBe(2)
+            expect(output.summary.completed).toBe(2)
+            expect(output.summary.succeeded).toBe(2)
+            expect(output.summary.failed).toBe(0)
+            expect(output.summary.message).toContain("do not repeat completed node work")
             expect(output.completed).toEqual(["first", "second"])
             expect(output.variables.second).toBe("done")
           },

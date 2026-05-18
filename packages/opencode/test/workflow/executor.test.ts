@@ -47,6 +47,95 @@ describe("workflow executor", () => {
     })
   })
 
+  test("dispatches prompted steps and persists node result", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dispatch",
+      name: "Dispatch",
+      steps: [
+        {
+          id: "inspect",
+          agent: "primary",
+          prompt: "Inspect the target files",
+          outputs: { inspected: "$inspect" },
+        },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "dispatch",
+              agent: "workflow-runner",
+              execute: async (input) => ({
+                agent: input.agent,
+                sessionID: session.id,
+                output: `ran ${input.step.id}`,
+              }),
+            })
+
+            expect(state.status).toBe("completed")
+            expect(state.variables.inspect).toBe("ran inspect")
+            expect(state.variables.inspected).toBe("ran inspect")
+            expect(state.nodes.inspect?.status).toBe("completed")
+            expect(state.nodes.inspect?.agent).toBe("workflow-runner")
+            expect(state.nodes.inspect?.sessionID).toBe(session.id)
+
+            const file = path.join(tmp.path, ".opencode", "workflows", "runs", state.runID, "inspect.json")
+            const node = JSON.parse(await Bun.file(file).text()) as { status: string; output: string }
+            expect(node.status).toBe("completed")
+            expect(node.output).toBe("ran inspect")
+          },
+        }),
+    })
+  })
+
+  test("persists failed prompted step before applying error policy", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dispatch-fail",
+      name: "Dispatch Fail",
+      steps: [{ id: "inspect", prompt: "Inspect the target files" }],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "dispatch-fail",
+              agent: "workflow-runner",
+              execute: async () => {
+                throw new Error("node failed")
+              },
+            })
+
+            expect(state.status).toBe("error")
+            expect(state.attempts.inspect).toBe(1)
+            expect(state.nodes.inspect?.status).toBe("error")
+            expect(state.nodes.inspect?.error).toBe("node failed")
+
+            const file = path.join(tmp.path, ".opencode", "workflows", "runs", state.runID, "inspect.json")
+            const node = JSON.parse(await Bun.file(file).text()) as { status: string; error: string }
+            expect(node.status).toBe("error")
+            expect(node.error).toBe("node failed")
+          },
+        }),
+    })
+  })
+
   test("runs missing verification steps before completing", async () => {
     await using tmp = await tmpdir()
     const space = WorkspaceID.ascending()

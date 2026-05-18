@@ -37,6 +37,26 @@ export namespace WorkflowState {
     .meta({ ref: "WorkflowPause" })
   export type Pause = z.infer<typeof Pause>
 
+  export const Node = z
+    .object({
+      step: z.string(),
+      status: z.enum(["running", "completed", "error"]),
+      agent: z.string(),
+      sessionID: z.string().optional(),
+      path: z.string(),
+      attempt: z.number().int().min(1),
+      output: z.string().optional(),
+      error: z.string().optional(),
+      time: z.object({
+        started: z.number(),
+        updated: z.number(),
+        completed: z.number().optional(),
+      }),
+    })
+    .strict()
+    .meta({ ref: "WorkflowNodeRun" })
+  export type Node = z.infer<typeof Node>
+
   export const Info = z
     .object({
       runID: z.string(),
@@ -49,6 +69,7 @@ export namespace WorkflowState {
       variables: z.record(z.string(), z.unknown()).default({}),
       attempts: z.record(z.string(), z.number()).default({}),
       completed: z.array(z.string()).default([]),
+      nodes: z.record(z.string(), Node).default({}),
       pause: Pause.optional(),
       error: z.string().optional(),
       checkpoint: z.string().optional(),

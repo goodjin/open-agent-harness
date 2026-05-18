@@ -13,16 +13,35 @@ function file(id: string) {
 }
 
 function result(state: WorkflowState.Info) {
+  const nodes = Object.values(state.nodes)
+  const summary = {
+    total: state.total,
+    completed: state.completed.length,
+    succeeded: state.completed.length,
+    failed: nodes.filter((node) => node.status === "error").length,
+    running: nodes.filter((node) => node.status === "running").length,
+    pending: Math.max(state.total - state.completed.length - nodes.filter((node) => node.status === "error").length, 0),
+    message:
+      state.status === "completed"
+        ? "Workflow execution completed. Use node outputs as the task result and summarize them; do not repeat completed node work unless a node output is missing or insufficient."
+        : state.status === "error"
+          ? "Workflow execution failed. Inspect failed node records before deciding whether to revise the workflow, retry, or stop."
+          : state.status === "waiting_user" || state.status === "waiting_permission"
+            ? "Workflow execution is paused. Report the pause reason and wait for resume input."
+            : "Workflow execution is still active. Check node records before taking more action.",
+  }
   return {
     run_id: state.runID,
     workflow_id: state.workflowID,
     workflow_name: state.workflowName,
     status: state.status,
+    summary,
     current: state.current,
     step: state.step,
     total: state.total,
     completed: state.completed,
     attempts: state.attempts,
+    nodes: state.nodes,
     variables: state.variables,
     pause: state.pause,
     error: state.error,
@@ -119,6 +138,8 @@ export const WorkflowStartTool = Tool.define("workflow_start", {
       sessionID: ctx.sessionID,
       workflowID: params.workflow_id,
       variables: params.variables,
+      agent: ctx.agent,
+      abort: ctx.abort,
     })
     const out = result(state)
 

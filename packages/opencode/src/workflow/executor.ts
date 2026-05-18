@@ -2,11 +2,17 @@ import { PermissionNext } from "@/permission/next"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session"
 import { MessageV2 } from "@/session/message-v2"
+import { SessionPrompt } from "@/session/prompt"
 import { MessageID, PartID, SessionID } from "@/session/schema"
 import { SessionStatus } from "@/session/status"
 import { Snapshot } from "@/snapshot"
+import { Agent } from "@/agent/agent"
+import { AgentEntry } from "@/agent/entry"
 import { ForbiddenError, NotFoundError } from "@/storage/db"
+import { Filesystem } from "@/util/filesystem"
+import { defer } from "@/util/defer"
 import { NamedError } from "@opencode-ai/util/error"
+import path from "path"
 import z from "zod"
 import { WorkflowParser } from "./parser"
 import { loader } from "./loader"
@@ -16,6 +22,27 @@ import { Audit } from "@/observability/audit"
 export namespace WorkflowExecutor {
   const prefix = "workflow"
   export const InvalidError = NamedError.create("WorkflowInvalidError", z.object({ message: z.string() }))
+  type Run = {
+    sessionID: SessionID
+    workflowID: string
+    variables?: Record<string, unknown>
+    agent?: string
+    abort?: AbortSignal
+    execute?: Executor
+  }
+  type Executor = (input: {
+    parent: Session.Info
+    workflow: WorkflowParser.Definition
+    step: WorkflowParser.Step
+    state: WorkflowState.Info
+    agent: string
+    attempt: number
+    abort?: AbortSignal
+  }) => Promise<{
+    agent: string
+    sessionID?: SessionID
+    output: string
+  }>
 
   type Gate =
     | { status: "allow" }
@@ -56,11 +83,7 @@ export namespace WorkflowExecutor {
     return WorkflowState.read(session.dsl_context)
   }
 
-  export async function run(input: {
-    sessionID: SessionID
-    workflowID: string
-    variables?: Record<string, unknown>
-  }) {
+  export async function run(input: Run) {
     const session = await bound(input.sessionID)
     const source = await loader()
     const item = await source.get(input.workflowID)
@@ -79,6 +102,7 @@ export namespace WorkflowExecutor {
       variables,
       attempts: {},
       completed: [],
+      nodes: {},
       time: {
         started: now,
         updated: now,
@@ -94,7 +118,7 @@ export namespace WorkflowExecutor {
         runID: state.runID,
       },
     })
-    return advance(input.sessionID, item.workflow, state)
+    return advance(input.sessionID, item.workflow, state, undefined, input)
   }
 
   export async function resume(input: {
@@ -163,6 +187,7 @@ export namespace WorkflowExecutor {
     workflow: WorkflowParser.Definition,
     state: WorkflowState.Info,
     resumed?: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean },
+    opts?: Pick<Run, "agent" | "abort" | "execute">,
   ): Promise<WorkflowState.Info> {
     const steps = new Map(workflow.steps.map((step) => [step.id, step]))
     let current = state
@@ -190,7 +215,7 @@ export namespace WorkflowExecutor {
         })
       }
 
-      const attempted = await attempt(sessionID, step, current).then(
+      const attempted = await attempt(sessionID, workflow, step, current, opts).then(
         (state) => ({ state }),
         (err: unknown) => ({ err }),
       )
@@ -200,7 +225,7 @@ export namespace WorkflowExecutor {
       }
       current = attempted.state
       const next = transition(workflow, step, current, (await bound(sessionID)).permission, resumed)
-      if (next.status === "complete") return finish(sessionID, workflow, current)
+      if (next.status === "complete") return finish(sessionID, workflow, current, opts)
       if (next.status !== "next") return pause(sessionID, current, next)
       current = {
         ...current,
@@ -265,8 +290,10 @@ export namespace WorkflowExecutor {
 
   async function attempt(
     sessionID: SessionID,
+    workflow: WorkflowParser.Definition,
     step: WorkflowParser.Step,
     state: WorkflowState.Info,
+    opts?: Pick<Run, "agent" | "abort" | "execute">,
   ) {
     const attempts = {
       ...state.attempts,
@@ -278,17 +305,197 @@ export namespace WorkflowExecutor {
       time: { ...state.time, updated: Date.now() },
     }
     if (step.mutates) await checkpoint(sessionID, base)
-    const variables = {
+    const ran = await execute(sessionID, workflow, step, base, opts)
+    const saved = WorkflowState.read((await bound(sessionID)).dsl_context)
+    const vars = {
       ...base.variables,
-      ...Object.fromEntries(Object.entries(step.outputs).map((entry) => [entry[0], value(entry[1], base.variables)])),
+      ...(ran ? { [step.id]: ran.output } : {}),
+    }
+    const variables = {
+      ...vars,
+      ...Object.fromEntries(Object.entries(step.outputs).map((entry) => [entry[0], value(entry[1], vars)])),
     }
     const next = {
       ...base,
       variables,
+      nodes: saved?.nodes ?? base.nodes,
       completed: [...new Set([...base.completed, step.id])],
     }
     await save(await bound(sessionID), next)
     return next
+  }
+
+  async function execute(
+    sessionID: SessionID,
+    workflow: WorkflowParser.Definition,
+    step: WorkflowParser.Step,
+    state: WorkflowState.Info,
+    opts?: Pick<Run, "agent" | "abort" | "execute">,
+  ) {
+    if (!step.prompt) return
+    const parent = await bound(sessionID)
+    const attempt = state.attempts[step.id] ?? 1
+    const agent = await route(step, opts?.agent)
+    const started = Date.now()
+    const node: WorkflowState.Node = {
+      step: step.id,
+      status: "running",
+      agent,
+      path: nodepath(state.runID, step.id),
+      attempt,
+      time: {
+        started,
+        updated: started,
+      },
+    }
+    await nodefile(state.runID, step.id, node)
+    await save(parent, {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [step.id]: node,
+      },
+    })
+    const ran = await (opts?.execute ?? subagent)({
+      parent,
+      workflow,
+      step,
+      state,
+      agent,
+      attempt,
+      abort: opts?.abort,
+    }).catch(async (err: unknown) => {
+      const failed: WorkflowState.Node = {
+        ...node,
+        status: "error",
+        error: message(err),
+        time: {
+          ...node.time,
+          updated: Date.now(),
+          completed: Date.now(),
+        },
+      }
+      await nodefile(state.runID, step.id, failed)
+      await save(await bound(sessionID), {
+        ...state,
+        nodes: {
+          ...state.nodes,
+          [step.id]: failed,
+        },
+      })
+      throw err
+    })
+    const done: WorkflowState.Node = {
+      ...node,
+      status: "completed",
+      agent: ran.agent,
+      sessionID: ran.sessionID,
+      output: ran.output,
+      time: {
+        ...node.time,
+        updated: Date.now(),
+        completed: Date.now(),
+      },
+    }
+    await nodefile(state.runID, step.id, done)
+    await save(await bound(sessionID), {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [step.id]: done,
+      },
+    })
+    return ran
+  }
+
+  async function subagent(input: Parameters<Executor>[0]) {
+    const agent = await Agent.get(input.agent)
+    if (!agent) throw new InvalidError({ message: `Workflow node agent not found: ${input.agent}` })
+    const rule = PermissionNext.evaluate("task", agent.name, input.parent.permission ?? [])
+    if (rule.action === "deny") {
+      throw new InvalidError({ message: `Workflow node agent denied: ${agent.name}` })
+    }
+    const child = await Session.create({
+      parentID: input.parent.id,
+      title: `${input.workflow.name}: ${input.step.id} (@${agent.name})`,
+      permission: [
+        ...agent.permission,
+        { permission: "workflow_create", pattern: "*", action: "deny" },
+        { permission: "workflow_start", pattern: "*", action: "deny" },
+      ],
+    })
+    function cancel() {
+      SessionPrompt.cancel(child.id)
+    }
+    input.abort?.addEventListener("abort", cancel)
+    using _ = defer(() => input.abort?.removeEventListener("abort", cancel))
+    const prompt = [
+      `Execute workflow node "${input.step.id}" for workflow "${input.workflow.name}".`,
+      "",
+      "Return only the node result. Include what you did, important findings, changed files, test results, blockers, and whether the node goal is complete.",
+      "",
+      "<workflow>",
+      JSON.stringify({
+        id: input.workflow.id,
+        name: input.workflow.name,
+        description: input.workflow.description,
+        run_id: input.state.runID,
+      }),
+      "</workflow>",
+      "",
+      "<node>",
+      JSON.stringify({
+        id: input.step.id,
+        type: input.step.type,
+        mutates: input.step.mutates,
+        inputs: input.step.inputs,
+        verification: input.step.verification,
+        attempt: input.attempt,
+      }),
+      "</node>",
+      "",
+      "<variables>",
+      JSON.stringify(input.state.variables),
+      "</variables>",
+      "",
+      "<task>",
+      input.step.prompt,
+      "</task>",
+    ].join("\n")
+    const result = await SessionPrompt.prompt({
+      sessionID: child.id,
+      agent: agent.name,
+      parts: await SessionPrompt.resolvePromptParts(prompt),
+    })
+    input.abort?.throwIfAborted()
+    return {
+      agent: agent.name,
+      sessionID: child.id,
+      output: result.parts.findLast((part) => part.type === "text")?.text ?? "",
+    }
+  }
+
+  async function route(step: WorkflowParser.Step, current?: string) {
+    if (step.agent !== "primary" && step.agent !== "auto") {
+      const agent = await Agent.get(step.agent)
+      if (agent) return agent.name
+    }
+    if (step.agent === "primary" && current && (await Agent.get(current))) return current
+    const agents = await Agent.list().then((items) => items.filter((item) => AgentEntry.delegable(item)))
+    const match = agents.find((item) => item.name.includes(step.type) || item.description?.toLowerCase().includes(step.type))
+    if (match) return match.name
+    if (current && (await Agent.get(current))) return current
+    const agent = await Agent.defaultAgent()
+    if (agent) return agent
+    throw new InvalidError({ message: `Workflow node agent could not be resolved for step: ${step.id}` })
+  }
+
+  async function nodefile(runID: string, step: string, node: WorkflowState.Node) {
+    await Filesystem.writeJson(nodepath(runID, step), node)
+  }
+
+  function nodepath(runID: string, step: string) {
+    return path.join(Instance.directory, ".opencode", "workflows", "runs", runID, `${step}.json`)
   }
 
   function transition(
@@ -393,15 +600,18 @@ export namespace WorkflowExecutor {
     state: WorkflowState.Info,
     reason: string,
   ) {
+    const latest = WorkflowState.read((await bound(sessionID)).dsl_context) ?? state
+    const prior = state.attempts[step.id] ?? 0
+    const count = latest.attempts[step.id] ?? prior
     const next = await save(
       await bound(sessionID),
       {
-        ...state,
+        ...latest,
         attempts: {
-          ...state.attempts,
-          [step.id]: (state.attempts[step.id] ?? 0) + 1,
+          ...latest.attempts,
+          [step.id]: count === prior ? count + 1 : count,
         },
-        time: { ...state.time, updated: Date.now() },
+        time: { ...latest.time, updated: Date.now() },
       },
     ).then((session) => WorkflowState.read(session.dsl_context)!)
     const policy = step.error_policy ?? workflow.error_policy
@@ -425,6 +635,7 @@ export namespace WorkflowExecutor {
     sessionID: SessionID,
     workflow: WorkflowParser.Definition,
     state: WorkflowState.Info,
+    opts?: Pick<Run, "agent" | "abort" | "execute">,
   ): Promise<WorkflowState.Info> {
     const step = pending(workflow, state)
     if (!step) return complete(sessionID, state)
@@ -435,7 +646,7 @@ export namespace WorkflowExecutor {
       time: { ...state.time, updated: Date.now() },
     }
     await save(await bound(sessionID), next)
-    return advance(sessionID, workflow, next)
+    return advance(sessionID, workflow, next, undefined, opts)
   }
 
   function pending(workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
