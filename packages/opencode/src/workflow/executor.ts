@@ -49,11 +49,6 @@ export namespace WorkflowExecutor {
     | { status: "miss"; reason: string }
     | { status: "waiting_permission"; step: string; reason: string; guard?: WorkflowState.Guard }
     | { status: "error"; step: string; reason: string; policy?: boolean }
-  type Move =
-    | { status: "next"; step: WorkflowParser.Step }
-    | { status: "complete" }
-    | { status: "waiting_permission"; step: string; reason: string; guard?: WorkflowState.Guard }
-    | { status: "error"; step: string; reason: string; policy?: boolean }
 
   export async function list() {
     const source = await loader()
@@ -102,7 +97,22 @@ export namespace WorkflowExecutor {
       variables,
       attempts: {},
       completed: [],
+      steps: item.workflow.steps.map((step) => ({
+        id: step.id,
+        type: step.type,
+        agent: step.agent,
+        prompt: step.prompt,
+        mutates: step.mutates,
+        wait: step.wait,
+        inputs: step.inputs,
+        outputs: step.outputs,
+        guards: step.guards,
+        depends_on: step.depends_on,
+        next: step.next,
+        verification: step.verification,
+      })),
       nodes: {},
+      statuses: Object.fromEntries(item.workflow.nodes.map((node) => [node.id, "pending" as const])),
       time: {
         started: now,
         updated: now,
@@ -189,54 +199,208 @@ export namespace WorkflowExecutor {
     resumed?: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean },
     opts?: Pick<Run, "agent" | "abort" | "execute">,
   ): Promise<WorkflowState.Info> {
-    const steps = new Map(workflow.steps.map((step) => [step.id, step]))
     let current = state
 
     while (current.status === "active") {
-      const step = steps.get(current.current)
-      if (!step) return error(sessionID, current, `Workflow step not found: ${current.current}`)
+      current = await block(sessionID, workflow, await latest(sessionID, current))
+      if (current.status !== "active") return current
 
-      const session = await bound(sessionID)
-      const gate = guard(step.guards, current, session.permission, resumed)
-      if (gate.status !== "allow") {
-        if (gate.status === "error" && gate.policy !== false) {
-          current = await fail(sessionID, workflow, step, current, gate.reason)
+      const batch = ready(workflow, current)
+      if (batch.length === 0) return settle(sessionID, workflow, current)
+
+      const gated: WorkflowParser.Step[] = []
+      let changed = false
+      for (const step of batch) {
+        const session = await bound(sessionID)
+        const ctx = { ...current, current: step.id, step: step.index }
+        const edge = matchin(workflow, step, ctx, session.permission, resumed)
+        if (edge.status === "miss") {
+          const prev = current
+          current = await mark(sessionID, current, step, "skipped")
+          if (workflow.legacy) {
+            current = {
+              ...current,
+              current: prev.current,
+              step: prev.step,
+            }
+            await save(await bound(sessionID), current)
+          }
+          changed = true
           continue
         }
-        if (gate.status === "miss") return error(sessionID, current, gate.reason)
-        return pause(sessionID, current, gate)
-      }
+        if (edge.status === "error" && edge.policy !== false) {
+          current = await fail(sessionID, workflow, step, ctx, edge.reason)
+          changed = true
+          continue
+        }
+        if (edge.status === "error") return error(sessionID, ctx, edge.reason)
+        if (edge.status !== "allow") return pause(sessionID, ctx, edge)
 
-      if (step.wait && !(resumed?.type === `waiting_${step.wait}` && resumed.step === step.id)) {
-        return pause(sessionID, current, {
-          status: `waiting_${step.wait}` as "waiting_user" | "waiting_permission",
-          step: step.id,
-          reason: step.wait === "user" ? "Workflow is waiting for user input" : "Workflow is waiting for permission",
-        })
-      }
+        const gate = guard(step.guards, ctx, session.permission, resumed)
+        if (gate.status === "error" && gate.policy !== false) {
+          current = await fail(sessionID, workflow, step, ctx, gate.reason)
+          changed = true
+          continue
+        }
+        if (gate.status === "miss" || gate.status === "error") return error(sessionID, ctx, gate.reason)
+        if (gate.status !== "allow") return pause(sessionID, ctx, gate)
 
-      const attempted = await attempt(sessionID, workflow, step, current, opts).then(
-        (state) => ({ state }),
-        (err: unknown) => ({ err }),
+        if (step.wait && !(resumed?.type === `waiting_${step.wait}` && resumed.step === step.id)) {
+          return pause(sessionID, ctx, {
+            status: `waiting_${step.wait}` as "waiting_user" | "waiting_permission",
+            step: step.id,
+            reason: step.wait === "user" ? "Workflow is waiting for user input" : "Workflow is waiting for permission",
+          })
+        }
+
+        gated.push(step)
+      }
+      resumed = undefined
+      if (changed) continue
+
+      const base = current
+      const running = await Promise.all(
+        gated.map((step) =>
+          attempt(sessionID, workflow, step, base, opts).then(
+            (state) => ({ step, state }),
+            (err: unknown) => ({ step, err }),
+          ),
+        ),
       )
-      if ("err" in attempted) {
-        current = await fail(sessionID, workflow, step, current, message(attempted.err))
-        continue
+      for (const item of running) {
+        if ("err" in item) {
+          current = await fail(sessionID, workflow, item.step, base, message(item.err))
+          continue
+        }
+        const last = await latest(sessionID, item.state)
+        const keys = [item.step.id, ...Object.keys(item.step.outputs)]
+        current = {
+          ...last,
+          current: item.step.id,
+          step: item.step.index,
+          variables: {
+            ...last.variables,
+            ...Object.fromEntries(
+              keys.filter((key) => item.state.variables[key] !== undefined).map((key) => [key, item.state.variables[key]]),
+            ),
+          },
+          nodes: {
+            ...last.nodes,
+            ...Object.fromEntries(Object.entries(item.state.nodes).filter((entry) => entry[0] === item.step.id)),
+          },
+          statuses: {
+            ...last.statuses,
+            [item.step.id]: "completed" as const,
+          },
+          completed: [...new Set([...last.completed, item.step.id])],
+        }
+        await save(await bound(sessionID), current)
       }
-      current = attempted.state
-      const next = transition(workflow, step, current, (await bound(sessionID)).permission, resumed)
-      if (next.status === "complete") return finish(sessionID, workflow, current, opts)
-      if (next.status !== "next") return pause(sessionID, current, next)
-      current = {
-        ...current,
-        current: next.step.id,
-        step: next.step.index,
-        time: { ...current.time, updated: Date.now() },
-      }
-      await save(await bound(sessionID), current)
     }
 
     return current
+  }
+
+  async function latest(sessionID: SessionID, state: WorkflowState.Info) {
+    return WorkflowState.read((await bound(sessionID)).dsl_context) ?? state
+  }
+
+  async function block(sessionID: SessionID, workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
+    let current = state
+    for (const step of workflow.nodes) {
+      if ((current.statuses[step.id] ?? "pending") !== "pending") continue
+      if (orphan(workflow, step)) {
+        current = await mark(sessionID, current, step, "skipped")
+        continue
+      }
+      if (!step.depends_on.some((dep) => failed(workflow, current, dep))) continue
+      current = await mark(sessionID, current, step, workflow.legacy ? "cancelled" : "skipped")
+    }
+    return current
+  }
+
+  function ready(workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
+    return workflow.nodes.filter((step) => {
+      if ((state.statuses[step.id] ?? "pending") !== "pending") return false
+      if (orphan(workflow, step)) return false
+      return step.depends_on.every((dep) => satisfied(workflow, state, step, dep))
+    })
+  }
+
+  function orphan(workflow: WorkflowParser.Definition, step: WorkflowParser.Step) {
+    if (!workflow.legacy) return false
+    if (step.index === 0) return false
+    if (step.depends_on.length > 0) return false
+    return !target(workflow, step)
+  }
+
+  function target(workflow: WorkflowParser.Definition, step: WorkflowParser.Step) {
+    return workflow.nodes.some((node) => node.verification?.must_pass.includes(step.id))
+  }
+
+  function verifier(workflow: WorkflowParser.Definition, state: WorkflowState.Info, step: WorkflowParser.Step) {
+    return workflow.nodes.some(
+      (node) => state.statuses[node.id] === "completed" && node.verification?.must_pass.includes(step.id),
+    )
+  }
+
+  function satisfied(
+    workflow: WorkflowParser.Definition,
+    state: WorkflowState.Info,
+    step: WorkflowParser.Step,
+    dep: string,
+  ) {
+    const status = state.statuses[dep]
+    if (status === "completed") return true
+    if (workflow.legacy && verifier(workflow, state, step) && (status === "skipped" || status === "cancelled")) return true
+    return allowed(workflow, state, dep)
+  }
+
+  function allowed(workflow: WorkflowParser.Definition, state: WorkflowState.Info, id: string) {
+    if (!workflow.legacy) return false
+    if (state.statuses[id] !== "error") return false
+    const step = workflow.nodes.find((item) => item.id === id)
+    const policy = step?.error_policy ?? workflow.error_policy
+    return policy.strategy === "continue"
+  }
+
+  function failed(workflow: WorkflowParser.Definition, state: WorkflowState.Info, id: string) {
+    const status = state.statuses[id]
+    if (workflow.legacy && (status === "skipped" || status === "cancelled")) return false
+    if (status === "skipped" || status === "cancelled") return true
+    if (status !== "error") return false
+    return !allowed(workflow, state, id)
+  }
+
+  function done(state: WorkflowState.Info, step: WorkflowParser.Step) {
+    return ["completed", "error", "skipped", "cancelled"].includes(state.statuses[step.id] ?? "pending")
+  }
+
+  async function settle(sessionID: SessionID, workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
+    if (!workflow.nodes.every((step) => done(state, step))) {
+      return error(sessionID, state, "Workflow has no runnable nodes")
+    }
+    const bad = workflow.nodes.some((step) => failed(workflow, state, step.id))
+    if (bad) return error(sessionID, state, "Workflow completed with failed or skipped nodes")
+    return complete(sessionID, state)
+  }
+
+  function matchin(
+    workflow: WorkflowParser.Definition,
+    step: WorkflowParser.Step,
+    state: WorkflowState.Info,
+    permission: Session.Info["permission"],
+    resumed?: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean },
+  ): Gate {
+    for (const source of workflow.nodes) {
+      for (const [index, branch] of source.branches.entries()) {
+        if (branch.step !== step.id) continue
+        const gate = match(branch.guards, { ...state, current: source.id }, permission, index, resumed)
+        if (gate.status === "miss") return gate
+        if (gate.status !== "allow") return gate
+      }
+    }
+    return { status: "allow" }
   }
 
   function guard(
@@ -301,14 +465,21 @@ export namespace WorkflowExecutor {
     }
     const base = {
       ...state,
+      current: step.id,
+      step: step.index,
       attempts,
+      statuses: {
+        ...state.statuses,
+        [step.id]: "running" as const,
+      },
       time: { ...state.time, updated: Date.now() },
     }
+    await save(await bound(sessionID), base)
     if (step.mutates) await checkpoint(sessionID, base)
     const ran = await execute(sessionID, workflow, step, base, opts)
-    const saved = WorkflowState.read((await bound(sessionID)).dsl_context)
+    const saved = WorkflowState.read((await bound(sessionID)).dsl_context) ?? base
     const vars = {
-      ...base.variables,
+      ...saved.variables,
       ...(ran ? { [step.id]: ran.output } : {}),
     }
     const variables = {
@@ -316,10 +487,16 @@ export namespace WorkflowExecutor {
       ...Object.fromEntries(Object.entries(step.outputs).map((entry) => [entry[0], value(entry[1], vars)])),
     }
     const next = {
-      ...base,
+      ...saved,
+      current: step.id,
+      step: step.index,
       variables,
-      nodes: saved?.nodes ?? base.nodes,
-      completed: [...new Set([...base.completed, step.id])],
+      statuses: {
+        ...saved.statuses,
+        [step.id]: "completed" as const,
+      },
+      completed: [...new Set([...saved.completed, step.id])],
+      time: { ...saved.time, updated: Date.now() },
     }
     await save(await bound(sessionID), next)
     return next
@@ -349,10 +526,17 @@ export namespace WorkflowExecutor {
       },
     }
     await nodefile(state.runID, step.id, node)
+    const active = WorkflowState.read(parent.dsl_context) ?? state
     await save(parent, {
-      ...state,
+      ...active,
+      current: step.id,
+      step: step.index,
+      statuses: {
+        ...active.statuses,
+        [step.id]: "running",
+      },
       nodes: {
-        ...state.nodes,
+        ...active.nodes,
         [step.id]: node,
       },
     })
@@ -376,10 +560,17 @@ export namespace WorkflowExecutor {
         },
       }
       await nodefile(state.runID, step.id, failed)
+      const current = await latest(sessionID, state)
       await save(await bound(sessionID), {
-        ...state,
+        ...current,
+        current: step.id,
+        step: step.index,
+        statuses: {
+          ...current.statuses,
+          [step.id]: "error",
+        },
         nodes: {
-          ...state.nodes,
+          ...current.nodes,
           [step.id]: failed,
         },
       })
@@ -398,10 +589,17 @@ export namespace WorkflowExecutor {
       },
     }
     await nodefile(state.runID, step.id, done)
+    const current = await latest(sessionID, state)
     await save(await bound(sessionID), {
-      ...state,
+      ...current,
+      current: step.id,
+      step: step.index,
+      statuses: {
+        ...current.statuses,
+        [step.id]: "completed",
+      },
       nodes: {
-        ...state.nodes,
+        ...current.nodes,
         [step.id]: done,
       },
     })
@@ -498,32 +696,6 @@ export namespace WorkflowExecutor {
     return path.join(Instance.directory, ".opencode", "workflows", "runs", runID, `${step}.json`)
   }
 
-  function transition(
-    workflow: WorkflowParser.Definition,
-    step: WorkflowParser.Step,
-    state: WorkflowState.Info,
-    permission: Session.Info["permission"],
-    resumed?: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean },
-  ): Move {
-    const steps = new Map(workflow.steps.map((item) => [item.id, item]))
-    if (step.branches.length === 0) {
-      const next = workflow.steps[step.index + 1]
-      if (!next) return { status: "complete" as const }
-      if (state.completed.includes(next.id)) return { status: "complete" as const }
-      return { status: "next" as const, step: next }
-    }
-    for (const [index, branch] of step.branches.entries()) {
-      const gate = match(branch.guards, state, permission, index, resumed)
-      if (gate.status === "allow") {
-        const next = steps.get(branch.step)!
-        if (state.completed.includes(next.id)) return { status: "complete" as const }
-        return { status: "next" as const, step: next }
-      }
-      if (gate.status !== "miss") return gate
-    }
-    return { status: "complete" as const }
-  }
-
   function match(
     guards: WorkflowParser.Step["guards"],
     state: WorkflowState.Info,
@@ -600,65 +772,50 @@ export namespace WorkflowExecutor {
     state: WorkflowState.Info,
     reason: string,
   ) {
-    const latest = WorkflowState.read((await bound(sessionID)).dsl_context) ?? state
+    const last = await latest(sessionID, state)
     const prior = state.attempts[step.id] ?? 0
-    const count = latest.attempts[step.id] ?? prior
+    const count = last.attempts[step.id] ?? prior
     const next = await save(
       await bound(sessionID),
       {
-        ...latest,
+        ...last,
+        current: step.id,
+        step: step.index,
         attempts: {
-          ...latest.attempts,
+          ...last.attempts,
           [step.id]: count === prior ? count + 1 : count,
         },
-        time: { ...latest.time, updated: Date.now() },
+        statuses: {
+          ...last.statuses,
+          [step.id]: "error" as const,
+        },
+        time: { ...last.time, updated: Date.now() },
       },
     ).then((session) => WorkflowState.read(session.dsl_context)!)
     const policy = step.error_policy ?? workflow.error_policy
-    if (policy.strategy === "retry" && (next.attempts[step.id] ?? 0) < policy.max_attempts) return next
+    if (policy.strategy === "retry" && (next.attempts[step.id] ?? 0) < policy.max_attempts) {
+      return mark(sessionID, next, step, "pending")
+    }
     if (policy.strategy === "continue") {
-      const item = workflow.steps[step.index + 1]
-      if (!item) return finish(sessionID, workflow, next)
-      const state: WorkflowState.Info = {
-        ...next,
-        current: item.id,
-        step: item.index,
-        time: { ...next.time, updated: Date.now() },
-      }
-      await save(await bound(sessionID), state)
-      return state
+      return next
     }
     return error(sessionID, next, reason)
   }
 
-  async function finish(
-    sessionID: SessionID,
-    workflow: WorkflowParser.Definition,
-    state: WorkflowState.Info,
-    opts?: Pick<Run, "agent" | "abort" | "execute">,
-  ): Promise<WorkflowState.Info> {
-    const step = pending(workflow, state)
-    if (!step) return complete(sessionID, state)
+  async function mark(sessionID: SessionID, state: WorkflowState.Info, step: WorkflowParser.Step, status: WorkflowState.Status) {
+    const current = await latest(sessionID, state)
     const next: WorkflowState.Info = {
-      ...state,
+      ...current,
       current: step.id,
       step: step.index,
-      time: { ...state.time, updated: Date.now() },
+      statuses: {
+        ...current.statuses,
+        [step.id]: status,
+      },
+      time: { ...current.time, updated: Date.now() },
     }
     await save(await bound(sessionID), next)
-    return advance(sessionID, workflow, next, undefined, opts)
-  }
-
-  function pending(workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
-    const done = new Set(state.completed)
-    const steps = new Map(workflow.steps.map((step) => [step.id, step]))
-    for (const step of workflow.steps) {
-      if (!done.has(step.id)) continue
-      for (const id of step.verification?.must_pass ?? []) {
-        if (done.has(id)) continue
-        return steps.get(id)
-      }
-    }
+    return next
   }
 
   function value(input: unknown, variables: Record<string, unknown>) {

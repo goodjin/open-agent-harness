@@ -46,6 +46,37 @@ describe("workflow schema", () => {
     expect(result.success).toBe(true)
   })
 
+  test("accepts a valid nodes DAG workflow", () => {
+    const result = Workflow.Definition.safeParse({
+      id: "dag",
+      name: "Dag",
+      nodes: [
+        {
+          id: "plan",
+          type: "planning",
+          outputs: { plan: true },
+        },
+        {
+          id: "build",
+          type: "implementation",
+          mutates: true,
+          depends_on: ["plan"],
+          verification: {
+            required: true,
+            must_pass: ["test"],
+          },
+        },
+        {
+          id: "test",
+          type: "test",
+          depends_on: ["build"],
+        },
+      ],
+    })
+
+    expect(result.success).toBe(true)
+  })
+
   test("rejects invalid and duplicate workflows", () => {
     expect(
       Workflow.Definition.safeParse({

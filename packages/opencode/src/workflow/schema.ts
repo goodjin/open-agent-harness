@@ -111,6 +111,25 @@ export namespace Workflow {
     .meta({ ref: "WorkflowStep" })
   export type Step = z.infer<typeof Step>
 
+  export const Node = z
+    .object({
+      id: z.string().min(1),
+      type: StepType.default("task"),
+      agent: z.string().min(1).default("primary"),
+      prompt: z.string().optional(),
+      mutates: z.boolean().default(false),
+      wait: z.enum(["user", "permission"]).optional(),
+      inputs: z.record(z.string(), z.unknown()).default({}),
+      outputs: z.record(z.string(), z.unknown()).default({}),
+      guards: z.array(Guard).default([]),
+      depends_on: z.array(z.string().min(1)).default([]),
+      error_policy: ErrorPolicy.optional(),
+      verification: Verification.optional(),
+    })
+    .strict()
+    .meta({ ref: "WorkflowNode" })
+  export type Node = z.infer<typeof Node>
+
   export const Definition = z
     .object({
       id: z.string().min(1),
@@ -120,32 +139,49 @@ export namespace Workflow {
       inputs: z.record(z.string(), Input).default({}),
       outputs: z.record(z.string(), Output).default({}),
       error_policy: ErrorPolicy.default({ strategy: "abort", max_attempts: 1 }),
-      steps: z.array(Step).min(1),
+      steps: z.array(Step).default([]),
+      nodes: z.array(Node).default([]),
     })
     .strict()
     .superRefine((workflow, ctx) => {
+      if (workflow.steps.length === 0 && workflow.nodes.length === 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["steps"],
+          message: "Workflow must define steps or nodes",
+        })
+      }
+      if (workflow.steps.length > 0 && workflow.nodes.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["nodes"],
+          message: "Workflow cannot define both steps and nodes",
+        })
+      }
+      const items = workflow.nodes.length > 0 ? workflow.nodes : workflow.steps
+      const path = workflow.nodes.length > 0 ? "nodes" : "steps"
       const ids = new Set<string>()
-      const steps = new Map<string, Step>()
-      for (const step of workflow.steps) {
-        if (!ids.has(step.id)) {
-          ids.add(step.id)
-          steps.set(step.id, step)
+      const steps = new Map<string, Step | Node>()
+      for (const item of items) {
+        if (!ids.has(item.id)) {
+          ids.add(item.id)
+          steps.set(item.id, item)
           continue
         }
         ctx.addIssue({
           code: "custom",
-          path: ["steps"],
-          message: `Duplicate workflow step id: ${step.id}`,
+          path: [path],
+          message: `Duplicate workflow node id: ${item.id}`,
         })
       }
 
-      for (const [index, step] of workflow.steps.entries()) {
+      for (const [index, step] of items.entries()) {
         if (!step.verification) continue
         if (step.verification.required && step.verification.must_pass.length === 0 && !step.verification.justification) {
           ctx.addIssue({
             code: "custom",
-            path: ["steps", index, "verification"],
-            message: `Workflow step ${step.id} requires verification but does not define must_pass or justification`,
+            path: [path, index, "verification"],
+            message: `Workflow node ${step.id} requires verification but does not define must_pass or justification`,
           })
         }
         for (const ref of step.verification.must_pass) {
@@ -153,23 +189,23 @@ export namespace Workflow {
           if (!target) {
             ctx.addIssue({
               code: "custom",
-              path: ["steps", index, "verification", "must_pass"],
-              message: `Workflow step ${step.id} references missing verification step: ${ref}`,
+              path: [path, index, "verification", "must_pass"],
+              message: `Workflow node ${step.id} references missing verification node: ${ref}`,
             })
             continue
           }
           if (target.id === step.id) {
             ctx.addIssue({
               code: "custom",
-              path: ["steps", index, "verification", "must_pass"],
-              message: `Workflow step ${step.id} cannot verify itself`,
+              path: [path, index, "verification", "must_pass"],
+              message: `Workflow node ${step.id} cannot verify itself`,
             })
           }
           if (!["test", "review", "gate"].includes(target.type)) {
             ctx.addIssue({
               code: "custom",
-              path: ["steps", index, "verification", "must_pass"],
-              message: `Workflow step ${step.id} verification target ${target.id} must be a test, review, or gate step`,
+              path: [path, index, "verification", "must_pass"],
+              message: `Workflow node ${step.id} verification target ${target.id} must be a test, review, or gate node`,
             })
           }
         }

@@ -106,4 +106,56 @@ describe("workflow tools", () => {
         }),
     })
   })
+
+  test("workflow_start summarizes DAG failed, skipped, and completed nodes", async () => {
+    await using tmp = await tmpdir()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const tools = await ToolRegistry.tools(model)
+            const create = tools.find((item) => item.id === "workflow_create")!
+            const start = tools.find((item) => item.id === "workflow_start")!
+
+            await create.execute(
+              {
+                workflow: {
+                  id: "dag-started",
+                  name: "Dag Started",
+                  nodes: [
+                    {
+                      id: "fail",
+                      error_policy: { strategy: "continue", max_attempts: 1 },
+                      guards: [{ type: "variable", name: "ready", exists: true }],
+                    },
+                    { id: "blocked", depends_on: ["fail"], outputs: { blocked: true } },
+                    { id: "free", outputs: { free: true } },
+                  ],
+                },
+              },
+              ctx(session.id),
+            )
+
+            const result = await start.execute({ workflow_id: "dag-started" }, ctx(session.id))
+            const output = JSON.parse(result.output)
+
+            expect(output.status).toBe("error")
+            expect(output.summary.completed).toBe(1)
+            expect(output.summary.failed).toBe(1)
+            expect(output.summary.skipped).toBe(1)
+            expect(output.statuses).toMatchObject({
+              fail: "error",
+              blocked: "skipped",
+              free: "completed",
+            })
+            expect(output.variables.free).toBe(true)
+            expect(output.variables.blocked).toBeUndefined()
+          },
+        }),
+    })
+  })
 })

@@ -38,10 +38,96 @@ describe("workflow executor", () => {
             const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "seq" })
 
             expect(state.status).toBe("completed")
+            expect(state.steps.map((step) => step.id)).toEqual(["one", "two"])
             expect(state.current).toBe("two")
             expect(state.variables.two).toBe("done")
             expect(state.attempts).toEqual({ one: 1, two: 1 })
             expect(WorkflowState.read((await Session.get(session.id)).dsl_context)?.status).toBe("completed")
+          },
+        }),
+    })
+  })
+
+  test("runs nodes DAG dependencies in order", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dag-serial",
+      name: "Dag Serial",
+      nodes: [
+        { id: "one", outputs: { one: "done" } },
+        { id: "two", depends_on: ["one"], outputs: { two: "$one" } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "dag-serial" })
+
+            expect(state.status).toBe("completed")
+            expect(state.steps.map((step) => step.id)).toEqual(["one", "two"])
+            expect(state.statuses).toEqual({ one: "completed", two: "completed" })
+            expect(state.completed).toEqual(["one", "two"])
+            expect(state.variables.two).toBe("done")
+          },
+        }),
+    })
+  })
+
+  test("runs parallel ready DAG nodes in the same batch", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dag-parallel",
+      name: "Dag Parallel",
+      nodes: [
+        { id: "left", prompt: "Left" },
+        { id: "right", prompt: "Right" },
+        { id: "join", depends_on: ["left", "right"], outputs: { done: true } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const started: string[] = []
+            let release = () => {}
+            const wait = new Promise<void>((resolve) => {
+              release = resolve
+            })
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "dag-parallel",
+              agent: "workflow-runner",
+              execute: async (input) => {
+                started.push(input.step.id)
+                if (started.length === 2) release()
+                await wait
+                return {
+                  agent: input.agent,
+                  sessionID: session.id,
+                  output: input.step.id,
+                }
+              },
+            })
+
+            expect(state.status).toBe("completed")
+            expect(started.slice(0, 2).sort()).toEqual(["left", "right"])
+            expect(state.completed).toContain("join")
+            expect(state.statuses).toMatchObject({
+              left: "completed",
+              right: "completed",
+              join: "completed",
+            })
           },
         }),
     })
@@ -181,6 +267,80 @@ describe("workflow executor", () => {
             expect(state.variables.shipped).toBeUndefined()
             expect(state.variables.tested).toBe(true)
             expect(state.completed).toEqual(["build", "ship", "test"])
+          },
+        }),
+    })
+  })
+
+  test("legacy next skips intermediate steps", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "jump",
+      name: "Jump",
+      steps: [
+        { id: "start", next: "ship", outputs: { start: true } },
+        { id: "test", outputs: { test: true } },
+        { id: "ship", outputs: { ship: true } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "jump" })
+
+            expect(state.status).toBe("completed")
+            expect(state.completed).toEqual(["start", "ship"])
+            expect(state.variables.start).toBe(true)
+            expect(state.variables.test).toBeUndefined()
+            expect(state.variables.ship).toBe(true)
+            expect(state.statuses.test).toBe("skipped")
+          },
+        }),
+    })
+  })
+
+  test("legacy branch miss still runs completed step verification", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "branch-verify",
+      name: "Branch Verify",
+      steps: [
+        {
+          id: "start",
+          next: [{ step: "next", guards: [{ type: "variable", name: "flag", equals: true }] }],
+          outputs: { start: true },
+          verification: {
+            required: true,
+            must_pass: ["test"],
+          },
+        },
+        { id: "next", outputs: { next: true } },
+        { id: "test", type: "test", outputs: { test: true } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "branch-verify" })
+
+            expect(state.status).toBe("completed")
+            expect(state.completed).toEqual(["start", "test"])
+            expect(state.statuses.next).toBe("skipped")
+            expect(state.variables.start).toBe(true)
+            expect(state.variables.next).toBeUndefined()
+            expect(state.variables.test).toBe(true)
           },
         }),
     })
@@ -601,6 +761,90 @@ describe("workflow executor", () => {
             expect(abort.status).toBe("error")
             expect(abort.error).toContain("ready")
             expect(WorkflowState.read((await Session.get(stopped.id)).dsl_context)?.status).toBe("error")
+          },
+        }),
+    })
+  })
+
+  test("marks DAG dependents skipped when a continue node fails", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dag-block",
+      name: "Dag Block",
+      nodes: [
+        {
+          id: "fail",
+          prompt: "Fail",
+          error_policy: { strategy: "continue", max_attempts: 1 },
+        },
+        { id: "blocked", depends_on: ["fail"], outputs: { blocked: true } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "dag-block",
+              execute: async () => {
+                throw new Error("boom")
+              },
+            })
+
+            expect(state.status).toBe("error")
+            expect(state.statuses.fail).toBe("error")
+            expect(state.statuses.blocked).toBe("skipped")
+            expect(state.completed).toEqual([])
+            expect(state.variables.blocked).toBeUndefined()
+          },
+        }),
+    })
+  })
+
+  test("continues independent DAG branches after a continue node fails", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "dag-continue",
+      name: "Dag Continue",
+      nodes: [
+        {
+          id: "fail",
+          prompt: "Fail",
+          error_policy: { strategy: "continue", max_attempts: 1 },
+        },
+        { id: "blocked", depends_on: ["fail"], outputs: { blocked: true } },
+        { id: "free", outputs: { free: true } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "dag-continue",
+              execute: async () => {
+                throw new Error("boom")
+              },
+            })
+
+            expect(state.status).toBe("error")
+            expect(state.statuses.fail).toBe("error")
+            expect(state.statuses.blocked).toBe("skipped")
+            expect(state.statuses.free).toBe("completed")
+            expect(state.variables.free).toBe(true)
+            expect(state.variables.blocked).toBeUndefined()
           },
         }),
     })

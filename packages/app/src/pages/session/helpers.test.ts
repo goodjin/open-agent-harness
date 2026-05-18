@@ -179,6 +179,69 @@ describe("createSessionTabs", () => {
     })
   })
 
+  test("keeps workflow out of sortable file tabs", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: "workflow" as string | undefined,
+        all: ["workflow", "file://src/a.ts"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+        workflow: () => true,
+      })
+
+      expect(result.activeTab()).toBe("workflow")
+      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+  })
+
+  test("falls back through workflow visibility", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: [],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+        workflow: () => true,
+        logs: () => true,
+      })
+
+      expect(result.activeTab()).toBe("workflow")
+      expect(result.activeFileTab()).toBeUndefined()
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: "workflow" as string | undefined,
+        all: [],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+        workflow: () => false,
+        logs: () => true,
+      })
+
+      expect(result.activeTab()).toBe("logs")
+      expect(result.activeFileTab()).toBeUndefined()
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+  })
+
   test("uses session as the default unified tab", () => {
     createRoot((dispose) => {
       const [state] = createStore({

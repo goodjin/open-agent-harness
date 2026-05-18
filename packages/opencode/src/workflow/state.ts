@@ -40,7 +40,7 @@ export namespace WorkflowState {
   export const Node = z
     .object({
       step: z.string(),
-      status: z.enum(["running", "completed", "error"]),
+      status: z.enum(["pending", "ready", "running", "completed", "error", "skipped", "cancelled"]),
       agent: z.string(),
       sessionID: z.string().optional(),
       path: z.string(),
@@ -57,6 +57,28 @@ export namespace WorkflowState {
     .meta({ ref: "WorkflowNodeRun" })
   export type Node = z.infer<typeof Node>
 
+  export const Status = z.enum(["pending", "ready", "running", "completed", "error", "skipped", "cancelled"])
+  export type Status = z.infer<typeof Status>
+
+  export const Step = z
+    .object({
+      id: z.string(),
+      type: z.string(),
+      agent: z.string(),
+      prompt: z.string().optional(),
+      mutates: z.boolean(),
+      wait: z.string().optional(),
+      inputs: z.record(z.string(), z.unknown()).default({}),
+      outputs: z.record(z.string(), z.unknown()).default({}),
+      guards: z.array(z.unknown()).default([]),
+      depends_on: z.array(z.string()).default([]),
+      next: z.unknown().optional(),
+      verification: z.unknown().optional(),
+    })
+    .strict()
+    .meta({ ref: "WorkflowRunStep" })
+  export type Step = z.infer<typeof Step>
+
   export const Info = z
     .object({
       runID: z.string(),
@@ -69,7 +91,9 @@ export namespace WorkflowState {
       variables: z.record(z.string(), z.unknown()).default({}),
       attempts: z.record(z.string(), z.number()).default({}),
       completed: z.array(z.string()).default([]),
+      steps: z.array(Step).default([]),
       nodes: z.record(z.string(), Node).default({}),
+      statuses: z.record(z.string(), Status).default({}),
       pause: Pause.optional(),
       error: z.string().optional(),
       checkpoint: z.string().optional(),

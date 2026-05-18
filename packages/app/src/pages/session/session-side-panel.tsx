@@ -25,6 +25,373 @@ import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex } from 
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 
+type WorkflowNode = {
+  step: string
+  status?: WorkflowStatus
+  agent?: string
+  sessionID?: string
+  path?: string
+  attempt?: number
+  output?: string
+  error?: string
+  depends_on?: string[]
+  time: {
+    started: number
+    updated: number
+    completed?: number
+  }
+}
+
+type WorkflowStep = {
+  id: string
+  type: string
+  agent?: string
+  prompt?: string
+  mutates?: boolean
+  wait?: string
+  depends_on?: string[]
+  next?: unknown
+  verification?: unknown
+}
+
+type WorkflowStatus = "ready" | "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "error"
+
+type WorkflowRun = {
+  runID: string
+  workflowID: string
+  workflowName: string
+  status: "active" | "completed" | "waiting_user" | "waiting_permission" | "aborted" | "error" | "failed" | "cancelled"
+  current: string
+  step: number
+  total: number
+  variables?: Record<string, unknown>
+  attempts?: Record<string, number>
+  completed?: string[]
+  ready?: string[]
+  running?: string[]
+  failed?: string[]
+  skipped?: string[]
+  cancelled?: string[]
+  statuses?: Record<string, WorkflowStatus>
+  steps?: WorkflowStep[]
+  nodes?: Record<string, WorkflowNode> | WorkflowStep[]
+  pause?: {
+    type: string
+    step: string
+    reason?: string
+  }
+  error?: string
+  checkpoint?: string
+  time: {
+    started: number
+    updated: number
+    completed?: number
+  }
+}
+
+function record(input: unknown): input is Record<string, unknown> {
+  return typeof input === "object" && input !== null && !Array.isArray(input)
+}
+
+function workflow(input: unknown): WorkflowRun | undefined {
+  if (!record(input)) return
+  const data = input.workflow
+  if (!record(data)) return
+  if (typeof data.runID !== "string") return
+  if (typeof data.workflowID !== "string") return
+  if (typeof data.workflowName !== "string") return
+  if (typeof data.status !== "string") return
+  if (typeof data.current !== "string") return
+  if (typeof data.total !== "number") return
+  return data as WorkflowRun
+}
+
+function array(input: unknown) {
+  if (!Array.isArray(input)) return []
+  return input.filter((item): item is string => typeof item === "string")
+}
+
+function status(input: unknown): WorkflowStatus | undefined {
+  if (input === "error") return "failed"
+  if (
+    input === "ready" ||
+    input === "pending" ||
+    input === "running" ||
+    input === "completed" ||
+    input === "failed" ||
+    input === "skipped" ||
+    input === "cancelled"
+  )
+    return input
+}
+
+function label(status: WorkflowRun["status"] | WorkflowStatus | undefined) {
+  if (status === "completed") return "Completed"
+  if (status === "running" || status === "active") return "Running"
+  if (status === "ready") return "Ready"
+  if (status === "failed" || status === "error") return "Failed"
+  if (status === "skipped") return "Skipped"
+  if (status === "cancelled") return "Cancelled"
+  if (status === "waiting_user") return "Waiting for user"
+  if (status === "waiting_permission") return "Waiting for permission"
+  if (status === "aborted") return "Aborted"
+  return "Pending"
+}
+
+function tone(status: WorkflowRun["status"] | WorkflowStatus | undefined) {
+  if (status === "completed") return "text-icon-success-base"
+  if (status === "failed" || status === "error") return "text-text-danger-base"
+  if (status === "running" || status === "active") return "text-text-interactive-base"
+  if (status === "ready") return "text-icon-warning-base"
+  if (status === "skipped" || status === "cancelled") return "text-text-muted"
+  if (status === "waiting_user" || status === "waiting_permission") return "text-icon-warning-base"
+  return "text-text-weak"
+}
+
+function value(input: unknown) {
+  if (input === undefined) return ""
+  if (typeof input === "string") return input
+  return JSON.stringify(input, null, 2)
+}
+
+function next(input: unknown): string[] {
+  if (typeof input === "string") return [input]
+  if (Array.isArray(input)) return input.filter((item): item is string => typeof item === "string")
+  if (!record(input)) return []
+  return Object.values(input).flatMap(next)
+}
+
+function unique(input: string[]) {
+  return [...new Set(input)]
+}
+
+function WorkflowPanel(props: { workflow: WorkflowRun }) {
+  const steps = createMemo(() => {
+    const nodes = Array.isArray(props.workflow.nodes) ? props.workflow.nodes : []
+    const runs =
+      record(props.workflow.nodes) && !Array.isArray(props.workflow.nodes)
+        ? (props.workflow.nodes as Record<string, WorkflowNode>)
+        : {}
+    const step = (id: string): WorkflowStep => ({
+      id,
+      type: "task",
+      agent: runs[id]?.agent ?? "primary",
+      mutates: false,
+      depends_on: runs[id]?.depends_on,
+    })
+    const list: WorkflowStep[] = props.workflow.steps?.length
+      ? props.workflow.steps
+      : nodes.length
+        ? nodes
+        : [
+            ...array(props.workflow.completed),
+            ...array(props.workflow.ready),
+            ...array(props.workflow.running),
+            ...array(props.workflow.failed),
+            ...array(props.workflow.skipped),
+            ...array(props.workflow.cancelled),
+          ].map(step)
+    const seen = new Set(list.map((step) => step.id))
+    const extra = unique([...Object.keys(runs), ...Object.keys(props.workflow.statuses ?? {})]).filter((id) => !seen.has(id))
+    const all = [...list, ...extra.map(step)]
+    if (!props.workflow.current || all.some((item) => item.id === props.workflow.current)) return all
+    return [...all, step(props.workflow.current)]
+  })
+
+  const runs = createMemo(() =>
+    record(props.workflow.nodes) && !Array.isArray(props.workflow.nodes)
+      ? (props.workflow.nodes as Record<string, WorkflowNode>)
+      : {},
+  )
+  const edges = createMemo(() => {
+    const out = new Map<string, string[]>()
+    steps().forEach((step) => {
+      const deps = unique([...array(step.depends_on), ...array(runs()[step.id]?.depends_on)])
+      deps.forEach((id) => out.set(id, unique([...(out.get(id) ?? []), step.id])))
+      next(step.next).forEach((id) => out.set(step.id, unique([...(out.get(step.id) ?? []), id])))
+    })
+    return out
+  })
+  const state = (id: string, step?: WorkflowStep): WorkflowStatus => {
+    const run = runs()[id]
+    const phase = status(props.workflow.statuses?.[id])
+    if (phase) return phase
+    const value = status(run?.status)
+    if (value) return value
+    if (array(props.workflow.completed).includes(id)) return "completed"
+    if (array(props.workflow.running).includes(id)) return "running"
+    if (array(props.workflow.ready).includes(id)) return "ready"
+    if (array(props.workflow.failed).includes(id)) return "failed"
+    if (array(props.workflow.skipped).includes(id)) return "skipped"
+    if (array(props.workflow.cancelled).includes(id)) return "cancelled"
+    if (props.workflow.current === id && props.workflow.status === "active") return "running"
+    if (step && [...array(step.depends_on), ...array(run?.depends_on)].length) return "pending"
+    return "pending"
+  }
+  const groups = createMemo(() =>
+    (["running", "ready", "pending", "completed", "failed", "skipped", "cancelled"] as const)
+      .map((id) => ({
+        id,
+        items: steps().filter((step) => state(step.id, step) === id),
+      }))
+      .filter((item) => item.items.length > 0),
+  )
+  const count = (id: WorkflowStatus) =>
+    groups()
+      .find((item) => item.id === id)
+      ?.items.length ?? 0
+  const total = createMemo(() => Math.max(props.workflow.total, steps().length))
+
+  return (
+    <div class="h-full overflow-auto bg-background-stronger px-4 py-4">
+      <div class="flex flex-col gap-4 pb-10">
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="text-13-medium text-text-base truncate">{props.workflow.workflowName}</div>
+            <div class="mt-1 text-11-regular text-text-weak truncate">{props.workflow.workflowID}</div>
+          </div>
+          <div class={`text-11-medium shrink-0 ${tone(props.workflow.status)}`}>{label(props.workflow.status)}</div>
+        </div>
+
+        <div class="grid grid-cols-4 gap-2">
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Total</div>
+            <div class="mt-1 text-14-medium text-text-base">{total()}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Done</div>
+            <div class="mt-1 text-14-medium text-icon-success-base">{count("completed")}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Running</div>
+            <div class="mt-1 text-14-medium text-text-interactive-base">{count("running")}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Failed</div>
+            <div class="mt-1 text-14-medium text-text-danger-base">{count("failed")}</div>
+          </div>
+        </div>
+
+        <Show when={props.workflow.pause || props.workflow.error}>
+          <div class="border border-border-weaker-base px-3 py-2 text-12-regular text-text-muted">
+            <Show when={props.workflow.pause}>{(pause) => <div>{pause().reason ?? pause().type}</div>}</Show>
+            <Show when={props.workflow.error}>{(err) => <div>{err()}</div>}</Show>
+          </div>
+        </Show>
+
+        <div class="flex flex-col gap-2">
+          <div class="text-11-medium uppercase text-text-weak">Nodes</div>
+          <For each={groups()}>
+            {(group) => (
+              <div class="flex flex-col gap-1.5">
+                <div class={`text-11-medium uppercase ${tone(group.id)}`}>
+                  {label(group.id)} · {group.items.length}
+                </div>
+                <For each={group.items}>
+                  {(step) => {
+                    const node = createMemo(() => runs()[step.id])
+                    const deps = createMemo(() => unique([...array(step.depends_on), ...array(node()?.depends_on)]))
+                    const after = createMemo(() => edges().get(step.id) ?? [])
+                    const phase = createMemo(() => state(step.id, step))
+                    const index = createMemo(() => steps().findIndex((item) => item.id === step.id) + 1)
+                    return (
+                      <details class="group border border-border-weaker-base bg-background-base">
+                        <summary class="cursor-pointer list-none px-3 py-2">
+                          <div class="flex items-center gap-3">
+                            <div class={`w-6 shrink-0 text-11-medium ${tone(phase())}`}>{index()}</div>
+                            <div class="min-w-0 flex-1">
+                              <div class="flex min-w-0 items-center gap-2">
+                                <div class="truncate text-12-medium text-text-base">{step.id}</div>
+                                <div class="shrink-0 text-11-regular text-text-weak">{step.type}</div>
+                              </div>
+                              <div class="mt-0.5 truncate text-11-regular text-text-weak">
+                                {node()?.agent ?? step.agent ?? "primary"} · attempts{" "}
+                                {(props.workflow.attempts ?? {})[step.id] ?? node()?.attempt ?? 0}
+                              </div>
+                            </div>
+                            <div class={`shrink-0 text-11-medium ${tone(phase())}`}>{label(phase())}</div>
+                          </div>
+                        </summary>
+                        <div class="border-t border-border-weaker-base px-3 py-3 text-12-regular text-text-muted">
+                          <div class="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1">
+                            <div class="text-text-weak">Agent</div>
+                            <div class="min-w-0 break-all">{node()?.agent ?? step.agent ?? "primary"}</div>
+                            <Show when={deps().length > 0}>
+                              <div class="text-text-weak">Depends on</div>
+                              <div class="min-w-0 break-words">{deps().join(", ")}</div>
+                            </Show>
+                            <Show when={after().length > 0}>
+                              <div class="text-text-weak">Downstream</div>
+                              <div class="min-w-0 break-words">{after().join(", ")}</div>
+                            </Show>
+                            <Show when={node()?.sessionID}>
+                              {(id) => (
+                                <>
+                                  <div class="text-text-weak">Session</div>
+                                  <div class="min-w-0 break-all">{id()}</div>
+                                </>
+                              )}
+                            </Show>
+                            <Show when={node()?.path}>
+                              {(path) => (
+                                <>
+                                  <div class="text-text-weak">Node file</div>
+                                  <div class="min-w-0 break-all">{path()}</div>
+                                </>
+                              )}
+                            </Show>
+                            <Show when={step.wait}>
+                              {(wait) => (
+                                <>
+                                  <div class="text-text-weak">Wait</div>
+                                  <div>{wait()}</div>
+                                </>
+                              )}
+                            </Show>
+                            <Show when={step.next !== undefined}>
+                              <div class="text-text-weak">Next</div>
+                              <pre class="min-w-0 whitespace-pre-wrap break-words font-mono text-11-regular">{value(step.next)}</pre>
+                            </Show>
+                          </div>
+                          <Show when={step.prompt}>
+                            {(prompt) => (
+                              <div class="mt-3">
+                                <div class="mb-1 text-11-medium text-text-weak">Prompt</div>
+                                <pre class="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+                                  {prompt()}
+                                </pre>
+                              </div>
+                            )}
+                          </Show>
+                          <Show when={node()?.output || node()?.error}>
+                            <div class="mt-3">
+                              <div class="mb-1 text-11-medium text-text-weak">{node()?.error ? "Error" : "Output"}</div>
+                              <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+                                {node()?.error ?? node()?.output}
+                              </pre>
+                            </div>
+                          </Show>
+                        </div>
+                      </details>
+                    )
+                  }}
+                </For>
+              </div>
+            )}
+          </For>
+        </div>
+
+        <details class="border border-border-weaker-base bg-background-base">
+          <summary class="cursor-pointer list-none px-3 py-2 text-12-medium text-text-base">Variables</summary>
+          <pre class="max-h-80 overflow-auto border-t border-border-weaker-base px-3 py-3 whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+            {JSON.stringify(props.workflow.variables ?? {}, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </div>
+  )
+}
+
 export function SessionSidePanel(props: {
   reviewPanel: () => JSX.Element
   logPanel: () => JSX.Element
@@ -52,6 +419,8 @@ export function SessionSidePanel(props: {
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
+  const run = createMemo(() => workflow(info()?.dsl_context))
+  const workflowTab = createMemo(() => isDesktop() && !!run())
   const diffsReady = createMemo(() => {
     const id = params.id
     if (!id) return true
@@ -133,6 +502,7 @@ export function SessionSidePanel(props: {
     hasReview,
     logs: logTab,
     files: fileTab,
+    workflow: workflowTab,
   })
   const contextOpen = tabState.contextOpen
   const openedTabs = tabState.openedTabs
@@ -140,7 +510,7 @@ export function SessionSidePanel(props: {
   const activeFileTab = tabState.activeFileTab
 
   const select = (value: string) => {
-    if (value === "review" || value === "logs") {
+    if (value === "review" || value === "logs" || value === "workflow") {
       tabs().setActive(value)
       return
     }
@@ -271,6 +641,16 @@ export function SessionSidePanel(props: {
                           <div>{language.t("session.files.all")}</div>
                         </Tabs.Trigger>
                       </Show>
+                      <Show when={workflowTab()}>
+                        <Tabs.Trigger value="workflow">
+                          <div class="flex items-center gap-1.5">
+                            <div>Workflow</div>
+                            <Show when={run()}>
+                              {(item) => <div>{array(item().completed).length}/{item().total}</div>}
+                            </Show>
+                          </div>
+                        </Tabs.Trigger>
+                      </Show>
                       <Show when={contextOpen()}>
                         <Tabs.Trigger
                           value="context"
@@ -332,6 +712,12 @@ export function SessionSidePanel(props: {
                   <Show when={logTab()}>
                     <Tabs.Content value="logs" class="flex flex-col h-full overflow-hidden contain-strict">
                       <Show when={activeTab() === "logs"}>{props.logPanel()}</Show>
+                    </Tabs.Content>
+                  </Show>
+
+                  <Show when={workflowTab()}>
+                    <Tabs.Content value="workflow" class="flex flex-col h-full overflow-hidden contain-strict">
+                      <Show when={activeTab() === "workflow" && run()}>{(item) => <WorkflowPanel workflow={item()} />}</Show>
                     </Tabs.Content>
                   </Show>
 

@@ -13,14 +13,20 @@ function file(id: string) {
 }
 
 function result(state: WorkflowState.Info) {
-  const nodes = Object.values(state.nodes)
+  const statuses = Object.values(state.statuses)
+  const completed = statuses.filter((status) => status === "completed").length
+  const failed = statuses.filter((status) => status === "error").length
+  const running = statuses.filter((status) => status === "running" || status === "ready").length
+  const skipped = statuses.filter((status) => status === "skipped" || status === "cancelled").length
+  const pending = statuses.filter((status) => status === "pending").length
   const summary = {
     total: state.total,
-    completed: state.completed.length,
-    succeeded: state.completed.length,
-    failed: nodes.filter((node) => node.status === "error").length,
-    running: nodes.filter((node) => node.status === "running").length,
-    pending: Math.max(state.total - state.completed.length - nodes.filter((node) => node.status === "error").length, 0),
+    completed,
+    succeeded: completed,
+    failed,
+    running,
+    skipped,
+    pending,
     message:
       state.status === "completed"
         ? "Workflow execution completed. Use node outputs as the task result and summarize them; do not repeat completed node work unless a node output is missing or insufficient."
@@ -42,6 +48,7 @@ function result(state: WorkflowState.Info) {
     completed: state.completed,
     attempts: state.attempts,
     nodes: state.nodes,
+    statuses: state.statuses,
     variables: state.variables,
     pause: state.pause,
     error: state.error,
@@ -96,6 +103,7 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
             mutates: step.mutates,
             next: step.next,
             verification: step.verification,
+            depends_on: step.depends_on,
           })),
         },
         path: file(parsed.id),
@@ -105,7 +113,7 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
           status: "ready",
           workflow_id: parsed.id,
           workflow_name: parsed.name,
-          steps: parsed.steps.map((step) => step.id),
+          nodes: parsed.nodes.map((step) => step.id),
           path: file(parsed.id),
           next_action: "workflow_start",
         },

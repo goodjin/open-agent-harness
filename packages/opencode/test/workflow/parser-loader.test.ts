@@ -12,6 +12,10 @@ describe("workflow parser and loader", () => {
       steps: [{ id: "one", next: "two" }, { id: "two" }],
     })
     expect(sequential.steps[0].branches).toEqual([{ step: "two", guards: [] }])
+    expect(sequential.nodes.map((node) => [node.id, node.depends_on])).toEqual([
+      ["one", []],
+      ["two", ["one"]],
+    ])
 
     const branching = WorkflowParser.parse({
       id: "branch",
@@ -31,6 +35,24 @@ describe("workflow parser and loader", () => {
     expect(branching.steps[0].branches.map((branch) => branch.step)).toEqual(["yes", "no"])
   })
 
+  test("parses nodes into unified DAG nodes", () => {
+    const parsed = WorkflowParser.parse({
+      id: "dag",
+      name: "Dag",
+      nodes: [
+        { id: "one" },
+        { id: "two", depends_on: ["one"] },
+      ],
+    })
+
+    expect(parsed.steps.map((step) => step.id)).toEqual(["one", "two"])
+    expect(parsed.nodes.map((node) => [node.id, node.index, node.depends_on])).toEqual([
+      ["one", 0, []],
+      ["two", 1, ["one"]],
+    ])
+    expect(parsed.nodes[0].branches).toEqual([])
+  })
+
   test("rejects missing branch targets", () => {
     expect(() =>
       WorkflowParser.parse({
@@ -39,6 +61,35 @@ describe("workflow parser and loader", () => {
         steps: [{ id: "one", next: "missing" }],
       }),
     ).toThrow("missing step")
+  })
+
+  test("rejects invalid DAG dependencies", () => {
+    expect(() =>
+      WorkflowParser.parse({
+        id: "missing",
+        name: "Missing",
+        nodes: [{ id: "one", depends_on: ["nope"] }],
+      }),
+    ).toThrow("missing dependency")
+
+    expect(() =>
+      WorkflowParser.parse({
+        id: "self",
+        name: "Self",
+        nodes: [{ id: "one", depends_on: ["one"] }],
+      }),
+    ).toThrow("cannot depend on itself")
+
+    expect(() =>
+      WorkflowParser.parse({
+        id: "cycle",
+        name: "Cycle",
+        nodes: [
+          { id: "one", depends_on: ["two"] },
+          { id: "two", depends_on: ["one"] },
+        ],
+      }),
+    ).toThrow("cycle")
   })
 
   test("discovers package and user workflows with user precedence", async () => {
