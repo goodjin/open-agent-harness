@@ -93,7 +93,7 @@ describe("AgentTemplateLoader", () => {
         metis: ["pre_planning", "medium", false, false, true, true, false, false],
         momus: ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
-        "workflow-runner": ["workflow_orchestration", "low", true, false, false, false, false, true],
+        "workflow-runner": ["workflow_orchestration", "low", true, true, false, true, false, false],
       } as const
       const agents = await loader.loadAll()
 

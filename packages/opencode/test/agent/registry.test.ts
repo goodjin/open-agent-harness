@@ -126,6 +126,41 @@ describe("AgentRegistry", () => {
       })
     })
 
+    test("Agent.get ignores blank config display names", async () => {
+      await using tmp = await tmpdir({ git: true })
+      await entry(
+        tmp.path,
+        "runner",
+        {
+          entry: {
+            primary: true,
+            delegable: false,
+            mentionable: true,
+            default: false,
+            hidden: false,
+          },
+        },
+        {
+          agent: {
+            runner: {
+              name: "  ",
+            },
+          },
+        },
+      )
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () => {
+          resetRegistry()
+          const registry = new AgentRegistry(path.join(tmp.path, ".opencode", "agents"), "/missing/package/agents")
+          const agent = await Agent.get("runner", registry)
+
+          expect(agent?.name).toBe("runner")
+        },
+      })
+    })
+
     test("get(id) and Agent.get preserve legacy primary mode", async () => {
       await using tmp = await tmpdir({ git: true })
       await entry(tmp.path, "legacy", {

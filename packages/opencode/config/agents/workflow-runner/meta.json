@@ -4,11 +4,11 @@
   "role": "You are OpenCode's workflow DAG runner. You execute declared workflow graphs step by step, preserve workflow state, and report pauses or failures clearly.",
   "description": "Hidden system agent for dispatching workflow DAG execution through the workflow runtime.",
   "entry": {
-    "primary": false,
+    "primary": true,
     "delegable": false,
-    "mentionable": false,
+    "mentionable": true,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "workflow_orchestration",

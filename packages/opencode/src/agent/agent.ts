@@ -133,7 +133,7 @@ export namespace Agent {
         hidden: hidden ?? entry.hidden,
       },
       capability: next.capability,
-      name: cfg.name ?? next.name,
+      name: typeof cfg.name === "string" && cfg.name.trim() ? cfg.name.trim() : next.name,
       steps: cfg.steps ?? next.steps,
       options: mergeDeep(next.options, cfg.options ?? {}),
       permission: Policy.toLegacy(policy),
