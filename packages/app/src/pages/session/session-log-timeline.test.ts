@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionLogResponse } from "@opencode-ai/sdk/v2/client"
-import { describeLog, mergeLogs } from "./session-log-timeline"
+import { describeLog, mergeLogs, summarizeLogs } from "./session-log-timeline"
 
 type Log = SessionLogResponse[number]
 
@@ -73,5 +73,53 @@ describe("session log timeline", () => {
 
     expect(logs.map((log) => log.id)).toEqual(["a", "c", "b"])
     expect(logs.at(-1)?.data).toEqual({ hash: "new" })
+  })
+
+  test("summarizes requests tools and token usage", () => {
+    expect(
+      summarizeLogs([
+        record("a", 1, "llm.start", {}),
+        record("b", 2, "llm.start", {}),
+        record("c", 3, "tool.start", {}),
+        record("d", 4, "tool.start", {}),
+        record("e", 5, "tool.finish", {}),
+        record("f", 6, "step.finish", {
+          tokens: {
+            input: 100,
+            output: 20,
+            reasoning: 5,
+            total: 140,
+            cache: {
+              read: 10,
+              write: 5,
+            },
+          },
+        }),
+        record("g", 7, "step.finish", {
+          tokens: {
+            input: 50,
+            output: 30,
+            reasoning: 10,
+            cache: {
+              read: 20,
+              write: 10,
+            },
+          },
+        }),
+      ]),
+    ).toEqual({
+      requests: 2,
+      tools: 2,
+      tokens: {
+        input: 150,
+        output: 50,
+        reasoning: 15,
+        total: 260,
+        cache: {
+          read: 30,
+          write: 15,
+        },
+      },
+    })
   })
 })

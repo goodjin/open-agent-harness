@@ -12,6 +12,20 @@ type Summary = {
   meta: string[]
 }
 type Log = SessionLogResponse[number]
+type Stats = {
+  requests: number
+  tools: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+    total: number
+  }
+}
 
 const label = (value: string) =>
   value
@@ -21,6 +35,8 @@ const label = (value: string) =>
 
 const text = (value: unknown) => (typeof value === "string" ? value : undefined)
 const count = (value: unknown) => (typeof value === "number" ? value : undefined)
+const object = (value: unknown) =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined
 const list = (value: unknown) => (Array.isArray(value) ? value.filter((item) => typeof item === "string") : [])
 const filled = (value: string | undefined): value is string => Boolean(value)
 
@@ -156,6 +172,46 @@ export function mergeLogs(current: Log[], incoming: Log[]) {
   return [...logs.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
 }
 
+export function summarizeLogs(logs: Log[]): Stats {
+  return logs.reduce<Stats>(
+    (acc, log) => {
+      if (log.type === "llm.start") acc.requests += 1
+      if (log.type === "tool.start") acc.tools += 1
+      if (log.type === "step.finish") {
+        const tokens = object(log.data.tokens)
+        const cache = object(tokens?.cache)
+        acc.tokens.input += count(tokens?.input) ?? 0
+        acc.tokens.output += count(tokens?.output) ?? 0
+        acc.tokens.reasoning += count(tokens?.reasoning) ?? 0
+        acc.tokens.cache.read += count(cache?.read) ?? 0
+        acc.tokens.cache.write += count(cache?.write) ?? 0
+        acc.tokens.total +=
+          count(tokens?.total) ??
+          (count(tokens?.input) ?? 0) +
+            (count(tokens?.output) ?? 0) +
+            (count(tokens?.reasoning) ?? 0) +
+            (count(cache?.read) ?? 0) +
+            (count(cache?.write) ?? 0)
+      }
+      return acc
+    },
+    {
+      requests: 0,
+      tools: 0,
+      tokens: {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cache: {
+          read: 0,
+          write: 0,
+        },
+        total: 0,
+      },
+    },
+  )
+}
+
 export function SessionLogTimeline(props: { sessionID: string }) {
   const sdk = useSDK()
   const language = useLanguage()
@@ -168,7 +224,9 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   })
 
   const rows = createMemo(() => store.logs.map((log) => ({ log, summary: describeLog(log) })))
+  const stats = createMemo(() => summarizeLogs(store.logs))
   const time = createMemo(() => new Intl.DateTimeFormat(language.intl(), { dateStyle: "medium", timeStyle: "medium" }))
+  const num = createMemo(() => new Intl.NumberFormat(language.intl(), { notation: "compact" }))
   let seq = 0
 
   const load = async () => {
@@ -217,16 +275,26 @@ export function SessionLogTimeline(props: { sessionID: string }) {
 
   return (
     <div class="h-full min-h-0 flex flex-col overflow-hidden bg-background-stronger">
-      <div class="shrink-0 px-4 md:px-6 py-3 border-b border-border-weaker-base flex items-center justify-between gap-3">
+      <div class="shrink-0 px-4 md:px-6 py-3 border-b border-border-weaker-base flex flex-wrap items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="text-14-medium text-text-strong">{language.t("session.logs.title")}</div>
           <div class="text-12-regular text-text-weak">
             {language.t("session.logs.count", { count: store.logs.length })}
           </div>
         </div>
-        <Button size="small" variant="ghost" disabled={store.loading} onClick={() => void load()}>
-          {language.t("session.logs.refresh")}
-        </Button>
+        <div class="min-w-0 flex flex-wrap items-center justify-end gap-1.5">
+          <Stat label={language.t("session.logs.stats.requests")} value={num().format(stats().requests)} />
+          <Stat label={language.t("session.logs.stats.tools")} value={num().format(stats().tools)} />
+          <Stat label={language.t("session.logs.stats.tokens")} value={num().format(stats().tokens.total)} />
+          <Stat label={language.t("session.logs.stats.input")} value={num().format(stats().tokens.input)} />
+          <Stat label={language.t("session.logs.stats.output")} value={num().format(stats().tokens.output)} />
+          <Stat label={language.t("session.logs.stats.reasoning")} value={num().format(stats().tokens.reasoning)} />
+          <Stat label={language.t("session.logs.stats.cacheRead")} value={num().format(stats().tokens.cache.read)} />
+          <Stat label={language.t("session.logs.stats.cacheWrite")} value={num().format(stats().tokens.cache.write)} />
+          <Button size="small" variant="ghost" disabled={store.loading} onClick={() => void load()}>
+            {language.t("session.logs.refresh")}
+          </Button>
+        </div>
       </div>
 
       <Show
@@ -303,6 +371,15 @@ export function SessionLogTimeline(props: { sessionID: string }) {
           </Show>
         </Show>
       </Show>
+    </div>
+  )
+}
+
+function Stat(props: { label: string; value: string }) {
+  return (
+    <div class="shrink-0 rounded bg-surface-base px-2 py-1 text-11-regular text-text-weak tabular-nums">
+      <span>{props.label}</span>
+      <span class="ml-1 text-text-strong">{props.value}</span>
     </div>
   )
 }
