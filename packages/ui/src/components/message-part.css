@@ -211,6 +211,10 @@
   width: 100%;
   margin-top: 24px;
 
+  &[data-kind="workflow"] {
+    margin-top: 14px;
+  }
+
   [data-slot="text-part-body"] {
     margin-top: 0;
   }
@@ -683,6 +687,53 @@
     -webkit-line-clamp: 3;
     line-clamp: 3;
     overflow: hidden;
+  }
+}
+
+[data-component="workflow-message"] {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  max-width: 720px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 8px;
+  background: var(--surface-base);
+
+  [data-slot="workflow-message-icon"] {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: var(--text-strong);
+    background: var(--surface-base-active);
+  }
+
+  [data-slot="workflow-message-content"] {
+    min-width: 0;
+  }
+
+  [data-slot="workflow-message-title"] {
+    color: var(--text-strong);
+    font-size: 13px;
+    font-weight: var(--font-weight-medium);
+    line-height: 18px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-slot="workflow-message-detail"] {
+    margin-top: 2px;
+    color: var(--text-weak);
+    font-size: 12px;
+    line-height: 16px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

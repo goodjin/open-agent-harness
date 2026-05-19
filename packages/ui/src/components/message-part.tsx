@@ -1305,6 +1305,49 @@ PART_MAPPING["compaction"] = function CompactionPartDisplay() {
   return <MessageDivider label={i18n.t("ui.messagePart.compaction")} />
 }
 
+type WorkflowTextMeta = {
+  kind: "workflow"
+  action?: string
+  workflow?: {
+    runID?: string
+    workflowID?: string
+    workflowName?: string
+    status?: string
+    current?: string
+    step?: number
+    total?: number
+    counts?: Record<string, number>
+  }
+}
+
+function workflowMeta(input: unknown): WorkflowTextMeta | undefined {
+  if (!input || typeof input !== "object") return
+  const meta = input as Record<string, unknown>
+  if (meta.kind !== "workflow") return
+  return meta as WorkflowTextMeta
+}
+
+function workflowAction(input: string | undefined) {
+  switch (input) {
+    case "started":
+      return "Started"
+    case "continued":
+      return "Continued"
+    case "resumed":
+      return "Resumed"
+    case "permission":
+      return "Permission updated"
+    case "completed":
+      return "Completed"
+    case "failed":
+      return "Failed"
+    case "paused":
+      return "Paused"
+    default:
+      return "Updated"
+  }
+}
+
 PART_MAPPING["text"] = function TextPartDisplay(props) {
   const data = useData()
   const i18n = useI18n()
@@ -1357,6 +1400,25 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
 
   const displayText = () => (part().text ?? "").trim()
   const throttledText = createThrottledValue(displayText)
+  const workflow = createMemo(() => workflowMeta(part().metadata))
+  const workflowTitle = createMemo(() => {
+    const meta = workflow()
+    if (!meta) return ""
+    const name = meta.workflow?.workflowName || meta.workflow?.workflowID || "Workflow"
+    return `${workflowAction(meta.action)}: ${name}`
+  })
+  const workflowDetail = createMemo(() => {
+    const meta = workflow()
+    if (!meta?.workflow) return ""
+    const wf = meta.workflow
+    const bits = [
+      wf.status,
+      wf.current ? `step ${wf.step ?? "?"}/${wf.total ?? "?"}: ${wf.current}` : "",
+      wf.workflowID,
+      wf.runID,
+    ]
+    return bits.filter(Boolean).join(" · ")
+  })
   const isLastTextPart = createMemo(() => {
     const last = (data.store.part?.[props.message.id] ?? [])
       .filter((item): item is TextPart => item?.type === "text" && !!item.text?.trim())
@@ -1381,10 +1443,27 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
 
   return (
     <Show when={throttledText()}>
-      <div data-component="text-part">
-        <div data-slot="text-part-body">
-          <Markdown text={throttledText()} cacheKey={part().id} />
-        </div>
+      <div data-component="text-part" data-kind={workflow() ? "workflow" : undefined}>
+        <Show
+          when={workflow()}
+          fallback={
+            <div data-slot="text-part-body">
+              <Markdown text={throttledText()} cacheKey={part().id} />
+            </div>
+          }
+        >
+          <div data-component="workflow-message">
+            <div data-slot="workflow-message-icon">
+              <Icon name="status" />
+            </div>
+            <div data-slot="workflow-message-content">
+              <div data-slot="workflow-message-title">{workflowTitle()}</div>
+              <Show when={workflowDetail()}>
+                <div data-slot="workflow-message-detail">{workflowDetail()}</div>
+              </Show>
+            </div>
+          </div>
+        </Show>
         <Show when={showCopy()}>
           <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>
             <Tooltip

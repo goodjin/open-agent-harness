@@ -11,6 +11,7 @@ import { MessageID } from "../../src/session/schema"
 import { SessionRunner } from "../../src/session/runner"
 import { LLM } from "../../src/session/llm"
 import { WorkflowState } from "../../src/workflow/state"
+import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
 
 describe("SessionRunner", () => {
@@ -139,6 +140,9 @@ describe("SessionRunner", () => {
             expect(state?.workflowID).toBe("sample")
             expect(state?.variables.second).toBe("sample ship it")
             expect(parts.some((part) => part.type === "text" && part.text.includes("completed"))).toBe(true)
+            const part = parts.find((item) => item.type === "text") as MessageV2.TextPart | undefined
+            expect(part?.metadata?.kind).toBe("workflow")
+            expect(part?.metadata?.action).toBe("started")
           },
         }),
     })
@@ -271,9 +275,150 @@ describe("SessionRunner", () => {
             expect(state?.completed).toEqual(["first", "second"])
             expect(state?.variables.second).toBe("done")
             expect(parts.some((part) => part.type === "text" && part.text.includes("completed"))).toBe(true)
+            const part = parts.find((item) => item.type === "text") as MessageV2.TextPart | undefined
+            expect(part?.metadata?.kind).toBe("workflow")
+            expect(part?.metadata?.action).toBe("continued")
           },
         }),
     })
+  })
+
+  test("workflow runner writes progress before waiting for active workflow", async () => {
+    await using tmp = await tmpdir()
+    let done!: (state: WorkflowState.Info) => void
+    const wait = new Promise<WorkflowState.Info>((resolve) => {
+      done = resolve
+    })
+    const hook = spyOn(WorkflowExecutor, "continueRun").mockImplementation(async () => wait)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const state: WorkflowState.Info = {
+                runID: "workflow_waiting",
+                workflowID: "waiting",
+                workflowName: "Waiting",
+                status: "active",
+                current: "second",
+                step: 1,
+                total: 2,
+                variables: { first: "done" },
+                attempts: { first: 1 },
+                completed: ["first"],
+                steps: [
+                  {
+                    id: "first",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    mutates: false,
+                    inputs: {},
+                    outputs: {},
+                    guards: [],
+                    depends_on: [],
+                  },
+                  {
+                    id: "second",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    mutates: false,
+                    inputs: {},
+                    outputs: {},
+                    guards: [],
+                    depends_on: ["first"],
+                  },
+                ],
+                nodes: {},
+                statuses: { first: "completed", second: "running" },
+                time: { started: Date.now(), updated: Date.now() },
+              }
+              const session = await Session.create({})
+              await Session.setDslContext({
+                sessionID: session.id,
+                dsl_context: WorkflowState.write(undefined, state),
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "workflow-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "workflow-runner",
+                agent: "workflow-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model: {} as never,
+                abort: new AbortController().signal,
+              })
+              const pending = runner.process({
+                user,
+                sessionID: session.id,
+                model: {} as never,
+                agent: {
+                  name: "workflow-runner",
+                  runner: "workflow",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "继续推进" }],
+                tools: {},
+              })
+
+              await Bun.sleep(10)
+              const before = await MessageV2.parts(assistant.id)
+              expect(before).toHaveLength(1)
+              expect(before[0]?.type).toBe("text")
+              expect(before[0]?.type === "text" && before[0].text.includes("active")).toBe(true)
+              expect((before[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
+              expect((before[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
+
+              done({
+                ...state,
+                status: "completed",
+                completed: ["first", "second"],
+                statuses: { first: "completed", second: "completed" },
+                time: { ...state.time, completed: Date.now() },
+              })
+
+              expect(await pending).toBe("stop")
+              const after = await MessageV2.parts(assistant.id)
+              expect(after).toHaveLength(1)
+              expect(after[0]?.type === "text" && after[0].text.includes("completed")).toBe(true)
+              expect((after[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
+              expect((after[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
   })
 
   test("workflow runner persists and runs workflow returned by chat", async () => {

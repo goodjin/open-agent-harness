@@ -55,26 +55,41 @@ export namespace SessionRunner {
       ?.trim()
     const sessionID = SessionID.make(stream.sessionID)
     const state = await WorkflowExecutor.status(sessionID)
+    let part: PartID | undefined
+    let action: "started" | "continued" | "resumed" | "permission" | undefined
     const next = state?.pause
       ? state.pause.type === "waiting_permission"
-        ? await permission(sessionID, state, text)
-        : await WorkflowExecutor.resume({
-            sessionID,
-            variables: input(text),
-          })
+        ? await (async () => {
+            action = "permission"
+            return permission(sessionID, state, text)
+          })()
+        : await (async () => {
+            action = "resumed"
+            return WorkflowExecutor.resume({
+              sessionID,
+              variables: input(text),
+            })
+          })()
       : state?.status === "active"
-        ? await WorkflowExecutor.continueRun({
-            sessionID,
-            variables: input(text),
-            agent: stream.agent.name,
-            abort: stream.abort,
-          })
+        ? await (async () => {
+            action = "continued"
+            part = await progress(chat, state, action)
+            return WorkflowExecutor.continueRun({
+              sessionID,
+              variables: input(text),
+              agent: stream.agent.name,
+              abort: stream.abort,
+            })
+          })()
         : state?.status === "completed" || state?.status === "error" || state?.status === "aborted"
           ? undefined
-          : await start(sessionID, text)
+          : await (async () => {
+              action = "started"
+              return start(sessionID, text)
+            })()
 
     if (!next) return chat.process(stream).then((result) => generated(chat, stream, result))
-    await output(chat, next)
+    await output(chat, next, part, action)
     return "stop"
   }
 
@@ -114,7 +129,7 @@ export namespace SessionRunner {
           ?.trim(),
       ),
     })
-    await output(chat, state)
+    await output(chat, state, undefined, "started")
     return "stop"
   }
 
@@ -164,15 +179,35 @@ export namespace SessionRunner {
     }
   }
 
-  async function output(chat: SessionProcessor.Info, state: WorkflowState.Info) {
+  type Action = "started" | "continued" | "resumed" | "permission" | "updated"
+
+  async function progress(chat: SessionProcessor.Info, state: WorkflowState.Info, action: Action) {
     const msg = chat.message
-    const body = summary(state)
-    await Session.updatePart({
+    const fmt = format(state, action)
+    const part = await Session.updatePart({
       id: PartID.ascending(),
       messageID: msg.id,
       sessionID: msg.sessionID,
       type: "text",
-      text: body,
+      text: fmt.text,
+      metadata: fmt.metadata,
+      time: {
+        start: Date.now(),
+      },
+    })
+    return part.id
+  }
+
+  async function output(chat: SessionProcessor.Info, state: WorkflowState.Info, partID?: PartID, action: Action = "updated") {
+    const msg = chat.message
+    const fmt = format(state, action)
+    await Session.updatePart({
+      id: partID ?? PartID.ascending(),
+      messageID: msg.id,
+      sessionID: msg.sessionID,
+      type: "text",
+      text: fmt.text,
+      metadata: fmt.metadata,
       time: {
         start: Date.now(),
         end: Date.now(),
@@ -181,6 +216,44 @@ export namespace SessionRunner {
     msg.finish = state.status === "error" ? "error" : "stop"
     msg.time.completed = Date.now()
     await Session.updateMessage(msg)
+  }
+
+  function format(state: WorkflowState.Info, action: Action) {
+    const statuses = Object.values(state.statuses)
+    const counts = {
+      completed: statuses.filter((item) => item === "completed").length,
+      failed: statuses.filter((item) => item === "error").length,
+      skipped: statuses.filter((item) => item === "skipped" || item === "cancelled").length,
+      pending: statuses.filter((item) => item === "pending").length,
+      running: statuses.filter((item) => item === "running").length,
+    }
+    const label =
+      action === "started"
+        ? "Workflow started"
+        : action === "continued"
+          ? "Workflow continued"
+          : action === "resumed"
+            ? "Workflow resumed"
+            : action === "permission"
+              ? "Workflow permission updated"
+              : "Workflow updated"
+    return {
+      text: `${label}: ${state.workflowName || state.workflowID}\n${summary(state)}`,
+      metadata: {
+        kind: "workflow",
+        action,
+        workflow: {
+          runID: state.runID,
+          workflowID: state.workflowID,
+          workflowName: state.workflowName,
+          status: state.status,
+          current: state.current,
+          step: state.step + 1,
+          total: state.total,
+          counts,
+        },
+      },
+    }
   }
 
   function summary(state: WorkflowState.Info) {

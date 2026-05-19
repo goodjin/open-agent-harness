@@ -1356,6 +1356,7 @@ export namespace WorkflowExecutor {
       sessionID,
       type: "text",
       text: notice(state, body),
+      metadata: noticeMeta(state, body.type),
       time: {
         start: Date.now(),
         end: Date.now(),
@@ -1387,6 +1388,37 @@ export namespace WorkflowExecutor {
       )
     }
     return lines.join("\n")
+  }
+
+  function noticeMeta(state: WorkflowState.Info, type: string) {
+    const statuses = Object.values(state.statuses)
+    return {
+      kind: "workflow",
+      action:
+        type === "workflow.completed"
+          ? "completed"
+          : type === "workflow.failed"
+            ? "failed"
+            : type === "workflow.paused"
+              ? "paused"
+              : "updated",
+      workflow: {
+        runID: state.runID,
+        workflowID: state.workflowID,
+        workflowName: state.workflowName,
+        status: state.status,
+        current: state.current,
+        step: state.step + 1,
+        total: state.total,
+        counts: {
+          completed: statuses.filter((item) => item === "completed").length,
+          failed: statuses.filter((item) => item === "error").length,
+          skipped: statuses.filter((item) => item === "skipped" || item === "cancelled").length,
+          pending: statuses.filter((item) => item === "pending").length,
+          running: statuses.filter((item) => item === "running").length,
+        },
+      },
+    }
   }
 
   function short(text: string) {
