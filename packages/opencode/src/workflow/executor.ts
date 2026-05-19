@@ -95,17 +95,19 @@ export namespace WorkflowExecutor {
     if (!item) throw new NotFoundError({ message: `Workflow not found: ${state.workflowID}` })
     if (state.status !== "active") return state
     if (active.has(state.runID)) return state
+    const recovered = await recover(input.sessionID, item.workflow, state)
+    if (recovered.waiting || recovered.state.status !== "active") return recovered.state
     const next = {
-      ...state,
+      ...recovered.state,
       variables: {
-        ...state.variables,
+        ...recovered.state.variables,
         ...(input.variables ?? {}),
       },
       statuses: Object.fromEntries(
-        Object.entries(state.statuses).map(([id, status]) => [id, status === "running" ? "pending" : status]),
+        Object.entries(recovered.state.statuses).map(([id, status]) => [id, status === "running" ? "pending" : status]),
       ),
-      nodes: Object.fromEntries(Object.entries(state.nodes).filter((entry) => entry[1].status !== "running")),
-      time: { ...state.time, updated: Date.now() },
+      nodes: Object.fromEntries(Object.entries(recovered.state.nodes).filter((entry) => entry[1].status !== "running")),
+      time: { ...recovered.state.time, updated: Date.now() },
     } satisfies WorkflowState.Info
     await save(session, next)
     return advance(input.sessionID, item.workflow, next, undefined, input)
@@ -371,6 +373,61 @@ export namespace WorkflowExecutor {
     return WorkflowState.read((await bound(sessionID)).dsl_context) ?? state
   }
 
+  async function recover(sessionID: SessionID, workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
+    let current = state
+    let waiting = false
+    for (const node of Object.values(state.nodes)) {
+      if (node.status !== "running") continue
+      if ((current.statuses[node.step] ?? "pending") !== "running") continue
+      if (!node.sessionID) continue
+      const child = await result(SessionID.make(node.sessionID))
+      if (!child) {
+        waiting = true
+        continue
+      }
+      const step = workflow.nodes.find((item) => item.id === node.step)
+      if (!step) continue
+      if ("error" in child) {
+        current = await fail(sessionID, workflow, step, current, child.error ?? "Workflow child session failed")
+        continue
+      }
+      current = await completeNode(sessionID, step, current, {
+        ...node,
+        status: "completed",
+        output: child.output,
+        time: {
+          ...node.time,
+          updated: Date.now(),
+          completed: Date.now(),
+        },
+      })
+    }
+    if (current !== state) await save(await bound(sessionID), current)
+    return { state: current, waiting }
+  }
+
+  async function result(sessionID: SessionID) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch((err: unknown) => {
+      if (err instanceof NotFoundError) return []
+      throw err
+    })
+    const msg = msgs.findLast((item) => item.info.role === "assistant")
+    if (!msg || msg.info.role !== "assistant") return
+    if (typeof msg.info.time.completed !== "number") return
+    if (msg.info.error) {
+      const data = "data" in msg.info.error ? msg.info.error.data : undefined
+      return {
+        error:
+          data && typeof data === "object" && "message" in data && typeof data.message === "string"
+            ? data.message
+            : "Workflow child session failed",
+      }
+    }
+    return {
+      output: msg.parts.findLast((part) => part.type === "text")?.text ?? "",
+    }
+  }
+
   async function block(sessionID: SessionID, workflow: WorkflowParser.Definition, state: WorkflowState.Info) {
     let current = state
     for (const step of workflow.nodes) {
@@ -568,6 +625,38 @@ export namespace WorkflowExecutor {
     return next
   }
 
+  async function completeNode(
+    sessionID: SessionID,
+    step: WorkflowParser.Step,
+    state: WorkflowState.Info,
+    node: WorkflowState.Node,
+  ) {
+    await nodefile(state.runID, step.id, node)
+    const vars = {
+      ...state.variables,
+      ...(node.output !== undefined ? { [step.id]: node.output } : {}),
+    }
+    return {
+      ...state,
+      current: step.id,
+      step: step.index,
+      variables: {
+        ...vars,
+        ...Object.fromEntries(Object.entries(step.outputs).map((entry) => [entry[0], value(entry[1], vars)])),
+      },
+      statuses: {
+        ...state.statuses,
+        [step.id]: "completed" as const,
+      },
+      nodes: {
+        ...state.nodes,
+        [step.id]: node,
+      },
+      completed: [...new Set([...state.completed, step.id])],
+      time: { ...state.time, updated: Date.now() },
+    } satisfies WorkflowState.Info
+  }
+
   async function execute(
     sessionID: SessionID,
     workflow: WorkflowParser.Definition,
@@ -578,7 +667,7 @@ export namespace WorkflowExecutor {
     if (!step.prompt) return
     const parent = await bound(sessionID)
     const attempt = state.attempts[step.id] ?? 1
-    const agent = await route(step)
+    const agent = await route(step, opts?.agent)
     const started = Date.now()
     const node: WorkflowState.Node = {
       step: step.id,
@@ -688,6 +777,24 @@ export namespace WorkflowExecutor {
         { permission: "workflow_start", pattern: "*", action: "deny" },
       ],
     })
+    const current = await latest(input.parent.id, input.state)
+    const node = current.nodes[input.step.id]
+    if (node?.status === "running" && !node.sessionID) {
+      await save(await bound(input.parent.id), {
+        ...current,
+        nodes: {
+          ...current.nodes,
+          [input.step.id]: {
+            ...node,
+            sessionID: child.id,
+            time: {
+              ...node.time,
+              updated: Date.now(),
+            },
+          },
+        },
+      })
+    }
     function cancel() {
       SessionPrompt.cancel(child.id)
     }
@@ -739,7 +846,7 @@ export namespace WorkflowExecutor {
     }
   }
 
-  async function route(step: WorkflowParser.Step) {
+  async function route(step: WorkflowParser.Step, current?: string) {
     if (step.agent !== "auto" && step.agent !== "primary") {
       const agent = await Agent.get(step.agent)
       if (!agent) throw new InvalidError({ message: `Workflow node agent not found: ${step.agent}` })
@@ -1117,26 +1224,77 @@ export namespace WorkflowExecutor {
       pause: state.pause,
       error: state.error,
     }
-    await SessionPrompt.prompt({
+    const parentID = await parent(sessionID)
+    if (!parentID) return
+    const msg = (await Session.updateMessage({
+      id: MessageID.ascending(),
       sessionID,
-      agent,
-      parts: [
-        {
-          type: "text",
-          synthetic: true,
-          text: [
-            "<workflow-result>",
-            JSON.stringify(body, null, 2),
-            "</workflow-result>",
-            "",
-            "The workflow runtime has finished or paused this background run.",
-            "Use this result as authoritative. If it completed, summarize the node outputs for the user and do not rerun completed nodes. If it failed or paused, decide whether to revise, resume, or ask the user.",
-          ].join("\n"),
-        },
-      ],
-    }).catch((err: unknown) => {
-      log.error("workflow continuation prompt failed", { runID: state.runID, err })
+      parentID,
+      role: "assistant",
+      mode: "workflow",
+      agent: agent ?? "workflow",
+      path: {
+        cwd: Instance.directory,
+        root: Instance.worktree,
+      },
+      cost: 0,
+      tokens: {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      },
+      modelID: "workflow",
+      providerID: "workflow",
+      time: {
+        created: Date.now(),
+        completed: Date.now(),
+      },
+      finish: state.status === "error" ? "error" : "stop",
+    } as MessageV2.Assistant)) as MessageV2.Assistant
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: msg.id,
+      sessionID,
+      type: "text",
+      text: notice(state, body),
+      time: {
+        start: Date.now(),
+        end: Date.now(),
+      },
     })
+  }
+
+  async function parent(sessionID: SessionID) {
+    for await (const msg of MessageV2.stream(sessionID)) {
+      if (msg.info.role !== "user") continue
+      if (msg.parts.every((part) => "synthetic" in part && part.synthetic)) continue
+      return msg.info.id
+    }
+  }
+
+  function notice(state: WorkflowState.Info, body: { summary: Record<string, number>; type: string }) {
+    const lines = [
+      `Workflow ${state.workflowName || state.workflowID}: ${state.status}`,
+      `Progress: ${body.summary.completed}/${body.summary.total} completed, ${body.summary.failed} failed, ${body.summary.skipped} skipped, ${body.summary.pending} pending.`,
+    ]
+    if (state.pause?.reason) lines.push(state.pause.reason)
+    if (state.error) lines.push(state.error)
+    const nodes = Object.values(state.nodes).filter((node) => node.status === "completed" && node.output)
+    if (nodes.length > 0) {
+      lines.push("", "Node outputs:")
+      lines.push(
+        ...nodes.slice(0, 8).map((node) => `- ${node.step}: ${short(node.output ?? "")}`),
+        ...(nodes.length > 8 ? [`- ... ${nodes.length - 8} more node outputs`] : []),
+      )
+    }
+    return lines.join("\n")
+  }
+
+  function short(text: string) {
+    const value = text.replace(/\s+/g, " ").trim()
+    if (value.length <= 500) return value
+    return value.slice(0, 497) + "..."
   }
 
   async function save(session: Session.Info, state: WorkflowState.Info) {

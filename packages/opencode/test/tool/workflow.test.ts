@@ -5,7 +5,8 @@ import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
-import { MessageID } from "../../src/session/schema"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID } from "../../src/session/schema"
 import type { Tool } from "../../src/tool/tool"
 import { ToolRegistry } from "../../src/tool/registry"
 import { WorkflowState } from "../../src/workflow/state"
@@ -30,6 +31,16 @@ async function wait(sessionID: Session.Info["id"], status: WorkflowState.Info["s
     await Bun.sleep(10)
   }
   throw new Error(`Workflow did not reach ${status}`)
+}
+
+async function assistant(sessionID: Session.Info["id"]) {
+  for (let i = 0; i < 50; i++) {
+    for await (const msg of MessageV2.stream(sessionID)) {
+      if (msg.info.role === "assistant") return msg
+    }
+    await Bun.sleep(10)
+  }
+  throw new Error("Workflow notification was not created")
 }
 
 const model = { providerID: ProviderID.make("test"), modelID: ModelID.make("test") }
@@ -79,6 +90,24 @@ describe("workflow tools", () => {
           workspaceID: WorkspaceID.ascending(),
           fn: async () => {
             const session = await Session.create({})
+            const user = MessageID.ascending()
+            await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "workflow-runner",
+              model,
+              tools: {},
+              mode: "",
+            } as MessageV2.User)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: user,
+              sessionID: session.id,
+              type: "text",
+              text: "run started",
+            })
             const tools = await ToolRegistry.tools(model)
             const create = tools.find((item) => item.id === "workflow_create")!
             const start = tools.find((item) => item.id === "workflow_start")!
@@ -112,6 +141,13 @@ describe("workflow tools", () => {
             const state = await wait(session.id, "completed")
             expect(state.completed).toEqual(["first", "second"])
             expect(state.variables.second).toBe("done")
+            const note = await assistant(session.id)
+            expect(note.info.role).toBe("assistant")
+            if (note.info.role !== "assistant") throw new Error("Expected workflow notification assistant")
+            expect(note.info.parentID).toBe(user)
+            expect(note.parts.some((part) => part.type === "text" && part.text.includes("Workflow Started: completed"))).toBe(
+              true,
+            )
           },
         }),
     })

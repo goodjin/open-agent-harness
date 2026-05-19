@@ -4,7 +4,10 @@ import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { SessionTimeline } from "../../src/session/timeline"
 import { WorkflowExecutor } from "../../src/workflow/executor"
@@ -870,6 +873,200 @@ describe("workflow executor", () => {
             expect(state.statuses.free).toBe("completed")
             expect(state.variables.free).toBe(true)
             expect(state.variables.blocked).toBeUndefined()
+          },
+      }),
+    })
+  })
+
+  test("continueRun waits for an existing running child session", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "running-child",
+      name: "Running Child",
+      nodes: [{ id: "work", prompt: "Work" }],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const child = await Session.create({ parentID: session.id })
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now() },
+            })) as MessageV2.Assistant
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: WorkflowState.write(undefined, {
+                runID: "workflow_running_child",
+                workflowID: "running-child",
+                workflowName: "Running Child",
+                status: "active",
+                current: "work",
+                step: 0,
+                total: 1,
+                variables: {},
+                attempts: { work: 1 },
+                completed: [],
+                steps: [
+                  {
+                    id: "work",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    prompt: "Work",
+                    mutates: false,
+                    inputs: {},
+                    outputs: {},
+                    guards: [],
+                    depends_on: [],
+                  },
+                ],
+                nodes: {
+                  work: {
+                    step: "work",
+                    status: "running",
+                    agent: "build",
+                    sessionID: child.id,
+                    path: path.join(tmp.path, ".opencode", "workflows", "runs", "workflow_running_child", "work.json"),
+                    attempt: 1,
+                    time: { started: Date.now(), updated: Date.now() },
+                  },
+                },
+                statuses: { work: "running" },
+                time: { started: Date.now(), updated: Date.now() },
+              }),
+            })
+            let calls = 0
+            const state = await WorkflowExecutor.continueRun({
+              sessionID: session.id,
+              execute: async () => {
+                calls++
+                return { agent: "build", output: "duplicate" }
+              },
+            })
+
+            expect(assistant.time.completed).toBeUndefined()
+            expect(calls).toBe(0)
+            expect(state.status).toBe("active")
+            expect(state.statuses.work).toBe("running")
+            expect(state.nodes.work?.sessionID).toBe(child.id)
+          },
+        }),
+    })
+  })
+
+  test("continueRun absorbs a completed running child session", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "completed-child",
+      name: "Completed Child",
+      nodes: [{ id: "work", prompt: "Work", outputs: { result: "$work" } }],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const child = await Session.create({ parentID: session.id })
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "stop",
+            })) as MessageV2.Assistant
+            await Session.updatePart({
+              id: PartID.ascending(),
+              sessionID: child.id,
+              messageID: assistant.id,
+              type: "text",
+              text: "child done",
+              time: { start: Date.now(), end: Date.now() },
+            })
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: WorkflowState.write(undefined, {
+                runID: "workflow_completed_child",
+                workflowID: "completed-child",
+                workflowName: "Completed Child",
+                status: "active",
+                current: "work",
+                step: 0,
+                total: 1,
+                variables: {},
+                attempts: { work: 1 },
+                completed: [],
+                steps: [
+                  {
+                    id: "work",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    prompt: "Work",
+                    mutates: false,
+                    inputs: {},
+                    outputs: { result: "$work" },
+                    guards: [],
+                    depends_on: [],
+                  },
+                ],
+                nodes: {
+                  work: {
+                    step: "work",
+                    status: "running",
+                    agent: "build",
+                    sessionID: child.id,
+                    path: path.join(tmp.path, ".opencode", "workflows", "runs", "workflow_completed_child", "work.json"),
+                    attempt: 1,
+                    time: { started: Date.now(), updated: Date.now() },
+                  },
+                },
+                statuses: { work: "running" },
+                time: { started: Date.now(), updated: Date.now() },
+              }),
+            })
+            let calls = 0
+            const state = await WorkflowExecutor.continueRun({
+              sessionID: session.id,
+              execute: async () => {
+                calls++
+                return { agent: "build", output: "duplicate" }
+              },
+            })
+
+            expect(calls).toBe(0)
+            expect(state.status).toBe("completed")
+            expect(state.statuses.work).toBe("completed")
+            expect(state.nodes.work?.sessionID).toBe(child.id)
+            expect(state.nodes.work?.output).toBe("child done")
+            expect(state.variables.result).toBe("child done")
           },
         }),
     })

@@ -19,7 +19,9 @@
 - 修改 `packages/opencode/src/workflow/executor.ts`
   - 新增 `WorkflowExecutor.continueRun`
   - 当 run 仍在当前进程执行时直接返回状态，避免重复执行
-  - 当 run 是陈旧 active 状态时，将残留 `running` step 重置为 `pending`，移除对应 running node，然后继续 `advance`
+  - running node 会在创建子会话后立即持久化 `sessionID`
+  - 当 run 是陈旧 active 状态时，优先检查已有 running child session：未完成则等待，已完成则吸收结果；只有没有可恢复子会话时才退回 `pending` 并继续 `advance`
+  - workflow 完成/暂停/失败通知由 runtime 直接写入最近的真实用户 turn 下，避免 synthetic-only user message 在主会话中显示为空白轮次
 - 修改 `packages/opencode/src/session/runner.ts`
   - workflow runner 遇到 active run 时调用 `continueRun`
 
@@ -32,6 +34,8 @@
 ## 相关测试
 
 - `cd packages/opencode && bun test test/session/runner.test.ts`
+- `cd packages/opencode && bun test test/workflow/executor.test.ts`
+- `cd packages/opencode && bun test test/tool/workflow.test.ts`
 - `cd packages/opencode && bun run typecheck`
 - `cd packages/app && bun test src/pages/session/helpers.test.ts src/components/settings-agents-helpers.test.ts`
 - `cd packages/app && bun run typecheck`
