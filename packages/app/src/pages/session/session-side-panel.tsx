@@ -24,6 +24,7 @@ import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import type { SessionStatus } from "@opencode-ai/sdk/v2/client"
 
 type WorkflowNode = {
   step: string
@@ -188,11 +189,29 @@ function unique(input: string[]) {
   return [...new Set(input)]
 }
 
+function sessionStatus(input: SessionStatus | undefined): WorkflowRun["status"] | WorkflowStatus | undefined {
+  if (!input || input.type === "idle") return
+  if (input.type === "error") return "failed"
+  return "running"
+}
+
 function WorkflowPanel(props: {
   workflow: WorkflowRun
   workflows: WorkflowRun[]
   selectWorkflow: (runID: string) => void
+  status: (sessionID: string | undefined) => SessionStatus | undefined
 }) {
+  const active = (input: WorkflowRun["status"] | WorkflowStatus | undefined) => input === "running" || input === "active"
+  const badge = (input: WorkflowRun["status"] | WorkflowStatus | undefined) => (
+    <span>
+      {label(input)}
+      <Show when={active(input)}>
+        <span class="inline-flex w-4 justify-start">
+          <span class="animate-pulse">...</span>
+        </span>
+      </Show>
+    </span>
+  )
   const steps = createMemo(() => {
     const nodes = Array.isArray(props.workflow.nodes) ? props.workflow.nodes : []
     const runs =
@@ -232,6 +251,16 @@ function WorkflowPanel(props: {
       ? (props.workflow.nodes as Record<string, WorkflowNode>)
       : {},
   )
+  const stateFor = (run: WorkflowRun): WorkflowRun["status"] | WorkflowStatus => {
+    const nodes = record(run.nodes) && !Array.isArray(run.nodes) ? (run.nodes as Record<string, WorkflowNode>) : {}
+    const states = Object.values(nodes).flatMap((node) => {
+      const value = sessionStatus(props.status(node.sessionID))
+      return value ? [value] : []
+    })
+    if (states.includes("running")) return "active"
+    if (states.includes("failed")) return "error"
+    return run.status
+  }
   const edges = createMemo(() => {
     const out = new Map<string, string[]>()
     steps().forEach((step) => {
@@ -243,6 +272,8 @@ function WorkflowPanel(props: {
   })
   const state = (id: string, step?: WorkflowStep): WorkflowStatus => {
     const run = runs()[id]
+    const active = sessionStatus(props.status(run?.sessionID))
+    if (active) return active === "failed" ? "failed" : "running"
     const phase = status(props.workflow.statuses?.[id])
     if (phase) return phase
     const value = status(run?.status)
@@ -276,7 +307,7 @@ function WorkflowPanel(props: {
             <div class="text-13-medium text-text-base truncate">{props.workflow.workflowName}</div>
             <div class="mt-1 text-11-regular text-text-weak truncate">{props.workflow.workflowID}</div>
           </div>
-          <div class={`text-11-medium shrink-0 ${tone(props.workflow.status)}`}>{label(props.workflow.status)}</div>
+          <div class={`text-11-medium shrink-0 ${tone(stateFor(props.workflow))}`}>{badge(stateFor(props.workflow))}</div>
         </div>
 
         <Show when={props.workflows.length > 1}>
@@ -299,7 +330,7 @@ function WorkflowPanel(props: {
                         <div class="truncate text-12-medium text-text-base">{run.workflowName}</div>
                         <div class="mt-0.5 truncate text-11-regular text-text-weak">{run.workflowID}</div>
                       </div>
-                      <div class={`shrink-0 text-11-medium ${tone(run.status)}`}>{label(run.status)}</div>
+                      <div class={`shrink-0 text-11-medium ${tone(stateFor(run))}`}>{badge(stateFor(run))}</div>
                     </div>
                   </button>
                 )}
@@ -364,7 +395,7 @@ function WorkflowPanel(props: {
                                 {(props.workflow.attempts ?? {})[step.id] ?? node()?.attempt ?? 0}
                               </div>
                             </div>
-                            <div class={`shrink-0 text-11-medium ${tone(phase())}`}>{label(phase())}</div>
+                            <div class={`shrink-0 text-11-medium ${tone(phase())}`}>{badge(phase())}</div>
                           </div>
                         </summary>
                         <div class="border-t border-border-weaker-base px-3 py-3 text-12-regular text-text-muted">
@@ -794,7 +825,12 @@ export function SessionSidePanel(props: {
                     <Tabs.Content value="workflow" class="flex flex-col h-full overflow-hidden contain-strict">
                       <Show when={activeTab() === "workflow" && run()}>
                         {(item) => (
-                          <WorkflowPanel workflow={item()} workflows={runs()} selectWorkflow={setSelectedWorkflow} />
+                          <WorkflowPanel
+                            workflow={item()}
+                            workflows={runs()}
+                            selectWorkflow={setSelectedWorkflow}
+                            status={(sessionID) => (sessionID ? sync.data.session_status[sessionID] : undefined)}
+                          />
                         )}
                       </Show>
                     </Tabs.Content>
