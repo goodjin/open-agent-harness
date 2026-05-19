@@ -5,7 +5,7 @@ import { Tag } from "@opencode-ai/ui/tag"
 import { TextField } from "@opencode-ai/ui/text-field"
 import { showToast } from "@opencode-ai/ui/toast"
 import type { AgentManageDiagnostic, AgentManageInfo } from "@opencode-ai/sdk/v2"
-import { createEffect, createResource, For, Show, type Component, type JSX } from "solid-js"
+import { createResource, For, Show, type Component, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useLanguage } from "@/context/language"
@@ -38,14 +38,22 @@ const SelectField: Component<{
   options: string[]
   onChange: (value: string) => void
   disabled?: boolean
+  inline?: boolean
 }> = (props) => (
-  <label class="flex flex-col gap-1 text-12-medium text-text-weak">
-    {props.label}
+  <label
+    class="flex gap-1 text-12-medium text-text-weak"
+    classList={{
+      "flex-col": !props.inline,
+      "flex-row items-center gap-2": props.inline,
+    }}
+  >
+    <span class="shrink-0">{props.label}</span>
     <select
       value={props.value}
       disabled={props.disabled}
       onChange={(event) => props.onChange(event.currentTarget.value)}
       class="h-8 rounded-md border border-border-base bg-surface-base px-2 text-13-regular text-text-strong"
+      classList={{ "min-w-28": props.inline }}
     >
       <For each={props.options}>{(item) => <option value={item}>{item}</option>}</For>
     </select>
@@ -67,6 +75,7 @@ const Field: Component<{
   onChange: (value: string) => void
   disabled?: boolean
   multiline?: boolean
+  class?: string
 }> = (props) => (
   <TextField
     label={props.label}
@@ -74,6 +83,7 @@ const Field: Component<{
     onChange={props.onChange}
     disabled={props.disabled}
     multiline={props.multiline}
+    class={props.class}
   />
 )
 
@@ -84,16 +94,23 @@ const Section: Component<{ title: string; children: JSX.Element }> = (props) => 
   </div>
 )
 
+const source = (item: AgentManageInfo) => {
+  if (item.source === "builtin") return "Source: built-in"
+  return `Source: ${item.source}`
+}
+
 export const SettingsAgents: Component = () => {
   const language = useLanguage()
   const globalSDK = useGlobalSDK()
   const [view, setView] = createStore<{
+    page: "list" | "form"
     mode: View
     selected: string
     saving: boolean
     state: string
     diagnostics: AgentManageDiagnostic[]
   }>({
+    page: "list",
     mode: "edit",
     selected: "",
     saving: false,
@@ -107,6 +124,7 @@ export const SettingsAgents: Component = () => {
   const current = () => agents()?.find((item) => item.id === view.selected)
 
   const select = (item: AgentManageInfo) => {
+    setView("page", "form")
     setView("mode", "edit")
     setView("selected", item.id)
     setView("diagnostics", item.diagnostics)
@@ -114,19 +132,14 @@ export const SettingsAgents: Component = () => {
   }
 
   const create = () => {
+    setView("page", "form")
     setView("mode", "create")
     setView("selected", "")
     setView("diagnostics", [])
     setForm(blank())
   }
 
-  createEffect(() => {
-    const list = agents()
-    if (!list?.length) return
-    if (view.mode === "create") return
-    if (view.selected && list.some((item) => item.id === view.selected)) return
-    select(list[0])
-  })
+  const back = () => setView("page", "list")
 
   const refresh = async () => {
     await actions.refetch()
@@ -179,118 +192,132 @@ export const SettingsAgents: Component = () => {
 
   return (
     <div class="flex h-full flex-col overflow-y-auto px-4 pb-10 sm:px-10 sm:pb-10">
-      <div class="sticky top-0 z-10 bg-[linear-gradient(to_bottom,var(--surface-stronger-non-alpha)_calc(100%_-_24px),transparent)]">
-        <div class="flex max-w-[960px] flex-wrap items-center justify-between gap-3 pt-6 pb-6">
-          <h2 class="text-16-medium text-text-strong">{language.t("settings.agents.title")}</h2>
-          <Button size="large" variant="secondary" icon="plus-small" onClick={create}>
-            New agent
-          </Button>
-        </div>
-      </div>
+      <Show
+        when={view.page === "form"}
+        fallback={
+          <>
+            <div class="sticky top-0 z-10 bg-[linear-gradient(to_bottom,var(--surface-stronger-non-alpha)_calc(100%_-_24px),transparent)]">
+              <div class="flex max-w-[960px] flex-wrap items-center justify-between gap-3 pt-6 pb-6">
+                <h2 class="text-16-medium text-text-strong">{language.t("settings.agents.title")}</h2>
+                <Button size="large" variant="secondary" icon="plus-small" onClick={create}>
+                  New agent
+                </Button>
+              </div>
+            </div>
 
-      <div class="grid max-w-[960px] grid-cols-1 gap-6 lg:grid-cols-[320px_1fr]">
-        <div class="flex flex-col gap-1">
-          <SettingsList>
-            <Show
-              when={!agents.loading}
-              fallback={
-                <div class="py-4 text-14-regular text-text-weak">
-                  {language.t("common.loading")}
-                  {language.t("common.loading.ellipsis")}
-                </div>
-              }
-            >
-              <Show
-                when={(agents()?.length ?? 0) > 0}
-                fallback={<div class="py-4 text-14-regular text-text-weak">No manageable agents</div>}
-              >
-                <For each={agents()}>
-                  {(item) => (
-                    <div class="border-b border-border-weak-base py-3 last:border-none">
-                      <button
-                        type="button"
-                        data-action="agent-select"
-                        onClick={() => select(item)}
-                        class="flex w-full flex-col gap-2 rounded-md px-2 py-2 text-left hover:bg-surface-strong"
-                        classList={{ "bg-surface-strong": view.selected === item.id }}
-                      >
-                        <div class="flex min-w-0 items-center justify-between gap-2">
-                          <span class="truncate text-14-medium text-text-strong">{item.name}</span>
-                          <div class="flex shrink-0 items-center gap-1">
-                            <Tag>{item.source}</Tag>
-                            <Show when={item.disabled}>
-                              <Tag>Disabled</Tag>
-                            </Show>
+            <div class="flex max-w-[960px] flex-col gap-1">
+              <SettingsList>
+                <Show
+                  when={!agents.loading}
+                  fallback={
+                    <div class="py-4 text-14-regular text-text-weak">
+                      {language.t("common.loading")}
+                      {language.t("common.loading.ellipsis")}
+                    </div>
+                  }
+                >
+                  <Show
+                    when={(agents()?.length ?? 0) > 0}
+                    fallback={<div class="py-4 text-14-regular text-text-weak">No manageable agents</div>}
+                  >
+                    <For each={agents()}>
+                      {(item) => (
+                        <div class="flex flex-wrap items-center justify-between gap-4 border-b border-border-weak-base py-4 last:border-none">
+                          <div class="flex min-w-0 flex-1 flex-col gap-2">
+                            <div class="flex min-w-0 items-center gap-2">
+                              <span class="truncate text-14-medium text-text-strong">{item.name}</span>
+                              <Tag>{source(item)}</Tag>
+                              <Show when={item.disabled}>
+                                <Tag>Disabled</Tag>
+                              </Show>
+                            </div>
+                            <span class="line-clamp-2 text-12-regular text-text-weak">{item.effective.description}</span>
+                            <span class="text-11-regular text-text-weaker">{summary(item)}</span>
+                          </div>
+                          <div class="flex shrink-0 items-center gap-2">
+                            <Button data-action="agent-select" size="small" variant="secondary" icon="edit" onClick={() => select(item)}>
+                              Details
+                            </Button>
+                            <Button
+                              data-action="agent-state"
+                              size="small"
+                              variant="ghost"
+                              disabled={view.state === item.id}
+                              onClick={() => void toggle(item)}
+                            >
+                              {item.disabled ? "Enable" : "Disable"}
+                            </Button>
                           </div>
                         </div>
-                        <span class="line-clamp-2 text-12-regular text-text-weak">{item.effective.description}</span>
-                        <span class="text-11-regular text-text-weaker">{summary(item)}</span>
-                      </button>
-                      <div class="flex justify-end pt-1">
-                        <Button
-                          data-action="agent-state"
-                          size="small"
-                          variant="ghost"
-                          disabled={view.state === item.id}
-                          onClick={() => void toggle(item)}
-                        >
-                          {item.disabled ? "Enable" : "Disable"}
-                        </Button>
-                      </div>
-                    </div>
+                      )}
+                    </For>
+                  </Show>
+                </Show>
+              </SettingsList>
+            </div>
+          </>
+        }
+      >
+        <div class="sticky top-0 z-10 bg-[linear-gradient(to_bottom,var(--surface-stronger-non-alpha)_calc(100%_-_24px),transparent)]">
+          <div class="flex max-w-[960px] flex-wrap items-center justify-between gap-3 pt-6 pb-6">
+            <div class="flex min-w-0 items-center gap-2">
+              <Button size="large" variant="ghost" icon="arrow-left" onClick={back}>
+                Back
+              </Button>
+              <div class="flex min-w-0 items-center gap-2">
+                <Icon name={view.mode === "create" ? "plus-small" : "edit"} class="text-icon-weak-base" />
+                <span class="truncate text-16-medium text-text-strong">
+                  {view.mode === "create" ? "New agent" : current()?.name || language.t("common.edit")}
+                </span>
+                <Show when={current()}>
+                  {(item) => (
+                    <>
+                      <Tag>{source(item())}</Tag>
+                      <Show when={!item().editable}>
+                        <Tag>Override</Tag>
+                      </Show>
+                    </>
                   )}
-                </For>
-              </Show>
-            </Show>
-          </SettingsList>
+                </Show>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <SelectField
+                label="Scope"
+                value={form.scope}
+                options={scopes}
+                onChange={(value) => setForm("scope", value as Scope)}
+                inline
+              />
+              <Button
+                data-action="agent-save"
+                size="large"
+                variant="primary"
+                disabled={view.saving}
+                onClick={() => void save()}
+              >
+                {view.saving ? language.t("common.saving") : language.t("common.save")}
+              </Button>
+            </div>
+          </div>
         </div>
 
-        <div class="flex min-w-0 flex-col gap-5">
+        <div class="flex max-w-[960px] min-w-0 flex-col gap-5">
           <SettingsList>
             <div class="flex flex-col gap-5 py-4">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex min-w-0 items-center gap-2">
-                  <Icon name={view.mode === "create" ? "plus-small" : "edit"} class="text-icon-weak-base" />
-                  <span class="truncate text-14-medium text-text-strong">
-                    {view.mode === "create" ? "New agent" : current()?.name || language.t("common.edit")}
-                  </span>
-                  <Show when={current()}>
-                    {(item) => (
-                      <>
-                        <Tag>{item().source}</Tag>
-                        <Show when={!item().editable}>
-                          <Tag>Override</Tag>
-                        </Show>
-                      </>
-                    )}
-                  </Show>
-                </div>
-                <div class="flex items-center gap-2">
-                  <SelectField
-                    label="Scope"
-                    value={form.scope}
-                    options={scopes}
-                    onChange={(value) => setForm("scope", value as Scope)}
-                  />
-                  <Button
-                    data-action="agent-save"
-                    size="large"
-                    variant="primary"
-                    disabled={view.saving}
-                    onClick={() => void save()}
-                  >
-                    {view.saving ? language.t("common.saving") : language.t("common.save")}
-                  </Button>
-                </div>
-              </div>
-
               <Section title="Profile">
                 <Field label="ID" value={form.id} disabled={view.mode !== "create"} onChange={(value) => setForm("id", value)} />
                 <Field label="Name" value={form.name} onChange={(value) => setForm("name", value)} />
                 <Field label="Role" value={form.role} onChange={(value) => setForm("role", value)} />
                 <Field label="Description" value={form.description} onChange={(value) => setForm("description", value)} />
-                <Field label="Identity" value={form.identity} multiline onChange={(value) => setForm("identity", value)} />
-                <Field label="Rules" value={form.rules} multiline onChange={(value) => setForm("rules", value)} />
+                <Field
+                  label="Identity"
+                  value={form.identity}
+                  multiline
+                  class="min-h-48"
+                  onChange={(value) => setForm("identity", value)}
+                />
+                <Field label="Rules" value={form.rules} multiline class="min-h-48" onChange={(value) => setForm("rules", value)} />
               </Section>
 
               <Section title="Runtime">
@@ -346,7 +373,7 @@ export const SettingsAgents: Component = () => {
             </div>
           </SettingsList>
         </div>
-      </div>
+      </Show>
     </div>
   )
 }

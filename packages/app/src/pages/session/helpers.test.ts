@@ -7,7 +7,34 @@ import {
   createSessionTabs,
   focusTerminalById,
   getTabReorderIndex,
+  isSessionBusy,
 } from "./helpers"
+
+describe("isSessionBusy", () => {
+  test("uses session status as the source of truth", () => {
+    expect(
+      isSessionBusy({ type: "idle" }, [
+        {
+          id: "msg_1",
+          sessionID: "ses_1",
+          role: "assistant",
+          path: { cwd: "/tmp", root: "/tmp" },
+          time: { created: 1 },
+          cost: 0,
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          modelID: "model",
+          providerID: "provider",
+          parentID: "msg_0",
+          agent: "build",
+          mode: "build",
+        },
+      ]),
+    ).toBe(false)
+
+    expect(isSessionBusy({ type: "running" })).toBe(true)
+    expect(isSessionBusy(undefined)).toBe(false)
+  })
+})
 
 describe("createOpenReviewFile", () => {
   test("opens and loads selected review file", () => {

@@ -86,6 +86,31 @@ export namespace WorkflowExecutor {
     return advance(input.sessionID, workflow, state, undefined, input)
   }
 
+  export async function continueRun(input: Omit<Run, "workflowID">) {
+    const session = await bound(input.sessionID)
+    const state = WorkflowState.read(session.dsl_context)
+    if (!state) throw new NotFoundError({ message: `Workflow run not found for session: ${input.sessionID}` })
+    const source = await loader()
+    const item = await source.get(state.workflowID)
+    if (!item) throw new NotFoundError({ message: `Workflow not found: ${state.workflowID}` })
+    if (state.status !== "active") return state
+    if (active.has(state.runID)) return state
+    const next = {
+      ...state,
+      variables: {
+        ...state.variables,
+        ...(input.variables ?? {}),
+      },
+      statuses: Object.fromEntries(
+        Object.entries(state.statuses).map(([id, status]) => [id, status === "running" ? "pending" : status]),
+      ),
+      nodes: Object.fromEntries(Object.entries(state.nodes).filter((entry) => entry[1].status !== "running")),
+      time: { ...state.time, updated: Date.now() },
+    } satisfies WorkflowState.Info
+    await save(session, next)
+    return advance(input.sessionID, item.workflow, next, undefined, input)
+  }
+
   export async function begin(input: Run) {
     const { workflow, state } = await init(input)
     schedule(input.sessionID, workflow, state, {

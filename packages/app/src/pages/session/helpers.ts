@@ -1,5 +1,6 @@
 import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
+import type { Message, SessionStatus } from "@opencode-ai/sdk/v2/client"
 import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []
@@ -22,6 +23,10 @@ type TabsInput = {
 }
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
+
+export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Message[]) => {
+  return (status ?? { type: "idle" as const }).type !== "idle"
+}
 
 export const createSessionTabs = (input: TabsInput) => {
   const session = input.session ?? (() => false)

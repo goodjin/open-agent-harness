@@ -144,6 +144,136 @@ describe("SessionRunner", () => {
     })
   })
 
+  test("workflow runner continues a stale active workflow run", async () => {
+    await using tmp = await tmpdir()
+    await fs.mkdir(path.join(tmp.path, ".opencode", "workflows"), { recursive: true })
+    await Bun.write(
+      path.join(tmp.path, ".opencode", "workflows", "stale.json"),
+      JSON.stringify({
+        id: "stale",
+        name: "Stale",
+        steps: [{ id: "first", outputs: { first: "done" } }, { id: "second", outputs: { second: "$first" } }],
+      }),
+    )
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: WorkflowState.write(undefined, {
+                runID: "workflow_stale",
+                workflowID: "stale",
+                workflowName: "Stale",
+                status: "active",
+                current: "second",
+                step: 1,
+                total: 2,
+                variables: { first: "done" },
+                attempts: { first: 1 },
+                completed: ["first"],
+                steps: [
+                  {
+                    id: "first",
+                    type: "task",
+                    agent: "auto",
+                    mutates: false,
+                    inputs: {},
+                    outputs: { first: "done" },
+                    guards: [],
+                    depends_on: [],
+                  },
+                  {
+                    id: "second",
+                    type: "task",
+                    agent: "auto",
+                    mutates: false,
+                    inputs: {},
+                    outputs: { second: "$first" },
+                    guards: [],
+                    depends_on: ["first"],
+                  },
+                ],
+                nodes: {
+                  second: {
+                    step: "second",
+                    status: "running",
+                    agent: "workflow-runner",
+                    path: path.join(tmp.path, ".opencode", "workflows", "runs", "workflow_stale", "second.json"),
+                    attempt: 1,
+                    time: { started: Date.now(), updated: Date.now() },
+                  },
+                },
+                statuses: { first: "completed", second: "running" },
+                time: { started: Date.now(), updated: Date.now() },
+              }),
+            })
+            const user = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "workflow-runner",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)) as MessageV2.User
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              parentID: user.id,
+              role: "assistant",
+              mode: "workflow-runner",
+              agent: "workflow-runner",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now() },
+            })) as MessageV2.Assistant
+
+            const runner = SessionRunner.create({
+              assistantMessage: assistant,
+              sessionID: session.id,
+              model: {} as never,
+              abort: new AbortController().signal,
+            })
+            const result = await runner.process({
+              user,
+              sessionID: session.id,
+              model: {} as never,
+              agent: {
+                name: "workflow-runner",
+                runner: "workflow",
+              } as never,
+              system: [],
+              abort: new AbortController().signal,
+              messages: [{ role: "user", content: "继续推进" }],
+              tools: {},
+            })
+            const state = WorkflowState.read((await Session.get(session.id)).dsl_context)
+            const parts = await MessageV2.parts(assistant.id)
+
+            expect(result).toBe("stop")
+            expect(state?.status).toBe("completed")
+            expect(state?.completed).toEqual(["first", "second"])
+            expect(state?.variables.second).toBe("done")
+            expect(parts.some((part) => part.type === "text" && part.text.includes("completed"))).toBe(true)
+          },
+        }),
+    })
+  })
+
   test("workflow runner persists and runs workflow returned by chat", async () => {
     await using tmp = await tmpdir()
     const model = {

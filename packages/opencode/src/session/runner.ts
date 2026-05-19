@@ -63,7 +63,12 @@ export namespace SessionRunner {
             variables: input(text),
           })
       : state?.status === "active"
-        ? state
+        ? await WorkflowExecutor.continueRun({
+            sessionID,
+            variables: input(text),
+            agent: stream.agent.name,
+            abort: stream.abort,
+          })
         : state?.status === "completed" || state?.status === "error" || state?.status === "aborted"
           ? undefined
           : await start(sessionID, text)
