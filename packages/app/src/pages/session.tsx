@@ -18,6 +18,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useLocal } from "@/context/local"
 import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
 import { createStore } from "solid-js/store"
+import { ResizeHandle } from "@opencode-ai/ui/resize-handle"
 import { Select } from "@opencode-ai/ui/select"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { createAutoScroll } from "@opencode-ai/ui/hooks"
@@ -39,7 +40,7 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
+import { createOpenReviewFile, createSessionTabs, createSizing, focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -380,8 +381,11 @@ export default function Page() {
   )
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
+  const size = createSizing()
+  const desktopSidePanelOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
-  const centered = createMemo(() => isDesktop())
+  const sessionPanelWidth = createMemo(() => (desktopSidePanelOpen() ? `${layout.session.width()}px` : "100%"))
+  const centered = createMemo(() => isDesktop() && !desktopSidePanelOpen())
 
   function normalizeTab(tab: string) {
     if (!tab.startsWith("file://")) return tab
@@ -1782,9 +1786,33 @@ export default function Page() {
             </div>
           }
         >
-          <div class="@container relative flex flex-col min-h-0 h-full bg-background-stronger flex-1 min-w-0">
+          <div
+            classList={{
+              "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger flex-1 md:flex-none min-w-0":
+                true,
+              "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
+                !size.active(),
+            }}
+            style={{
+              width: sessionPanelWidth(),
+            }}
+          >
             {sessionPanel()}
             {composerPanel()}
+            <Show when={desktopSidePanelOpen()}>
+              <div onPointerDown={() => size.start()}>
+                <ResizeHandle
+                  direction="horizontal"
+                  size={layout.session.width()}
+                  min={450}
+                  max={typeof window === "undefined" ? 1000 : Math.max(450, Math.min(1000, window.innerWidth - 360))}
+                  onResize={(width) => {
+                    size.touch()
+                    layout.session.resize(width)
+                  }}
+                />
+              </div>
+            </Show>
           </div>
           <SessionSidePanel
             reviewPanel={reviewPanel}

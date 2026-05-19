@@ -44,6 +44,7 @@ type WorkflowNode = {
 
 type WorkflowStep = {
   id: string
+  description?: string
   type: string
   agent?: string
   prompt?: string
@@ -187,7 +188,11 @@ function unique(input: string[]) {
   return [...new Set(input)]
 }
 
-function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[]; selectWorkflow: (runID: string) => void }) {
+function WorkflowPanel(props: {
+  workflow: WorkflowRun
+  workflows: WorkflowRun[]
+  selectWorkflow: (runID: string) => void
+}) {
   const steps = createMemo(() => {
     const nodes = Array.isArray(props.workflow.nodes) ? props.workflow.nodes : []
     const runs =
@@ -214,7 +219,9 @@ function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[];
             ...array(props.workflow.cancelled),
           ].map(step)
     const seen = new Set(list.map((step) => step.id))
-    const extra = unique([...Object.keys(runs), ...Object.keys(props.workflow.statuses ?? {})]).filter((id) => !seen.has(id))
+    const extra = unique([...Object.keys(runs), ...Object.keys(props.workflow.statuses ?? {})]).filter(
+      (id) => !seen.has(id),
+    )
     const all = [...list, ...extra.map(step)]
     if (!props.workflow.current || all.some((item) => item.id === props.workflow.current)) return all
     return [...all, step(props.workflow.current)]
@@ -258,10 +265,7 @@ function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[];
       }))
       .filter((item) => item.items.length > 0),
   )
-  const count = (id: WorkflowStatus) =>
-    groups()
-      .find((item) => item.id === id)
-      ?.items.length ?? 0
+  const count = (id: WorkflowStatus) => groups().find((item) => item.id === id)?.items.length ?? 0
   const total = createMemo(() => Math.max(props.workflow.total, steps().length))
 
   return (
@@ -352,7 +356,7 @@ function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[];
                             <div class={`w-6 shrink-0 text-11-medium ${tone(phase())}`}>{index()}</div>
                             <div class="min-w-0 flex-1">
                               <div class="flex min-w-0 items-center gap-2">
-                                <div class="truncate text-12-medium text-text-base">{step.id}</div>
+                                <div class="truncate text-12-medium text-text-base">{step.description ?? step.id}</div>
                                 <div class="shrink-0 text-11-regular text-text-weak">{step.type}</div>
                               </div>
                               <div class="mt-0.5 truncate text-11-regular text-text-weak">
@@ -401,7 +405,9 @@ function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[];
                             </Show>
                             <Show when={step.next !== undefined}>
                               <div class="text-text-weak">Next</div>
-                              <pre class="min-w-0 whitespace-pre-wrap break-words font-mono text-11-regular">{value(step.next)}</pre>
+                              <pre class="min-w-0 whitespace-pre-wrap break-words font-mono text-11-regular">
+                                {value(step.next)}
+                              </pre>
                             </Show>
                           </div>
                           <Show when={step.prompt}>
@@ -465,6 +471,7 @@ export function SessionSidePanel(props: {
   const reviewTab = createMemo(() => isDesktop())
   const logTab = createMemo(() => isDesktop() && !!params.id)
   const fileTab = createMemo(() => isDesktop() && fileOpen())
+  const panelWidth = createMemo(() => (open() ? `calc(100% - ${layout.session.width()}px)` : "0px"))
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
@@ -643,10 +650,11 @@ export function SessionSidePanel(props: {
         aria-label={language.t("session.panel.reviewAndFiles")}
         aria-hidden={!open()}
         inert={!open()}
-        class="relative min-w-0 h-full w-[min(48vw,760px)] shrink-0 overflow-hidden bg-background-base"
+        class="relative min-w-0 h-full shrink-0 overflow-hidden bg-background-base"
         classList={{
           "pointer-events-none": !open(),
         }}
+        style={{ width: panelWidth() }}
       >
         <div class="size-full flex border-l border-border-weaker-base">
           <div
@@ -709,7 +717,11 @@ export function SessionSidePanel(props: {
                           <div class="flex items-center gap-1.5">
                             <div>Workflow</div>
                             <Show when={run()}>
-                              {(item) => <div>{array(item().completed).length}/{item().total}</div>}
+                              {(item) => (
+                                <div>
+                                  {array(item().completed).length}/{item().total}
+                                </div>
+                              )}
                             </Show>
                           </div>
                         </Tabs.Trigger>
@@ -781,7 +793,9 @@ export function SessionSidePanel(props: {
                   <Show when={workflowTab()}>
                     <Tabs.Content value="workflow" class="flex flex-col h-full overflow-hidden contain-strict">
                       <Show when={activeTab() === "workflow" && run()}>
-                        {(item) => <WorkflowPanel workflow={item()} workflows={runs()} selectWorkflow={setSelectedWorkflow} />}
+                        {(item) => (
+                          <WorkflowPanel workflow={item()} workflows={runs()} selectWorkflow={setSelectedWorkflow} />
+                        )}
                       </Show>
                     </Tabs.Content>
                   </Show>
@@ -829,7 +843,9 @@ export function SessionSidePanel(props: {
                         </Match>
                         <Match when={true}>
                           {empty(
-                            language.t(sync.project && !sync.project.vcs ? "session.review.noChanges" : reviewEmptyKey()),
+                            language.t(
+                              sync.project && !sync.project.vcs ? "session.review.noChanges" : reviewEmptyKey(),
+                            ),
                           )}
                         </Match>
                       </Switch>
@@ -879,7 +895,6 @@ export function SessionSidePanel(props: {
               </DragDropProvider>
             </div>
           </div>
-
         </div>
       </aside>
     </Show>
