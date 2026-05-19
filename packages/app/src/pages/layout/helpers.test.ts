@@ -6,8 +6,9 @@ import {
   parseDeepLink,
   parseNewSessionDeepLink,
 } from "./deep-links"
-import { type Session } from "@opencode-ai/sdk/v2/client"
+import { type Message, type Session } from "@opencode-ai/sdk/v2/client"
 import {
+  childSessionSummary,
   displayName,
   displaySessionTitle,
   childMapByParent,
@@ -31,6 +32,13 @@ const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
     time: { created: 0, updated: 0, archived: undefined },
     ...input,
   }) as Session
+
+const message = (input: Partial<Message> & Pick<Message, "id" | "sessionID">) =>
+  ({
+    role: "assistant",
+    time: { created: 0, completed: undefined },
+    ...input,
+  }) as Message
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
@@ -243,6 +251,27 @@ describe("layout workspace helpers", () => {
     ])
 
     expect(map.get("root")).toEqual(["first", "second", "third"])
+  })
+
+  test("summarizes completed child sessions", () => {
+    const done = session({ id: "done", directory: "/workspace" })
+    const running = session({ id: "running", directory: "/workspace" })
+    const idle = session({ id: "idle", directory: "/workspace" })
+
+    expect(
+      childSessionSummary(
+        [done, running, idle],
+        {
+          done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
+          running: [message({ id: "running-message", sessionID: "running" })],
+        },
+        {
+          done: { type: "idle" },
+          running: { type: "retry" },
+          idle: { type: "idle" },
+        },
+      ),
+    ).toEqual({ completed: 1, total: 3 })
   })
 
   test("keeps active grandchild ancestors expanded in nav order after collapse", () => {

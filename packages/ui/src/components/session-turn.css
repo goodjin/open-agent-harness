@@ -47,7 +47,10 @@
   }
 
   [data-slot="session-turn-message-container"] > [data-slot="session-turn-message-time"] {
+    align-self: flex-end;
     margin-bottom: -10px;
+    max-width: min(82%, 64ch);
+    text-align: right;
   }
 
   [data-slot="session-turn-compaction"] {

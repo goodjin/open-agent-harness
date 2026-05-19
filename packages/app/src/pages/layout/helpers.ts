@@ -1,5 +1,5 @@
 import { getFilename } from "@opencode-ai/util/path"
-import { type Session } from "@opencode-ai/sdk/v2/client"
+import { type Message, type Session } from "@opencode-ai/sdk/v2/client"
 
 export const workspaceKey = (directory: string) => {
   const drive = directory.match(/^([A-Za-z]:)[\\/]+$/)
@@ -109,6 +109,39 @@ export const effectiveSessionExpansion = (expanded: Record<string, boolean>, lin
       .map((item) => item[0]),
     ...lineage,
   ])
+
+type Status = {
+  type?: string
+}
+
+export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {
+  const pending = (messages ?? []).findLast(
+    (message) =>
+      message.role === "assistant" && typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
+  )
+  return pending !== undefined || status?.type === "retry" || (status !== undefined && status.type !== "idle")
+}
+
+export const sessionCompleted = (session: Session, messages: Message[] | undefined, status: Status | undefined) => {
+  if (sessionWorking(messages, status)) return false
+  if (!messages) return (session.time.updated ?? session.time.created) > session.time.created
+  return messages.some(
+    (message) =>
+      message.role === "assistant" && typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
+  )
+}
+
+export const childSessionSummary = (
+  children: Session[],
+  messages: Record<string, Message[] | undefined>,
+  status: Record<string, Status | undefined>,
+) => {
+  if (children.length === 0) return
+  return {
+    completed: children.filter((child) => sessionCompleted(child, messages[child.id], status[child.id])).length,
+    total: children.length,
+  }
+}
 
 const sessionTitleParts = (title: string) => {
   const trimmed = title.trim()

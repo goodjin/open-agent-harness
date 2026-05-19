@@ -17,7 +17,7 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { displaySessionTitle, hasProjectPermissions } from "./helpers"
+import { childSessionSummary, displaySessionTitle, hasProjectPermissions, sessionCompleted, sessionWorking } from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -103,7 +103,7 @@ export type SessionItemProps = {
 const SessionRow = (props: {
   session: Session
   title: Accessor<string>
-  childSummary: Accessor<{ active: number; total: number } | undefined>
+  childSummary: Accessor<{ completed: number; total: number } | undefined>
   slug: string
   mobile?: boolean
   dense?: boolean
@@ -187,7 +187,7 @@ const SessionRow = (props: {
         <Show when={props.childSummary()}>
           {(summary) => (
             <span class="shrink-0 rounded bg-surface-base px-1.5 py-0.5 text-11-regular tabular-nums text-text-weak">
-              {summary().active}/{summary().total}
+              {summary().completed}/{summary().total}
             </span>
           )}
         </Show>
@@ -263,23 +263,11 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   })
   const isWorking = createMemo(() => {
     if (isPaused()) return false
-    const pending = (sessionStore.message[props.session.id] ?? []).findLast(
-      (message) =>
-        message.role === "assistant" &&
-        typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
-    )
-    const next = status()
-    return pending !== undefined || next?.type === "retry" || (next !== undefined && next.type !== "idle")
+    return sessionWorking(sessionStore.message[props.session.id], status())
   })
   const isDone = createMemo(() => {
     if (hasPermissions() || isWorking() || hasError()) return false
-    const messages = sessionStore.message[props.session.id]
-    if (!messages) return (props.session.time.updated ?? props.session.time.created) > props.session.time.created
-    return messages.some(
-      (message) =>
-        message.role === "assistant" &&
-        typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
-    )
+    return sessionCompleted(props.session, sessionStore.message[props.session.id], status())
   })
 
   const tint = createMemo(() => {
@@ -309,17 +297,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   })
   const childSummary = createMemo(() => {
     const children = childSessions()
-    if (children.length === 0) return
-    const active = children.filter((child) => {
-      const pending = (sessionStore.message[child.id] ?? []).findLast(
-        (message) =>
-          message.role === "assistant" &&
-          typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
-      )
-      const status = sessionStore.session_status[child.id]
-      return pending !== undefined || status?.type === "retry" || (status !== undefined && status.type !== "idle")
-    }).length
-    return { active, total: children.length }
+    return childSessionSummary(children, sessionStore.message, sessionStore.session_status)
   })
   const canExpand = createMemo(() => childSessions().length > 0)
   const expanded = createMemo(() => !!props.expanded?.()[props.session.id] || !!props.lineage?.().has(props.session.id))
