@@ -1038,6 +1038,92 @@ describe("workflow executor", () => {
     })
   })
 
+  test("continueRun fails an archived running child session", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "archived-child",
+      name: "Archived Child",
+      nodes: [{ id: "work", prompt: "Work" }],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const child = await Session.create({ parentID: session.id })
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now() },
+            } as MessageV2.Assistant)
+            await Session.setArchived({ sessionID: child.id, time: Date.now() })
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: WorkflowState.write(undefined, {
+                runID: "workflow_archived_child",
+                workflowID: "archived-child",
+                workflowName: "Archived Child",
+                status: "active",
+                current: "work",
+                step: 0,
+                total: 1,
+                variables: {},
+                attempts: { work: 1 },
+                completed: [],
+                steps: [
+                  {
+                    id: "work",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    prompt: "Work",
+                    mutates: false,
+                    inputs: {},
+                    outputs: {},
+                    guards: [],
+                    depends_on: [],
+                  },
+                ],
+                nodes: {
+                  work: {
+                    step: "work",
+                    status: "running",
+                    agent: "build",
+                    sessionID: child.id,
+                    path: path.join(tmp.path, ".opencode", "workflows", "runs", "workflow_archived_child", "work.json"),
+                    attempt: 1,
+                    time: { started: Date.now(), updated: Date.now() },
+                  },
+                },
+                statuses: { work: "running" },
+                time: { started: Date.now(), updated: Date.now() },
+              }),
+            })
+
+            const state = await WorkflowExecutor.continueRun({ sessionID: session.id })
+
+            expect(state.status).toBe("error")
+            expect(state.statuses.work).toBe("error")
+            expect(state.error).toContain("archived")
+            expect(SessionStatus.get(session.id).type).toBe("error")
+          },
+        }),
+    })
+  })
+
   test("continueRun absorbs a completed running child session", async () => {
     await using tmp = await tmpdir()
     const space = WorkspaceID.ascending()

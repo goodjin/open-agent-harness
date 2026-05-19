@@ -413,6 +413,10 @@ export namespace WorkflowExecutor {
   }
 
   async function result(sessionID: SessionID) {
+    const session = await Session.get(sessionID).catch((err: unknown) => {
+      if (err instanceof NotFoundError) return
+      throw err
+    })
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch((err: unknown) => {
       if (err instanceof NotFoundError) return []
       throw err
@@ -422,8 +426,10 @@ export namespace WorkflowExecutor {
       if (typeof item.info.time.completed === "number") return true
       return item.parts.length > 0
     })
-    if (!msg || msg.info.role !== "assistant") return
-    if (typeof msg.info.time.completed !== "number") return
+    if (!msg || msg.info.role !== "assistant" || typeof msg.info.time.completed !== "number") {
+      if (session?.time.archived) return { error: "Workflow child session was archived before completion" }
+      return
+    }
     if (msg.info.error) {
       const data = "data" in msg.info.error ? msg.info.error.data : undefined
       return {
