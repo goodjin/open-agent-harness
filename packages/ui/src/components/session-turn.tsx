@@ -138,6 +138,13 @@ function heading(text: string) {
   }
 }
 
+function time(value: number | undefined) {
+  if (typeof value !== "number") return ""
+  const date = new Date(value)
+  const pad = (next: number) => next.toString().padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
 export function SessionTurn(
   props: ParentProps<{
     sessionID: string
@@ -340,6 +347,8 @@ export function SessionTurn(
     if (end < start) return undefined
     return end - start
   })
+  const userTime = createMemo(() => time(message()?.time.created))
+  const assistantTime = createMemo(() => time(assistantMessages()[0]?.time.created))
   const assistantVisible = createMemo(() =>
     assistantMessages().reduce((count, message) => {
       const parts = list(data.store.part?.[message.id], emptyParts)
@@ -393,6 +402,9 @@ export function SessionTurn(
               data-slot="session-turn-message-container"
               class={props.classes?.container}
             >
+              <Show when={userTime()}>
+                <div data-slot="session-turn-message-time">{userTime()}</div>
+              </Show>
               <div data-slot="session-turn-message-content" aria-live="off">
                 <Message message={message()!} parts={parts()} actions={props.actions} />
               </div>
@@ -403,6 +415,9 @@ export function SessionTurn(
               </Show>
               <Show when={assistantMessages().length > 0}>
                 <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
+                  <Show when={assistantTime()}>
+                    <div data-slot="session-turn-message-time">{assistantTime()}</div>
+                  </Show>
                   <AssistantParts
                     messages={assistantMessages()}
                     showAssistantCopyPartID={assistantCopyPartID()}

@@ -42,6 +42,22 @@ type MessageComment = {
 const emptyMessages: MessageType[] = []
 const idle = { type: "idle" as const }
 
+const completeLabel = "本轮执行完毕"
+
+const done = (messages: MessageType[], id: string) => {
+  const idx = messages.findIndex((item) => item.id === id)
+  if (idx === -1) return false
+  const assistants: AssistantMessage[] = []
+  for (let i = idx + 1; i < messages.length; i++) {
+    const item = messages[i]
+    if (!item) continue
+    if (item.role === "user") break
+    if (item.role === "assistant" && item.parentID === id) assistants.push(item as AssistantMessage)
+  }
+  if (assistants.length === 0) return false
+  return assistants.every((item) => typeof item.time.completed === "number")
+}
+
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
@@ -948,6 +964,7 @@ export function MessageTimeline(props: {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
                   })
                   const commentCount = createMemo(() => comments().length)
+                  const completed = createMemo(() => done(sessionMessages(), messageID))
                   return (
                     <div
                       id={props.anchor(messageID)}
@@ -1013,6 +1030,15 @@ export function MessageTimeline(props: {
                           container: "w-full px-4 md:px-5",
                         }}
                       />
+                      <Show when={completed()}>
+                        <div class="px-4 md:px-5 pt-8">
+                          <div class="flex items-center gap-3 text-12-regular text-text-weak">
+                            <div class="h-px flex-1 bg-border-weaker-base" />
+                            <span class="shrink-0">{completeLabel}</span>
+                            <div class="h-px flex-1 bg-border-weaker-base" />
+                          </div>
+                        </div>
+                      </Show>
                     </div>
                   )
                 }}

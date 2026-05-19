@@ -91,6 +91,7 @@ export type SessionItemProps = {
 const SessionRow = (props: {
   session: Session
   title: Accessor<string>
+  childSummary: Accessor<{ active: number; total: number } | undefined>
   slug: string
   mobile?: boolean
   dense?: boolean
@@ -163,6 +164,13 @@ const SessionRow = (props: {
         <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
           {props.title()}
         </span>
+        <Show when={props.childSummary()}>
+          {(summary) => (
+            <span class="shrink-0 rounded bg-surface-base px-1.5 py-0.5 text-11-regular tabular-nums text-text-weak">
+              {summary().active}/{summary().total}
+            </span>
+          )}
+        </Show>
       </div>
     </A>
   </div>
@@ -264,6 +272,20 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     )
     return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
   })
+  const childSummary = createMemo(() => {
+    const children = childSessions()
+    if (children.length === 0) return
+    const active = children.filter((child) => {
+      const pending = (sessionStore.message[child.id] ?? []).findLast(
+        (message) =>
+          message.role === "assistant" &&
+          typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
+      )
+      const status = sessionStore.session_status[child.id]
+      return pending !== undefined || status?.type === "retry" || (status !== undefined && status.type !== "idle")
+    }).length
+    return { active, total: children.length }
+  })
   const canExpand = createMemo(() => childSessions().length > 0)
   const expanded = createMemo(() => !!props.expanded?.()[props.session.id] || !!props.lineage?.().has(props.session.id))
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
@@ -316,6 +338,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     <SessionRow
       session={props.session}
       title={title}
+      childSummary={childSummary}
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}

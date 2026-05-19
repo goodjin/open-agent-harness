@@ -37,6 +37,19 @@
     max-width: 100%;
   }
 
+  [data-slot="session-turn-message-time"] {
+    color: var(--text-weaker);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-small);
+    font-variant-numeric: tabular-nums;
+  }
+
+  [data-slot="session-turn-message-container"] > [data-slot="session-turn-message-time"] {
+    margin-bottom: -10px;
+  }
+
   [data-slot="session-turn-compaction"] {
     width: 100%;
     min-width: 0;
@@ -85,6 +98,17 @@
     flex-direction: column;
     align-self: stretch;
     gap: 12px;
+
+    [data-component="tool-part-wrapper"] {
+      background: var(--surface-base);
+      border: 1px solid var(--border-weaker-base);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    > [data-slot="session-turn-message-time"] {
+      margin-bottom: -4px;
+    }
 
     > :first-child > [data-component="markdown"]:first-child {
       margin-top: 0;
