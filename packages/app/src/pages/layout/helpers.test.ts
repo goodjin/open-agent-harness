@@ -9,6 +9,7 @@ import {
 import { type Session } from "@opencode-ai/sdk/v2/client"
 import {
   displayName,
+  displaySessionTitle,
   effectiveSessionExpansion,
   effectiveWorkspaceOrder,
   errorMessage,
@@ -252,6 +253,34 @@ describe("layout workspace helpers", () => {
       "grand",
       "other",
     ])
+  })
+
+  test("formats child session title with sibling sequence first", () => {
+    expect(
+      displaySessionTitle(
+        session({
+          id: "child",
+          directory: "/workspace",
+          parentID: "root",
+          title: "Mission Build: MOD-17 Remove WorkspaceID Runtime (@build agent)",
+        }),
+        1,
+      ),
+    ).toBe("#2 MOD-17 Remove WorkspaceID Runtime · Mission Build (@build agent)")
+  })
+
+  test("keeps child title order when no shared context exists", () => {
+    expect(
+      displaySessionTitle(
+        session({
+          id: "child",
+          directory: "/workspace",
+          parentID: "root",
+          title: "Fix the failing typecheck (@coder subagent)",
+        }),
+        0,
+      ),
+    ).toBe("#1 Fix the failing typecheck (@coder subagent)")
   })
 
   test("formats fallback project display name", () => {

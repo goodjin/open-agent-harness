@@ -100,6 +100,29 @@ export const effectiveSessionExpansion = (expanded: Record<string, boolean>, lin
     ...lineage,
   ])
 
+const sessionTitleParts = (title: string) => {
+  const trimmed = title.trim()
+  const suffix = trimmed.match(/\s+\(@[^)]+\)$/)?.[0] ?? ""
+  const base = suffix ? trimmed.slice(0, -suffix.length).trim() : trimmed
+  const idx = base.lastIndexOf(": ")
+  if (idx === -1) return { name: base, context: "", suffix }
+  return {
+    name: base.slice(idx + 2).trim(),
+    context: base.slice(0, idx).trim(),
+    suffix,
+  }
+}
+
+export const displaySessionTitle = (session: Session, index?: number) => {
+  if (!session.parentID) return session.title
+
+  const parts = sessionTitleParts(session.title)
+  const seq = index === undefined ? "" : `#${index + 1} `
+  const name = `${seq}${parts.name}`
+  if (!parts.context) return `${name}${parts.suffix}`
+  return `${name} · ${parts.context}${parts.suffix}`
+}
+
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree)
 

@@ -17,7 +17,7 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { hasProjectPermissions } from "./helpers"
+import { displaySessionTitle, hasProjectPermissions } from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -90,6 +90,7 @@ export type SessionItemProps = {
 
 const SessionRow = (props: {
   session: Session
+  title: Accessor<string>
   slug: string
   mobile?: boolean
   dense?: boolean
@@ -160,7 +161,7 @@ const SessionRow = (props: {
           </Switch>
         </div>
         <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
-          {props.session.title}
+          {props.title()}
         </span>
       </div>
     </A>
@@ -255,6 +256,14 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       .map((id) => by.get(id))
       .filter((session): session is Session => !!session && !session.time?.archived)
   })
+  const title = createMemo(() => {
+    if (!props.session.parentID) return displaySessionTitle(props.session)
+    const ids = props.children.get(props.session.parentID) ?? []
+    const idx = ids.filter((id) => props.list.some((session) => session.id === id && !session.time?.archived)).indexOf(
+      props.session.id,
+    )
+    return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
+  })
   const canExpand = createMemo(() => childSessions().length > 0)
   const expanded = createMemo(() => !!props.expanded?.()[props.session.id] || !!props.lineage?.().has(props.session.id))
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
@@ -306,6 +315,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const item = (
     <SessionRow
       session={props.session}
+      title={title}
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}
@@ -338,7 +348,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
         <Show
           when={hoverEnabled()}
           fallback={
-            <Tooltip placement={props.mobile ? "bottom" : "right"} value={props.session.title} gutter={10}>
+            <Tooltip placement={props.mobile ? "bottom" : "right"} value={title()} gutter={10}>
               {item}
             </Tooltip>
           }
