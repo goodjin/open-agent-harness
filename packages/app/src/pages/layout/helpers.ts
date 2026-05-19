@@ -42,6 +42,7 @@ export function hasProjectPermissions<T>(
 
 export const childMapByParent = (sessions: Session[]) => {
   const map = new Map<string, string[]>()
+  const by = new Map(sessions.map((session) => [session.id, session]))
   for (const session of sessions) {
     if (!session.parentID) continue
     const existing = map.get(session.parentID)
@@ -50,6 +51,15 @@ export const childMapByParent = (sessions: Session[]) => {
       continue
     }
     map.set(session.parentID, [session.id])
+  }
+  for (const ids of map.values()) {
+    ids.sort((a, b) => {
+      const left = by.get(a)
+      const right = by.get(b)
+      const diff = (left?.time.created ?? 0) - (right?.time.created ?? 0)
+      if (diff !== 0) return diff
+      return a < b ? -1 : a > b ? 1 : 0
+    })
   }
   return map
 }
@@ -117,6 +127,7 @@ export const displaySessionTitle = (session: Session, index?: number) => {
   if (!session.parentID) return session.title
 
   const parts = sessionTitleParts(session.title)
+  if (parts.context && /^#\d+\s+/.test(parts.name)) return `${parts.context} ${parts.name}${parts.suffix}`
   const seq = index === undefined ? "" : `#${index + 1} `
   const name = `${seq}${parts.name}`
   if (!parts.context) return `${name}${parts.suffix}`

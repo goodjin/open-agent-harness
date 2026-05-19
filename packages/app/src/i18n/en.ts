@@ -633,6 +633,7 @@ export const dict = {
   "session.share.action.view": "View",
   "session.share.copy.copied": "Copied",
   "session.share.copy.copyLink": "Copy link",
+  "session.copyName": "Copy name",
 
   "lsp.tooltip.none": "No LSP servers",
   "lsp.label.connected": "{{count}} LSP",

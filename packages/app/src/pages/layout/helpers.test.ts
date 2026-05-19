@@ -10,6 +10,7 @@ import { type Session } from "@opencode-ai/sdk/v2/client"
 import {
   displayName,
   displaySessionTitle,
+  childMapByParent,
   effectiveSessionExpansion,
   effectiveWorkspaceOrder,
   errorMessage,
@@ -233,6 +234,17 @@ describe("layout workspace helpers", () => {
     ])
   })
 
+  test("sorts child sessions by creation time for stable numbering", () => {
+    const map = childMapByParent([
+      session({ id: "root", directory: "/workspace", time: { created: 1, updated: 1 } }),
+      session({ id: "third", directory: "/workspace", parentID: "root", time: { created: 30, updated: 30 } }),
+      session({ id: "first", directory: "/workspace", parentID: "root", time: { created: 10, updated: 10 } }),
+      session({ id: "second", directory: "/workspace", parentID: "root", time: { created: 20, updated: 20 } }),
+    ])
+
+    expect(map.get("root")).toEqual(["first", "second", "third"])
+  })
+
   test("keeps active grandchild ancestors expanded in nav order after collapse", () => {
     const list = [
       session({ id: "root", directory: "/workspace" }),
@@ -281,6 +293,20 @@ describe("layout workspace helpers", () => {
         0,
       ),
     ).toBe("#1 Fix the failing typecheck (@coder subagent)")
+  })
+
+  test("keeps workflow child title in workflow order", () => {
+    expect(
+      displaySessionTitle(
+        session({
+          id: "child",
+          directory: "/workspace",
+          parentID: "root",
+          title: "Mission Build: #3 Fix typecheck (@coder subagent)",
+        }),
+        0,
+      ),
+    ).toBe("Mission Build #3 Fix typecheck (@coder subagent)")
   })
 
   test("formats fallback project display name", () => {

@@ -4,7 +4,7 @@ import { HoverCard } from "@opencode-ai/ui/hover-card"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { MessageNav } from "@opencode-ai/ui/message-nav"
-import { Spinner } from "@opencode-ai/ui/spinner"
+import { showToast } from "@opencode-ai/ui/toast"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { base64Encode } from "@opencode-ai/util/encode"
 import { getFilename } from "@opencode-ai/util/path"
@@ -20,6 +20,18 @@ import { sessionPermissionRequest } from "../session/composer/session-request-tr
 import { displaySessionTitle, hasProjectPermissions } from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
+
+const RunningIcon = (): JSX.Element => (
+  <div class="relative size-5 flex items-center justify-center text-icon-info-active" aria-label="Running" title="Running">
+    <span class="absolute size-4 rounded-full border border-icon-info-active opacity-30 animate-ping motion-reduce:animate-none" />
+    <span class="absolute size-3 rounded-full bg-icon-info-active opacity-10 animate-pulse motion-reduce:animate-none" />
+    <Icon
+      name="reset"
+      size="small"
+      class="relative text-icon-info-active animate-spin [animation-duration:1.1s] motion-reduce:animate-none"
+    />
+  </div>
+)
 
 export const ProjectIcon = (props: { project: LocalProject; class?: string; notify?: boolean }): JSX.Element => {
   const globalSync = useGlobalSync()
@@ -97,6 +109,8 @@ const SessionRow = (props: {
   dense?: boolean
   tint: Accessor<string | undefined>
   isWorking: Accessor<boolean>
+  isPaused: Accessor<boolean>
+  isDone: Accessor<boolean>
   hasPermissions: Accessor<boolean>
   hasError: Accessor<boolean>
   unseenCount: Accessor<number>
@@ -130,7 +144,7 @@ const SessionRow = (props: {
     </Show>
     <A
       href={`/${props.slug}/session/${props.session.id}`}
-      class={`flex items-center justify-between gap-3 min-w-0 text-left w-full focus:outline-none transition-[padding] ${props.mobile ? "pr-7" : ""} group-hover/session:pr-7 group-focus-within/session:pr-7 group-active/session:pr-7 ${props.dense ? "py-0.5" : "py-1"}`}
+      class={`flex items-center justify-between gap-3 min-w-0 text-left w-full focus:outline-none transition-[padding] ${props.mobile ? "pr-[52px]" : "pr-7"} group-hover/session:pr-[52px] group-focus-within/session:pr-[52px] group-active/session:pr-[52px] ${props.dense ? "py-0.5" : "py-1"}`}
       onPointerDown={props.warmPress}
       onPointerEnter={props.warmHover}
       onPointerLeave={props.cancelHoverPrefetch}
@@ -146,15 +160,21 @@ const SessionRow = (props: {
           class="shrink-0 size-6 flex items-center justify-center"
           style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
         >
-          <Switch fallback={<Icon name="dash" size="small" class="text-icon-weak" />}>
+          <Switch fallback={<div class="size-1.5 rounded-full bg-icon-weak-base" aria-label="Idle" title="Idle" />}>
+            <Match when={props.isPaused()}>
+              <Icon name="stop" size="small" class="text-icon-warning-base" aria-label="Paused" />
+            </Match>
             <Match when={props.isWorking()}>
-              <Spinner class="size-[15px]" />
+              <RunningIcon />
             </Match>
             <Match when={props.hasPermissions()}>
-              <div class="size-1.5 rounded-full bg-surface-warning-strong" />
+              <Icon name="warning" size="small" class="text-icon-warning-base" aria-label="Permission required" />
             </Match>
             <Match when={props.hasError()}>
-              <div class="size-1.5 rounded-full bg-text-diff-delete-base" />
+              <Icon name="circle-x" size="small" class="text-icon-critical-base" aria-label="Error" />
+            </Match>
+            <Match when={props.isDone()}>
+              <Icon name="circle-check" size="small" class="text-text-diff-add-base" aria-label="Done" />
             </Match>
             <Match when={props.unseenCount() > 0}>
               <div class="size-1.5 rounded-full bg-text-interactive-base" />
@@ -236,15 +256,30 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       return !permission.autoResponds(item, props.session.directory)
     })
   })
+  const status = createMemo(() => sessionStore.session_status[props.session.id])
+  const isPaused = createMemo(() => {
+    const next = status()?.type
+    return hasPermissions() || next === "waiting_user" || next === "waiting_permission"
+  })
   const isWorking = createMemo(() => {
-    if (hasPermissions()) return false
+    if (isPaused()) return false
     const pending = (sessionStore.message[props.session.id] ?? []).findLast(
       (message) =>
         message.role === "assistant" &&
         typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
     )
-    const status = sessionStore.session_status[props.session.id]
-    return pending !== undefined || status?.type === "retry" || (status !== undefined && status.type !== "idle")
+    const next = status()
+    return pending !== undefined || next?.type === "retry" || (next !== undefined && next.type !== "idle")
+  })
+  const isDone = createMemo(() => {
+    if (hasPermissions() || isWorking() || hasError()) return false
+    const messages = sessionStore.message[props.session.id]
+    if (!messages) return (props.session.time.updated ?? props.session.time.created) > props.session.time.created
+    return messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
+    )
   })
 
   const tint = createMemo(() => {
@@ -267,9 +302,9 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const title = createMemo(() => {
     if (!props.session.parentID) return displaySessionTitle(props.session)
     const ids = props.children.get(props.session.parentID) ?? []
-    const idx = ids.filter((id) => props.list.some((session) => session.id === id && !session.time?.archived)).indexOf(
-      props.session.id,
-    )
+    const idx = ids
+      .filter((id) => props.list.some((session) => session.id === id && !session.time?.archived))
+      .indexOf(props.session.id)
     return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
   })
   const childSummary = createMemo(() => {
@@ -289,6 +324,24 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const canExpand = createMemo(() => childSessions().length > 0)
   const expanded = createMemo(() => !!props.expanded?.()[props.session.id] || !!props.lineage?.().has(props.session.id))
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
+  const copy = () => {
+    void navigator.clipboard
+      .writeText(title())
+      .then(() => {
+        showToast({
+          variant: "success",
+          icon: "circle-check",
+          title: language.t("session.share.copy.copied"),
+          description: title(),
+        })
+      })
+      .catch(() => {
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+        })
+      })
+  }
 
   const warm = (span: number, priority: "high" | "low") => {
     const nav = props.navList?.()
@@ -344,6 +397,8 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       dense={props.dense}
       tint={tint}
       isWorking={isWorking}
+      isPaused={isPaused}
+      isDone={isDone}
       hasPermissions={hasPermissions}
       hasError={hasError}
       unseenCount={unseenCount}
@@ -400,27 +455,44 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
         </Show>
 
         <div
-          class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 transition-opacity`}
-          classList={{
-            "opacity-100 pointer-events-auto": !!props.mobile,
-            "opacity-0 pointer-events-none": !props.mobile,
-            "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-            "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-          }}
+          class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 pointer-events-auto`}
         >
-          <Tooltip value={language.t("common.archive")} placement="top">
+          <Tooltip value={language.t("session.copyName")} placement="top">
             <IconButton
-              icon="archive"
+              icon="copy"
               variant="ghost"
               class="size-6 rounded-md"
-              aria-label={language.t("common.archive")}
+              aria-label={language.t("session.copyName")}
               onClick={(event) => {
                 event.preventDefault()
                 event.stopPropagation()
-                void props.archiveSession(props.session)
+                copy()
               }}
             />
           </Tooltip>
+          <div
+            class="transition-opacity"
+            classList={{
+              "opacity-100 pointer-events-auto": !!props.mobile,
+              "opacity-0 pointer-events-none": !props.mobile,
+              "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+              "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
+            }}
+          >
+            <Tooltip value={language.t("common.archive")} placement="top">
+              <IconButton
+                icon="archive"
+                variant="ghost"
+                class="size-6 rounded-md"
+                aria-label={language.t("common.archive")}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  void props.archiveSession(props.session)
+                }}
+              />
+            </Tooltip>
+          </div>
         </div>
       </div>
       <Show when={expanded()}>

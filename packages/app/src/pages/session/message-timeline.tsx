@@ -428,6 +428,27 @@ export function MessageTimeline(props: {
     setTitle({ editing: false, saving: false })
   }
 
+  const copyTitle = () => {
+    const value = titleValue() ?? sessionID()
+    if (!value) return
+    void navigator.clipboard
+      .writeText(value)
+      .then(() => {
+        showToast({
+          variant: "success",
+          icon: "circle-check",
+          title: language.t("session.share.copy.copied"),
+          description: value,
+        })
+      })
+      .catch((err) => {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        })
+      })
+  }
+
   const saveTitleEditor = async () => {
     const id = sessionID()
     if (!id) return
@@ -803,6 +824,17 @@ export function MessageTimeline(props: {
                                 }}
                               >
                                 <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item
+                                onSelect={() => {
+                                  setTitle("menuOpen", false)
+                                  copyTitle()
+                                }}
+                              >
+                                <div class="flex size-5 shrink-0 items-center justify-center">
+                                  <Icon name="copy" size="small" class="text-icon-weak" />
+                                </div>
+                                <DropdownMenu.ItemLabel>{language.t("session.copyName")}</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                               <Show when={shareEnabled()}>
                                 <DropdownMenu.Item

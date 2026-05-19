@@ -2272,7 +2272,7 @@ export default function Layout(props: ParentProps) {
   )
 
   return (
-    <div class="relative bg-background-base flex-1 min-h-0 min-w-0 flex flex-col select-none [&_input]:select-text [&_textarea]:select-text [&_[contenteditable]]:select-text">
+    <div class="relative bg-background-base flex-1 min-h-0 min-w-0 flex flex-col">
       <Titlebar />
       <div class="flex-1 min-h-0 min-w-0 flex">
         <div class="flex-1 min-h-0 relative">

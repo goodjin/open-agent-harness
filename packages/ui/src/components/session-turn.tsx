@@ -413,7 +413,7 @@ export function SessionTurn(
                   <MessageDivider label={divider()} />
                 </div>
               </Show>
-              <Show when={assistantMessages().length > 0}>
+              <Show when={assistantVisible() > 0}>
                 <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
                   <Show when={assistantTime()}>
                     <div data-slot="session-turn-message-time">{assistantTime()}</div>
