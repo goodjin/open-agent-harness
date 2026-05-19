@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { Tabs } from "@opencode-ai/ui/tabs"
@@ -106,6 +106,28 @@ function workflow(input: unknown): WorkflowRun | undefined {
   return data as WorkflowRun
 }
 
+function workflows(input: unknown): WorkflowRun[] {
+  if (!record(input)) return []
+  const runs = Array.isArray(input.workflows) ? input.workflows : []
+  const current = workflow(input)
+  return [...runs, current]
+    .filter((item): item is WorkflowRun => {
+      if (!record(item)) return false
+      if (!record(item.time)) return false
+      return (
+        typeof item.runID === "string" &&
+        typeof item.workflowID === "string" &&
+        typeof item.workflowName === "string" &&
+        typeof item.status === "string" &&
+        typeof item.current === "string" &&
+        typeof item.total === "number" &&
+        typeof item.time.started === "number"
+      )
+    })
+    .filter((item, index, all) => all.findIndex((run) => run.runID === item.runID) === index)
+    .sort((a, b) => a.time.started - b.time.started)
+}
+
 function array(input: unknown) {
   if (!Array.isArray(input)) return []
   return input.filter((item): item is string => typeof item === "string")
@@ -165,7 +187,7 @@ function unique(input: string[]) {
   return [...new Set(input)]
 }
 
-function WorkflowPanel(props: { workflow: WorkflowRun }) {
+function WorkflowPanel(props: { workflow: WorkflowRun; workflows: WorkflowRun[]; selectWorkflow: (runID: string) => void }) {
   const steps = createMemo(() => {
     const nodes = Array.isArray(props.workflow.nodes) ? props.workflow.nodes : []
     const runs =
@@ -175,7 +197,7 @@ function WorkflowPanel(props: { workflow: WorkflowRun }) {
     const step = (id: string): WorkflowStep => ({
       id,
       type: "task",
-      agent: runs[id]?.agent ?? "primary",
+      agent: runs[id]?.agent ?? "auto",
       mutates: false,
       depends_on: runs[id]?.depends_on,
     })
@@ -253,6 +275,35 @@ function WorkflowPanel(props: { workflow: WorkflowRun }) {
           <div class={`text-11-medium shrink-0 ${tone(props.workflow.status)}`}>{label(props.workflow.status)}</div>
         </div>
 
+        <Show when={props.workflows.length > 1}>
+          <div class="flex flex-col gap-1.5">
+            <div class="text-11-medium uppercase text-text-weak">Runs</div>
+            <div class="flex flex-col gap-1">
+              <For each={[...props.workflows].reverse()}>
+                {(run) => (
+                  <button
+                    type="button"
+                    class="w-full border px-3 py-2 text-left"
+                    classList={{
+                      "border-border-strong bg-background-base": run.runID === props.workflow.runID,
+                      "border-border-weaker-base bg-background-stronger": run.runID !== props.workflow.runID,
+                    }}
+                    onClick={() => props.selectWorkflow(run.runID)}
+                  >
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="min-w-0">
+                        <div class="truncate text-12-medium text-text-base">{run.workflowName}</div>
+                        <div class="mt-0.5 truncate text-11-regular text-text-weak">{run.workflowID}</div>
+                      </div>
+                      <div class={`shrink-0 text-11-medium ${tone(run.status)}`}>{label(run.status)}</div>
+                    </div>
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+
         <div class="grid grid-cols-4 gap-2">
           <div class="border border-border-weaker-base px-2 py-2">
             <div class="text-11-regular text-text-weak">Total</div>
@@ -305,7 +356,7 @@ function WorkflowPanel(props: { workflow: WorkflowRun }) {
                                 <div class="shrink-0 text-11-regular text-text-weak">{step.type}</div>
                               </div>
                               <div class="mt-0.5 truncate text-11-regular text-text-weak">
-                                {node()?.agent ?? step.agent ?? "primary"} · attempts{" "}
+                                {node()?.agent ?? step.agent ?? "auto"} · attempts{" "}
                                 {(props.workflow.attempts ?? {})[step.id] ?? node()?.attempt ?? 0}
                               </div>
                             </div>
@@ -315,7 +366,7 @@ function WorkflowPanel(props: { workflow: WorkflowRun }) {
                         <div class="border-t border-border-weaker-base px-3 py-3 text-12-regular text-text-muted">
                           <div class="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1">
                             <div class="text-text-weak">Agent</div>
-                            <div class="min-w-0 break-all">{node()?.agent ?? step.agent ?? "primary"}</div>
+                            <div class="min-w-0 break-all">{node()?.agent ?? step.agent ?? "auto"}</div>
                             <Show when={deps().length > 0}>
                               <div class="text-text-weak">Depends on</div>
                               <div class="min-w-0 break-words">{deps().join(", ")}</div>
@@ -419,8 +470,20 @@ export function SessionSidePanel(props: {
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
-  const run = createMemo(() => workflow(info()?.dsl_context))
-  const workflowTab = createMemo(() => isDesktop() && !!run())
+  const runs = createMemo(() => workflows(info()?.dsl_context))
+  const [selectedWorkflow, setSelectedWorkflow] = createSignal<string>()
+  createEffect(() => {
+    const all = runs()
+    if (all.length === 0) {
+      setSelectedWorkflow(undefined)
+      return
+    }
+    const selected = selectedWorkflow()
+    if (selected && all.some((run) => run.runID === selected)) return
+    setSelectedWorkflow(all[all.length - 1]?.runID)
+  })
+  const run = createMemo(() => runs().find((item) => item.runID === selectedWorkflow()) ?? runs()[runs().length - 1])
+  const workflowTab = createMemo(() => isDesktop() && runs().length > 0)
   const diffsReady = createMemo(() => {
     const id = params.id
     if (!id) return true
@@ -717,7 +780,9 @@ export function SessionSidePanel(props: {
 
                   <Show when={workflowTab()}>
                     <Tabs.Content value="workflow" class="flex flex-col h-full overflow-hidden contain-strict">
-                      <Show when={activeTab() === "workflow" && run()}>{(item) => <WorkflowPanel workflow={item()} />}</Show>
+                      <Show when={activeTab() === "workflow" && run()}>
+                        {(item) => <WorkflowPanel workflow={item()} workflows={runs()} selectWorkflow={setSelectedWorkflow} />}
+                      </Show>
                     </Tabs.Content>
                   </Show>
 

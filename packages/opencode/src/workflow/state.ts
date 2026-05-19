@@ -111,6 +111,7 @@ export namespace WorkflowState {
   export const Context = z
     .object({
       workflow: Info.optional(),
+      workflows: z.array(Info).default([]),
     })
     .passthrough()
   export type Context = z.infer<typeof Context>
@@ -122,15 +123,33 @@ export namespace WorkflowState {
     return parsed.data.workflow
   }
 
+  export function list(input: Record<string, unknown> | undefined) {
+    const parsed = Context.safeParse(input ?? {})
+    if (!parsed.success) return []
+    const current = parsed.data.workflow ? [parsed.data.workflow] : []
+    return [...parsed.data.workflows, ...current]
+      .filter((item, index, all) => all.findIndex((run) => run.runID === item.runID) === index)
+      .sort((a, b) => a.time.started - b.time.started)
+  }
+
   export function write(input: Record<string, unknown> | undefined, state: Info | undefined) {
     const context = { ...(input ?? {}) }
     if (!state) {
       delete context.workflow
+      delete context.workflows
       return context
     }
+    const parsed = Context.safeParse(input ?? {})
+    const runs = parsed.success ? parsed.data.workflows : []
+    const current = parsed.success && parsed.data.workflow ? [parsed.data.workflow] : []
+    const next = [...runs, ...current, state]
+      .filter((item, index, all) => all.findIndex((run) => run.runID === item.runID) === index)
+      .map((item) => (item.runID === state.runID ? state : item))
+      .sort((a, b) => a.time.started - b.time.started)
     return {
       ...context,
       workflow: state,
+      workflows: next,
     }
   }
 }
