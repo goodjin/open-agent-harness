@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { SessionLogResponse } from "@opencode-ai/sdk/v2/client"
-import { describeLog, mergeLogs, summarizeLogs } from "./session-log-timeline"
+import { describeLog, mergeLogs, preserveScroll, summarizeLogs } from "./session-log-timeline"
 
 type Log = SessionLogResponse[number]
 
@@ -59,7 +59,7 @@ describe("session log timeline", () => {
     })
   })
 
-  test("merges records by id and orders the timeline by time", () => {
+  test("merges records by id and orders the timeline newest first", () => {
     const logs = mergeLogs(
       [
         record("b", 20, "restore.completed", { hash: "new" }),
@@ -71,8 +71,8 @@ describe("session log timeline", () => {
       ],
     )
 
-    expect(logs.map((log) => log.id)).toEqual(["a", "c", "b"])
-    expect(logs.at(-1)?.data).toEqual({ hash: "new" })
+    expect(logs.map((log) => log.id)).toEqual(["b", "c", "a"])
+    expect(logs[0].data).toEqual({ hash: "new" })
   })
 
   test("summarizes requests tools and token usage", () => {
@@ -121,5 +121,29 @@ describe("session log timeline", () => {
         },
       },
     })
+  })
+
+  test("preserves scroll position when new logs are inserted above the viewport", async () => {
+    const scroller = {
+      scrollTop: 80,
+      scrollHeight: 300,
+    }
+    preserveScroll(scroller, () => {
+      scroller.scrollHeight = 360
+    })
+    await Promise.resolve()
+    expect(scroller.scrollTop).toBe(140)
+  })
+
+  test("keeps scroll at top when user is watching newest logs", async () => {
+    const scroller = {
+      scrollTop: 0,
+      scrollHeight: 300,
+    }
+    preserveScroll(scroller, () => {
+      scroller.scrollHeight = 360
+    })
+    await Promise.resolve()
+    expect(scroller.scrollTop).toBe(0)
   })
 })

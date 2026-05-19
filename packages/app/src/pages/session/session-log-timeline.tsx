@@ -169,7 +169,7 @@ export function describeLog(record: Log): Summary {
 export function mergeLogs(current: Log[], incoming: Log[]) {
   const logs = new Map(incoming.map((log) => [log.id, log]))
   for (const log of current) logs.set(log.id, log)
-  return [...logs.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
+  return [...logs.values()].sort((a, b) => b.time - a.time || b.id.localeCompare(a.id))
 }
 
 export function summarizeLogs(logs: Log[]): Stats {
@@ -212,6 +212,19 @@ export function summarizeLogs(logs: Log[]): Stats {
   )
 }
 
+export function preserveScroll(
+  scroller: Pick<HTMLDivElement, "scrollTop" | "scrollHeight"> | undefined,
+  update: () => void,
+) {
+  const top = scroller?.scrollTop ?? 0
+  const height = scroller?.scrollHeight ?? 0
+  update()
+  if (!scroller || top <= 4) return
+  queueMicrotask(() => {
+    scroller.scrollTop = top + Math.max(0, scroller.scrollHeight - height)
+  })
+}
+
 export function SessionLogTimeline(props: { sessionID: string }) {
   const sdk = useSDK()
   const language = useLanguage()
@@ -228,6 +241,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
   const time = createMemo(() => new Intl.DateTimeFormat(language.intl(), { dateStyle: "medium", timeStyle: "medium" }))
   const num = createMemo(() => new Intl.NumberFormat(language.intl(), { notation: "compact" }))
   let seq = 0
+  let scroller: HTMLDivElement | undefined
 
   const load = async () => {
     const run = ++seq
@@ -268,7 +282,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
     const unsub = sdk.event.on("session.log.created", (event) => {
       const log = event.properties.info
       if (log.sessionID !== props.sessionID) return
-      setStore("logs", reconcile(mergeLogs([log], store.logs)))
+      preserveScroll(scroller, () => setStore("logs", reconcile(mergeLogs([log], store.logs))))
     })
     onCleanup(unsub)
   })
@@ -322,7 +336,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
               </div>
             }
           >
-            <div class="min-h-0 flex-1 overflow-auto px-4 md:px-6 py-4" data-scrollable>
+            <div ref={scroller} class="min-h-0 flex-1 overflow-auto px-4 md:px-6 py-4" data-scrollable>
               <div class="flex flex-col">
                 <For each={rows()}>
                   {(row) => (
