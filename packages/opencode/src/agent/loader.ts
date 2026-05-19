@@ -4,6 +4,7 @@ import { Glob } from "../util/glob"
 import { Log } from "../util/log"
 import { AgentTemplate as Schema } from "./schema"
 import { Metrics } from "@/observability/metrics"
+import { ConfigMarkdown } from "@/config/markdown"
 
 const log = Log.create({ service: "agent-loader" })
 
@@ -108,12 +109,18 @@ export class AgentTemplateLoader {
     const map = new Map<string, AgentTemplate>()
     const statuses: AgentTemplateStatus[] = []
 
+    for (const item of await this.loadSkills(this.fallbackDir, "package")) {
+      map.set(item.id, item)
+    }
     for (const item of await this.loadFromDir(this.fallbackDir, "package")) {
       if (item.template) map.set(item.template.id, item.template)
       statuses.push(item.status)
     }
 
     for (const dir of this.baseDirs) {
+      for (const item of await this.loadSkills(dir, "user")) {
+        map.set(item.id, item)
+      }
       for (const item of await this.loadFromDir(dir, "user")) {
         if (item.template) map.set(item.template.id, item.template)
         statuses.push(item.status)
@@ -184,13 +191,22 @@ export class AgentTemplateLoader {
 
   private async files(dir: string): Promise<string[]> {
     const meta = await Glob.scan("*/meta.json", { cwd: dir, absolute: true })
+    const skills = await Promise.all(
+      this.skillRoots(dir).map(async (root) => {
+        try {
+          return await Glob.scan("*/SKILL.md", { cwd: root, absolute: true })
+        } catch {
+          return []
+        }
+      }),
+    )
     const docs = await Promise.all(
       meta.map(async (file) => {
         const root = path.dirname(file)
         return [file, path.join(root, "identity.md"), path.join(root, "rules.md")]
       }),
     )
-    return docs.flat()
+    return [...docs.flat(), ...skills.flat()]
   }
 
   private async loadFromDir(dir: string, source: "package" | "user"): Promise<Entry[]> {
@@ -234,6 +250,89 @@ export class AgentTemplateLoader {
         },
       }
     })
+  }
+
+  private skillRoots(dir: string) {
+    const base = path.basename(dir)
+    const root = base === "agent" || base === "agents" ? path.dirname(dir) : dir
+    return [path.join(root, "skill"), path.join(root, "skills")]
+  }
+
+  private id(input: string) {
+    return input
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+  }
+
+  private title(input: string) {
+    return input
+      .split(/[-_]+/g)
+      .filter((item) => item.length > 0)
+      .map((item) => item[0]?.toUpperCase() + item.slice(1))
+      .join(" ")
+  }
+
+  private section(input: string, name: string) {
+    const match = input.match(new RegExp(`(^|\\n)##\\s+${name}\\s*\\n+([\\s\\S]*?)(?=\\n##\\s+|$)`, "i"))
+    return match?.[2]?.trim()
+  }
+
+  private async loadSkills(dir: string, source: "package" | "user"): Promise<AgentTemplate[]> {
+    const out: AgentTemplate[] = []
+    for (const root of this.skillRoots(dir)) {
+      try {
+        await fs.access(root)
+      } catch {
+        continue
+      }
+
+      const files = (await Glob.scan("*/SKILL.md", { cwd: root, absolute: true })).sort()
+      for (const file of files) {
+        const parsed = await ConfigMarkdown.parse(file).catch((err) => {
+          this.warn({ dir: path.dirname(file), source, message: `failed to parse legacy skill: ${String(err)}` })
+          return undefined
+        })
+        if (!parsed) continue
+
+        const raw = typeof parsed.data.name === "string" ? parsed.data.name : path.basename(path.dirname(file))
+        const id = this.id(raw)
+        if (!id) continue
+        const desc =
+          typeof parsed.data.description === "string" && parsed.data.description.trim()
+            ? parsed.data.description.trim()
+            : `Use this agent for tasks from the legacy ${raw} skill.`
+        const role = this.section(parsed.content, "Role") ?? parsed.content.trim()
+        const rules = [this.section(parsed.content, "Workflow"), this.section(parsed.content, "Rules")]
+          .filter((item): item is string => !!item)
+          .join("\n\n")
+        const meta = Schema.Meta.parse({
+          id,
+          name: this.title(id),
+          role: `You are the ${this.title(id)} agent converted from a legacy skill.`,
+          description: desc,
+          mode: "subagent",
+          capability: {
+            purpose: "legacy_skill",
+            tags: ["skill", id],
+            cost: "medium",
+            writes: true,
+          },
+          permission_mode: "lax",
+        })
+        out.push({
+          id,
+          name: meta.name,
+          dir: path.dirname(file),
+          source,
+          meta,
+          identity: role,
+          rules: rules || parsed.content.trim(),
+        })
+      }
+    }
+    return out
   }
 
   /**

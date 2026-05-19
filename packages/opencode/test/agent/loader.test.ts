@@ -159,6 +159,68 @@ describe("AgentTemplateLoader", () => {
         await fs.rm(tmp, { recursive: true })
       }
     })
+
+    test("converts legacy skills into virtual agent templates", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      try {
+        const dir = path.join(tmp, "skill", "reviewer")
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(
+          path.join(dir, "SKILL.md"),
+          [
+            "---",
+            "name: code-reviewer",
+            "description: Use when reviewing code changes.",
+            "---",
+            "",
+            "# Code Reviewer",
+            "",
+            "## Role",
+            "",
+            "You review code for bugs.",
+            "",
+            "## Workflow",
+            "",
+            "- Read the diff.",
+            "- Return findings first.",
+            "",
+          ].join("\n"),
+        )
+
+        const testLoader = new AgentTemplateLoader(path.join(tmp, "agents"), "/nonexistent/fallback")
+        const agents = await testLoader.loadAll()
+        const agent = agents.find((item) => item.id === "code-reviewer")
+        expect(agent?.source).toBe("user")
+        expect(agent?.meta.description).toBe("Use when reviewing code changes.")
+        expect(agent?.meta.entry.primary).toBe(false)
+        expect(agent?.meta.capability.purpose).toBe("legacy_skill")
+        expect(agent?.identity).toContain("You review code for bugs.")
+        expect(agent?.rules).toContain("Read the diff.")
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
+
+    test("agent templates override converted skills with the same id", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      try {
+        const skill = path.join(tmp, "skill", "writer")
+        await fs.mkdir(skill, { recursive: true })
+        await fs.writeFile(
+          path.join(skill, "SKILL.md"),
+          ["---", "name: writer", "description: Skill writer", "---", "", "# Writer", "", "Skill prompt."].join("\n"),
+        )
+        await write(path.join(tmp, "agents"), "writer", { name: "Agent Writer", description: "Agent writer" })
+
+        const testLoader = new AgentTemplateLoader(path.join(tmp, "agents"), "/nonexistent/fallback")
+        const agents = await testLoader.loadAll()
+        const agent = agents.find((item) => item.id === "writer")
+        expect(agent?.name).toBe("Agent Writer")
+        expect(agent?.meta.description).toBe("Agent writer")
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
   })
 
   describe("file parsing", () => {

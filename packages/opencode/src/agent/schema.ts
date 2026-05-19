@@ -164,6 +164,7 @@ export namespace AgentTemplate {
       permission_mode: PermissionMode.default("strict").describe("Permission mode for the agent"),
     })
     .strict()
+  export const MetaInput = Base
   export const Meta = Base.transform((meta) => ({
     ...meta,
     entry: meta.entry ?? {

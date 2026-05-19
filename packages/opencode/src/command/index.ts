@@ -6,6 +6,7 @@ import { Instance } from "../project/instance"
 import { Identifier } from "../id/id"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
+import PROMPT_AGENT_CREATE from "./template/agent-create.txt"
 import { MCP } from "../mcp"
 
 export namespace Command {
@@ -54,6 +55,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    AGENT_CREATE: "agent-create",
   } as const
 
   const state = Instance.state(async () => {
@@ -78,6 +80,17 @@ export namespace Command {
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
+      },
+      [Default.AGENT_CREATE]: {
+        name: Default.AGENT_CREATE,
+        description: "create an agent from a natural language description",
+        source: "command",
+        agent: "general",
+        get template() {
+          return PROMPT_AGENT_CREATE
+        },
+        subtask: true,
+        hints: hints(PROMPT_AGENT_CREATE),
       },
     }
 
