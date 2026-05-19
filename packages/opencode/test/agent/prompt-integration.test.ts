@@ -112,9 +112,10 @@ describe("agent prompt integration", () => {
             expect(agent?.prompt).toContain("Current Executable Workflow Schema")
             expect(agent?.prompt).toContain("call the `workflow_create` tool")
             expect(agent?.prompt).toContain("call `workflow_start` only when the user asked to execute")
-            expect(agent?.prompt).toContain("Treat the `workflow_start` tool result as the authoritative execution result")
+            expect(agent?.prompt).toContain("Treat the `workflow_start` tool result as an authoritative start acknowledgement")
+            expect(agent?.prompt).toContain("Treat a `<workflow-result>` event as the authoritative execution result")
             expect(agent?.prompt).toContain("do not repeat the same completed work with ordinary tools")
-            expect(agent?.prompt).toContain("Read `summary`, `nodes`, `completed`, `attempts`, `variables`, `pause`, and `error`")
+            expect(agent?.prompt).toContain("Read `summary`, `nodes`, `completed`, `variables`, `pause`, and `error`")
             expect(agent?.prompt).toContain("Any id in `verification.must_pass`")
             expect(agent?.prompt).toContain('"steps"')
           },

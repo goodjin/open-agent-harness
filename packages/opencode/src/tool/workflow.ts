@@ -34,7 +34,7 @@ function result(state: WorkflowState.Info) {
           ? "Workflow execution failed. Inspect failed node records before deciding whether to revise the workflow, retry, or stop."
           : state.status === "waiting_user" || state.status === "waiting_permission"
             ? "Workflow execution is paused. Report the pause reason and wait for resume input."
-            : "Workflow execution is still active. Check node records before taking more action.",
+            : "Workflow execution started in the background. Do not manually execute workflow nodes. The runtime will post a workflow result back into this session when the run completes, fails, or pauses.",
   }
   return {
     run_id: state.runID,
@@ -61,7 +61,7 @@ function result(state: WorkflowState.Info) {
           ? "ask_or_resume"
           : state.status === "error"
             ? "revise_workflow_or_abort"
-            : "check_status",
+            : "wait_for_workflow_result",
   }
 }
 
@@ -126,9 +126,9 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
 
 export const WorkflowStartTool = Tool.define("workflow_start", {
   description: [
-    "Start executing a persisted workflow DAG and return the execution result to the model.",
+    "Start executing a persisted workflow DAG in the background and return immediately.",
     "This is the model-facing workflow.start operation.",
-    "Use the returned result to summarize success, handle pauses, or revise the workflow after failure.",
+    "Do not manually execute workflow nodes after this returns active; the runtime will post the completed, failed, or paused result back into the session for the model to continue.",
   ].join("\n"),
   parameters: z.object({
     workflow_id: z.string().min(1).describe("The id returned by workflow_create"),
@@ -142,12 +142,11 @@ export const WorkflowStartTool = Tool.define("workflow_start", {
       metadata: {},
     })
 
-    const state = await WorkflowExecutor.run({
+    const state = await WorkflowExecutor.begin({
       sessionID: ctx.sessionID,
       workflowID: params.workflow_id,
       variables: params.variables,
       agent: ctx.agent,
-      abort: ctx.abort,
     })
     const out = result(state)
 

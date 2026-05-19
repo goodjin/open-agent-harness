@@ -23,6 +23,15 @@ function ctx(sessionID: Session.Info["id"]): Tool.Context {
   }
 }
 
+async function wait(sessionID: Session.Info["id"], status: WorkflowState.Info["status"]) {
+  for (let i = 0; i < 50; i++) {
+    const state = WorkflowState.read((await Session.get(sessionID)).dsl_context)
+    if (state?.status === status) return state
+    await Bun.sleep(10)
+  }
+  throw new Error(`Workflow did not reach ${status}`)
+}
+
 const model = { providerID: ProviderID.make("test"), modelID: ModelID.make("test") }
 
 describe("workflow tools", () => {
@@ -60,7 +69,7 @@ describe("workflow tools", () => {
     })
   })
 
-  test("workflow_start runs a persisted workflow and returns model-visible results", async () => {
+  test("workflow_start starts a persisted workflow in the background", async () => {
     await using tmp = await tmpdir()
 
     await Instance.provide({
@@ -91,17 +100,18 @@ describe("workflow tools", () => {
             const result = await start.execute({ workflow_id: "started" }, ctx(session.id))
             const output = JSON.parse(result.output)
 
-            expect(result.metadata.state.status).toBe("completed")
-            expect(result.metadata.state.completed).toEqual(["first", "second"])
-            expect(result.metadata.state.variables.second).toBe("done")
-            expect(output.status).toBe("completed")
+            expect(result.metadata.state.status).toBe("active")
+            expect(output.status).toBe("active")
             expect(output.summary.total).toBe(2)
-            expect(output.summary.completed).toBe(2)
-            expect(output.summary.succeeded).toBe(2)
+            expect(output.summary.completed).toBe(0)
+            expect(output.summary.succeeded).toBe(0)
             expect(output.summary.failed).toBe(0)
-            expect(output.summary.message).toContain("do not repeat completed node work")
-            expect(output.completed).toEqual(["first", "second"])
-            expect(output.variables.second).toBe("done")
+            expect(output.summary.message).toContain("started in the background")
+            expect(output.next_action).toBe("wait_for_workflow_result")
+
+            const state = await wait(session.id, "completed")
+            expect(state.completed).toEqual(["first", "second"])
+            expect(state.variables.second).toBe("done")
           },
         }),
     })
@@ -143,17 +153,20 @@ describe("workflow tools", () => {
             const result = await start.execute({ workflow_id: "dag-started" }, ctx(session.id))
             const output = JSON.parse(result.output)
 
-            expect(output.status).toBe("error")
-            expect(output.summary.completed).toBe(1)
-            expect(output.summary.failed).toBe(1)
-            expect(output.summary.skipped).toBe(1)
-            expect(output.statuses).toMatchObject({
+            expect(output.status).toBe("active")
+
+            const state = await wait(session.id, "error")
+            const statuses = Object.values(state.statuses)
+            expect(statuses.filter((status) => status === "completed")).toHaveLength(1)
+            expect(statuses.filter((status) => status === "error")).toHaveLength(1)
+            expect(statuses.filter((status) => status === "skipped")).toHaveLength(1)
+            expect(state.statuses).toMatchObject({
               fail: "error",
               blocked: "skipped",
               free: "completed",
             })
-            expect(output.variables.free).toBe(true)
-            expect(output.variables.blocked).toBeUndefined()
+            expect(state.variables.free).toBe(true)
+            expect(state.variables.blocked).toBeUndefined()
           },
         }),
     })

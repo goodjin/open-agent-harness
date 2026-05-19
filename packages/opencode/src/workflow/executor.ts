@@ -18,9 +18,12 @@ import { WorkflowParser } from "./parser"
 import { loader } from "./loader"
 import { WorkflowState } from "./state"
 import { Audit } from "@/observability/audit"
+import { Log } from "@/util/log"
 
 export namespace WorkflowExecutor {
+  const log = Log.create({ service: "workflow.executor" })
   const prefix = "workflow"
+  const active = new Set<string>()
   export const InvalidError = NamedError.create("WorkflowInvalidError", z.object({ message: z.string() }))
   type Run = {
     sessionID: SessionID
@@ -79,6 +82,20 @@ export namespace WorkflowExecutor {
   }
 
   export async function run(input: Run) {
+    const { workflow, state } = await init(input)
+    return advance(input.sessionID, workflow, state, undefined, input)
+  }
+
+  export async function begin(input: Run) {
+    const { workflow, state } = await init(input)
+    schedule(input.sessionID, workflow, state, {
+      agent: input.agent,
+      execute: input.execute,
+    })
+    return state
+  }
+
+  async function init(input: Run) {
     const session = await bound(input.sessionID)
     const source = await loader()
     const item = await source.get(input.workflowID)
@@ -128,7 +145,30 @@ export namespace WorkflowExecutor {
         runID: state.runID,
       },
     })
-    return advance(input.sessionID, item.workflow, state, undefined, input)
+    return { session, workflow: item.workflow, state }
+  }
+
+  function schedule(
+    sessionID: SessionID,
+    workflow: WorkflowParser.Definition,
+    state: WorkflowState.Info,
+    opts?: Pick<Run, "agent" | "execute">,
+  ) {
+    if (active.has(state.runID)) return
+    active.add(state.runID)
+    void Promise.resolve()
+      .then(async () => {
+        const done = await advance(sessionID, workflow, state, undefined, opts)
+        void notify(sessionID, done, opts?.agent)
+      })
+      .catch(async (err: unknown) => {
+        log.error("background workflow failed", { runID: state.runID, err })
+        const done = await error(sessionID, await latest(sessionID, state), message(err))
+        void notify(sessionID, done, opts?.agent)
+      })
+      .finally(() => {
+        active.delete(state.runID)
+      })
   }
 
   export async function resume(input: {
@@ -974,6 +1014,57 @@ export namespace WorkflowExecutor {
       },
     })
     return next
+  }
+
+  async function notify(sessionID: SessionID, state: WorkflowState.Info, agent: string | undefined) {
+    const statuses = Object.values(state.statuses)
+    const body = {
+      type:
+        state.status === "completed"
+          ? "workflow.completed"
+          : state.status === "error"
+            ? "workflow.failed"
+            : state.status === "waiting_user" || state.status === "waiting_permission"
+              ? "workflow.paused"
+              : "workflow.result",
+      run_id: state.runID,
+      workflow_id: state.workflowID,
+      workflow_name: state.workflowName,
+      status: state.status,
+      summary: {
+        total: state.total,
+        completed: statuses.filter((status) => status === "completed").length,
+        failed: statuses.filter((status) => status === "error").length,
+        skipped: statuses.filter((status) => status === "skipped" || status === "cancelled").length,
+        pending: statuses.filter((status) => status === "pending").length,
+      },
+      completed: state.completed,
+      nodes: state.nodes,
+      statuses: state.statuses,
+      variables: state.variables,
+      pause: state.pause,
+      error: state.error,
+    }
+    await SessionPrompt.prompt({
+      sessionID,
+      agent,
+      parts: [
+        {
+          type: "text",
+          synthetic: true,
+          text: [
+            "<workflow-result>",
+            JSON.stringify(body, null, 2),
+            "</workflow-result>",
+            "",
+            "The workflow runtime has finished or paused this background run.",
+            "Use this result as authoritative. If it completed, summarize the node outputs for the user and do not rerun completed nodes. If it failed or paused, decide whether to revise, resume, or ask the user.",
+          ].join("\n"),
+        },
+      ],
+    }).catch((err: unknown) => {
+      log.error("workflow continuation prompt failed", { runID: state.runID, err })
+    })
   }
 
   async function save(session: Session.Info, state: WorkflowState.Info) {

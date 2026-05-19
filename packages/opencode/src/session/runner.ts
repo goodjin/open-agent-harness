@@ -62,7 +62,11 @@ export namespace SessionRunner {
             sessionID,
             variables: input(text),
           })
-      : await start(sessionID, text)
+      : state?.status === "active"
+        ? state
+        : state?.status === "completed" || state?.status === "error" || state?.status === "aborted"
+          ? undefined
+          : await start(sessionID, text)
 
     if (!next) return chat.process(stream).then((result) => generated(chat, stream, result))
     await output(chat, next)
