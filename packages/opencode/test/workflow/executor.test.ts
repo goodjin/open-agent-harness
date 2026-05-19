@@ -136,6 +136,74 @@ describe("workflow executor", () => {
     })
   })
 
+  test("runs a loop node until its condition passes", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "loop",
+      name: "Loop",
+      nodes: [
+        { id: "build", outputs: { built: true } },
+        {
+          id: "feedback",
+          type: "loop",
+          depends_on: ["build"],
+          loop: {
+            max_attempts: 3,
+            until: [{ type: "variable", name: "passed", equals: true }],
+            steps: [
+              {
+                id: "test",
+                type: "test",
+                session: "per_call",
+                outputs: { passed: "$fixed" },
+              },
+              {
+                id: "fix",
+                type: "debug",
+                session: "per_loop",
+                outputs: { fixed: true },
+              },
+            ],
+          },
+          outputs: { result: "$passed" },
+        },
+        { id: "report", depends_on: ["feedback"], outputs: { reported: "$result" } },
+      ],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({
+              sessionID: session.id,
+              workflowID: "loop",
+              execute: async (input) => ({
+                agent: input.agent,
+                sessionID: session.id,
+                output: input.step.id,
+              }),
+            })
+
+            expect(state.status).toBe("completed")
+            expect(state.statuses.feedback).toBe("completed")
+            expect(state.statuses.report).toBe("completed")
+            expect(state.attempts.feedback).toBe(1)
+            expect(state.attempts["feedback.test"]).toBe(2)
+            expect(state.attempts["feedback.fix"]).toBe(1)
+            expect(state.variables.passed).toBe(true)
+            expect(state.variables.fixed).toBe(true)
+            expect(state.variables.result).toBe(true)
+            expect(state.variables.reported).toBe(true)
+          },
+        }),
+    })
+  })
+
   test("dispatches prompted steps and persists node result", async () => {
     await using tmp = await tmpdir()
     const space = WorkspaceID.ascending()

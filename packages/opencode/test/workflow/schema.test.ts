@@ -88,6 +88,50 @@ describe("workflow schema", () => {
     expect(result.nodes[0].capabilities).toEqual(["frontend", "typescript"])
   })
 
+  test("accepts a loop node with child step session policies", () => {
+    const result = Workflow.Definition.safeParse({
+      id: "loop",
+      name: "Loop",
+      nodes: [
+        {
+          id: "build",
+          type: "implementation",
+          outputs: { built: true },
+        },
+        {
+          id: "feedback",
+          type: "loop",
+          depends_on: ["build"],
+          loop: {
+            max_attempts: 3,
+            until: [{ type: "variable", name: "passed", equals: true }],
+            memory: {
+              include: ["node.goal", "attempts.summary", "steps.test.output", "artifacts.diff"],
+              summarize: { when: "context_tokens > 24000" },
+            },
+            steps: [
+              {
+                id: "test",
+                type: "test",
+                session: "per_call",
+                outputs: { passed: "$ok" },
+              },
+              {
+                id: "fix",
+                type: "debug",
+                session: "per_loop",
+                mutates: true,
+                outputs: { fixed: true },
+              },
+            ],
+          },
+        },
+      ],
+    })
+
+    expect(result.success).toBe(true)
+  })
+
   test("rejects invalid and duplicate workflows", () => {
     expect(
       Workflow.Definition.safeParse({

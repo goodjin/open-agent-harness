@@ -15504,6 +15504,148 @@
           "path"
         ]
       },
+      "WorkflowRunStep": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "capabilities": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "session": {
+            "type": "string"
+          },
+          "context": {},
+          "prompt": {
+            "type": "string"
+          },
+          "mutates": {
+            "type": "boolean"
+          },
+          "wait": {
+            "type": "string"
+          },
+          "inputs": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "outputs": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "guards": {
+            "default": [],
+            "type": "array",
+            "items": {}
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next": {},
+          "verification": {},
+          "loop": {}
+        },
+        "required": [
+          "id",
+          "type",
+          "agent",
+          "mutates"
+        ],
+        "additionalProperties": false
+      },
+      "WorkflowNodeRun": {
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "running",
+              "completed",
+              "error",
+              "skipped",
+              "cancelled"
+            ]
+          },
+          "agent": {
+            "type": "string"
+          },
+          "sessionID": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "output": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "time": {
+            "type": "object",
+            "properties": {
+              "started": {
+                "type": "number"
+              },
+              "updated": {
+                "type": "number"
+              },
+              "completed": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "started",
+              "updated"
+            ]
+          }
+        },
+        "required": [
+          "step",
+          "status",
+          "agent",
+          "path",
+          "attempt",
+          "time"
+        ],
+        "additionalProperties": false
+      },
       "WorkflowPauseGuard": {
         "anyOf": [
           {
@@ -15661,6 +15803,42 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "steps": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkflowRunStep"
+            }
+          },
+          "nodes": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/WorkflowNodeRun"
+            }
+          },
+          "statuses": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "ready",
+                "running",
+                "completed",
+                "error",
+                "skipped",
+                "cancelled"
+              ]
             }
           },
           "pause": {

@@ -36,9 +36,11 @@ Top-level fields:
 Step fields:
 
 - `id` string, required. Unique within the workflow. Use short stable ids such as `inspect`, `review_toolbar`, `test_toolbar`, `report`.
-- `type` string, optional. One of `task`, `research`, `planning`, `design`, `implementation`, `debug`, `test`, `review`, `gate`, `documentation`, `build`, `release`, `decision`, `manual`, `recovery`.
+- `type` string, optional. One of `task`, `research`, `planning`, `design`, `implementation`, `debug`, `test`, `review`, `gate`, `documentation`, `build`, `release`, `decision`, `manual`, `recovery`, `loop`.
 - `capabilities` array, optional. Open string tags describing the node's required execution abilities, technical domain, or context. Examples: `frontend`, `backend`, `typescript`, `testing`, `code-review`, `security`, `performance`, `database`, `api`, `ui`, `documentation`, `workflow`, `session`, `toolbar`, `editor`.
 - `agent` string, optional. Defaults to `auto`. Use `auto` to let the runtime choose an execution agent from the node `type`, `capabilities`, and `prompt`. Use a concrete agent name only when the user or task explicitly requires that agent.
+- `session` string, optional. One of `per_call`, `per_loop`, or `per_attempt`. Defaults to `per_call`. On loop child steps, use `per_call` for objective validators and reviewers, and `per_loop` when the same agent should keep continuity across loop attempts.
+- `context` object, optional. `{ "include": string[] }`. Lists the scoped context snapshot inputs a child agent should receive, such as `node.goal`, `steps.test.output`, `attempts.summary`, or `artifacts.diff`. The runtime constructs this from structured workflow state and artifacts; do not assume it copies the full parent conversation.
 - `prompt` string, optional but strongly recommended. Describe exactly what this step must do and what result it should produce.
 - `mutates` boolean, optional. Set true when the step may edit files or external state.
 - `wait` string, optional. Use `user` or `permission` only when the step must pause.
@@ -49,6 +51,14 @@ Step fields:
 - `depends_on` array, optional on `nodes`. References node ids that must finish before this node can run.
 - `error_policy` object, optional. Same shape as top-level `error_policy`.
 - `verification` object, optional. Define test/review/gate requirements for this step.
+- `loop` object, required when `type` is `loop`, forbidden otherwise. Defines child steps repeated inside this node boundary.
+
+Loop fields:
+
+- `max_attempts` number, optional. Defaults to 3. Hard safety limit for loop iterations.
+- `until` array, required. Variable guards that must all be true for the loop to finish successfully. Example: `{ "type": "variable", "name": "passed", "equals": true }`.
+- `memory` object, optional. `{ "include": string[], "summarize": { "when": string } }`. Describes what state should carry between attempts and when runtime summarization may be used.
+- `steps` array, required. Child steps executed sequentially inside each attempt. Child steps use the normal step fields except outer DAG fields such as `depends_on` and `next`.
 
 Guard fields:
 
@@ -78,12 +88,19 @@ Schema constraints:
 - Do not include provider or model concurrency in the workflow DSL.
 - Do not invent arbitrary scripting languages or unsupported fields.
 - Workflow nodes describe tasks and required capabilities. They do not select skills. The runtime selects agents by matching node `type`, `capabilities`, and `prompt` against agent descriptions and agent capability profiles.
+- The outer workflow graph must remain acyclic. Do not create dependency cycles to model feedback. Use a `loop` node for bounded feedback cycles.
 
 ## Workflow Design Guidance
 
 - Make the smallest useful DAG, not a giant speculative plan.
 - Put discovery before implementation when the task needs codebase context.
 - Put verification after mutating steps.
+- Use a `loop` node when the work naturally requires bounded feedback, such as test-fix-retest, draft-review-revise, generate-evaluate-retry, or reproduce-fix-verify.
+- The `id` of a loop node is task-specific and model-generated. Do not use fixed semantic names like `qa`, `validate`, or `stabilize` unless that is the clearest name for the current task.
+- A loop node is a composite node. It repeats child steps inside the node boundary and does not create an edge back to an earlier DAG node.
+- Initial feature implementation usually belongs in an ordinary outer DAG node. Put repair, revision, or retry work caused by loop feedback inside the loop node.
+- Child steps may use different agents. This means separate child agent sessions created from scoped context snapshots, not changing the system prompt of one conversation.
+- Prefer `per_call` child sessions for tests, reviews, gates, and audits. Prefer `per_loop` when a mutating implementation or fix agent should remember prior attempts within the same loop node.
 - Represent code review, tests, and audit as separate steps when they can fail independently.
 - Use parallel branches only for independent work. Use serial `next` when a later step depends on previous results.
 - For broad review requests, create at least `inspect`, `review`, and `report` steps.
@@ -125,6 +142,62 @@ Schema constraints:
       "capabilities": ["documentation", "review"],
       "agent": "auto",
       "prompt": "Summarize findings by severity and include residual risks."
+    }
+  ]
+}
+```
+
+## Loop Example
+
+This example shows a bounded feedback loop. The names are examples only; choose node ids that fit the task.
+
+```json
+{
+  "id": "feature-workflow",
+  "name": "Feature Workflow",
+  "nodes": [
+    {
+      "id": "implement",
+      "type": "implementation",
+      "capabilities": ["typescript"],
+      "mutates": true,
+      "prompt": "Implement the requested feature and summarize changed files."
+    },
+    {
+      "id": "feedback_loop",
+      "type": "loop",
+      "depends_on": ["implement"],
+      "loop": {
+        "max_attempts": 5,
+        "until": [{ "type": "variable", "name": "feedback_loop.test", "equals": "passed" }],
+        "memory": {
+          "include": ["node.goal", "attempts.summary", "steps.test.output", "artifacts.diff"],
+          "summarize": { "when": "context_tokens > 24000" }
+        },
+        "steps": [
+          {
+            "id": "test",
+            "type": "test",
+            "session": "per_call",
+            "context": { "include": ["node.goal", "artifacts.diff", "attempts.summary"] },
+            "prompt": "Run the relevant tests. Return exactly `passed` when all required tests pass; otherwise return the failing commands and concise failure details."
+          },
+          {
+            "id": "fix",
+            "type": "debug",
+            "session": "per_loop",
+            "mutates": true,
+            "context": { "include": ["steps.test.output", "attempts.previous.fix", "artifacts.diff"] },
+            "prompt": "If tests failed, fix the reported failures and summarize the patch."
+          }
+        ]
+      }
+    },
+    {
+      "id": "report",
+      "type": "documentation",
+      "depends_on": ["feedback_loop"],
+      "prompt": "Report the final implementation, loop attempts, and verification result."
     }
   ]
 }

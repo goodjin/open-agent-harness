@@ -63,9 +63,12 @@ export namespace WorkflowState {
   export const Step = z
     .object({
       id: z.string(),
+      description: z.string().optional(),
       type: z.string(),
       agent: z.string(),
       capabilities: z.array(z.string()).default([]),
+      session: z.string().optional(),
+      context: z.unknown().optional(),
       prompt: z.string().optional(),
       mutates: z.boolean(),
       wait: z.string().optional(),
@@ -75,6 +78,7 @@ export namespace WorkflowState {
       depends_on: z.array(z.string()).default([]),
       next: z.unknown().optional(),
       verification: z.unknown().optional(),
+      loop: z.unknown().optional(),
     })
     .strict()
     .meta({ ref: "WorkflowRunStep" })

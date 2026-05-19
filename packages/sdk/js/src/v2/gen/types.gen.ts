@@ -1975,6 +1975,46 @@ export type WorkflowSummary = {
   path: string
 }
 
+export type WorkflowRunStep = {
+  id: string
+  description?: string
+  type: string
+  agent: string
+  capabilities?: Array<string>
+  session?: string
+  context?: unknown
+  prompt?: string
+  mutates: boolean
+  wait?: string
+  inputs?: {
+    [key: string]: unknown
+  }
+  outputs?: {
+    [key: string]: unknown
+  }
+  guards?: Array<unknown>
+  depends_on?: Array<string>
+  next?: unknown
+  verification?: unknown
+  loop?: unknown
+}
+
+export type WorkflowNodeRun = {
+  step: string
+  status: "pending" | "ready" | "running" | "completed" | "error" | "skipped" | "cancelled"
+  agent: string
+  sessionID?: string
+  path: string
+  attempt: number
+  output?: string
+  error?: string
+  time: {
+    started: number
+    updated: number
+    completed?: number
+  }
+}
+
 export type WorkflowPauseGuard =
   | {
       type: "step"
@@ -2014,6 +2054,13 @@ export type WorkflowRun = {
     [key: string]: number
   }
   completed?: Array<string>
+  steps?: Array<WorkflowRunStep>
+  nodes?: {
+    [key: string]: WorkflowNodeRun
+  }
+  statuses?: {
+    [key: string]: "pending" | "ready" | "running" | "completed" | "error" | "skipped" | "cancelled"
+  }
   pause?: WorkflowPause
   error?: string
   checkpoint?: string

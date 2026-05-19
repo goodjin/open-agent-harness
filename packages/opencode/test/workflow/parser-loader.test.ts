@@ -54,6 +54,32 @@ describe("workflow parser and loader", () => {
     expect(parsed.nodes[0].branches).toEqual([])
   })
 
+  test("keeps loop child steps inside the parent DAG node", () => {
+    const parsed = WorkflowParser.parse({
+      id: "loop",
+      name: "Loop",
+      nodes: [
+        { id: "build" },
+        {
+          id: "feedback",
+          type: "loop",
+          depends_on: ["build"],
+          loop: {
+            max_attempts: 2,
+            until: [{ type: "variable", name: "ok", equals: true }],
+            steps: [{ id: "test", outputs: { ok: true } }],
+          },
+        },
+      ],
+    })
+
+    expect(parsed.nodes.map((node) => [node.id, node.depends_on])).toEqual([
+      ["build", []],
+      ["feedback", ["build"]],
+    ])
+    expect(parsed.nodes[1].loop?.steps.map((step) => step.id)).toEqual(["test"])
+  })
+
   test("rejects missing branch targets", () => {
     expect(() =>
       WorkflowParser.parse({

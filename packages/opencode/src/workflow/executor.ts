@@ -143,9 +143,12 @@ export namespace WorkflowExecutor {
       completed: [],
       steps: item.workflow.steps.map((step) => ({
         id: step.id,
+        description: step.description,
         type: step.type,
         agent: step.agent,
         capabilities: step.capabilities,
+        session: step.session,
+        context: step.context,
         prompt: step.prompt,
         mutates: step.mutates,
         wait: step.wait,
@@ -155,6 +158,7 @@ export namespace WorkflowExecutor {
         depends_on: step.depends_on,
         next: step.next,
         verification: step.verification,
+        loop: step.loop,
       })),
       nodes: {},
       statuses: Object.fromEntries(item.workflow.nodes.map((node) => [node.id, "pending" as const])),
@@ -349,7 +353,9 @@ export namespace WorkflowExecutor {
           variables: {
             ...last.variables,
             ...Object.fromEntries(
-              keys.filter((key) => item.state.variables[key] !== undefined).map((key) => [key, item.state.variables[key]]),
+              keys
+                .filter((key) => item.state.variables[key] !== undefined)
+                .map((key) => [key, item.state.variables[key]]),
             ),
           },
           nodes: {
@@ -475,7 +481,8 @@ export namespace WorkflowExecutor {
   ) {
     const status = state.statuses[dep]
     if (status === "completed") return true
-    if (workflow.legacy && verifier(workflow, state, step) && (status === "skipped" || status === "cancelled")) return true
+    if (workflow.legacy && verifier(workflow, state, step) && (status === "skipped" || status === "cancelled"))
+      return true
     return allowed(workflow, state, dep)
   }
 
@@ -575,6 +582,16 @@ export namespace WorkflowExecutor {
     return { status: "allow" }
   }
 
+  function met(guards: WorkflowParser.Step["guards"], state: WorkflowState.Info) {
+    return guards.every((item) => {
+      if (item.type !== "variable") return false
+      const exists = state.variables[item.name] !== undefined
+      if (item.exists !== undefined && exists !== item.exists) return false
+      if (item.equals !== undefined && state.variables[item.name] !== item.equals) return false
+      return true
+    })
+  }
+
   async function attempt(
     sessionID: SessionID,
     workflow: WorkflowParser.Definition,
@@ -599,7 +616,9 @@ export namespace WorkflowExecutor {
     }
     await save(await bound(sessionID), base)
     if (step.mutates) await checkpoint(sessionID, base)
-    const ran = await execute(sessionID, workflow, step, base, opts)
+    const ran = step.loop
+      ? await loop(sessionID, workflow, step, base, opts)
+      : await execute(sessionID, workflow, step, base, opts)
     const saved = WorkflowState.read((await bound(sessionID)).dsl_context) ?? base
     const vars = {
       ...saved.variables,
@@ -623,6 +642,73 @@ export namespace WorkflowExecutor {
     }
     await save(await bound(sessionID), next)
     return next
+  }
+
+  async function loop(
+    sessionID: SessionID,
+    workflow: WorkflowParser.Definition,
+    step: WorkflowParser.Step,
+    state: WorkflowState.Info,
+    opts?: Pick<Run, "agent" | "abort" | "execute">,
+  ) {
+    if (!step.loop) return
+    let current = state
+    for (const round of Array.from({ length: step.loop.max_attempts }, (_, index) => index + 1)) {
+      if (met(step.loop.until, current)) {
+        return { agent: step.agent, output: `Loop completed after ${round - 1} attempt(s)` }
+      }
+      for (const item of step.loop.steps) {
+        const child = {
+          ...item,
+          id: `${step.id}.${item.id}`,
+          index: step.index,
+          branches: [],
+          depends_on: [],
+          next: undefined,
+        } satisfies WorkflowParser.Step
+        const ctx = {
+          ...current,
+          current: child.id,
+          step: child.index,
+          attempts: {
+            ...current.attempts,
+            [child.id]: (current.attempts[child.id] ?? 0) + 1,
+          },
+          time: { ...current.time, updated: Date.now() },
+        } satisfies WorkflowState.Info
+        await save(await bound(sessionID), ctx)
+        if (child.mutates) await checkpoint(sessionID, ctx)
+        const gate = guard(child.guards, ctx, (await bound(sessionID)).permission, undefined)
+        if (gate.status !== "allow") {
+          throw new InvalidError({ message: gate.reason })
+        }
+        const ran = await execute(sessionID, workflow, child, ctx, opts)
+        const saved = WorkflowState.read((await bound(sessionID)).dsl_context) ?? ctx
+        const vars = {
+          ...saved.variables,
+          ...(ran ? { [child.id]: ran.output } : {}),
+        }
+        current = {
+          ...saved,
+          current: step.id,
+          step: step.index,
+          attempts: {
+            ...saved.attempts,
+            [child.id]: ctx.attempts[child.id],
+          },
+          variables: {
+            ...vars,
+            ...Object.fromEntries(Object.entries(child.outputs).map((entry) => [entry[0], value(entry[1], vars)])),
+          },
+          time: { ...saved.time, updated: Date.now() },
+        }
+        await save(await bound(sessionID), current)
+        if (met(step.loop.until, current)) {
+          return { agent: step.agent, output: `Loop completed after ${round} attempt(s)` }
+        }
+      }
+    }
+    throw new InvalidError({ message: `Workflow loop ${step.id} reached max_attempts` })
   }
 
   async function completeNode(
@@ -669,10 +755,12 @@ export namespace WorkflowExecutor {
     const attempt = state.attempts[step.id] ?? 1
     const agent = await route(step, opts?.agent)
     const started = Date.now()
+    const active = WorkflowState.read(parent.dsl_context) ?? state
     const node: WorkflowState.Node = {
       step: step.id,
       status: "running",
       agent,
+      sessionID: step.session === "per_loop" ? active.nodes[step.id]?.sessionID : undefined,
       path: nodepath(state.runID, step.id),
       attempt,
       time: {
@@ -681,7 +769,6 @@ export namespace WorkflowExecutor {
       },
     }
     await nodefile(state.runID, step.id, node)
-    const active = WorkflowState.read(parent.dsl_context) ?? state
     await save(parent, {
       ...active,
       current: step.id,
@@ -768,18 +855,22 @@ export namespace WorkflowExecutor {
     if (rule.action === "deny") {
       throw new InvalidError({ message: `Workflow node agent denied: ${agent.name}` })
     }
-    const child = await Session.create({
-      parentID: input.parent.id,
-      title: `${input.workflow.name}: ${input.step.id} (@${agent.name})`,
-      permission: [
-        ...agent.permission,
-        { permission: "workflow_create", pattern: "*", action: "deny" },
-        { permission: "workflow_start", pattern: "*", action: "deny" },
-      ],
-    })
     const current = await latest(input.parent.id, input.state)
+    const reused = input.step.session === "per_loop" ? current.nodes[input.step.id]?.sessionID : undefined
+    const brief = (input.step.description ?? input.step.id).trim()
+    const child = reused
+      ? await Session.get(SessionID.make(reused))
+      : await Session.create({
+          parentID: input.parent.id,
+          title: `${input.workflow.name}: #${input.step.index + 1} ${brief} (@${agent.name})`,
+          permission: [
+            ...agent.permission,
+            { permission: "workflow_create", pattern: "*", action: "deny" },
+            { permission: "workflow_start", pattern: "*", action: "deny" },
+          ],
+        })
     const node = current.nodes[input.step.id]
-    if (node?.status === "running" && !node.sessionID) {
+    if (node?.status === "running" && (!node.sessionID || node.sessionID !== child.id)) {
       await save(await bound(input.parent.id), {
         ...current,
         nodes: {
@@ -819,6 +910,8 @@ export namespace WorkflowExecutor {
         id: input.step.id,
         type: input.step.type,
         mutates: input.step.mutates,
+        session: input.step.session,
+        context: input.step.context,
         inputs: input.step.inputs,
         verification: input.step.verification,
         attempt: input.attempt,
@@ -863,7 +956,9 @@ export namespace WorkflowExecutor {
       return agent.name
     }
     const agents = await Agent.list().then((items) =>
-      items.filter((item) => AgentEntry.delegable(item) && item.runner !== "workflow" && (!step.mutates || item.capability.writes)),
+      items.filter(
+        (item) => AgentEntry.delegable(item) && item.runner !== "workflow" && (!step.mutates || item.capability.writes),
+      ),
     )
     const ranked = agents
       .map((agent) => ({ agent, score: score(agent, step) }))
@@ -884,12 +979,7 @@ export namespace WorkflowExecutor {
   }
 
   function score(agent: Agent.Info, step: WorkflowParser.Step) {
-    const words = [
-      agent.name,
-      agent.description ?? "",
-      agent.capability.purpose,
-      ...agent.capability.tags,
-    ]
+    const words = [agent.name, agent.description ?? "", agent.capability.purpose, ...agent.capability.tags]
       .join(" ")
       .toLowerCase()
     const caps = step.capabilities.map((item) => item.toLowerCase())
@@ -963,7 +1053,9 @@ export namespace WorkflowExecutor {
   }
 
   function approved(
-    resumed: { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean } | undefined,
+    resumed:
+      | { type: WorkflowState.Pause["type"]; step: string; guard?: WorkflowState.Guard; approved?: boolean }
+      | undefined,
     guard: WorkflowState.Guard,
   ) {
     if (resumed?.type !== "waiting_permission" || resumed.approved !== true) return false
@@ -990,23 +1082,20 @@ export namespace WorkflowExecutor {
     const last = await latest(sessionID, state)
     const prior = state.attempts[step.id] ?? 0
     const count = last.attempts[step.id] ?? prior
-    const next = await save(
-      await bound(sessionID),
-      {
-        ...last,
-        current: step.id,
-        step: step.index,
-        attempts: {
-          ...last.attempts,
-          [step.id]: count === prior ? count + 1 : count,
-        },
-        statuses: {
-          ...last.statuses,
-          [step.id]: "error" as const,
-        },
-        time: { ...last.time, updated: Date.now() },
+    const next = await save(await bound(sessionID), {
+      ...last,
+      current: step.id,
+      step: step.index,
+      attempts: {
+        ...last.attempts,
+        [step.id]: count === prior ? count + 1 : count,
       },
-    ).then((session) => WorkflowState.read(session.dsl_context)!)
+      statuses: {
+        ...last.statuses,
+        [step.id]: "error" as const,
+      },
+      time: { ...last.time, updated: Date.now() },
+    }).then((session) => WorkflowState.read(session.dsl_context)!)
     const policy = step.error_policy ?? workflow.error_policy
     if (policy.strategy === "retry" && (next.attempts[step.id] ?? 0) < policy.max_attempts) {
       return mark(sessionID, next, step, "pending")
@@ -1017,7 +1106,12 @@ export namespace WorkflowExecutor {
     return error(sessionID, next, reason)
   }
 
-  async function mark(sessionID: SessionID, state: WorkflowState.Info, step: WorkflowParser.Step, status: WorkflowState.Status) {
+  async function mark(
+    sessionID: SessionID,
+    state: WorkflowState.Info,
+    step: WorkflowParser.Step,
+    status: WorkflowState.Status,
+  ) {
     const current = await latest(sessionID, state)
     const next: WorkflowState.Info = {
       ...current,
