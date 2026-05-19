@@ -7,6 +7,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { getRegistry, resetRegistry } from "../../src/agent/registry"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionLog } from "../../src/session/log"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
@@ -39,6 +40,83 @@ async function agent(dir: string, id: string, cfg: Record<string, unknown> = {})
 }
 
 describe("session.prompt missing file", () => {
+  test("records setup failures in the assistant message and session log", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              agent: "build",
+              model: { providerID: "openai", modelID: "gpt-5.2" },
+              tools: {},
+              mode: "",
+              time: { created: Date.now() },
+            } as unknown as MessageV2.Info)
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user.id,
+              sessionID: session.id,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              time: { created: Date.now() },
+            })) as MessageV2.Assistant
+
+            await SessionPrompt.failSetup({
+              sessionID: session.id,
+              assistant,
+              providerID: ProviderID.make("openai"),
+              error: new Error("setup exploded"),
+              stage: "resolve_tools",
+            })
+
+            const msg = await MessageV2.get({ sessionID: session.id, messageID: assistant.id })
+            expect(msg.info.role).toBe("assistant")
+            if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+            expect(msg.info.error?.name).toBe("UnknownError")
+            expect(msg.info.error?.data.message).toBe("Error: setup exploded")
+            expect(typeof msg.info.time.completed).toBe("number")
+            expect(SessionStatus.get(session.id).type).toBe("error")
+
+            const logs = await SessionLog.list({ sessionID: session.id })
+            expect(logs).toContainEqual(
+              expect.objectContaining({
+                type: "llm.error",
+                data: expect.objectContaining({
+                  stage: "resolve_tools",
+                  error: "Error: setup exploded",
+                  name: "UnknownError",
+                }),
+              }),
+            )
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("loop restores idle after completed assistant message", async () => {
     await using tmp = await tmpdir({ git: true })
 

@@ -285,7 +285,6 @@ export namespace SessionProcessor {
                   break
                 }
                 case "error":
-                  await record("error", "llm.error", { error: (value.error as Error).toString() })
                   throw value.error
 
                 case "start-step":
@@ -452,6 +451,11 @@ export namespace SessionProcessor {
                 continue
               }
               input.assistantMessage.error = error
+              await record("error", "llm.error", {
+                error: "message" in error.data ? error.data.message : error.name,
+                name: error.name,
+                attempt,
+              })
               Bus.publish(Session.Event.Error, {
                 sessionID: input.assistantMessage.sessionID,
                 error: input.assistantMessage.error,

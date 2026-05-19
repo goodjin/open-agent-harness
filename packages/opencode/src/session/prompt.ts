@@ -43,6 +43,7 @@ import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
 import { PermissionNext } from "@/permission/next"
 import { SessionStatus } from "./status"
+import { SessionLog } from "./log"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
@@ -619,24 +620,36 @@ export namespace SessionPrompt {
       const lastUserMsg = msgs.findLast((m) => m.info.role === "user")
       const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
 
-      const tools = await resolveTools({
-        agent,
-        session,
-        model,
-        tools: lastUser.tools,
-        processor,
-        bypassAgentCheck,
-        messages: msgs,
-      })
-
-      // Inject StructuredOutput tool if JSON schema mode enabled
-      if (lastUser.format?.type === "json_schema") {
-        tools["StructuredOutput"] = createStructuredOutputTool({
-          schema: lastUser.format.schema,
-          onSuccess(output) {
-            structuredOutput = output
-          },
+      let tools: Record<string, AITool>
+      try {
+        tools = await resolveTools({
+          agent,
+          session,
+          model,
+          tools: lastUser.tools,
+          processor,
+          bypassAgentCheck,
+          messages: msgs,
         })
+
+        // Inject StructuredOutput tool if JSON schema mode enabled
+        if (lastUser.format?.type === "json_schema") {
+          tools["StructuredOutput"] = createStructuredOutputTool({
+            schema: lastUser.format.schema,
+            onSuccess(output) {
+              structuredOutput = output
+            },
+          })
+        }
+      } catch (error) {
+        await failSetup({
+          sessionID,
+          assistant: processor.message,
+          providerID: model.providerID,
+          error,
+          stage: "resolve_tools",
+        })
+        break
       }
 
       if (step === 1) {
@@ -744,6 +757,39 @@ export namespace SessionPrompt {
       return item
     }
     throw new Error("Impossible")
+  }
+
+  /** @internal Exported for testing */
+  export async function failSetup(input: {
+    sessionID: SessionID
+    assistant: MessageV2.Assistant
+    providerID: ProviderID
+    error: unknown
+    stage: string
+  }) {
+    const error = MessageV2.fromError(input.error, { providerID: input.providerID })
+    const message = "message" in error.data ? String(error.data.message) : error.name
+    log.error("setup failed", { stage: input.stage, error: input.error })
+    input.assistant.error = error
+    input.assistant.finish = "error"
+    input.assistant.time.completed = Date.now()
+    await Session.updateMessage(input.assistant)
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.assistant.id,
+      level: "error",
+      type: "llm.error",
+      data: {
+        stage: input.stage,
+        error: message,
+        name: error.name,
+      },
+    }).catch((err) => log.warn("session log failed", { err }))
+    Bus.publish(Session.Event.Error, {
+      sessionID: input.sessionID,
+      error,
+    })
+    SessionStatus.set(input.sessionID, { type: "error", message })
   }
 
   async function lastModel(sessionID: SessionID) {
