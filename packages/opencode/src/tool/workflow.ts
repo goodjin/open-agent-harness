@@ -99,6 +99,7 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
           steps: parsed.steps.map((step) => ({
             id: step.id,
             type: step.type,
+            capabilities: step.capabilities,
             agent: step.agent,
             mutates: step.mutates,
             next: step.next,

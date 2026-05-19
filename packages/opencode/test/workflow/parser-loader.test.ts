@@ -40,12 +40,13 @@ describe("workflow parser and loader", () => {
       id: "dag",
       name: "Dag",
       nodes: [
-        { id: "one" },
+        { id: "one", capabilities: ["frontend"] },
         { id: "two", depends_on: ["one"] },
       ],
     })
 
     expect(parsed.steps.map((step) => step.id)).toEqual(["one", "two"])
+    expect(parsed.nodes[0].capabilities).toEqual(["frontend"])
     expect(parsed.nodes.map((node) => [node.id, node.index, node.depends_on])).toEqual([
       ["one", 0, []],
       ["two", 1, ["one"]],

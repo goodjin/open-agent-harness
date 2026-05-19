@@ -29,13 +29,16 @@ Top-level fields:
 - `inputs` object, optional. Map input names to `{ "type": "string" | "number" | "boolean" | "object", "required": boolean, "default": value }`.
 - `outputs` object, optional. Map output names to `{ "from": "step_id.output_name" }`.
 - `error_policy` object, optional. `{ "strategy": "abort" | "continue" | "retry", "max_attempts": number }`.
-- `steps` array, required. At least one step.
+- `nodes` array, recommended. At least one node. Use `depends_on` to express DAG dependencies.
+- `steps` array, legacy alternative. At least one step. Use `next` to express serial or guarded branch flow.
+- Define either `nodes` or `steps`, not both.
 
 Step fields:
 
 - `id` string, required. Unique within the workflow. Use short stable ids such as `inspect`, `review_toolbar`, `test_toolbar`, `report`.
-- `type` string, optional. One of `task`, `research`, `planning`, `design`, `implementation`, `debug`, `test`, `review`, `gate`, `documentation`, `build`, `release`, `decision`, `manual`.
-- `agent` string, optional. Use `primary` unless a specialized agent is clearly needed.
+- `type` string, optional. One of `task`, `research`, `planning`, `design`, `implementation`, `debug`, `test`, `review`, `gate`, `documentation`, `build`, `release`, `decision`, `manual`, `recovery`.
+- `capabilities` array, optional. Open string tags describing the node's required execution abilities, technical domain, or context. Examples: `frontend`, `backend`, `typescript`, `testing`, `code-review`, `security`, `performance`, `database`, `api`, `ui`, `documentation`, `workflow`, `session`, `toolbar`, `editor`.
+- `agent` string, optional. Defaults to `auto`. Use `auto` to let the runtime choose an execution agent from the node `type`, `capabilities`, and `prompt`. Use a concrete agent name only when the user or task explicitly requires that agent.
 - `prompt` string, optional but strongly recommended. Describe exactly what this step must do and what result it should produce.
 - `mutates` boolean, optional. Set true when the step may edit files or external state.
 - `wait` string, optional. Use `user` or `permission` only when the step must pause.
@@ -43,6 +46,7 @@ Step fields:
 - `outputs` object, optional. Step-local output values or references.
 - `guards` array, optional. Conditions that must pass before the step runs.
 - `next` string or branch array, optional. Use a string for serial flow. Omit on terminal steps.
+- `depends_on` array, optional on `nodes`. References node ids that must finish before this node can run.
 - `error_policy` object, optional. Same shape as top-level `error_policy`.
 - `verification` object, optional. Define test/review/gate requirements for this step.
 
@@ -73,6 +77,7 @@ Schema constraints:
 - Any id in `verification.must_pass` must point to a step with type `test`, `review`, or `gate`.
 - Do not include provider or model concurrency in the workflow DSL.
 - Do not invent arbitrary scripting languages or unsupported fields.
+- Workflow nodes describe tasks and required capabilities. They do not select skills. The runtime selects agents by matching node `type`, `capabilities`, and `prompt` against agent descriptions and agent capability profiles.
 
 ## Workflow Design Guidance
 
@@ -97,14 +102,16 @@ Schema constraints:
     {
       "id": "inspect",
       "type": "research",
-      "agent": "primary",
+      "capabilities": ["frontend", "typescript", "toolbar"],
+      "agent": "auto",
       "prompt": "Find toolbar component, config, composable, editor integration, and tests.",
       "next": "review"
     },
     {
       "id": "review",
       "type": "review",
-      "agent": "primary",
+      "capabilities": ["frontend", "typescript", "toolbar", "code-review"],
+      "agent": "auto",
       "prompt": "Review each toolbar button behavior against the implementation and identify defects with file and line references.",
       "verification": {
         "required": true,
@@ -115,7 +122,8 @@ Schema constraints:
     {
       "id": "report",
       "type": "documentation",
-      "agent": "primary",
+      "capabilities": ["documentation", "review"],
+      "agent": "auto",
       "prompt": "Summarize findings by severity and include residual risks."
     }
   ]

@@ -65,6 +65,7 @@ export namespace WorkflowState {
       id: z.string(),
       type: z.string(),
       agent: z.string(),
+      capabilities: z.array(z.string()).default([]),
       prompt: z.string().optional(),
       mutates: z.boolean(),
       wait: z.string().optional(),

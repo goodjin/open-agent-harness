@@ -171,13 +171,38 @@ describe("workflow executor", () => {
             expect(state.variables.inspect).toBe("ran inspect")
             expect(state.variables.inspected).toBe("ran inspect")
             expect(state.nodes.inspect?.status).toBe("completed")
-            expect(state.nodes.inspect?.agent).toBe("workflow-runner")
+            expect(state.nodes.inspect?.agent).not.toBe("workflow-runner")
             expect(state.nodes.inspect?.sessionID).toBe(session.id)
 
             const file = path.join(tmp.path, ".opencode", "workflows", "runs", state.runID, "inspect.json")
             const node = JSON.parse(await Bun.file(file).text()) as { status: string; output: string }
             expect(node.status).toBe("completed")
             expect(node.output).toBe("ran inspect")
+          },
+        }),
+    })
+  })
+
+  test("rejects workflow runner for ordinary execution nodes", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "bad-agent",
+      name: "Bad Agent",
+      nodes: [{ id: "review", type: "review", agent: "workflow-runner", prompt: "Review code." }],
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: space,
+          fn: async () => {
+            const session = await Session.create({})
+            const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "bad-agent" })
+
+            expect(state.status).toBe("error")
+            expect(state.error).toContain("cannot use workflow runner")
           },
         }),
     })

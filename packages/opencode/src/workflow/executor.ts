@@ -143,6 +143,7 @@ export namespace WorkflowExecutor {
         id: step.id,
         type: step.type,
         agent: step.agent,
+        capabilities: step.capabilities,
         prompt: step.prompt,
         mutates: step.mutates,
         wait: step.wait,
@@ -577,7 +578,7 @@ export namespace WorkflowExecutor {
     if (!step.prompt) return
     const parent = await bound(sessionID)
     const attempt = state.attempts[step.id] ?? 1
-    const agent = await route(step, opts?.agent)
+    const agent = await route(step)
     const started = Date.now()
     const node: WorkflowState.Node = {
       step: step.id,
@@ -738,19 +739,61 @@ export namespace WorkflowExecutor {
     }
   }
 
-  async function route(step: WorkflowParser.Step, current?: string) {
-    if (step.agent !== "primary" && step.agent !== "auto") {
+  async function route(step: WorkflowParser.Step) {
+    if (step.agent !== "auto" && step.agent !== "primary") {
       const agent = await Agent.get(step.agent)
-      if (agent) return agent.name
+      if (!agent) throw new InvalidError({ message: `Workflow node agent not found: ${step.agent}` })
+      if (agent?.runner === "workflow" && !orchestrates(step)) {
+        throw new InvalidError({ message: `Workflow node ${step.id} cannot use workflow runner agent: ${agent.name}` })
+      }
+      if (agent?.runner === "workflow") return agent.name
+      if (!AgentEntry.delegable(agent)) {
+        throw new InvalidError({ message: `Workflow node agent is not delegable: ${agent.name}` })
+      }
+      if (step.mutates && !agent.capability.writes) {
+        throw new InvalidError({ message: `Workflow node agent cannot mutate workspace: ${agent.name}` })
+      }
+      return agent.name
     }
-    if (step.agent === "primary" && current && (await Agent.get(current))) return current
-    const agents = await Agent.list().then((items) => items.filter((item) => AgentEntry.delegable(item)))
-    const match = agents.find((item) => item.name.includes(step.type) || item.description?.toLowerCase().includes(step.type))
-    if (match) return match.name
-    if (current && (await Agent.get(current))) return current
+    const agents = await Agent.list().then((items) =>
+      items.filter((item) => AgentEntry.delegable(item) && item.runner !== "workflow" && (!step.mutates || item.capability.writes)),
+    )
+    const ranked = agents
+      .map((agent) => ({ agent, score: score(agent, step) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+    if (ranked[0]) return ranked[0].agent.name
     const agent = await Agent.defaultAgent()
-    if (agent) return agent
+    if (agent) {
+      const info = await Agent.get(agent)
+      if (info && info.runner !== "workflow" && (!step.mutates || info.capability.writes)) return info.name
+    }
+    if (agents[0]) return agents[0].name
     throw new InvalidError({ message: `Workflow node agent could not be resolved for step: ${step.id}` })
+  }
+
+  function orchestrates(step: WorkflowParser.Step) {
+    return ["planning", "decision", "recovery"].includes(step.type)
+  }
+
+  function score(agent: Agent.Info, step: WorkflowParser.Step) {
+    const words = [
+      agent.name,
+      agent.description ?? "",
+      agent.capability.purpose,
+      ...agent.capability.tags,
+    ]
+      .join(" ")
+      .toLowerCase()
+    const caps = step.capabilities.map((item) => item.toLowerCase())
+    const type = step.type.toLowerCase()
+    const text = step.prompt?.toLowerCase() ?? ""
+    return (
+      (words.includes(type) ? 10 : 0) +
+      caps.filter((cap) => words.includes(cap)).length * 5 +
+      agent.capability.tags.filter((tag) => text.includes(tag.toLowerCase())).length +
+      (text.includes(agent.capability.purpose.toLowerCase()) ? 2 : 0)
+    )
   }
 
   async function nodefile(runID: string, step: string, node: WorkflowState.Node) {
@@ -929,6 +972,10 @@ export namespace WorkflowExecutor {
   }
 
   function message(err: unknown) {
+    if (err instanceof NamedError) {
+      const obj = err.toObject()
+      return "message" in obj.data ? String(obj.data.message) : obj.name
+    }
     if (err instanceof Error) return err.message
     return String(err)
   }

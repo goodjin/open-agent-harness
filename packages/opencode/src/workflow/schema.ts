@@ -75,6 +75,7 @@ export namespace Workflow {
       "release",
       "decision",
       "manual",
+      "recovery",
     ])
     .meta({ ref: "WorkflowStepType" })
   export type StepType = z.infer<typeof StepType>
@@ -96,7 +97,8 @@ export namespace Workflow {
     .object({
       id: z.string().min(1),
       type: StepType.default("task"),
-      agent: z.string().min(1).default("primary"),
+      capabilities: z.array(z.string().min(1)).default([]),
+      agent: z.string().min(1).default("auto"),
       prompt: z.string().optional(),
       mutates: z.boolean().default(false),
       wait: z.enum(["user", "permission"]).optional(),
@@ -115,7 +117,8 @@ export namespace Workflow {
     .object({
       id: z.string().min(1),
       type: StepType.default("task"),
-      agent: z.string().min(1).default("primary"),
+      capabilities: z.array(z.string().min(1)).default([]),
+      agent: z.string().min(1).default("auto"),
       prompt: z.string().optional(),
       mutates: z.boolean().default(false),
       wait: z.enum(["user", "permission"]).optional(),

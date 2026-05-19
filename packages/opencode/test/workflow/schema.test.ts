@@ -77,6 +77,17 @@ describe("workflow schema", () => {
     expect(result.success).toBe(true)
   })
 
+  test("defaults workflow node agent to auto and accepts capability tags", () => {
+    const result = Workflow.Definition.parse({
+      id: "capable",
+      name: "Capable",
+      nodes: [{ id: "review", type: "review", capabilities: ["frontend", "typescript"] }],
+    })
+
+    expect(result.nodes[0].agent).toBe("auto")
+    expect(result.nodes[0].capabilities).toEqual(["frontend", "typescript"])
+  })
+
   test("rejects invalid and duplicate workflows", () => {
     expect(
       Workflow.Definition.safeParse({
