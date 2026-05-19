@@ -1078,6 +1078,20 @@ describe("workflow executor", () => {
               text: "child done",
               time: { start: Date.now(), end: Date.now() },
             })
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: MessageID.ascending(),
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now() },
+            } as MessageV2.Assistant)
             await Session.setDslContext({
               sessionID: session.id,
               dsl_context: WorkflowState.write(undefined, {

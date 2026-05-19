@@ -417,7 +417,11 @@ export namespace WorkflowExecutor {
       if (err instanceof NotFoundError) return []
       throw err
     })
-    const msg = msgs.findLast((item) => item.info.role === "assistant")
+    const msg = msgs.findLast((item) => {
+      if (item.info.role !== "assistant") return false
+      if (typeof item.info.time.completed === "number") return true
+      return item.parts.length > 0
+    })
     if (!msg || msg.info.role !== "assistant") return
     if (typeof msg.info.time.completed !== "number") return
     if (msg.info.error) {
