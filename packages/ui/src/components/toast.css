@@ -107,9 +107,16 @@
     overflow-x: hidden;
     overflow-y: auto;
     scrollbar-width: none;
+    -webkit-user-select: text;
+    user-select: text;
 
     &::-webkit-scrollbar {
       display: none;
+    }
+
+    :where(*:not(button):not([role="button"])) {
+      -webkit-user-select: text;
+      user-select: text;
     }
   }
 
@@ -118,6 +125,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    -webkit-user-select: text;
+    user-select: text;
 
     /* text-14-medium */
     font-family: var(--font-family-sans);
@@ -135,6 +144,8 @@
     text-wrap-style: pretty;
     overflow-wrap: anywhere;
     word-break: break-word;
+    -webkit-user-select: text;
+    user-select: text;
 
     /* text-14-regular */
     font-family: var(--font-family-sans);
@@ -152,6 +163,8 @@
     flex-wrap: wrap;
     gap: 16px;
     margin-top: 8px;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   [data-slot="toast-action"] {
@@ -159,6 +172,8 @@
     border: none;
     padding: 0;
     cursor: pointer;
+    -webkit-user-select: none;
+    user-select: none;
     min-width: 0;
     max-width: 100%;
     overflow: hidden;

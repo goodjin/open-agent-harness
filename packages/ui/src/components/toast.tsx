@@ -47,7 +47,16 @@ function ToastIcon(props: { name: IconProps["name"] }) {
 }
 
 function ToastContent(props: ComponentProps<"div">) {
-  return <div data-slot="toast-content" {...props} />
+  return (
+    <div
+      data-slot="toast-content"
+      {...props}
+      onPointerDown={(event) => {
+        if (typeof props.onPointerDown === "function") props.onPointerDown(event)
+        event.stopPropagation()
+      }}
+    />
+  )
 }
 
 function ToastTitle(props: ToastTitleProps & ComponentProps<"div">) {
