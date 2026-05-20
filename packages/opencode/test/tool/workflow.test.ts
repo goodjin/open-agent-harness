@@ -80,6 +80,39 @@ describe("workflow tools", () => {
     })
   })
 
+  test("workflow_create accepts a JSON string workflow argument", async () => {
+    await using tmp = await tmpdir()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const tool = (await ToolRegistry.tools(model)).find((item) => item.id === "workflow_create")!
+
+            const result = await tool.execute(
+              {
+                workflow: JSON.stringify({
+                  id: "string-created",
+                  name: "String Created",
+                  nodes: [{ id: "first", outputs: { done: true } }],
+                }),
+              },
+              ctx(session.id),
+            )
+
+            expect(await Bun.file(path.join(tmp.path, ".opencode", "workflows", "string-created.json")).exists()).toBe(
+              true,
+            )
+            expect(result.metadata.workflow.id).toBe("string-created")
+            expect(JSON.parse(result.output).workflow_id).toBe("string-created")
+          },
+        }),
+    })
+  })
+
   test("workflow_start starts a persisted workflow in the background", async () => {
     await using tmp = await tmpdir()
 

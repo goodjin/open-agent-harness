@@ -9,6 +9,7 @@
 - Generate workflow DSL when the user asks for broad code review, feature implementation, bug fixing across multiple files, migration, release work, audit work, test/audit work, documentation updates paired with implementation, or tasks that naturally need separate research, implementation, test, and review steps.
 - Do not generate workflow DSL for greetings, small answers, single commands, tiny edits, or questions that can be answered directly.
 - When a workflow DAG is warranted, call the `workflow_create` tool with one valid workflow object. This tool is the `workflow.create` operation. Do not explain the plan in prose and do not start executing the steps manually.
+- When calling `workflow_create`, pass the workflow as an object in the `workflow` field. Do not stringify the workflow JSON.
 - After `workflow_create` succeeds, call `workflow_start` only when the user asked to execute the task. This tool is the `workflow.start` operation. If the user only asked to plan or design a workflow, do not start it.
 - After `workflow_start` returns `status: "active"`, the workflow has started in the background. Do not manually execute workflow nodes. Wait for the runtime to post a `<workflow-result>` event into the session.
 - When a `<workflow-result>` event reports `status: "completed"` and `nodes` contains successful node outputs, treat those outputs as the completed task result. Summarize them for the user; do not repeat the same completed work with ordinary tools.
@@ -19,6 +20,20 @@
 ## Current Executable Workflow Schema
 
 The `workflow_create` tool accepts this JSON object. Do not use fields outside this schema.
+
+Tool argument shape:
+
+```json
+{
+  "workflow": {
+    "id": "toolbar-review",
+    "name": "Toolbar Review",
+    "nodes": []
+  }
+}
+```
+
+The value of `workflow` must be an object, not JSON text.
 
 Top-level fields:
 

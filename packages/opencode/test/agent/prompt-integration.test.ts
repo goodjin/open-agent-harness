@@ -114,6 +114,8 @@ describe("agent prompt integration", () => {
             expect(agent?.prompt).toContain("Defaults to `auto`")
             expect(agent?.prompt).toContain("agent capability profiles")
             expect(agent?.prompt).toContain("call the `workflow_create` tool")
+            expect(agent?.prompt).toContain("pass the workflow as an object")
+            expect(agent?.prompt).toContain("must be an object, not JSON text")
             expect(agent?.prompt).toContain("call `workflow_start` only when the user asked to execute")
             expect(agent?.prompt).toContain("Treat the `workflow_start` tool result as an authoritative start acknowledgement")
             expect(agent?.prompt).toContain("Treat a `<workflow-result>` event as the authoritative execution result")

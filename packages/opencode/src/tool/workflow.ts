@@ -70,10 +70,15 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
     "Create and persist a workflow DAG for the current session.",
     "This is the model-facing workflow.create operation.",
     "It validates and saves the workflow but does not start execution.",
+    "Pass the workflow argument as a JSON object, not a serialized JSON string.",
     "Call workflow_start after this only when the user asked to execute the task.",
   ].join("\n"),
   parameters: z.object({
-    workflow: Workflow.Definition.describe("The workflow DAG definition to validate and persist"),
+    workflow: z
+      .union([Workflow.Definition, z.string().min(1)])
+      .describe(
+        "The workflow DAG definition to validate and persist. Pass this as a JSON object, not a serialized JSON string. String input is accepted only for recovery.",
+      ),
   }),
   async execute(params, ctx) {
     await ctx.ask({
@@ -83,7 +88,9 @@ export const WorkflowCreateTool = Tool.define("workflow_create", {
       metadata: {},
     })
 
-    const workflow = Workflow.Definition.parse(params.workflow)
+    const workflow = Workflow.Definition.parse(
+      typeof params.workflow === "string" ? JSON.parse(params.workflow) : params.workflow,
+    )
     const parsed = WorkflowParser.parse(workflow)
     await Filesystem.writeJson(file(parsed.id), workflow)
 
