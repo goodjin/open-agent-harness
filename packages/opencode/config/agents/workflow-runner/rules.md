@@ -12,7 +12,8 @@
 - When calling `workflow_create`, pass the workflow as an object in the `workflow` field. Do not stringify the workflow JSON.
 - After `workflow_create` succeeds, call `workflow_start` only when the user asked to execute the task. This tool is the `workflow.start` operation. If the user only asked to plan or design a workflow, do not start it.
 - After `workflow_start` returns `status: "active"`, the workflow has started in the background. Do not manually execute workflow nodes. Wait for the runtime to post a `<workflow-result>` event into the session.
-- When a `<workflow-result>` event reports `status: "completed"` and `nodes` contains successful node outputs, treat those outputs as the completed task result. Summarize them for the user; do not repeat the same completed work with ordinary tools.
+- When a `<workflow-result>` event reports `status: "completed"` and `nodes` contains successful node outputs, treat those outputs as the completed task result. Output a final user-facing summary report; do not repeat the same completed work with ordinary tools.
+- The final summary report is required after every completed workflow. It should be concise but complete, and should synthesize the node outputs into the answer the user actually needs.
 - Continue with ordinary tools after a completed workflow only when a node output is missing, clearly insufficient, contradictory, or the user asks for extra follow-up work. Explain why additional work is needed before doing it.
 - If `workflow_start` fails and the plan can be repaired, call `workflow_create` again with the corrected workflow, then call `workflow_start` again when execution should continue.
 - When no workflow DAG is warranted, answer or work normally like a primary agent.
@@ -225,9 +226,24 @@ This example shows a bounded feedback loop. The names are examples only; choose 
 - Use `workflow_start` to start a created workflow when execution is intended.
 - After `workflow_start` succeeds, the program controls scheduling, execution, retries, and progress updates in the background.
 - Treat the `workflow_start` tool result as an authoritative start acknowledgement. If it says `status: "active"`, stop manual execution and wait for the runtime continuation event.
-- Treat a `<workflow-result>` event as the authoritative execution result. Summarize that result to the user.
+- Treat a `<workflow-result>` event as the authoritative execution result. If the workflow completed, write the final summary report to the user immediately.
 - Read `summary`, `nodes`, `completed`, `variables`, `pause`, and `error` from the `<workflow-result>` event before deciding what to say or do next.
 - If the result says workflow execution completed, use node outputs as the task result. Do not inspect files, run commands, or call other tools to redo already completed nodes.
+- A completed workflow is not finished from the user's perspective until you have written the final summary report.
 - If a workflow is already active, report the current workflow status or continue through the runtime.
 - If a workflow pauses for user input or permission, report the pause reason and stop.
 - If a workflow fails, preserve the failing step and error reason.
+
+## Final Summary Report
+
+When a workflow completes successfully, output a final report in normal assistant text. The report should be grounded in the workflow node outputs and should not expose raw DSL unless the user asks for it.
+
+Include the useful parts for the task:
+
+- What was completed.
+- Key findings, implementation changes, or decisions.
+- Verification, tests, reviews, or checks performed, including pass/fail state when available.
+- Remaining risks, limitations, or follow-up items.
+- Relevant files, artifacts, or generated outputs when the workflow produced them.
+
+Keep the report concise. For small workflows, a short paragraph is enough. For broad reviews, implementations, releases, or audits, use a structured report with clear sections.

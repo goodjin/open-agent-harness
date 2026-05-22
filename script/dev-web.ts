@@ -69,7 +69,7 @@ function start(name: string, cwd: string, args: string[]) {
 
 await cleanup()
 
-const server = start("server", `${root}/packages/opencode`, [
+const serverArgs = [
   "bun",
   "--watch",
   "--conditions=browser",
@@ -81,13 +81,27 @@ const server = start("server", `${root}/packages/opencode`, [
   "127.0.0.1",
   "--cors",
   "http://127.0.0.1:3001",
-])
+]
 
 const app = start("web", `${root}/packages/app`, ["bun", "dev", "--host", "127.0.0.1", "--port", "3001", "--strictPort"])
+let server = start("server", `${root}/packages/opencode`, serverArgs)
+let stopping = false
 
 const stop = () => {
+  stopping = true
   server.kill()
   app.kill()
+}
+
+const watch = async () => {
+  while (!stopping) {
+    const code = await server.exited
+    if (stopping) break
+    console.error(`[server] exited with code ${code}; restarting in 1000ms`)
+    await Bun.sleep(1000)
+    if (stopping) break
+    server = start("server", `${root}/packages/opencode`, serverArgs)
+  }
 }
 
 process.on("SIGINT", () => {
@@ -100,5 +114,6 @@ process.on("SIGTERM", () => {
   process.exit(143)
 })
 
-await Promise.race([server.exited, app.exited])
+void watch()
+await app.exited
 stop()

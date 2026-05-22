@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { APICallError } from "ai"
+import { APICallError, modelMessageSchema } from "ai"
 import { MessageV2 } from "../../src/session/message-v2"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -191,6 +191,53 @@ describe("session.message-v2.toModelMessage", () => {
         content: [{ type: "text", text: "assistant" }],
       },
     ])
+  })
+
+  test("omits app metadata from provider options", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "continue",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "text",
+            text: "Workflow continued",
+            metadata: {
+              kind: "workflow",
+              action: "continued",
+              workflow: { status: "active" },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    const result = MessageV2.toModelMessages(input, model)
+
+    expect(result).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "continue" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Workflow continued" }],
+      },
+    ])
+    expect(result.every((item) => modelMessageSchema.safeParse(item).success)).toBe(true)
   })
 
   test("converts user text/file parts and injects compaction/subtask prompts", () => {

@@ -2,7 +2,14 @@ import { BusEvent } from "@/bus/bus-event"
 import { SessionID, MessageID, PartID } from "./schema"
 import z from "zod"
 import { NamedError } from "@opencode-ai/util/error"
-import { APICallError, convertToModelMessages, LoadAPIKeyError, type ModelMessage, type UIMessage } from "ai"
+import {
+  APICallError,
+  convertToModelMessages,
+  LoadAPIKeyError,
+  type ModelMessage,
+  type ProviderMetadata,
+  type UIMessage,
+} from "ai"
 import { LSP } from "../lsp"
 import { Snapshot } from "@/snapshot"
 import { fn } from "@/util/fn"
@@ -619,6 +626,15 @@ export namespace MessageV2 {
 
       return { type: "json", value: output as never }
     }
+    const meta = (input: unknown): ProviderMetadata | undefined => {
+      if (!input || typeof input !== "object" || Array.isArray(input)) return undefined
+      const entries = Object.entries(input)
+      if (entries.length === 0) return undefined
+      if (entries.some((entry) => !entry[1] || typeof entry[1] !== "object" || Array.isArray(entry[1]))) {
+        return undefined
+      }
+      return input as ProviderMetadata
+    }
 
     for (const msg of input) {
       if (msg.parts.length === 0) continue
@@ -691,7 +707,7 @@ export namespace MessageV2 {
             assistantMessage.parts.push({
               type: "text",
               text: part.text,
-              ...(differentModel ? {} : { providerMetadata: part.metadata }),
+              ...(differentModel ? {} : { providerMetadata: meta(part.metadata) }),
             })
           if (part.type === "step-start")
             assistantMessage.parts.push({
@@ -726,7 +742,7 @@ export namespace MessageV2 {
                 toolCallId: part.callID,
                 input: part.state.input,
                 output,
-                ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
+                ...(differentModel ? {} : { callProviderMetadata: meta(part.metadata) }),
               })
             }
             if (part.state.status === "error")
@@ -736,7 +752,7 @@ export namespace MessageV2 {
                 toolCallId: part.callID,
                 input: part.state.input,
                 errorText: part.state.error,
-                ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
+                ...(differentModel ? {} : { callProviderMetadata: meta(part.metadata) }),
               })
             // Handle pending/running tool calls to prevent dangling tool_use blocks
             // Anthropic/Claude APIs require every tool_use to have a corresponding tool_result
@@ -747,14 +763,14 @@ export namespace MessageV2 {
                 toolCallId: part.callID,
                 input: part.state.input,
                 errorText: "[Tool execution was interrupted]",
-                ...(differentModel ? {} : { callProviderMetadata: part.metadata }),
+                ...(differentModel ? {} : { callProviderMetadata: meta(part.metadata) }),
               })
           }
           if (part.type === "reasoning") {
             assistantMessage.parts.push({
               type: "reasoning",
               text: part.text,
-              ...(differentModel ? {} : { providerMetadata: part.metadata }),
+              ...(differentModel ? {} : { providerMetadata: meta(part.metadata) }),
             })
           }
         }

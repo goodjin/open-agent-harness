@@ -1,0 +1,114 @@
+# ToolNode
+
+> **Class** in `langgraph.prebuilt`
+
+📖 [View in docs](https://reference.langchain.com/python/langgraph.prebuilt/tool_node/ToolNode)
+
+A node for executing tools in LangGraph workflows.
+
+Handles tool execution patterns including function calls, state injection,
+persistent storage, and control flow. Manages parallel execution,
+error handling.
+
+Use `ToolNode` when building custom workflows that require fine-grained control over
+tool execution—for example, custom routing logic, specialized error handling, or
+non-standard agent architectures.
+
+For standard ReAct-style agents, use [`create_agent`][langchain.agents.create_agent]
+instead. It uses `ToolNode` internally with sensible defaults for the agent loop,
+conditional routing, and error handling.
+
+## Signature
+
+```python
+ToolNode(
+    self,
+    tools: Sequence[BaseTool | Callable],
+    *,
+    name: str = 'tools',
+    tags: list[str] | None = None,
+    handle_tool_errors: bool | str | Callable[..., str] | type[Exception] | tuple[type[Exception], ...] = _default_handle_tool_errors,
+    messages_key: str = 'messages',
+    wrap_tool_call: ToolCallWrapper | None = None,
+    awrap_tool_call: AsyncToolCallWrapper | None = None,
+)
+```
+
+## Description
+
+**Input Formats:**
+
+1. **Graph state** with `messages` key that has a list of messages:
+    - Common representation for agentic workflows
+    - Supports custom messages key via `messages_key` parameter
+
+2. **Message List**: `[AIMessage(..., tool_calls=[...])]`
+    - List of messages with tool calls in the last AIMessage
+
+3. **Direct Tool Calls**: `[{"name": "tool", "args": {...}, "id": "1", "type": "tool_call"}]`
+    - Bypasses message parsing for direct tool execution
+    - For programmatic tool invocation and testing
+
+**Output Formats:**
+
+Output format depends on input type and tool behavior:
+
+**For Regular tools**:
+
+- Dict input → `{"messages": [ToolMessage(...)]}`
+- List input → `[ToolMessage(...)]`
+
+**For Command tools**:
+
+- Returns `[Command(...)]` or mixed list with regular tool outputs
+- `Command` can update state, trigger navigation, or send messages
+
+## Parameters
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `tools` | `Sequence[BaseTool \| Callable]` | Yes | A sequence of tools that can be invoked by this node.  Supports:  - **BaseTool instances**: Tools with schemas and metadata - **Plain functions**: Automatically converted to tools with inferred schemas |
+| `name` | `str` | No | The name identifier for this node in the graph. Used for debugging and visualization. (default: `'tools'`) |
+| `tags` | `list[str] \| None` | No | Optional metadata tags to associate with the node for filtering and organization. (default: `None`) |
+| `handle_tool_errors` | `bool \| str \| Callable[..., str] \| type[Exception] \| tuple[type[Exception], ...]` | No | Configuration for error handling during tool execution. Supports multiple strategies:  - `True`: Catch all errors and return a `ToolMessage` with the default     error template containing the exception details. - `str`: Catch all errors and return a `ToolMessage` with this custom     error message string. - `type[Exception]`: Only catch exceptions with the specified type and     return the default error message for it. - `tuple[type[Exception], ...]`: Only catch exceptions with the specified     types and return default error messages for them. - `Callable[..., str]`: Catch exceptions matching the callable's signature     and return the string result of calling it with the exception. - `False`: Disable error handling entirely, allowing exceptions to     propagate.  Defaults to a callable that:  - Catches tool invocation errors (due to invalid arguments provided by the     model) and returns a descriptive error message - Ignores tool execution errors (they will be re-raised) (default: `_default_handle_tool_errors`) |
+| `messages_key` | `str` | No | The key in the state dictionary that contains the message list. This same key will be used for the output `ToolMessage` objects.  Allows custom state schemas with different message field names. (default: `'messages'`) |
+
+## Extends
+
+- `RunnableCallable`
+
+## Constructors
+
+```python
+__init__(
+    self,
+    tools: Sequence[BaseTool | Callable],
+    *,
+    name: str = 'tools',
+    tags: list[str] | None = None,
+    handle_tool_errors: bool | str | Callable[..., str] | type[Exception] | tuple[type[Exception], ...] = _default_handle_tool_errors,
+    messages_key: str = 'messages',
+    wrap_tool_call: ToolCallWrapper | None = None,
+    awrap_tool_call: AsyncToolCallWrapper | None = None,
+) -> None
+```
+
+| Name | Type |
+|------|------|
+| `tools` | `Sequence[BaseTool \| Callable]` |
+| `name` | `str` |
+| `tags` | `list[str] \| None` |
+| `handle_tool_errors` | `bool \| str \| Callable[..., str] \| type[Exception] \| tuple[type[Exception], ...]` |
+| `messages_key` | `str` |
+| `wrap_tool_call` | `ToolCallWrapper \| None` |
+| `awrap_tool_call` | `AsyncToolCallWrapper \| None` |
+
+
+## Properties
+
+- `name`
+- `tools_by_name`
+
+---
+
+[View source on GitHub](https://github.com/langchain-ai/langgraph/blob/aa322c13cd5f16a3f6254a931a4104e412cd687c/libs/prebuilt/langgraph/prebuilt/tool_node.py#L622)
