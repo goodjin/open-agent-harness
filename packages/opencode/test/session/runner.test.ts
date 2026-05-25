@@ -9,6 +9,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID } from "../../src/session/schema"
 import { SessionRunner } from "../../src/session/runner"
+import { SessionLog } from "../../src/session/log"
 import { LLM } from "../../src/session/llm"
 import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
@@ -921,6 +922,161 @@ describe("SessionRunner", () => {
               expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("native-protocol")
               expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Protocol violation recovered")))).toBe(true)
               expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Read package successfully.")))).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("protocol runner accepts plain markdown final responses", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      type: "agent.protocol.output",
+      version: "1",
+      intent: "execute",
+      title: "Read package",
+      actions: [
+        {
+          type: "action",
+          id: "read_package",
+          title: "Read package",
+          operation: "read",
+          executor: { type: "tool", target: "read", capabilities: ["repo"] },
+          input: { filePath: "package.json" },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        },
+      ],
+    }
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      if (calls === 2) {
+        return {
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "text-start" }
+            yield { type: "text-delta", text: "Plain final answer." }
+            yield { type: "text-end" }
+            yield {
+              type: "finish-step",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        } as never
+      }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Bun.write(path.join(tmp.path, "package.json"), JSON.stringify({ name: "plain-final" }))
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "read package" }],
+                tools: {},
+              })
+              const messages = await Session.messages({ sessionID: session.id })
+              const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
+
+              expect(calls).toBe(2)
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Plain final answer.")))).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.final.plain")).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
             },
           }),
       })

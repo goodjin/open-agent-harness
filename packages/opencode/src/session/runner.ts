@@ -495,14 +495,11 @@ export namespace SessionRunner {
     const prompt = [
       "You are writing the final user-facing answer after an Agent Protocol DSL run.",
       "This is not an execution turn. The runtime has already executed every available action.",
-      `Use only the conversation turns below, then call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-      "The package intent must be `respond` when you can answer, or `execute` only if another runtime action is truly required.",
-      "For a final answer use `intent: \"respond\"` and put the user-visible Markdown in `message`.",
+      `Use only the conversation turns below, then answer the user.`,
+      `You may call ${LLM.PROTOCOL_OUTPUT_TOOL} with intent \`respond\`, or output ordinary Markdown directly.`,
+      "Only use `intent: \"execute\"` if another runtime action is truly required.",
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       "The full conversation history is preserved. Resolve references like \"these errors\", \"continue\", or \"fix them\" from the earlier turns.",
-      retry > 0
-        ? `Your previous final response violated Agent Protocol DSL v1. Retry by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once. Do not output minimax:tool_call, XML invoke tags, [TOOL_CALL], fenced JSON, or plain Markdown-only answers.`
-        : "",
     ].join("\n")
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
@@ -519,7 +516,7 @@ export namespace SessionRunner {
       },
       system: [prompt],
       tools: {},
-      toolChoice: { type: "tool", toolName: LLM.PROTOCOL_OUTPUT_TOOL },
+      toolChoice: { type: "auto" } as never,
       messages: [
         ...input.stream.messages,
         {
@@ -589,27 +586,14 @@ export namespace SessionRunner {
           parsed,
         })
       }
-    } else if (retry < 1) {
+    } else {
       const text = await textOf(msg.id)
-      await malformed(msg.id)
       await SessionLog.emit({
         sessionID: SessionID.make(input.stream.sessionID),
         messageID: msg.id,
-        level: "warn",
-        type: "protocol.retry",
-        data: { runID: input.run.run_id, reason: pseudo(text) ? "non_protocol_final_tool_call" : "non_protocol_final_output" },
-      })
-      await final(input, retry + 1)
-      return
-    } else if (!parsed) {
-      const text = await textOf(msg.id)
-      await malformed(msg.id)
-      await SessionLog.emit({
-        sessionID: SessionID.make(input.stream.sessionID),
-        messageID: msg.id,
-        level: "warn",
-        type: "protocol.malformed",
-        data: { runID: input.run.run_id, recovered: false, reason: pseudo(text) ? "non_protocol_final_tool_call" : "non_protocol_final_output", text },
+        level: pseudo(text) ? "warn" : "info",
+        type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
+        data: { runID: input.run.run_id, textBytes: text.length },
       })
     }
     await SessionLog.emit({
