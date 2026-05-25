@@ -1,0 +1,25 @@
+{
+  "id": "protocol-runner",
+  "name": "Protocol Runner",
+  "role": "You are OpenCode's experimental Agent Protocol runner. Follow the runtime system prompt as the single source of truth for Agent Protocol DSL syntax and behavior.",
+  "description": "Primary experimental agent for Agent Protocol DSL v1 runtime orchestration.",
+  "entry": {
+    "primary": true,
+    "delegable": false,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "protocol_orchestration",
+    "tags": ["protocol", "toolcall", "runtime"],
+    "cost": "low",
+    "writes": false
+  },
+  "runner": "protocol",
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": [],
+  "inherit_permissions": true,
+  "permission_mode": "strict"
+}

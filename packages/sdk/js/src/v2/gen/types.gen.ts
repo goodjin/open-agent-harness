@@ -2204,7 +2204,7 @@ export type AgentManageEffective = {
     cost?: "low" | "medium" | "high"
     writes?: boolean
   }
-  runner: "chat" | "workflow"
+  runner: "chat" | "workflow" | "protocol"
   hidden: boolean
   disabled: boolean
   model?: string
@@ -2290,7 +2290,7 @@ export type AgentManageInfo = {
     /**
      * Which session runtime handles this agent
      */
-    runner?: "chat" | "workflow"
+    runner?: "chat" | "workflow" | "protocol"
     /**
      * How the agent executes workflows
      */
@@ -2380,7 +2380,7 @@ export type AgentManageValidateOutput = {
     /**
      * Which session runtime handles this agent
      */
-    runner?: "chat" | "workflow"
+    runner?: "chat" | "workflow" | "protocol"
     /**
      * How the agent executes workflows
      */
@@ -2475,7 +2475,7 @@ export type AgentManageSaveInput = {
     /**
      * Which session runtime handles this agent
      */
-    runner?: "chat" | "workflow"
+    runner?: "chat" | "workflow" | "protocol"
     /**
      * How the agent executes workflows
      */
@@ -2563,7 +2563,7 @@ export type AgentManagePatchInput = {
     /**
      * Which session runtime handles this agent
      */
-    runner?: "chat" | "workflow"
+    runner?: "chat" | "workflow" | "protocol"
     /**
      * How the agent executes workflows
      */
@@ -2680,7 +2680,7 @@ export type Agent = {
     cost?: "low" | "medium" | "high"
     writes?: boolean
   }
-  runner?: "chat" | "workflow"
+  runner?: "chat" | "workflow" | "protocol"
   native?: boolean
   hidden?: boolean
   topP?: number
@@ -4063,6 +4063,61 @@ export type SessionLogResponses = {
 }
 
 export type SessionLogResponse = SessionLogResponses[keyof SessionLogResponses]
+
+export type SessionProtocolTraceData = {
+  body?: never
+  path: {
+    sessionID: string
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/protocol/{runID}/trace"
+}
+
+export type SessionProtocolTraceErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionProtocolTraceError = SessionProtocolTraceErrors[keyof SessionProtocolTraceErrors]
+
+export type SessionProtocolTraceResponses = {
+  /**
+   * Protocol trace
+   */
+  200: {
+    session_id: string
+    run_id: string
+    type: "agent.protocol.trace"
+    version: "1"
+    declaration?: unknown
+    result?: unknown
+    actions: Array<{
+      [key: string]: unknown
+    }>
+    tool_calls: Array<{
+      [key: string]: unknown
+    }>
+    metrics: {
+      actions: number
+      internal_tool_calls: number
+      direct_model_tool_calls: number
+      model_visible_bytes: number
+      raw_output_bytes: number
+      duration_ms: number
+    }
+  } | null
+}
+
+export type SessionProtocolTraceResponse = SessionProtocolTraceResponses[keyof SessionProtocolTraceResponses]
 
 export type SessionDeleteData = {
   body?: never

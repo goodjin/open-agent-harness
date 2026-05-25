@@ -240,6 +240,50 @@ describe("session.message-v2.toModelMessage", () => {
     expect(result.every((item) => modelMessageSchema.safeParse(item).success)).toBe(true)
   })
 
+  test("omits protocol result metadata from provider options", () => {
+    const userID = "m-protocol-user"
+    const assistantID = "m-protocol-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u-protocol"),
+            type: "text",
+            text: "continue",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a-protocol"),
+            type: "text",
+            text: "<protocol-result>{}</protocol-result>",
+            metadata: {
+              kind: "protocol",
+              action: "completed",
+              protocol: { run_id: "apr_test", status: "completed" },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "continue" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "<protocol-result>{}</protocol-result>" }],
+      },
+    ])
+  })
+
   test("converts user text/file parts and injects compaction/subtask prompts", () => {
     const messageID = "m-user"
 

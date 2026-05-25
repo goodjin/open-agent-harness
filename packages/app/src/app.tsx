@@ -47,6 +47,8 @@ import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
 
 const Home = lazy(() => import("@/pages/home"))
+const Harness = lazy(() => import("@/pages/harness"))
+const HarnessHome = lazy(() => import("@/pages/harness-home"))
 const Session = lazy(() => import("@/pages/session"))
 const Loading = () => <div class="size-full" />
 
@@ -65,6 +67,18 @@ const SessionRoute = () => (
 )
 
 const SessionIndexRoute = () => <Navigate href="session" />
+
+const HarnessRoute = () => (
+  <Suspense fallback={<Loading />}>
+    <Harness />
+  </Suspense>
+)
+
+const HarnessHomeRoute = () => (
+  <Suspense fallback={<Loading />}>
+    <HarnessHome />
+  </Suspense>
+)
 
 function UiI18nBridge(props: ParentProps) {
   const language = useLanguage()
@@ -282,8 +296,10 @@ export function AppInterface(props: {
               root={(routerProps) => <RouterRoot appChildren={props.children}>{routerProps.children}</RouterRoot>}
             >
               <Route path="/" component={HomeRoute} />
+              <Route path="/harness" component={HarnessHomeRoute} />
               <Route path="/:dir" component={DirectoryLayout}>
                 <Route path="/" component={SessionIndexRoute} />
+                <Route path="/harness" component={HarnessRoute} />
                 <Route path="/session/:id?" component={SessionRoute} />
               </Route>
             </Dynamic>

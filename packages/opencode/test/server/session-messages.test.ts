@@ -8,6 +8,7 @@ import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { Log } from "../../src/util/log"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
+import { SessionLog } from "../../src/session/log"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -128,6 +129,35 @@ describe("session messages endpoint", () => {
             expect(res.status).toBe(200)
             const body = (await res.json()) as MessageV2.WithParts[]
             expect(body).toHaveLength(510)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("returns exported protocol trace", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await SessionLog.emit({
+              sessionID: session.id,
+              level: "info",
+              type: "protocol.started",
+              data: { runID: "apr_route", title: "Route" },
+            })
+
+            const app = Server.Default()
+            const res = await app.request(`/session/${session.id}/protocol/apr_route/trace`)
+            const body = await res.json()
+
+            expect(res.status).toBe(200)
+            expect(body.type).toBe("agent.protocol.trace")
+            expect(body.run_id).toBe("apr_route")
 
             await Session.remove(session.id)
           },

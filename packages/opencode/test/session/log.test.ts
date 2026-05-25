@@ -63,4 +63,48 @@ describe("session log", () => {
         }),
     })
   })
+
+  test("exports protocol traces with comparison metrics", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_protocol_log"),
+          fn: async () => {
+            const session = await Session.create({})
+
+            await SessionLog.emit({
+              sessionID: session.id,
+              level: "info",
+              type: "protocol.started",
+              data: { runID: "apr_1", title: "Inspect" },
+            })
+            await SessionLog.emit({
+              sessionID: session.id,
+              level: "info",
+              type: "protocol.action.tool_call",
+              data: { runID: "apr_1", actionID: "inspect", callID: "call_1", tool: "grep", outputBytes: 200 },
+            })
+            await SessionLog.emit({
+              sessionID: session.id,
+              level: "info",
+              type: "protocol.completed",
+              data: {
+                runID: "apr_1",
+                result: { type: "agent.protocol.result", status: "completed" },
+                metrics: { modelVisibleBytes: 50 },
+              },
+            })
+
+            const trace = await SessionLog.protocolTrace({ sessionID: session.id, runID: "apr_1" })
+
+            expect(trace?.type).toBe("agent.protocol.trace")
+            expect(trace?.metrics.internal_tool_calls).toBe(1)
+            expect(trace?.metrics.raw_output_bytes).toBe(200)
+            expect(trace?.metrics.model_visible_bytes).toBe(50)
+          },
+        }),
+    })
+  })
 })

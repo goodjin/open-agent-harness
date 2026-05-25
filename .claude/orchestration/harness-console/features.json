@@ -1,0 +1,205 @@
+{
+  "mission_id": "harness-console",
+  "name": "Harness Console",
+  "features": [
+    {
+      "id": "phase-01-readonly-backend-schema",
+      "delivery_type": "interface",
+      "task_summary": "定义 Harness 只读数据模型和读取接口。",
+      "preconditions": [],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/01-phase-readonly-console.md",
+      "task_ref": "T-01~T-03",
+      "output_files": [
+        "packages/opencode/src/harness/schema.ts",
+        "packages/opencode/src/harness/store.ts",
+        "packages/opencode/src/server/harness.ts"
+      ],
+      "test_refs": [
+        "packages/opencode/test/harness/read-api.test.ts"
+      ],
+      "verificationSteps": [
+        "验证空 Harness Store 返回空集合而不是错误。",
+        "验证 fixture Run 能通过 API 读取 Run、Task、Artifact、Decision 和 Event。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-01-readonly-frontend-console",
+      "delivery_type": "presentation",
+      "task_summary": "实现只读 Harness Console 页面，展示 Run、Task、Artifact、Decision 和 Event。",
+      "preconditions": [
+        "phase-01-readonly-backend-schema"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/01-phase-readonly-console.md",
+      "task_ref": "T-04~T-07",
+      "output_files": [
+        "packages/app/src/pages/harness.tsx",
+        "packages/app/src/pages/harness.css"
+      ],
+      "test_refs": [
+        "packages/app/e2e/harness/readonly.spec.ts"
+      ],
+      "verificationSteps": [
+        "用户能在新界面看到 Run 列表和空态。",
+        "用户点击 Run 后能看到 Task、Artifact、Decision 和 Event 的只读详情。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-02-command-runtime",
+      "delivery_type": "interface",
+      "task_summary": "实现 Harness Command API 和 Runtime 状态迁移。",
+      "preconditions": [
+        "phase-01-readonly-backend-schema"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/02-phase-operable-console.md",
+      "task_ref": "T-01~T-04",
+      "output_files": [
+        "packages/opencode/src/harness/command.ts",
+        "packages/opencode/src/harness/runtime.ts",
+        "packages/opencode/src/harness/events.ts",
+        "packages/opencode/src/harness/projection.ts"
+      ],
+      "test_refs": [
+        "packages/opencode/test/harness/command-runtime.test.ts"
+      ],
+      "verificationSteps": [
+        "验证 Command 通过 Runtime 校验后产生 Event。",
+        "验证非法 Command 不改变 Projection。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-02-operable-frontend",
+      "delivery_type": "presentation",
+      "task_summary": "为 Harness Console 增加创建、暂停、恢复、重试和回答决策等操作。",
+      "preconditions": [
+        "phase-02-command-runtime",
+        "phase-01-readonly-frontend-console"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/02-phase-operable-console.md",
+      "task_ref": "T-05~T-09",
+      "output_files": [
+        "packages/app/src/pages/harness.tsx",
+        "packages/app/src/pages/harness.css"
+      ],
+      "test_refs": [
+        "packages/app/e2e/harness/actions.spec.ts"
+      ],
+      "verificationSteps": [
+        "用户能创建 Run 并进入详情页。",
+        "用户能回答 Decision，页面显示更新后的 Projection 状态。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-03-governance-backend",
+      "delivery_type": "interface",
+      "task_summary": "实现 Memory、Concept、Authority 和 Gate Detail 的治理接口。",
+      "preconditions": [
+        "phase-02-command-runtime"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/03-phase-governance-console.md",
+      "task_ref": "T-01~T-06",
+      "output_files": [
+        "packages/opencode/src/harness/memory.ts",
+        "packages/opencode/src/harness/concept.ts"
+      ],
+      "test_refs": [
+        "packages/opencode/test/harness/memory-scope.test.ts",
+        "packages/opencode/test/harness/concept-replacement.test.ts"
+      ],
+      "verificationSteps": [
+        "验证 Project、Team、Global Memory 查询结果带有 Scope 和 Namespace。",
+        "验证 Concept Replacement 缺少 new_information 时被拒绝。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-03-governance-frontend",
+      "delivery_type": "presentation",
+      "task_summary": "实现 Memory、Concept、Authority 和 Gate Detail 页面。",
+      "preconditions": [
+        "phase-03-governance-backend",
+        "phase-02-operable-frontend"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/03-phase-governance-console.md",
+      "task_ref": "T-07~T-11",
+      "output_files": [
+        "packages/app/src/pages/harness.tsx",
+        "packages/app/src/pages/harness.css"
+      ],
+      "test_refs": [
+        "packages/app/e2e/harness/governance.spec.ts"
+      ],
+      "verificationSteps": [
+        "用户能按 Scope 查看 Memory。",
+        "用户能查看 Concept 来源、替换关系和影响扫描结果。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-04-visualization-backend",
+      "delivery_type": "interface",
+      "task_summary": "实现任务图、概念图、事件链和审计导出的后端接口。",
+      "preconditions": [
+        "phase-03-governance-backend"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/04-phase-visualization-audit.md",
+      "task_ref": "T-01~T-05",
+      "output_files": [
+        "packages/opencode/src/harness/graph.ts",
+        "packages/opencode/src/harness/audit.ts"
+      ],
+      "test_refs": [
+        "packages/opencode/test/harness/graph-api.test.ts",
+        "packages/opencode/test/harness/event-chain.test.ts",
+        "packages/opencode/test/harness/audit-export.test.ts"
+      ],
+      "verificationSteps": [
+        "验证 Task Graph 和 Concept Graph 可查询。",
+        "验证审计导出包含 Run、Decision、Gate 和 Artifact。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    },
+    {
+      "id": "phase-04-visualization-frontend",
+      "delivery_type": "presentation",
+      "task_summary": "实现 Task Graph、Concept Graph、Event Explorer、Run Comparison 和 Audit Export UI。",
+      "preconditions": [
+        "phase-04-visualization-backend",
+        "phase-03-governance-frontend"
+      ],
+      "plan_doc": "docs/agent-rewrite/harness-console-plan/04-phase-visualization-audit.md",
+      "task_ref": "T-06~T-10",
+      "output_files": [
+        "packages/app/src/pages/harness.tsx",
+        "packages/app/src/pages/harness.css"
+      ],
+      "test_refs": [
+        "packages/app/e2e/harness/visualization.spec.ts"
+      ],
+      "verificationSteps": [
+        "用户能在界面上看到 Task Graph 并点击节点查看详情。",
+        "用户能过滤 Event Explorer 并导出审计报告。"
+      ],
+      "status": "pending",
+      "test_status": "pending",
+      "audit_status": "pending"
+    }
+  ]
+}

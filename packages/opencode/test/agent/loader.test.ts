@@ -94,6 +94,7 @@ describe("AgentTemplateLoader", () => {
         momus: ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
         "workflow-runner": ["workflow_orchestration", "low", true, true, false, true, false, false],
+        "protocol-runner": ["protocol_orchestration", "low", false, true, false, true, false, false],
       } as const
       const agents = await loader.loadAll()
 
@@ -116,11 +117,12 @@ describe("AgentTemplateLoader", () => {
       })
     })
 
-    test("package templates default to chat runner except workflow-runner", async () => {
+    test("package templates default to chat runner except special runners", async () => {
       const agents = await loader.loadAll()
 
       for (const agent of agents.filter((item) => item.source === "package")) {
-        expect(agent.meta.runner).toBe(agent.id === "workflow-runner" ? "workflow" : "chat")
+        const expected = agent.id === "workflow-runner" ? "workflow" : agent.id === "protocol-runner" ? "protocol" : "chat"
+        expect(agent.meta.runner).toBe(expected)
       }
     })
 
@@ -133,6 +135,17 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.meta.capability.purpose).toBe("workflow_orchestration")
       expect(agent?.identity).toContain("workflow DAG")
       expect(agent?.rules).toContain("workflow.create")
+    })
+
+    test("protocol-runner package template exposes protocol metadata", async () => {
+      const agents = await loader.loadAll()
+      const agent = agents.find((item) => item.id === "protocol-runner")
+
+      expect(agent).toBeDefined()
+      expect(agent?.meta.runner).toBe("protocol")
+      expect(agent?.meta.capability.purpose).toBe("protocol_orchestration")
+      expect(agent?.identity).toContain("Agent Protocol")
+      expect(agent?.rules).toBe("")
     })
 
     test("registry exposes workflow-runner runner metadata", async () => {

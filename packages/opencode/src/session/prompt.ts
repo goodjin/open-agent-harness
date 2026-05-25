@@ -11,18 +11,17 @@ import { Session } from "."
 import { Agent } from "../agent/agent"
 import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
-import { type Tool as AITool, tool, jsonSchema, type ToolCallOptions, asSchema } from "ai"
+import { type Tool as AITool, tool, jsonSchema } from "ai"
 import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
-import { ProviderTransform } from "../provider/transform"
+import { RuntimeTools } from "./runtime-tools"
 import { SystemPrompt } from "./system"
 import { InstructionPrompt } from "./instruction"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
 import BUILD_SWITCH from "../session/prompt/build-switch.txt"
 import MAX_STEPS from "../session/prompt/max-steps.txt"
 import { defer } from "../util/defer"
-import { ToolRegistry } from "../tool/registry"
 import { MCP } from "../mcp"
 import { LSP } from "../lsp"
 import { ReadTool } from "../tool/read"
@@ -47,9 +46,7 @@ import { SessionLog } from "./log"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
-import { Truncate } from "@/tool/truncation"
 import { decodeDataUrl } from "@/util/data-url"
-import { Metrics } from "@/observability/metrics"
 import { Trace } from "@/observability/trace"
 import { AgentEntry } from "@/agent/entry"
 
@@ -65,23 +62,6 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
-
-type McpResult = {
-  content: (
-    | { type: "text"; text: string }
-    | { type: "image"; mimeType: string; data: string }
-    | {
-        type: "resource"
-        resource: {
-          uri: string
-          text?: string
-          blob?: string
-          mimeType?: string
-        }
-      }
-  )[]
-  metadata?: Record<string, unknown>
-}
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
@@ -621,8 +601,9 @@ export namespace SessionPrompt {
       const bypassAgentCheck = lastUserMsg?.parts.some((p) => p.type === "agent") ?? false
 
       let tools: Record<string, AITool>
+      let runtime: RuntimeTools.Info | undefined
       try {
-        tools = await resolveTools({
+        runtime = await resolveTools({
           agent,
           session,
           model,
@@ -631,6 +612,10 @@ export namespace SessionPrompt {
           bypassAgentCheck,
           messages: msgs,
         })
+        if (agent.runner === "protocol") {
+          runtime = await stable(sessionID, session, runtime)
+        }
+        tools = agent.runner === "protocol" ? {} : runtime.tools
 
         // Inject StructuredOutput tool if JSON schema mode enabled
         if (lastUser.format?.type === "json_schema") {
@@ -707,6 +692,7 @@ export namespace SessionPrompt {
             : []),
         ],
         tools,
+        runtimeTools: runtime,
         model,
         toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
@@ -808,169 +794,32 @@ export namespace SessionPrompt {
     processor: SessionProcessor.Info
     bypassAgentCheck: boolean
     messages: MessageV2.WithParts[]
-  }) {
+  }): Promise<RuntimeTools.Info> {
     using _ = log.time("resolveTools")
-    const tools: Record<string, AITool> = {}
+    return RuntimeTools.build(input)
+  }
 
-    const context = (args: any, options: ToolCallOptions): Tool.Context => ({
-      sessionID: input.session.id,
-      abort: options.abortSignal!,
-      messageID: input.processor.message.id,
-      callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
-      agent: input.agent.name,
-      messages: input.messages,
-      metadata: async (val: { title?: string; metadata?: any }) => {
-        const match = input.processor.partFromToolCall(options.toolCallId)
-        if (match && match.state.status === "running") {
-          await Session.updatePart({
-            ...match,
-            state: {
-              title: val.title,
-              metadata: val.metadata,
-              status: "running",
-              input: args,
-              time: {
-                start: Date.now(),
-              },
-            },
-          })
-        }
-      },
-      async ask(req) {
-        await PermissionNext.ask({
-          ...req,
-          sessionID: input.session.id,
-          workspaceID: input.session.workspaceID,
-          tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: PermissionNext.merge(input.agent.permission, input.session.permission ?? []),
-        })
+  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
+    const tools = prev.tools && typeof prev.tools === "object" && !Array.isArray(prev.tools) ? prev.tools as Record<string, unknown> : {}
+    if (typeof tools.prompt === "string") {
+      return { ...runtime, prompt: tools.prompt }
+    }
+    await Session.setDslContext({
+      sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          tools: {
+            prompt: runtime.prompt,
+            catalog: runtime.catalog.map((item) => item.id),
+          },
+        },
       },
     })
-
-    for (const item of await ToolRegistry.tools(
-      { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
-      input.agent,
-    )) {
-      const schema = ProviderTransform.schema(input.model, z.toJSONSchema(item.parameters))
-      tools[item.id] = tool({
-        id: item.id as any,
-        description: item.description,
-        inputSchema: jsonSchema(schema as any),
-        async execute(args, options) {
-          const ctx = context(args, options)
-          const start = Date.now()
-          const span = Trace.begin("tool.call", { tool: item.id, sessionID: input.session.id })
-          const result = await item.execute(args, ctx).then(
-            (value) => {
-              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "completed" })
-              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "completed" }, start)
-              return value
-            },
-            (err: unknown) => {
-              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "error" })
-              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "error" }, start)
-              throw err
-            },
-          ).finally(() => Trace.end(span.id))
-          const output = {
-            ...result,
-            attachments: result.attachments?.map((attachment) => ({
-              ...attachment,
-              id: PartID.ascending(),
-              sessionID: ctx.sessionID,
-              messageID: input.processor.message.id,
-            })),
-          }
-          return output
-        },
-      })
-    }
-
-    for (const [key, item] of Object.entries(await MCP.tools())) {
-      const execute = item.execute
-      if (!execute) continue
-
-      const transformed = ProviderTransform.schema(input.model, asSchema(item.inputSchema).jsonSchema)
-      item.inputSchema = jsonSchema(transformed)
-      // Wrap execute to apply permission checks and format output.
-      item.execute = async (args, opts) => {
-        const ctx = context(args, opts)
-
-        await ctx.ask({
-          permission: key,
-          metadata: {},
-          patterns: ["*"],
-          always: ["*"],
-        })
-
-        const start = Date.now()
-        const span = Trace.begin("tool.call", { tool: key, sessionID: input.session.id })
-        const result = await (execute(args, opts) as Promise<McpResult>).then(
-          (value) => {
-            Metrics.emit("opencode_tool_call_total", { tool: key, status: "completed" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "completed" }, start)
-            return value
-          },
-          (err: unknown) => {
-            Metrics.emit("opencode_tool_call_total", { tool: key, status: "error" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "error" }, start)
-            throw err
-          },
-        ).finally(() => Trace.end(span.id))
-
-        const textParts: string[] = []
-        const attachments: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[] = []
-
-        for (const contentItem of result.content) {
-          if (contentItem.type === "text") {
-            textParts.push(contentItem.text)
-          } else if (contentItem.type === "image") {
-            attachments.push({
-              type: "file",
-              mime: contentItem.mimeType,
-              url: `data:${contentItem.mimeType};base64,${contentItem.data}`,
-            })
-          } else if (contentItem.type === "resource") {
-            const { resource } = contentItem
-            if (resource.text) {
-              textParts.push(resource.text)
-            }
-            if (resource.blob) {
-              attachments.push({
-                type: "file",
-                mime: resource.mimeType ?? "application/octet-stream",
-                url: `data:${resource.mimeType ?? "application/octet-stream"};base64,${resource.blob}`,
-                filename: resource.uri,
-              })
-            }
-          }
-        }
-
-        const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
-        const metadata = {
-          ...(result.metadata ?? {}),
-          truncated: truncated.truncated,
-          ...(truncated.truncated && { outputPath: truncated.outputPath }),
-        }
-
-        return {
-          title: "",
-          metadata,
-          output: truncated.content,
-          attachments: attachments.map((attachment) => ({
-            ...attachment,
-            id: PartID.ascending(),
-            sessionID: ctx.sessionID,
-            messageID: input.processor.message.id,
-          })),
-          content: result.content, // directly return content to preserve ordering when outputting to model
-        }
-      }
-      tools[key] = item
-    }
-
-    return tools
+    return runtime
   }
 
   /** @internal Exported for testing */

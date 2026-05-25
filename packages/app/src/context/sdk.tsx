@@ -41,6 +41,15 @@ export const { use: useSDK, provider: SDKProvider } = createSimpleContext({
       get url() {
         return globalSDK.url
       },
+      request(input: string, init?: RequestInit) {
+        const headers = new Headers(init?.headers)
+        const encoded = /[^\x00-\x7F]/.test(directory()) ? encodeURIComponent(directory()) : directory()
+        headers.set("x-opencode-directory", encoded)
+        return globalSDK.request(input, {
+          ...init,
+          headers,
+        })
+      },
       createClient(opts: Parameters<typeof globalSDK.createClient>[0]) {
         return globalSDK.createClient(opts)
       },

@@ -6,11 +6,13 @@ import {
   wrapLanguageModel,
   type ModelMessage,
   type StreamTextResult,
+  type ToolChoice,
   type Tool,
   type ToolSet,
   tool,
   jsonSchema,
 } from "ai"
+import z from "zod"
 import { mergeDeep, pipe } from "remeda"
 import { ProviderTransform } from "@/provider/transform"
 import { Config } from "@/config/config"
@@ -21,10 +23,76 @@ import { SystemPrompt } from "./system"
 import { Flag } from "@/flag/flag"
 import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
+import type { RuntimeTools } from "./runtime-tools"
+import { AgentProtocol } from "@/protocol/schema"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+  export const PROTOCOL_OUTPUT_TOOL = "AgentProtocolOutput"
+  const PROTOCOL = [
+    "# Agent Protocol DSL v1",
+    "",
+    "You are running as a protocol runner. Do not call low-level tools directly for ordinary work.",
+    "You have exactly one native tool available: `AgentProtocolOutput`.",
+    "Call `AgentProtocolOutput` exactly once every assistant turn to submit the next protocol package.",
+    "Every turn must end by making this native tool call. There are no exceptions.",
+    "If you only need to answer the user, still call `AgentProtocolOutput` with `intent: \"respond\"` and put the answer in `message`.",
+    "",
+    "Input contract:",
+    "- Conversation input is a sequence of turns. Treat each `<turn role=\"...\">...</turn>` as one prior user, assistant, or runtime turn.",
+    "- User turn input: ordinary user text, optionally with prior conversation context. It does not contain runtime results by itself.",
+    "- Runtime turn input: a `<turn role=\"runtime\" source=\"agent-protocol\">...</turn>` contains structured Markdown observations produced by the protocol executor.",
+    "- Available tool input: the stable system prefix includes an `Available Protocol Tools` catalog. Use it to choose concrete tool ids and JSON argument schemas.",
+    "",
+    "Decision rule:",
+    "- Always reason from the input turns, then decide the next protocol intent yourself.",
+    "- Use `intent: \"execute\"` when more runtime work is needed: project inspection, file reads, command execution, summarization from repo state, code review, edits, or delegation.",
+    "- Use `intent: \"respond\"` when you have enough information to show a user-facing answer.",
+    "- Use `intent: \"stop\"` only when the current turn is complete and there is no user-facing content to add.",
+    "",
+    "Output contract:",
+    "- Do not write the protocol package as text, Markdown, XML, code fences, or provider-specific invocation syntax.",
+    "- Submit the protocol package only by calling the native `AgentProtocolOutput` tool.",
+    "- Never answer in plain text instead of calling `AgentProtocolOutput`.",
+    "- Never print JSON for the protocol; JSON belongs only inside the native tool call arguments.",
+    "- For `intent: \"execute\"`, include concrete runtime `actions`.",
+    "- For `intent: \"respond\"` or `intent: \"stop\"`, include no actions and put the user-visible Markdown in `message`.",
+    "- You must never output fake tool output or fake runtime summaries.",
+    "",
+    "Forbidden output:",
+    "- Provider-specific textual invocation syntax such as `minimax:tool_call`, `[TOOL_CALL]`, `tool_call`, XML invoke tags, or `tool =>`.",
+    "- More than one `AgentProtocolOutput` call in a single assistant message.",
+    "- Any tool result, runtime result, or final conclusion before the runtime has returned an observation.",
+    "",
+    "Field semantics:",
+    "- `AgentProtocolOutput.input.type`: always `agent.protocol.output`.",
+    "- `AgentProtocolOutput.input.intent`: `execute`, `respond`, or `stop`.",
+    "- `AgentProtocolOutput.input.message`: user-visible Markdown for `respond` or brief progress text for `execute`.",
+    "- `id`: stable unique identifier used by `depends_on` and `context_refs`.",
+    "- `title`: short human readable label.",
+    "- `operation`: semantic intent label for humans, logs, and agent selection. It does not change tool availability; common values include `inspect`, `search`, `read`, `edit`, `run`, `summarize`, and `review_code`.",
+    "- `executor.type`: `tool` for runtime tools, `agent` only for semantic delegation to another agent.",
+    "- `executor.target`: for `tool`, this MUST be a concrete tool id from the Available Protocol Tools catalog; never use `auto` for tool actions.",
+    "- `executor.target`: for `agent`, use `auto` unless a concrete delegable agent is required.",
+    "- `input`: for `tool`, this is the exact JSON argument object required by the selected tool schema.",
+    "- `depends_on`: action ids that must finish before this action.",
+    "- `context_refs`: prior action ids whose summaries should inform this action.",
+    "- `result_policy`: `summary` by default; use `full` only when the final answer needs the full file content.",
+    "",
+    "Tool target requirements:",
+    "- Use the Available Protocol Tools catalog below for tool ids, descriptions, and input schemas.",
+    "- Choose the concrete tool id and arguments from the catalog; encode them only inside `AgentProtocolOutput.actions`.",
+    "- Do not invent tool names or parameters outside the listed schemas.",
+    "",
+    "Planning rules:",
+    "- Do not create vague tool actions with `target: auto`; name the concrete tool and provide its `input`.",
+    "- If you do not know exact files yet, declare a discovery action such as `glob` or `grep` with valid schema arguments.",
+    "- The runtime executes exactly what you declare. It will not infer project type, framework, file names, or search patterns from natural language.",
+    "Use `executor.type: \"agent\"` only for semantic delegation to another agent. Use `target: \"auto\"` unless a concrete agent is required.",
+    "",
+    "The model-visible contract is the native `AgentProtocolOutput` tool schema.",
+  ].join("\n")
 
   export type StreamInput = {
     user: MessageV2.User
@@ -38,17 +106,23 @@ export namespace LLM {
     small?: boolean
     tools: Record<string, Tool>
     retries?: number
-    toolChoice?: "auto" | "required" | "none"
+    toolChoice?: ToolChoice<ToolSet>
+    runtimeTools?: RuntimeTools.Info
+    structuredOutput?: boolean
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown>
 
-  export function compose(input: Pick<StreamInput, "agent" | "model" | "system" | "user"> & { isCodex: boolean }) {
+  export function compose(input: Pick<StreamInput, "agent" | "model" | "system" | "user" | "runtimeTools" | "structuredOutput"> & { isCodex: boolean }) {
+    const protocol = input.agent.runner === "protocol" || input.structuredOutput === true
+    const prompt = protocol
+      ? [input.agent.prompt, PROTOCOL, input.runtimeTools?.prompt].filter((item) => item).join("\n\n")
+      : input.agent.prompt
     return [
       [
         // use agent prompt otherwise provider prompt
         // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
-        ...(input.agent.prompt ? [input.agent.prompt] : input.isCodex ? [] : SystemPrompt.provider(input.model)),
+        ...(prompt ? [prompt] : input.isCodex ? [] : SystemPrompt.provider(input.model)),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
@@ -121,7 +195,31 @@ export namespace LLM {
     const maxOutputTokens =
       isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
-    const tools = await resolveTools(input)
+    const tools: ToolSet = input.agent.runner === "protocol"
+      ? {
+          [PROTOCOL_OUTPUT_TOOL]: tool({
+            description: "Submit exactly one Agent Protocol package to the runtime. This is the only allowed tool for protocol-runner.",
+            inputSchema: jsonSchema(ProviderTransform.schema(input.model, z.toJSONSchema(AgentProtocol.Structured)) as never),
+            execute: async () => ({
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            }),
+          }),
+          invalid: tool({
+            description: "Internal protocol violation sink. Do not call.",
+            inputSchema: z.object({
+              tool: z.string(),
+              error: z.string(),
+            }),
+            execute: async (args) => ({
+              title: "Invalid Protocol Tool Call",
+              output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in an action's executor.target instead. ${args.error}`,
+              metadata: { protocol: true, violation: "direct_tool_call", tool: args.tool },
+            }),
+          }),
+        }
+      : await resolveTools(input)
 
     // LiteLLM and some Anthropic proxies require the tools parameter to be present
     // when message history contains tool calls, even if no tools are being used.
@@ -143,6 +241,21 @@ export namespace LLM {
       })
     }
 
+    const model = wrapLanguageModel({
+      model: language,
+      middleware: [
+        {
+          async transformParams(args) {
+            if (args.type === "stream" || args.type === "generate") {
+              // @ts-expect-error
+              args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+            }
+            return args.params
+          },
+        },
+      ],
+    })
+
     return streamText({
       onError(error) {
         l.error("stream error", {
@@ -150,6 +263,20 @@ export namespace LLM {
         })
       },
       async experimental_repairToolCall(failed) {
+        if (input.agent.runner === "protocol" && failed.toolCall.toolName !== PROTOCOL_OUTPUT_TOOL) {
+          const fixed = protocol(failed.toolCall.toolName, failed.toolCall.input, failed.error.message, input.runtimeTools)
+          if (fixed) {
+            l.warn("recovering direct protocol tool call", {
+              tool: failed.toolCall.toolName,
+              repaired: PROTOCOL_OUTPUT_TOOL,
+            })
+            return {
+              ...failed.toolCall,
+              toolName: PROTOCOL_OUTPUT_TOOL,
+              input: JSON.stringify(fixed),
+            }
+          }
+        }
         const lower = failed.toolCall.toolName.toLowerCase()
         if (lower !== failed.toolCall.toolName && tools[lower]) {
           l.info("repairing tool call", {
@@ -176,7 +303,7 @@ export namespace LLM {
       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
       tools,
-      toolChoice: input.toolChoice,
+      toolChoice: input.agent.runner === "protocol" ? (input.toolChoice ?? { type: "tool", toolName: PROTOCOL_OUTPUT_TOOL }) as ToolChoice<ToolSet> : input.toolChoice,
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {
@@ -202,22 +329,9 @@ export namespace LLM {
             content: x,
           }),
         ),
-        ...input.messages,
+        ...prepareMessages(input),
       ],
-      model: wrapLanguageModel({
-        model: language,
-        middleware: [
-          {
-            async transformParams(args) {
-              if (args.type === "stream") {
-                // @ts-expect-error
-                args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
-              }
-              return args.params
-            },
-          },
-        ],
-      }),
+      model,
       experimental_telemetry: {
         isEnabled: cfg.experimental?.openTelemetry,
         metadata: {
@@ -226,6 +340,52 @@ export namespace LLM {
         },
       },
     })
+  }
+
+  function protocol(tool: string, input: unknown, error: string, runtime: RuntimeTools.Info | undefined) {
+    const name = tool.toLowerCase()
+    const found = runtime?.catalog.find((item) => item.id === name)
+    if (!found) return
+    return {
+      type: "agent.protocol.output",
+      version: "1",
+      intent: "execute",
+      persist: false,
+      title: `Recovered direct ${name} call`,
+      message: `Protocol violation recovered: the model attempted a direct \`${tool}\` native tool call. Converted it to an Agent Protocol action and continued.`,
+      actions: [
+        {
+          type: "action",
+          id: `recovered_${safe(name)}`,
+          title: `Recovered ${name}`,
+          description: `Recovered from direct native tool call. Original error: ${error}`,
+          operation: name,
+          executor: { type: "tool", target: found.id, capabilities: [] },
+          input: object(input),
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        },
+      ],
+    }
+  }
+
+  function object(input: unknown): Record<string, unknown> {
+    if (typeof input === "string") {
+      try {
+        const json = JSON.parse(input)
+        if (json && typeof json === "object" && !Array.isArray(json)) return json as Record<string, unknown>
+      } catch {
+        return {}
+      }
+      return {}
+    }
+    if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>
+    return {}
+  }
+
+  function safe(input: string) {
+    return input.replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
@@ -239,6 +399,33 @@ export namespace LLM {
       }
     }
     return input.tools
+  }
+
+  export function prepareMessages(input: Pick<StreamInput, "agent" | "messages">): ModelMessage[] {
+    if (input.agent.runner !== "protocol") return input.messages
+    return turns(input.messages)
+  }
+
+  function turns(messages: ModelMessage[]): ModelMessage[] {
+    if (messages.length === 1) {
+      const text = content(messages[0]!.content)
+      if (/^\s*<turn\b/.test(text)) return [{ role: "user", content: text }]
+    }
+    return messages.map((item, idx) => ({
+      role: "user",
+      content: `<turn index="${idx + 1}" role="${item.role}">\n${content(item.content)}\n</turn>`,
+    }))
+  }
+
+  function content(input: ModelMessage["content"]) {
+    if (typeof input === "string") return input
+    if (!Array.isArray(input)) return JSON.stringify(input)
+    return input
+      .map((item) => {
+        if ("type" in item && item.type === "text") return item.text
+        return JSON.stringify(item)
+      })
+      .join("\n")
   }
 
   // Check if messages contain any tool-call content

@@ -1,9 +1,11 @@
-import { base64Decode } from "@opencode-ai/util/encode"
+import { base64Decode, base64Encode } from "@opencode-ai/util/encode"
 
 export function decode64(value: string | undefined) {
   if (value === undefined) return
   try {
-    return base64Decode(value)
+    const decoded = base64Decode(value)
+    if (base64Encode(decoded) !== value) return
+    return decoded
   } catch {
     return
   }

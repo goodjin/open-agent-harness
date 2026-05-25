@@ -192,6 +192,38 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .get(
+      "/:sessionID/protocol/:runID/trace",
+      describeRoute({
+        summary: "Get protocol trace",
+        description: "Retrieve a structured Agent Protocol DSL trace for comparison with ordinary tool calls.",
+        tags: ["Session"],
+        operationId: "session.protocol.trace",
+        responses: {
+          200: {
+            description: "Protocol trace",
+            content: {
+              "application/json": {
+                schema: resolver(SessionLog.ProtocolTrace.nullable()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.get.schema,
+          runID: z.string(),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        await Session.get(params.sessionID)
+        return c.json((await SessionLog.protocolTrace({ sessionID: params.sessionID, runID: params.runID })) ?? null)
+      },
+    )
+    .get(
       "/:sessionID",
       describeRoute({
         summary: "Get session",

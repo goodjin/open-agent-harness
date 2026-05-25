@@ -20,6 +20,7 @@ type TabsInput = {
   logs?: Accessor<boolean>
   files?: Accessor<boolean>
   workflow?: Accessor<boolean>
+  protocol?: Accessor<boolean>
 }
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
@@ -35,6 +36,7 @@ export const createSessionTabs = (input: TabsInput) => {
   const logs = input.logs ?? (() => false)
   const files = input.files ?? (() => false)
   const workflow = input.workflow ?? (() => false)
+  const protocol = input.protocol ?? (() => false)
   const contextOpen = createMemo(() => input.tabs().active() === "context" || input.tabs().all().includes("context"))
   const openedTabs = createMemo(
     () => {
@@ -43,7 +45,7 @@ export const createSessionTabs = (input: TabsInput) => {
         .tabs()
         .all()
         .flatMap((tab) => {
-          if (tab === "session" || tab === "context" || tab === "review" || tab === "logs" || tab === "workflow") return []
+          if (tab === "session" || tab === "context" || tab === "review" || tab === "logs" || tab === "workflow" || tab === "protocol") return []
           if ((tab === "changes" || tab === "all") && files()) return []
           const value = input.pathFromTab(tab) ? input.normalizeTab(tab) : tab
           if (seen.has(value)) return []
@@ -61,6 +63,7 @@ export const createSessionTabs = (input: TabsInput) => {
     if (active === "review" && review()) return active
     if (active === "logs" && logs()) return active
     if (active === "workflow" && workflow()) return active
+    if (active === "protocol" && protocol()) return active
     if ((active === "changes" || active === "all") && files()) return active
     if (active && input.pathFromTab(active)) return input.normalizeTab(active)
 
@@ -68,6 +71,7 @@ export const createSessionTabs = (input: TabsInput) => {
     const first = openedTabs()[0]
     if (first) return first
     if (contextOpen()) return "context"
+    if (protocol()) return "protocol"
     if (workflow()) return "workflow"
     if (review() && hasReview()) return "review"
     if (logs()) return "logs"
