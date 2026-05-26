@@ -521,8 +521,6 @@ export function detailSections(logs: Log[]): Section[] {
           agent: data.agent,
           mode: data.mode,
           attempt: data.attempt,
-          messages: data.messages,
-          tools: data.tools,
           toolChoice: req.toolChoice,
           error: err?.data.error,
         }),
@@ -546,7 +544,6 @@ export function detailSections(logs: Log[]): Section[] {
         id: "tools",
         label: "Tools",
         data: compact({
-          count: data.tools,
           available: req.tools ?? [],
           toolChoice: req.toolChoice,
         }),
@@ -927,23 +924,9 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <div class="min-w-0 text-13-medium text-text-strong break-words">{row.summary.title}</div>
                             <div class="text-11-regular text-text-weaker break-words">{row.level}</div>
-                            <Show when={row.logs.length > 1}>
-                              <div class="text-11-regular text-text-weaker">{row.logs.length} events</div>
-                            </Show>
                           </div>
                           <Show when={row.summary.detail}>
                             <div class="mt-1 text-12-regular text-text-base break-words">{row.summary.detail}</div>
-                          </Show>
-                          <Show when={row.summary.meta.length > 0}>
-                            <div class="mt-2 flex flex-wrap gap-1.5">
-                              <For each={row.summary.meta.filter(Boolean)}>
-                                {(item) => (
-                                  <span class="min-w-0 max-w-full px-1.5 py-0.5 rounded bg-surface-base text-11-regular text-text-weak break-words">
-                                    {item}
-                                  </span>
-                                )}
-                              </For>
-                            </div>
                           </Show>
                         </div>
                         <Show when={open()}>

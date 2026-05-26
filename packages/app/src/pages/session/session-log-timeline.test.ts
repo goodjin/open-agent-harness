@@ -97,7 +97,6 @@ describe("session log timeline", () => {
     expect(sections.map((item) => item.id)).toEqual(["overview", "system", "messages", "user", "tools", "raw"])
     expect(sections.find((item) => item.id === "system")?.data).toEqual(["system prompt"])
     expect(sections.find((item) => item.id === "tools")?.data).toEqual({
-      count: 2,
       available: ["bash", "edit"],
       toolChoice: "auto",
     })
