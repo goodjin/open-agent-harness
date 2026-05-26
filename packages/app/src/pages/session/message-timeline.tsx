@@ -996,7 +996,7 @@ export function MessageTimeline(props: {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
                   })
                   const commentCount = createMemo(() => comments().length)
-                  const completed = createMemo(() => done(sessionMessages(), messageID))
+                  const completed = createMemo(() => sessionStatus().type === "idle" && done(sessionMessages(), messageID))
                   return (
                     <div
                       id={props.anchor(messageID)}

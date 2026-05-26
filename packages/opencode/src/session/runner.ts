@@ -15,8 +15,12 @@ import { AgentProtocolExecutor } from "@/protocol/executor"
 import { AgentProtocol } from "@/protocol/schema"
 import { SessionLog } from "./log"
 import { Agent } from "@/agent/agent"
+import { AgentEntry } from "@/agent/entry"
 import { Identifier } from "@/id/id"
 import { RuntimeTools } from "./runtime-tools"
+import { PermissionNext } from "@/permission/next"
+import { SessionPrompt } from "./prompt"
+import { defer } from "@/util/defer"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -153,11 +157,12 @@ export namespace SessionRunner {
                     ? "You output multiple Agent Protocol packages in one response."
                     : "You did not output a valid `agent.protocol.output` package.",
               `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-              "Keep the package small: output only the next necessary action set, preferably no more than 8 actions.",
+              "Keep the package small: output only the next necessary call set, preferably no more than 8 calls.",
               "If more work is needed after this package executes, wait for the runtime observation and continue in the next turn.",
               "Do not output minimax:tool_call, [TOOL_CALL], XML invoke tags, fake tool results, fenced JSON, or plain Markdown-only answers.",
-              "If execution is needed, use `intent: \"execute\"` with concrete `actions`, tools from Available Protocol Tools, and valid `input` JSON.",
-              "If no execution is needed, use `intent: \"respond\"` and put the Markdown answer in `message`.",
+              "If execution is needed, use `kind: \"act\"` with concrete `calls`, tool names from Available Protocol Tools, and valid `args` JSON.",
+              "If no execution is needed, use `kind: \"answer\"` and put the Markdown answer in `message`.",
+              "Strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
             ].join("\n"),
           ],
           toolChoice: { type: "tool", toolName: LLM.PROTOCOL_OUTPUT_TOOL },
@@ -308,11 +313,11 @@ export namespace SessionRunner {
       messageID: chat.message.id,
       sessionID,
       type: "text",
-      text: JSON.stringify(observation(run), null, 2),
+      text: transcript(run),
       synthetic: true,
       ignored: true,
       metadata: {
-        kind: "protocol",
+        kind: "protocol_context",
         action: run.status,
         protocol: run,
       },
@@ -326,7 +331,6 @@ export namespace SessionRunner {
       await final({
         stream,
         run,
-        exchange: observe(run),
       }, 0)
     } else {
       await Session.updatePart({
@@ -392,7 +396,15 @@ export namespace SessionRunner {
               model: input.stream.model,
               runtimeTools: runtime,
             })
-          : Promise.resolve(undefined),
+          : action.executor.type === "agent"
+            ? delegate({
+                action,
+                prompt,
+                sessionID: input.sessionID,
+                messageID: input.chat.message.id,
+                abort: input.stream.abort,
+              })
+            : Promise.resolve(undefined),
     })
     await SessionLog.emit({
       sessionID: input.sessionID,
@@ -459,9 +471,8 @@ export namespace SessionRunner {
   async function final(input: {
     stream: LLM.StreamInput
     run: AgentProtocol.Result
-    exchange: string
   }, retry: number) {
-    const msg = await Session.updateMessage({
+    const msg = (await Session.updateMessage({
       id: MessageID.ascending(),
       parentID: input.stream.user.id,
       role: "assistant",
@@ -485,7 +496,7 @@ export namespace SessionRunner {
         created: Date.now(),
       },
       sessionID: SessionID.make(input.stream.sessionID),
-    } as MessageV2.Assistant)
+    } as MessageV2.Assistant)) as MessageV2.Assistant
     const processor = SessionProcessor.create({
       assistantMessage: msg as MessageV2.Assistant,
       sessionID: SessionID.make(input.stream.sessionID),
@@ -494,12 +505,22 @@ export namespace SessionRunner {
     })
     const prompt = [
       "You are writing the final user-facing answer after an Agent Protocol DSL run.",
-      "This is not an execution turn. The runtime has already executed every available action.",
+      "This is not an execution turn. The runtime has already executed every available call.",
       `Use only the conversation turns below, then answer the user.`,
-      `You may call ${LLM.PROTOCOL_OUTPUT_TOOL} with intent \`respond\`, or output ordinary Markdown directly.`,
-      "Only use `intent: \"execute\"` if another runtime action is truly required.",
+      `You may call ${LLM.PROTOCOL_OUTPUT_TOOL} with \`kind: "answer"\`, or output ordinary Markdown directly.`,
+      "Only use `kind: \"act\"` with `calls` if another runtime call is truly required.",
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       "The full conversation history is preserved. Resolve references like \"these errors\", \"continue\", or \"fix them\" from the earlier turns.",
+      "If calling AgentProtocolOutput, strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
+      retry > 0
+        ? [
+            "",
+            "Loop warning:",
+            "You already requested additional runtime calls after a completed protocol run.",
+            "Read the full prior runtime observations before asking for more calls.",
+            "Do not repeat the same read/search/build/check calls. If enough information is available, answer or edit instead of looping.",
+          ].join("\n")
+        : "",
     ].join("\n")
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
@@ -516,35 +537,33 @@ export namespace SessionRunner {
       },
       system: [prompt],
       tools: {},
-      toolChoice: { type: "auto" } as never,
-      messages: [
-        ...input.stream.messages,
-        {
-          role: "user",
-          content: [
-            "Agent Protocol runtime observation for the latest execution:",
-            "<agent-protocol-observation>",
-            input.exchange,
-            "</agent-protocol-observation>",
-          ].join("\n"),
-        },
-      ],
+      messages: await history(input.stream, SessionID.make(input.stream.sessionID)),
     })
     const parsed = await protocolOutput(msg.id)
     if (parsed) {
       const sessionID = SessionID.make(input.stream.sessionID)
       if (parsed.declaration.intent === "execute") {
+        const reason = cycle(input.run, parsed.declaration, retry)
+        if (reason) {
+          await loop({
+            message: msg,
+            sessionID,
+            runID: input.run.run_id,
+            reason,
+          })
+          return
+        }
         const run = await execute({ chat: processor, stream: input.stream, sessionID, parsed, recovered: false })
         const raw = await Session.updatePart({
           id: PartID.ascending(),
           messageID: processor.message.id,
           sessionID,
           type: "text",
-          text: JSON.stringify(observation(run), null, 2),
+          text: transcript(run),
           synthetic: true,
           ignored: true,
           metadata: {
-            kind: "protocol",
+            kind: "protocol_context",
             action: run.status,
             protocol: run,
           },
@@ -555,8 +574,7 @@ export namespace SessionRunner {
           await final({
             stream: input.stream,
             run,
-            exchange: observe(run),
-          }, 0)
+          }, retry + 1)
           return
         } else {
           await Session.updatePart({
@@ -588,6 +606,34 @@ export namespace SessionRunner {
       }
     } else {
       const text = await textOf(msg.id)
+      if (text.trim().length === 0) {
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: SessionID.make(input.stream.sessionID),
+          type: "text",
+          text: "Protocol final response was empty or malformed.",
+          metadata: {
+            kind: "protocol_malformed",
+            action: "failed",
+            protocol: {
+              runID: input.run.run_id,
+            },
+          },
+          time: { start: Date.now(), end: Date.now() },
+        })
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.malformed",
+          data: { runID: input.run.run_id, reason: "empty_final_output" },
+        })
+        msg.finish = "error"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        return
+      }
       await SessionLog.emit({
         sessionID: SessionID.make(input.stream.sessionID),
         messageID: msg.id,
@@ -603,6 +649,86 @@ export namespace SessionRunner {
       type: "protocol.final.completed",
       data: { runID: input.run.run_id },
     })
+  }
+
+  async function history(stream: LLM.StreamInput, sessionID: SessionID) {
+    const messages = MessageV2.toModelMessages(await MessageV2.filterCompacted(MessageV2.stream(sessionID)), stream.model)
+    if (messages.length >= stream.messages.length) return messages
+    return [...stream.messages, ...messages]
+  }
+
+  async function loop(input: {
+    message: MessageV2.Assistant
+    sessionID: SessionID
+    runID: string
+    reason: string
+  }) {
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: input.message.id,
+      sessionID: input.sessionID,
+      type: "text",
+      text: [
+        "Protocol loop guard triggered.",
+        "",
+        input.reason,
+        "",
+        "The request was stopped to avoid an infinite loop.",
+        "",
+        "Review the protocol log and continue with a more specific instruction if more work is needed.",
+      ].join("\n"),
+      metadata: {
+        kind: "protocol_loop_guard",
+        action: "stopped",
+        protocol: {
+          runID: input.runID,
+        },
+      },
+      time: { start: Date.now(), end: Date.now() },
+    })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.message.id,
+      level: "warn",
+      type: "protocol.loop_guard.triggered",
+      data: { runID: input.runID, reason: input.reason },
+    })
+    input.message.finish = "stop"
+    input.message.time.completed = Date.now()
+    await Session.updateMessage(input.message)
+  }
+
+  function cycle(run: AgentProtocol.Result, declaration: AgentProtocol.Declaration, retry: number) {
+    if (retry >= 6) return "The model requested too many consecutive runtime execution turns after a completed protocol run."
+    if (retry === 0) return
+    if (!repeat(run, declaration)) return
+    return "The model repeated the same runtime calls after it had already been warned to avoid repeated protocol execution."
+  }
+
+  function repeat(run: AgentProtocol.Result, declaration: AgentProtocol.Declaration) {
+    if (declaration.payload.type !== "action_graph") return false
+    const before = run.actions.map((item) => sig(item)).sort()
+    const after = declaration.payload.actions.map((item) => sig(item)).sort()
+    return before.length > 0 && before.length === after.length && before.every((item, index) => item === after[index])
+  }
+
+  function sig(action: AgentProtocol.Action | AgentProtocol.ResultAction) {
+    return stable({
+      operation: action.operation,
+      executor: action.executor,
+      input: action.input ?? {},
+    })
+  }
+
+  function stable(input: unknown): string {
+    if (input === undefined) return ""
+    if (input === null || typeof input !== "object") return JSON.stringify(input)
+    if (Array.isArray(input)) return `[${input.map((item) => stable(item)).join(",")}]`
+    const value = input as globalThis.Record<string, unknown>
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stable(value[key])}`)
+      .join(",")}}`
   }
 
   async function textOf(messageID: MessageID) {
@@ -725,24 +851,44 @@ export namespace SessionRunner {
     }
   }
 
-  function observation(run: AgentProtocol.Result) {
-    return {
-      type: "agent.protocol.observation",
-      version: "1",
-      run_id: run.run_id,
-      status: run.status,
-      title: run.title,
-      actions: run.actions.map((item) => ({
-        id: item.id,
-        title: item.title,
-        operation: item.operation,
-        status: item.status,
-        summary: item.summary,
-        error: item.error,
-      })),
-      metrics: run.metrics,
-      next: "decide",
-    }
+  function transcript(run: AgentProtocol.Result) {
+    return [
+      "## Assistant protocol request and runtime results",
+      "",
+      `run_id: \`${run.run_id}\``,
+      run.title ? `Purpose: ${run.title}` : "",
+      `Status: ${run.status}`,
+      "",
+      ...run.actions.flatMap((item) => call(item)),
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n")
+  }
+
+  function call(item: AgentProtocol.ResultAction) {
+    const args = JSON.stringify(item.input ?? {}, null, 2)
+    const result = item.error ?? item.output ?? item.summary
+    return [
+      `### Call ${item.id}`,
+      "",
+      `Tool: \`${item.executor.target}\``,
+      "",
+      "```shell",
+      `tool ${item.executor.target} <<'JSON'`,
+      args,
+      "JSON",
+      "```",
+      "",
+      `### Result for ${item.id}`,
+      "",
+      `Status: ${item.status}`,
+      item.tool_call_ids.length ? `Artifacts: ${item.tool_call_ids.map((id) => `artifact://${id}`).join(", ")}` : "",
+      "",
+      "```md",
+      result,
+      "```",
+      "",
+    ].filter((line) => line.length > 0)
   }
 
   function visible(text: string, parsed: AgentProtocolParser.Parsed | undefined) {
@@ -754,38 +900,6 @@ export namespace SessionRunner {
     const msg = parsed?.declaration.message?.trim()
     if (msg) return msg
     return ""
-  }
-
-  function observe(run: AgentProtocol.Result) {
-    const status =
-      run.status === "completed"
-        ? "已完成。"
-        : run.status === "blocked"
-          ? "已阻塞。"
-          : "已失败。"
-    const actions = run.actions
-      .map((item, idx) =>
-        [
-          `${idx + 1}. 动作：${item.title}`,
-          `   操作：${item.operation}`,
-          `   状态：${item.status}`,
-          item.summary ? `   结果：${item.summary}` : "",
-          item.error ? `   失败原因：${item.error}` : "",
-          item.tool_call_ids.length ? `   证据：${item.tool_call_ids.map((id) => `artifact://${id}`).join(", ")}` : "",
-        ]
-          .filter((line) => line.length > 0)
-          .join("\n"),
-      )
-      .join("\n\n")
-    return [
-      `执行状态：${status}`,
-      "",
-      "执行的动作和结果：",
-      actions || "没有执行动作。",
-      "",
-      "下一步：",
-      "请根据全部输入判断下一轮 intent。若信息足够，请使用 intent: \"respond\" 并引用 `md:response`；若还需要更多信息，请使用 intent: \"execute\"。",
-    ].join("\n")
   }
 
   function summarize(run: AgentProtocol.Result) {
@@ -933,6 +1047,122 @@ export namespace SessionRunner {
 
   function pseudo(text: string) {
     return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool_call\b|\btool\s*=>/i.test(text)
+  }
+
+  async function delegate(input: {
+    action: AgentProtocol.Action
+    prompt: string | undefined
+    sessionID: SessionID
+    messageID: MessageID
+    abort: AbortSignal
+  }): Promise<AgentProtocolExecutor.ToolResult> {
+    const selected = await agent(input.action)
+    if (!selected.ok) {
+      return {
+        title: input.action.title,
+        output: selected.error,
+        metadata: { blocked: true },
+      }
+    }
+    const parent = await Session.get(input.sessionID)
+    const rule = PermissionNext.evaluate("task", selected.agent.name, parent.permission ?? [])
+    if (rule.action === "deny") {
+      return {
+        title: input.action.title,
+        output: `Protocol agent denied: ${selected.agent.name}`,
+        metadata: { blocked: true, agentID: selected.agent.name },
+      }
+    }
+    const title = input.action.title.trim()
+    const child = await Session.create({
+      parentID: parent.id,
+      title: `Protocol: ${title} (@${selected.agent.name})`,
+      permission: [
+        ...selected.agent.permission,
+        { permission: "workflow_create", pattern: "*", action: "deny" },
+        { permission: "workflow_start", pattern: "*", action: "deny" },
+      ],
+    })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      level: "info",
+      type: "protocol.agent.started",
+      data: { actionID: input.action.id, agent: selected.agent.name, childSessionID: child.id },
+    })
+    function cancel() {
+      SessionPrompt.cancel(child.id)
+    }
+    input.abort.addEventListener("abort", cancel)
+    using _ = defer(() => input.abort.removeEventListener("abort", cancel))
+    const text = await SessionPrompt.prompt({
+      sessionID: child.id,
+      agent: selected.agent.name,
+      parts: await SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent.name)),
+    }).then((msg) => msg.parts.findLast((part) => part.type === "text")?.text ?? "")
+    input.abort.throwIfAborted()
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      level: "info",
+      type: "protocol.agent.completed",
+      data: { actionID: input.action.id, agent: selected.agent.name, childSessionID: child.id, outputBytes: text.length },
+    })
+    return {
+      title: input.action.title,
+      output: text,
+      metadata: { agentID: selected.agent.name, childSessionID: child.id },
+    }
+  }
+
+  async function agent(action: AgentProtocol.Action): Promise<{ ok: true; agent: Agent.Info } | { ok: false; error: string }> {
+    const found =
+      action.executor.target === "auto"
+        ? AgentProtocolExecutor.select(action, await Agent.list().then((items) => items.map((item) => ({
+            id: item.name,
+            entry: item.entry,
+            capability: item.capability,
+          }))))
+        : { id: action.executor.target }
+    const fallback = found?.id ?? await Agent.defaultAgent()
+    const selected = fallback ? await Agent.get(fallback) : undefined
+    if (!selected) return { ok: false as const, error: `Protocol agent not found: ${fallback ?? action.executor.target}` }
+    if (AgentEntry.delegable(selected)) return { ok: true as const, agent: selected }
+    const next = (await Agent.list()).find((item) => AgentEntry.delegable(item))
+    if (next) return { ok: true as const, agent: next }
+    return { ok: false as const, error: `Protocol agent is not delegable: ${selected.name}` }
+  }
+
+  function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {
+    return [
+      `Execute Agent Protocol call "${action.id}" as @${agent}.`,
+      "",
+      "Return only the call result. Include what you did, important findings, changed files, test results, blockers, and whether the call goal is complete.",
+      "",
+      "<agent-protocol-call>",
+      JSON.stringify({
+        id: action.id,
+        title: action.title,
+        operation: action.operation,
+        executor: action.executor,
+        input: action.input ?? {},
+        result_policy: action.result_policy,
+      }),
+      "</agent-protocol-call>",
+      "",
+      "<task>",
+      prompt ?? text(action.input) ?? action.description ?? action.reason ?? action.title,
+      "</task>",
+    ].join("\n")
+  }
+
+  function text(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return
+    const value = input as Record<string, unknown>
+    for (const key of ["prompt", "description", "task", "request", "message"]) {
+      const item = value[key]
+      if (typeof item === "string" && item.trim()) return item
+    }
   }
 
   async function tool(input: {

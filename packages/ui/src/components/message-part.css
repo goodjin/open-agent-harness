@@ -166,7 +166,8 @@
   }
 
   [data-slot="user-message-meta"] {
-    user-select: none;
+    -webkit-user-select: text;
+    user-select: text;
     text-align: right;
     flex: 1 1 auto;
     min-width: 0;
@@ -186,7 +187,8 @@
   }
 
   [data-slot="user-message-meta-tail"] {
-    user-select: none;
+    -webkit-user-select: text;
+    user-select: text;
     flex: 0 0 auto;
     white-space: nowrap;
     text-align: right;
@@ -238,7 +240,8 @@
   }
 
   [data-slot="text-part-meta"] {
-    user-select: none;
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   [data-slot="text-part-copy-wrapper"][data-interrupted] {
@@ -746,6 +749,14 @@
 [data-component="write-content"],
 [data-component="todos"],
 [data-component="diagnostics"],
+[data-slot="message-part-title-area"],
+[data-slot="message-part-title"],
+[data-slot="message-part-title-text"],
+[data-slot="message-part-title-filename"],
+[data-slot="message-part-path"],
+[data-slot="message-part-directory"],
+[data-slot="message-part-filename"],
+[data-slot="message-part-todo-content"],
 .error-card {
   -webkit-user-select: text;
   user-select: text;

@@ -1,8 +1,9 @@
 const BASE = [
   "Catalog entry only. This is not a native tool and cannot be called directly.",
-  "To use this capability, call the native `AgentProtocolOutput` tool exactly once and declare an Agent Protocol DSL action.",
-  'Set that action\'s `executor.type` to `tool` and `executor.target` to this catalog id.',
-  "Set that action's `input` to a JSON object that matches the input schema below.",
+  "To use this capability, call the native `AgentProtocolOutput` tool exactly once.",
+  'Set top-level `kind` to `act` and add an item to `calls`.',
+  'For that call, set `type` to `tool` and `name` to this catalog id.',
+  "Set the call's `args` to a JSON object that matches the input schema below.",
   "Never call this catalog id as a provider/native tool, and never output provider-specific invocation syntax, XML invoke tags, or textual tool-call syntax.",
 ]
 
@@ -13,13 +14,13 @@ const MAP: Record<string, string[]> = {
     "Do not use this tool for ordinary file reading, file writing, editing, filename discovery, or content search when a dedicated protocol tool is available.",
     "Use `workdir` instead of embedding `cd ... && ...` in the command when a different directory is needed.",
     "Write a short `description` that names what the command does.",
-    "For independent shell operations, declare multiple independent protocol actions instead of combining unrelated commands into one action.",
+    "For independent shell operations, declare multiple independent calls instead of combining unrelated commands into one call.",
   ],
   read: [
     "Read a file or directory from the local filesystem.",
     "Use an absolute `filePath` when available.",
     "Use `offset` and `limit` when only a later or smaller section is needed.",
-    "For multiple known files, declare multiple independent protocol actions with `executor.target: \"read\"`.",
+    "For multiple known files, declare multiple independent calls with `type: \"tool\"` and `name: \"read\"`.",
   ],
   glob: [
     "Find files by filename pattern.",
@@ -49,10 +50,6 @@ const MAP: Record<string, string[]> = {
   apply_patch: [
     "Apply a patch to files when a patch-shaped edit is the clearest representation.",
     "Use this only when code or text changes are required.",
-  ],
-  task: [
-    "Delegate a bounded semantic subtask to another agent.",
-    "Use this for delegation, not for basic file reads, searches, edits, or shell commands.",
   ],
   todowrite: [
     "Update the visible task list for multi-step work.",

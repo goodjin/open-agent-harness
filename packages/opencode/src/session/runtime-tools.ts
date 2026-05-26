@@ -1,6 +1,7 @@
 import z from "zod"
 import { asSchema, jsonSchema, tool, type Tool as AITool, type ToolCallOptions } from "ai"
 import { Agent } from "@/agent/agent"
+import { AgentEntry } from "@/agent/entry"
 import { MCP } from "@/mcp"
 import { Metrics } from "@/observability/metrics"
 import { Trace } from "@/observability/trace"
@@ -90,7 +91,7 @@ export namespace RuntimeTools {
 
     const add = (id: string, description: string, schema: unknown, execute: (args: unknown, options: ToolCallOptions) => Promise<unknown>) => {
       if (input.tools?.[id] === false) return
-      catalog.push({ id, description: ProtocolToolCatalog.describe({ id, description }), schema })
+      if (listed(id)) catalog.push({ id, description: ProtocolToolCatalog.describe({ id, description }), schema })
       tools[id] = tool({
         id: id as never,
         description,
@@ -214,7 +215,7 @@ export namespace RuntimeTools {
     return {
       tools,
       catalog,
-      prompt: prompt(catalog),
+      prompt: prompt(catalog, await agents()),
       async execute(id: string, args: unknown, options: ToolCallOptions) {
         const found = tools[id]
         if (!found) throw new Error(`Tool '${id}' is not available.`)
@@ -225,7 +226,25 @@ export namespace RuntimeTools {
     }
   }
 
-  function prompt(catalog: { id: string; description: string; schema: unknown }[]) {
+  function listed(id: string) {
+    return id !== "task"
+  }
+
+  async function agents() {
+    return (await Agent.list())
+      .filter((item) => AgentEntry.delegable(item))
+      .map((item) => ({
+        id: item.name,
+        purpose: item.capability.purpose,
+        tags: item.capability.tags,
+        description: item.description,
+      }))
+  }
+
+  function prompt(
+    catalog: { id: string; description: string; schema: unknown }[],
+    agents: { id: string; purpose: string; tags: string[]; description?: string }[],
+  ) {
     const tools = catalog
       .map((item) =>
         [
@@ -243,23 +262,43 @@ export namespace RuntimeTools {
     return [
       "# Available Protocol Tools",
       "",
-      "These are catalog entries for Agent Protocol DSL actions, not native/provider tools.",
+      "These are catalog entries for Agent Protocol DSL act packages, not native/provider tools.",
       "The only native tool you can call is `AgentProtocolOutput`.",
-      "To use one catalog entry, call `AgentProtocolOutput` exactly once and declare an action inside its input.",
-      "For a tool action:",
-      "- Set `executor.type` to `tool`.",
-      "- Set `executor.target` to one tool id listed below.",
-      "- Set `input` to the exact JSON argument object required by that tool schema.",
+      "To use one catalog entry, call `AgentProtocolOutput` exactly once with `kind: \"act\"`.",
+      "For an act package:",
+      "- Use `calls` for all runtime calls, even when there is only one call.",
+      "- Set each call's `id` to a stable unique id.",
+      "- Set each call's `type` to `tool`.",
+      "- Set each call's `name` to one tool id listed below.",
+      "- Set each call's `args` to the exact JSON argument object required by that tool schema.",
+      "- Shape each call as `{ id, type, name, args, depends, result }`.",
+      "- Use `depends` for simple dependencies and `result` for result policy.",
       "- Do not invent parameters outside the tool's input schema.",
-      "- Do not use `target: \"auto\"` for tool actions.",
+      "- Do not use `name: \"auto\"` for tool calls.",
       "- Do not call listed tool ids directly as native/provider tools.",
+      "- For delegation, do not use a tool call. Use `calls[].type: \"agent\"` with `name: \"auto\"` or a concrete agent id.",
       "",
       "Example:",
       "```json",
-      '{ "type": "action", "id": "read_package", "title": "Read package manifest", "operation": "read", "executor": { "type": "tool", "target": "read", "capabilities": ["repo"] }, "input": { "filePath": "package.json" }, "depends_on": [], "context_refs": [], "result_policy": "summary" }',
+      '{ "kind": "act", "message": "I will read package.json.", "calls": [{ "id": "read_package", "type": "tool", "name": "read", "args": { "filePath": "package.json" } }] }',
       "```",
       "",
       tools,
+      "",
+      "# Available Protocol Agents",
+      "",
+      "Use these with `calls[].type: \"agent\"`, not as tool names.",
+      "For auto routing, set `name: \"auto\"` and put the goal in `args.prompt`; optional `args.subagent_type` can hint at the desired purpose.",
+      "",
+      agents.length
+        ? agents.map((item) => [
+            `## ${item.id}`,
+            "",
+            `purpose: ${item.purpose}`,
+            item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
+            item.description ?? "",
+          ].filter((line) => line.length > 0).join("\n")).join("\n\n")
+        : "No delegable agents are currently available.",
     ].join("\n")
   }
 }

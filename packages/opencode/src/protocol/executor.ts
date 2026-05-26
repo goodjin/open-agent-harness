@@ -46,6 +46,7 @@ export namespace AgentProtocolExecutor {
           title: item.title,
           operation: item.operation,
           executor: item.executor,
+          input: item.input,
           status: "blocked",
           summary: blocked,
           error: blocked,
@@ -69,6 +70,7 @@ export namespace AgentProtocolExecutor {
         title: item.title,
         operation: item.operation,
         executor: item.executor,
+        input: item.input,
         status: stop ? "blocked" : failed ? "failed" : "completed",
         summary: result.output,
         output: stop || failed ? undefined : result.output,
@@ -131,6 +133,7 @@ export namespace AgentProtocolExecutor {
         agent,
         score:
           (agent.capability?.purpose === action.operation ? 3 : 0) +
+          (agent.capability?.purpose && wants.has(agent.capability.purpose) ? 3 : 0) +
           (agent.capability?.tags ?? []).filter((tag) => wants.has(tag)).length,
       }))
       .filter((item) => item.score > 0)

@@ -81,6 +81,26 @@ describe("agent protocol executor", () => {
     ).toBe("reviewer")
   })
 
+  test("selects delegable agents by requested capability purpose", async () => {
+    const action: AgentProtocol.Action = {
+      type: "action",
+      id: "review",
+      title: "Review",
+      operation: "agent",
+      executor: { type: "agent", target: "auto", capabilities: ["general"] },
+      depends_on: [],
+      context_refs: [],
+      result_policy: "summary",
+    }
+
+    expect(
+      AgentProtocolExecutor.select(action, [
+        { id: "reviewer", capability: { purpose: "review_code", tags: [] } },
+        { id: "general", capability: { purpose: "general", tags: [] } },
+      ])?.id,
+    ).toBe("general")
+  })
+
   test("marks tool failures without blocking remaining actions", async () => {
     const result = await AgentProtocolExecutor.run({
       declaration: decl,
