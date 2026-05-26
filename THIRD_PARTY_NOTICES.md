@@ -6,7 +6,7 @@ This inventory covers the production dependency surface of the main runtime modu
 - Source: `packages/opencode/package.json`
 - Scan command: `bunx license-checker --production --json --start packages/opencode`
 
-Open Agent Harness itself is dual-licensed under AGPLv3-or-later and a separate commercial license. The packages below remain under their own licenses.
+Open Agent Harness itself is licensed under the PolyForm Noncommercial License 1.0.0. The packages below remain under their own licenses.
 
 ## Summary
 

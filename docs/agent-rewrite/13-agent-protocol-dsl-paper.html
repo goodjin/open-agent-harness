@@ -1,0 +1,846 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Protocol DSL: A Declarative Protocol for Runtime-Orchestrated LLM Agents</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #182026;
+        --muted: #5c6873;
+        --line: #d8dee4;
+        --soft: #f6f8fa;
+        --panel: #ffffff;
+        --accent: #0f766e;
+        --accent-2: #7c3aed;
+        --warn: #a16207;
+        --code: #0f172a;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #f3f5f7;
+        color: var(--ink);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.62;
+      }
+
+      main {
+        max-width: 980px;
+        margin: 0 auto;
+        background: var(--panel);
+        min-height: 100vh;
+        padding: 56px 72px 72px;
+        box-shadow: 0 16px 60px rgba(15, 23, 42, 0.08);
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 28px;
+        margin-bottom: 34px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 14px;
+      }
+
+      h1 {
+        font-size: 34px;
+        line-height: 1.16;
+        letter-spacing: 0;
+        margin: 0 0 16px;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 18px;
+        max-width: 780px;
+        margin: 0;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 4px 11px;
+        background: #fbfcfd;
+      }
+
+      h2 {
+        font-size: 23px;
+        margin: 38px 0 12px;
+        line-height: 1.25;
+      }
+
+      h3 {
+        font-size: 18px;
+        margin: 26px 0 8px;
+      }
+
+      p {
+        margin: 0 0 14px;
+      }
+
+      ul,
+      ol {
+        margin: 10px 0 18px 24px;
+        padding: 0;
+      }
+
+      li {
+        margin: 5px 0;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 16px 0 24px;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 9px 11px;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--soft);
+        text-align: left;
+      }
+
+      code {
+        color: var(--code);
+        background: #eef2f6;
+        border-radius: 5px;
+        padding: 1px 5px;
+        font-family:
+          ui-monospace,
+          SFMono-Regular,
+          Menlo,
+          Monaco,
+          Consolas,
+          "Liberation Mono",
+          monospace;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow-x: auto;
+        background: #0f172a;
+        color: #e5e7eb;
+        border-radius: 8px;
+        padding: 16px 18px;
+        line-height: 1.5;
+        margin: 16px 0 24px;
+      }
+
+      pre code {
+        color: inherit;
+        background: transparent;
+        padding: 0;
+      }
+
+      .note {
+        border-left: 4px solid var(--accent);
+        background: #ecfdf5;
+        padding: 12px 16px;
+        margin: 18px 0 24px;
+      }
+
+      .todo {
+        border-left: 4px solid var(--warn);
+        background: #fffbeb;
+        color: #713f12;
+        padding: 10px 14px;
+        margin: 14px 0 20px;
+        font-weight: 600;
+      }
+
+      .figure {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+        margin: 20px 0 28px;
+        background: #fbfcfd;
+      }
+
+      .figure-title {
+        color: var(--muted);
+        font-size: 14px;
+        margin: 0 0 14px;
+        text-align: center;
+      }
+
+      svg text {
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .refs a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .refs a:hover {
+        text-decoration: underline;
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        main {
+          box-shadow: none;
+          padding: 36px 44px;
+          max-width: none;
+        }
+
+        a {
+          color: inherit;
+          text-decoration: none;
+        }
+      }
+
+      @media (max-width: 760px) {
+        main {
+          padding: 32px 22px 48px;
+        }
+
+        h1 {
+          font-size: 28px;
+        }
+
+        .subtitle {
+          font-size: 16px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Draft v0.1 · Research Paper</div>
+        <h1>Agent Protocol DSL: A Declarative Protocol for Runtime-Orchestrated LLM Agents</h1>
+        <p class="subtitle">
+          A position-and-system draft for replacing imperative tool-call loops with model-generated,
+          runtime-validated agent protocols.
+        </p>
+        <div class="meta">
+          <span class="pill">Agent Protocol DSL</span>
+          <span class="pill">Declarative Orchestration</span>
+          <span class="pill">Context Reduction</span>
+          <span class="pill">User Projection</span>
+          <span class="pill">Draft with TODOs</span>
+        </div>
+      </header>
+
+      <section>
+        <h2>Abstract</h2>
+        <p>
+          Large language model agents are commonly implemented through imperative tool-call loops:
+          the model repeatedly selects a tool, observes the result, and decides the next action.
+          This pattern works well for short interactions, but it forces the model to act
+          simultaneously as planner, dispatcher, state manager, observation filter, and user-facing
+          narrator. As tasks become longer and tool outputs become larger, the loop can introduce
+          excessive context noise, unnecessary model turns, poor parallelism, and limited
+          transparency for users.
+        </p>
+        <p>
+          We propose <strong>Agent Protocol DSL</strong>, a declarative agent protocol in which the
+          model emits a JSON + Markdown execution specification rather than issuing step-by-step
+          native tool calls. The specification describes an action graph, executors, capabilities,
+          result policies, permission policies, user-visible notes, and references. A runtime parses,
+          validates, schedules, and executes the protocol. Instead of replaying full tool outputs into
+          the model context, the runtime renders compact structured Markdown observation turns that
+          describe what was executed, what was found, what failed, and where full artifacts are stored.
+        </p>
+        <p>
+          The key idea is an asymmetric bidirectional protocol: model-to-runtime communication uses an
+          expressive declarative DSL, while runtime-to-model communication uses a compressed
+          observation format optimized for context efficiency. We evaluate the approach against
+          imperative tool-call baselines on software engineering and information gathering tasks,
+          measuring token usage, model turns, latency, task success, error recovery, context
+          pollution, and user-rated transparency.
+        </p>
+        <div class="todo">TODO: Add quantitative results.</div>
+      </section>
+
+      <section>
+        <h2>1. Motivation</h2>
+        <p>
+          Current agent systems often treat tool use as a conversational loop. The model decides one
+          action, the runtime executes it, the result is returned to the model, and the model decides
+          again. This imperative pattern is simple and flexible, but it has a structural weakness:
+          every intermediate step must pass through the model context.
+        </p>
+        <p>For complex tasks, this creates four problems.</p>
+        <p>
+          First, <strong>context pollution</strong>. Tool outputs are often much larger than the
+          information actually needed for the next decision. A test run may produce thousands of
+          tokens, while the model only needs the failing test names and a reference to the full log.
+        </p>
+        <p>
+          Second, <strong>excessive model turns</strong>. If a task requires ten actions, an
+          imperative loop may require ten or more model calls, even when several actions are
+          independent and could run in parallel.
+        </p>
+        <p>
+          Third, <strong>weak runtime optimization</strong>. Because the model decides one step at a
+          time, the runtime has limited access to the whole task structure. It cannot easily optimize
+          scheduling, dependency execution, result reduction, permission gating, or artifact
+          management.
+        </p>
+        <p>
+          Fourth, <strong>poor user transparency</strong>. A raw tool-call trace is not the same as a
+          user-understandable task view. Users need to know what the agent is doing, which permissions
+          are being requested, what progress has been made, and where results came from.
+        </p>
+        <p>
+          Agent Protocol DSL addresses these issues by replacing imperative tool-call orchestration
+          with a declarative protocol. The model declares an executable task graph. The runtime
+          validates and executes it. The model receives only reduced observations and references.
+        </p>
+        <p>
+          The analogy is similar to SQL, but not identical. SQL does not tell a database engine how to
+          scan, join, and optimize step by step; it declares the desired relation. Agent Protocol DSL
+          does not ask the model to drive every tool invocation step by step; it declares an
+          executable task graph that the runtime can validate, schedule, execute, reduce, and project
+          to the user.
+        </p>
+      </section>
+
+      <section>
+        <h2>2. Declarative Agent Protocols</h2>
+        <p>We distinguish two orchestration models.</p>
+        <p>
+          <strong>Imperative tool-call orchestration</strong> asks the model to repeatedly answer:
+          what tool should be called next, with which arguments, after seeing the previous result?
+        </p>
+        <p>
+          <strong>Declarative protocol orchestration</strong> asks the model to specify: what task
+          graph should be executed, with which dependencies, capabilities, permissions, result
+          policies, user-visible notes, and references?
+        </p>
+        <p>
+          The difference is not merely syntactic. It changes where responsibility lives. In tool-call
+          loops, the model is planner, dispatcher, and observation manager. In Agent Protocol DSL, the
+          model remains the planner, but the runtime becomes the dispatcher, validator, scheduler,
+          reducer, permission checker, artifact manager, and user projection engine.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Dimension</th>
+              <th>Imperative Tool-Call Loop</th>
+              <th>Declarative Agent Protocol DSL</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Basic unit</td>
+              <td>Single tool call</td>
+              <td>Action graph / task specification</td>
+            </tr>
+            <tr>
+              <td>Control flow</td>
+              <td>Model decides step by step</td>
+              <td>Model declares, runtime schedules</td>
+            </tr>
+            <tr>
+              <td>Observation</td>
+              <td>Tool result is usually replayed</td>
+              <td>Policy-reduced structured Markdown observation</td>
+            </tr>
+            <tr>
+              <td>Parallelism</td>
+              <td>Discovered dynamically or by framework</td>
+              <td>Explicit DAG dependencies</td>
+            </tr>
+            <tr>
+              <td>Permissions</td>
+              <td>Handled outside the call loop</td>
+              <td>Protocol-level permission policy</td>
+            </tr>
+            <tr>
+              <td>User visibility</td>
+              <td>Chat trace or tool trace</td>
+              <td>User-facing task projection</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>3. System Design</h2>
+        <p>
+          Agent Protocol DSL uses an asymmetric bidirectional protocol. The model emits a
+          <strong>JSON + Markdown DSL</strong>. JSON expresses machine-checkable execution structure.
+          Markdown expresses user-visible notes, natural-language instructions, and references.
+        </p>
+        <p>
+          Runtime-to-model feedback is rendered as <strong>structured Markdown observation
+          turns</strong>. The runtime keeps machine-readable JSON records internally for artifacts,
+          metrics, UI rendering, and evaluation, but the model-visible observation is optimized for
+          semantic reasoning rather than programmatic parsing.
+        </p>
+
+        <h3>3.0 Model Interface Modes</h3>
+        <p>
+          Agent Protocol DSL does not assume that the model supports native tool calling. The primary
+          interface is ordinary text: the runtime sends ordered model-readable turns, the model
+          replies with one fenced <code>json agent-protocol</code> block and optional Markdown
+          sections, and the runtime parses and validates that text before execution.
+        </p>
+        <p>
+          Native tool calling can be used by an adapter to constrain or transport the interaction, but
+          it is not the protocol boundary. This makes the protocol portable across models that expose
+          different tool-call APIs, or no tool-call API at all. The essential contract is that the
+          model declares an executable protocol object; it does not directly invoke provider-native
+          tools.
+        </p>
+        <pre><code>```json agent-protocol
+{
+  "type": "agent.protocol.output",
+  "version": "1",
+  "intent": "execute",
+  "payload": {
+    "type": "action_graph",
+    "actions": []
+  }
+}
+```</code></pre>
+
+        <div class="figure">
+          <p class="figure-title">Figure 1. Agent Protocol DSL architecture.</p>
+          <svg viewBox="0 0 1080 760" role="img" aria-label="Agent Protocol DSL architecture diagram">
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L0,6 L9,3 z" fill="#52606d"></path>
+              </marker>
+              <style>
+                .box {
+                  fill: #ffffff;
+                  stroke: #b8c2cc;
+                  stroke-width: 1.5;
+                  rx: 10;
+                }
+                .model {
+                  fill: #eefcf9;
+                  stroke: #0f766e;
+                }
+                .runtime {
+                  fill: #f5f3ff;
+                  stroke: #7c3aed;
+                }
+                .store {
+                  fill: #fff7ed;
+                  stroke: #c2410c;
+                }
+                .user {
+                  fill: #eff6ff;
+                  stroke: #2563eb;
+                }
+                .label {
+                  fill: #182026;
+                  font-size: 17px;
+                  font-weight: 700;
+                }
+                .small {
+                  fill: #52606d;
+                  font-size: 13px;
+                }
+                .edge {
+                  stroke: #52606d;
+                  stroke-width: 1.7;
+                  fill: none;
+                  marker-end: url(#arrow);
+                }
+                .dash {
+                  stroke-dasharray: 6 5;
+                }
+              </style>
+            </defs>
+
+            <rect class="box user" x="410" y="18" width="260" height="58"></rect>
+            <text class="label" x="540" y="43" text-anchor="middle">User Request</text>
+            <text class="small" x="540" y="62" text-anchor="middle">task, constraints, intent</text>
+
+            <rect class="box model" x="410" y="112" width="260" height="66"></rect>
+            <text class="label" x="540" y="140" text-anchor="middle">LLM</text>
+            <text class="small" x="540" y="160" text-anchor="middle">planner, protocol author</text>
+
+            <rect class="box model" x="360" y="220" width="360" height="76"></rect>
+            <text class="label" x="540" y="250" text-anchor="middle">Agent Protocol DSL</text>
+            <text class="small" x="540" y="271" text-anchor="middle">JSON + Markdown action graph</text>
+
+            <rect class="box runtime" x="60" y="350" width="210" height="62"></rect>
+            <text class="label" x="165" y="376" text-anchor="middle">Protocol Parser</text>
+            <text class="small" x="165" y="396" text-anchor="middle">JSON / Markdown</text>
+
+            <rect class="box runtime" x="315" y="350" width="210" height="62"></rect>
+            <text class="label" x="420" y="376" text-anchor="middle">Schema Validator</text>
+            <text class="small" x="420" y="396" text-anchor="middle">graph, policy, refs</text>
+
+            <rect class="box runtime" x="570" y="350" width="210" height="62"></rect>
+            <text class="label" x="675" y="376" text-anchor="middle">Reference Resolver</text>
+            <text class="small" x="675" y="396" text-anchor="middle">notes, artifacts, sources</text>
+
+            <rect class="box runtime" x="825" y="350" width="210" height="62"></rect>
+            <text class="label" x="930" y="376" text-anchor="middle">Permission Checker</text>
+            <text class="small" x="930" y="396" text-anchor="middle">capabilities, approval</text>
+
+            <rect class="box runtime" x="165" y="470" width="230" height="66"></rect>
+            <text class="label" x="280" y="498" text-anchor="middle">Action Graph Builder</text>
+            <text class="small" x="280" y="518" text-anchor="middle">DAG / dependencies</text>
+
+            <rect class="box runtime" x="425" y="470" width="230" height="66"></rect>
+            <text class="label" x="540" y="498" text-anchor="middle">Runtime Scheduler</text>
+            <text class="small" x="540" y="518" text-anchor="middle">parallel or sequential</text>
+
+            <rect class="box runtime" x="685" y="470" width="230" height="66"></rect>
+            <text class="label" x="800" y="498" text-anchor="middle">Executor Registry</text>
+            <text class="small" x="800" y="518" text-anchor="middle">code, search, shell, agent, MCP</text>
+
+            <rect class="box runtime" x="110" y="590" width="180" height="58"></rect>
+            <text class="label" x="200" y="616" text-anchor="middle">Executors</text>
+            <text class="small" x="200" y="636" text-anchor="middle">run concrete actions</text>
+
+            <rect class="box store" x="330" y="590" width="190" height="58"></rect>
+            <text class="label" x="425" y="616" text-anchor="middle">Artifact Store</text>
+            <text class="small" x="425" y="636" text-anchor="middle">full logs, files, outputs</text>
+
+            <rect class="box runtime" x="560" y="590" width="190" height="58"></rect>
+            <text class="label" x="655" y="616" text-anchor="middle">Result Reducer</text>
+            <text class="small" x="655" y="636" text-anchor="middle">policy-governed summary</text>
+
+            <rect class="box model" x="790" y="590" width="210" height="58"></rect>
+            <text class="label" x="895" y="616" text-anchor="middle">Markdown Observation</text>
+            <text class="small" x="895" y="636" text-anchor="middle">actions, results, refs</text>
+
+            <rect class="box user" x="395" y="690" width="290" height="54"></rect>
+            <text class="label" x="540" y="713" text-anchor="middle">User Projection</text>
+            <text class="small" x="540" y="732" text-anchor="middle">tasks, progress, permissions, results</text>
+
+            <path class="edge" d="M540 76 L540 112"></path>
+            <path class="edge" d="M540 178 L540 220"></path>
+            <path class="edge" d="M360 258 C220 258 165 290 165 350"></path>
+            <path class="edge" d="M270 381 L315 381"></path>
+            <path class="edge" d="M525 381 L570 381"></path>
+            <path class="edge" d="M780 381 L825 381"></path>
+            <path class="edge" d="M930 412 C930 450 360 432 280 470"></path>
+            <path class="edge" d="M395 503 L425 503"></path>
+            <path class="edge" d="M655 503 L685 503"></path>
+            <path class="edge" d="M800 536 C800 574 230 552 200 590"></path>
+            <path class="edge" d="M290 619 L330 619"></path>
+            <path class="edge" d="M520 619 L560 619"></path>
+            <path class="edge" d="M750 619 L790 619"></path>
+            <path class="edge" d="M895 590 C895 222 720 145 670 145"></path>
+            <path class="edge dash" d="M540 296 L540 690"></path>
+            <path class="edge dash" d="M655 648 C655 676 604 682 580 690"></path>
+          </svg>
+        </div>
+
+        <h3>3.1 Model-to-Runtime DSL</h3>
+        <p>A protocol instance contains an action graph, executors, capabilities, result policy,
+          permission policy, user-visible note, and references.</p>
+        <pre><code>{
+  "graph": [
+    {
+      "id": "scan",
+      "executor": "repo.search",
+      "capabilities": ["read"],
+      "result_policy": "summary+refs"
+    },
+    {
+      "id": "test",
+      "executor": "repo.test",
+      "depends_on": ["scan"],
+      "capabilities": ["execute"],
+      "result_policy": "failures+refs"
+    }
+  ],
+  "user_note": "I will inspect relevant files and run focused tests.",
+  "references": []
+}</code></pre>
+
+        <h3>3.2 Runtime-to-Model Observation</h3>
+        <p>
+          The runtime does not replay complete tool outputs by default. It returns a structured
+          Markdown observation turn:
+        </p>
+        <pre><code>&lt;turn index="3" role="runtime"&gt;
+Execution status: partially failed.
+
+Actions and results:
+1. Action: Run focused session refresh tests.
+   Result: The test command failed.
+   Failure reason: 2 tests failed in session refresh behavior.
+   Evidence: artifact://test/stdout
+
+Note:
+The full test output was not replayed into the model context.
+
+Next:
+Decide whether to inspect the implementation and repair the failure.
+&lt;/turn&gt;</code></pre>
+        <p>
+          We define a summary as the minimal decision-relevant projection of an execution result,
+          generated according to a declared result policy and backed by artifact references.
+        </p>
+      </section>
+
+      <section>
+        <h2>4. Relation to Existing Work</h2>
+        <p>
+          ReAct and tool-call loops use an imperative interaction pattern. The model alternates
+          between reasoning, action, and observation. Agent Protocol DSL instead asks the model to
+          declare a task graph and lets the runtime execute it.
+        </p>
+        <p>
+          Native tool calling from major model providers improves local tool invocation. Models are
+          trained to select tools and produce valid arguments. However, this training mainly helps
+          individual tool calls. It does not solve task-level orchestration, context reduction,
+          artifact management, permission policy, or user projection.
+        </p>
+        <p>
+          Anthropic Programmatic Tool Calling also addresses round-trip and context overhead by
+          letting models write code that orchestrates tools. Agent Protocol DSL takes a different
+          path: instead of asking the model to generate executable code, it asks the model to generate
+          a declarative protocol that can be validated and constrained by the runtime.
+        </p>
+        <p>
+          ReWOO and LLMCompiler show that separating planning from observation and enabling parallel
+          tool execution can improve efficiency. Agent Protocol DSL extends this direction into a
+          broader protocol design that includes permissions, result policies, artifact references,
+          and user-visible projection.
+        </p>
+        <p>
+          LangGraph and AutoGen provide graph-based and multi-agent orchestration frameworks, but
+          their graphs are typically defined by developers in program code or UI configuration. Agent
+          Protocol DSL makes the graph a model-generated protocol object.
+        </p>
+        <p>
+          MCP standardizes how tools and resources are exposed to agents. Agent Protocol DSL targets a
+          different layer: how the model specifies a task for runtime execution and how the runtime
+          reports reduced observations back to the model.
+        </p>
+      </section>
+
+      <section>
+        <h2>5. Research Questions</h2>
+        <ol>
+          <li>
+            <strong>Context Efficiency.</strong> Does Agent Protocol DSL reduce token usage, model
+            turns, and irrelevant observation tokens compared with imperative tool-call loops?
+          </li>
+          <li>
+            <strong>Execution Effectiveness.</strong> Does declarative runtime orchestration improve
+            or preserve task success rate while reducing latency on multi-step agent tasks?
+          </li>
+          <li>
+            <strong>Transparency and Control.</strong> Does user projection improve users'
+            understanding of agent progress, permissions, and result provenance?
+          </li>
+          <li>
+            <strong>Model Compatibility.</strong> Can general-purpose LLMs generate valid and
+            effective Agent Protocol DSL without protocol-specific fine-tuning?
+          </li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>6. Evaluation Plan</h2>
+        <p>We compare three systems.</p>
+        <ul>
+          <li>
+            <strong>Baseline A: Native tool-call loop.</strong> The model invokes tools step by step.
+            Full or standard tool outputs are returned to context.
+          </li>
+          <li>
+            <strong>Baseline B: Tool-call loop with compressed Markdown observations.</strong> The
+            orchestration remains imperative, but tool outputs are compressed into structured
+            Markdown observations. This isolates the effect of result compression from the effect of
+            declarative planning.
+          </li>
+          <li>
+            <strong>System C: Agent Protocol DSL.</strong> The model emits a declarative action graph.
+            The runtime validates, schedules, executes, stores artifacts, and returns structured
+            Markdown observation turns.
+          </li>
+        </ul>
+        <p>Metrics include total token usage, model turns, end-to-end latency, task success rate,
+          error recovery quality, invalid protocol rate, repair attempts per task, user-rated
+          transparency, and context pollution.</p>
+        <p>
+          Task categories include coding agent tasks, code review tasks, multi-file edit tasks, test
+          generation tasks, information gathering tasks, and multi-agent delegation tasks.
+        </p>
+        <div class="todo">
+          TODO: Define benchmark size, task sampling method, model versions, runtime environment, and
+          judging rubric.
+        </div>
+      </section>
+
+      <section>
+        <h2>7. Ablations</h2>
+        <ul>
+          <li>No result policy</li>
+          <li>No user projection</li>
+          <li>No executor auto selection</li>
+          <li>No Markdown references</li>
+          <li>Sequential-only execution instead of DAG execution</li>
+          <li>Full result replay instead of summary/ref replay</li>
+          <li>No schema validation repair</li>
+          <li>No permission policy</li>
+        </ul>
+        <p>
+          The most important ablations are full result replay versus summary/ref replay, and user
+          projection versus raw trace. These directly test the central claims of context efficiency
+          and transparency.
+        </p>
+      </section>
+
+      <section>
+        <h2>8. Expected Claims</h2>
+        <p>We expect the strongest claims to be conditional, not universal.</p>
+        <p>
+          Agent Protocol DSL is expected to reduce model turns, token usage, and context pollution on
+          tasks with multiple actions or large intermediate outputs. DAG execution is expected to
+          reduce latency when actions can run independently. Policy-governed result reduction is
+          expected to preserve task success while reducing irrelevant observation tokens. User
+          projection is expected to improve user understanding of task state, permissions, and result
+          provenance.
+        </p>
+        <p>
+          The protocol may not outperform native tool calling on simple one-step tasks. In such cases,
+          DSL overhead may dominate.
+        </p>
+      </section>
+
+      <section>
+        <h2>9. Risks and Limitations</h2>
+        <ul>
+          <li>The protocol depends on the model's ability to generate valid structured specifications.</li>
+          <li>The DSL may introduce overhead for simple tasks.</li>
+          <li>Summaries may omit information needed for later reasoning.</li>
+          <li>LLM-assisted summarization can hallucinate or distort long outputs.</li>
+          <li>The system improves permission visibility but does not solve agent security.</li>
+          <li>Evaluation results may depend heavily on runtime implementation quality.</li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>10. Model Training and Compatibility</h2>
+        <p>
+          A major question is whether a protocol not explicitly targeted by provider-side tool-call
+          training can work reliably. Our hypothesis is yes, because the protocol is built from
+          capabilities that current LLMs already possess: structured JSON generation, Markdown
+          writing, task decomposition, dependency expression, and instruction following.
+        </p>
+        <p>
+          Tool-call-tuned models have an advantage on individual tool selection and argument
+          generation. Agent Protocol DSL targets a different level: task-level orchestration and
+          observation management.
+        </p>
+        <p>
+          The protocol should be usable in a zero-shot or few-shot setting with schema validation and
+          repair. Constrained decoding can further improve JSON validity. Fine-tuning is not required
+          for the first prototype, but the protocol provides a stable target for future post-training.
+        </p>
+        <p>
+          This compatibility claim should be evaluated in a text-only setting as well as with
+          tool-call-capable models. In the text-only setting, the model receives the protocol schema
+          and examples in ordinary prompt text and must emit a fenced protocol block. The runtime then
+          measures valid DSL rate, repair attempts, executor selection accuracy, and task success.
+        </p>
+        <div class="todo">
+          TODO: Add experiment comparing zero-shot, few-shot, constrained decoding, and optionally
+          fine-tuned generation.
+        </div>
+      </section>
+
+      <section>
+        <h2>11. Submission Strategy</h2>
+        <p>
+          The recommended path is staged. First, publish an arXiv preprint with the protocol, runtime
+          architecture, examples, and pilot evaluation. Second, submit to an ICLR or NeurIPS workshop
+          on agents, tool use, or foundation model systems. Third, choose the full-paper venue based
+          on the strongest evidence.
+        </p>
+        <ul>
+          <li><strong>ASE / FSE / ICSE</strong> if the strongest results are coding-agent benchmarks.</li>
+          <li><strong>CHI / UIST</strong> if the strongest results are user projection and human-agent interaction.</li>
+          <li><strong>ACL / EMNLP System Demo</strong> if the strongest artifact is an interactive system demo.</li>
+        </ul>
+        <p>
+          The most natural full-paper framing is software engineering agents: a declarative protocol
+          and runtime architecture for context-efficient, auditable software engineering agents.
+        </p>
+      </section>
+
+      <section>
+        <h2>12. Conclusion</h2>
+        <p>
+          Agent Protocol DSL reframes agent execution as a declarative protocol rather than an
+          imperative tool-call loop. The model specifies what should be executed; the runtime decides
+          how to validate, schedule, execute, reduce, store, and project the task.
+        </p>
+        <p>
+          The central contribution is not a new tool API. It is a separation of responsibilities:
+          model as planner, runtime as executor and reducer, user interface as projection layer. By
+          combining JSON + Markdown task specifications with structured Markdown observations, the
+          system creates an asymmetric protocol optimized for both expressiveness and model-readable
+          context efficiency.
+        </p>
+        <div class="todo">TODO: Fill with final empirical results and revised claims.</div>
+      </section>
+
+      <section class="refs">
+        <h2>References</h2>
+        <ol>
+          <li><a href="https://arxiv.org/abs/2210.03629">ReAct: Synergizing Reasoning and Acting in Language Models</a></li>
+          <li><a href="https://arxiv.org/abs/2305.18323">ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models</a></li>
+          <li><a href="https://arxiv.org/abs/2312.04511">LLMCompiler: An LLM Compiler for Parallel Function Calling</a></li>
+          <li><a href="https://platform.openai.com/docs/guides/function-calling">OpenAI Function Calling Documentation</a></li>
+          <li><a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling">Anthropic Programmatic Tool Calling Documentation</a></li>
+          <li><a href="https://microsoft.github.io/autogen/dev/user-guide/autogenstudio-user-guide/index.html">AutoGen Studio Documentation</a></li>
+          <li><a href="https://docs.langchain.com/oss/python/langgraph/workflows-agents">LangGraph Workflows and Agents Documentation</a></li>
+          <li><a href="https://modelcontextprotocol.io/specification/2024-11-05/index">Model Context Protocol Specification</a></li>
+        </ol>
+      </section>
+    </main>
+  </body>
+</html>

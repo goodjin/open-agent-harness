@@ -34,11 +34,15 @@ bun install
 bun run --cwd packages/opencode --conditions=browser ./src/index.ts --help
 ```
 
+During local development, you can run the main package directly:
+
+```bash
+bun run --cwd packages/opencode --conditions=browser ./src/index.ts --help
+```
+
 ## License
 
-Open Agent Harness is dual-licensed under AGPLv3-or-later and a separate commercial license.
-
-The AGPLv3-or-later license lets you use, modify, distribute, and run the software, including commercially, as long as you comply with its source-sharing obligations. If you want to use Open Agent Harness in a commercial or proprietary product or hosted service without complying with those AGPL obligations, you need a commercial license from the Open Agent Harness copyright holder.
+Open Agent Harness is distributed under the PolyForm Noncommercial License 1.0.0. Noncommercial use is permitted under that license. Commercial use requires a separate commercial license from the Open Agent Harness copyright holder.
 
 This project includes source code derived from opencode, which was originally distributed under the MIT License. The original opencode copyright notice and MIT license text are preserved in [LICENSE](./LICENSE).
 
