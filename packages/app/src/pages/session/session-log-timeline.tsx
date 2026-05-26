@@ -33,6 +33,7 @@ type Section = {
   label: string
   data: unknown
 }
+type Filter = "all" | "protocol"
 type Stats = {
   requests: number
   tools: number
@@ -97,6 +98,13 @@ const inside = new Set([
   "tool.start",
   "tool.finish",
   "tool.error",
+])
+const finals = new Set([
+  "protocol.final.started",
+  "protocol.final.completed",
+  "protocol.final.malformed",
+  "protocol.final.plain",
+  "protocol.final.plain_tool_syntax",
 ])
 
 export function describeLog(record: Log): Summary {
@@ -201,6 +209,24 @@ export function describeLog(record: Log): Summary {
         detail: text(data.runID),
         meta: [],
       }
+    case "protocol.final.malformed":
+      return {
+        title: "Protocol final response malformed",
+        detail: text(data.runID),
+        meta: [],
+      }
+    case "protocol.final.plain":
+      return {
+        title: "Protocol final plain text",
+        detail: text(data.runID),
+        meta: [],
+      }
+    case "protocol.final.plain_tool_syntax":
+      return {
+        title: "Protocol final plain tool syntax",
+        detail: text(data.runID),
+        meta: [],
+      }
     case "memory.captured":
       return {
         title: "Memory captured",
@@ -216,7 +242,7 @@ export function describeLog(record: Log): Summary {
     case "llm.start":
       return {
         title: "LLM Request",
-        meta: [`${count(data.messages) ?? 0} messages`, `${count(data.tools) ?? 0} tools`],
+        meta: [],
       }
     case "llm.finish":
       return {
@@ -297,13 +323,34 @@ export function mergeLogs(current: Log[], incoming: Log[]) {
   return [...logs.values()].sort((a, b) => b.time - a.time || b.id.localeCompare(a.id))
 }
 
-export function groupLogs(logs: Log[]): Row[] {
+const protocol = (log: Log) => log.type.startsWith("protocol.") || log.data.protocol === true
+const noisy = (log: Log) => {
+  if (log.type === "protocol.action.tool_call") return false
+  if (log.type === "protocol.failed" || log.type === "protocol.action.failed" || log.type === "protocol.action.blocked") return false
+  if (log.type === "protocol.final.malformed" || log.type === "protocol.final.plain_tool_syntax") return false
+  if (log.type === "tool.error" && log.data.protocol === true) return false
+  if (log.type.startsWith("protocol.")) return true
+  return log.data.protocol === true
+}
+
+export function groupLogs(logs: Log[], filter: Filter = "all"): Row[] {
   const rows: Row[] = []
   const stream = new Map<string, Log[]>()
+  const runs = new Map<string, Row>()
   const sorted = logs.slice().sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
 
   for (const log of sorted) {
+    if (filter === "protocol" && !protocol(log)) continue
+    if (filter === "all" && noisy(log)) continue
     const key = log.messageID
+    if (filter === "all" && finals.has(log.type)) {
+      const run = text(log.data.runID)
+      const row = run ? runs.get(run) : undefined
+      if (row) {
+        row.logs.push(log)
+        continue
+      }
+    }
     if (log.type === "llm.start") {
       rows.push({
         id: log.id,
@@ -314,6 +361,17 @@ export function groupLogs(logs: Log[]): Row[] {
         summary: describeLog(log),
       })
       if (key) stream.set(key, [])
+      continue
+    }
+    if (filter === "all" && log.type === "tool.error" && log.data.protocol === true) {
+      rows.push({
+        id: log.id,
+        time: log.time,
+        level: log.level,
+        type: log.type,
+        logs: [log],
+        summary: describeLog(log),
+      })
       continue
     }
     if (key && inside.has(log.type)) {
@@ -333,14 +391,19 @@ export function groupLogs(logs: Log[]): Row[] {
       })
       continue
     }
-    rows.push({
+    const row = {
       id: log.id,
       time: log.time,
       level: log.level,
       type: log.type,
       logs: [log],
       summary: describeLog(log),
-    })
+    }
+    rows.push(row)
+    if (log.type === "protocol.completed" || log.type === "protocol.failed") {
+      const run = text(log.data.runID)
+      if (run) runs.set(run, row)
+    }
   }
 
   return rows.sort((a, b) => b.time - a.time || b.id.localeCompare(a.id))
@@ -415,17 +478,36 @@ const output = (logs: Log[]) =>
     .filter(filled)
     .join("\n\n")
 
+const reasoning = (logs: Log[]) =>
+  logs
+    .filter((log) => log.type === "reasoning.end")
+    .map((log) => text(log.data.text))
+    .filter(filled)
+    .join("\n\n")
+
 const blocks = (logs: Log[]) =>
   output(logs)
     .match(/```[^\n`]*agent-protocol[^\n`]*\n[\s\S]*?```/g)
     ?.join("\n\n") ?? ""
+
+const records = (logs: Log[], names: string[]) =>
+  logs
+    .filter((log) => names.includes(log.type))
+    .map((log) => ({
+      time: log.time,
+      type: log.type,
+      data: log.data,
+    }))
 
 export function detailSections(logs: Log[]): Section[] {
   const start = logs.find((log) => log.type === "llm.start")
   const done = logs.find((log) => log.type === "llm.finish")
   const err = logs.find((log) => log.type === "llm.error")
   const out = output(logs)
+  const thoughts = reasoning(logs)
   const protocol = blocks(logs)
+  const steps = records(logs, ["step.start", "step.finish"])
+  const tools = records(logs, ["tool.input.start", "tool.start", "tool.finish", "tool.error"])
   if (start) {
     const data = start.data
     const req = object(data.request) ?? {}
@@ -490,9 +572,18 @@ export function detailSections(logs: Log[]): Section[] {
       ...(out
         ? [
             {
-              id: "output",
-              label: "Output",
+              id: "text",
+              label: "Text",
               data: out,
+            },
+          ]
+        : []),
+      ...(thoughts
+        ? [
+            {
+              id: "reasoning",
+              label: "Reasoning",
+              data: thoughts,
             },
           ]
         : []),
@@ -502,6 +593,24 @@ export function detailSections(logs: Log[]): Section[] {
               id: "protocol",
               label: "Protocol",
               data: protocol,
+            },
+          ]
+        : []),
+      ...(tools.length > 0
+        ? [
+            {
+              id: "tools",
+              label: "Tools",
+              data: tools,
+            },
+          ]
+        : []),
+      ...(steps.length > 0
+        ? [
+            {
+              id: "steps",
+              label: "Steps",
+              data: steps,
             },
           ]
         : []),
@@ -587,7 +696,7 @@ function Preview(props: { data: unknown }) {
     <Show
       when={str()}
       fallback={
-        <pre class="mt-2 overflow-auto rounded bg-background-base p-2 text-11-regular text-text-base whitespace-pre-wrap break-words">
+        <pre class="rounded bg-background-base p-2 text-11-regular text-text-base whitespace-pre-wrap break-words">
           {json()}
         </pre>
       }
@@ -596,12 +705,12 @@ function Preview(props: { data: unknown }) {
         <Show
           when={md()}
           fallback={
-            <pre class="mt-2 overflow-auto rounded bg-background-base p-2 text-11-regular text-text-base whitespace-pre-wrap break-words">
+            <pre class="rounded bg-background-base p-2 text-11-regular text-text-base whitespace-pre-wrap break-words">
               {text()}
             </pre>
           }
         >
-          <div class="mt-2 rounded bg-background-base p-2 text-12-regular text-text-base break-words">
+          <div class="rounded bg-background-base p-2 text-12-regular text-text-base break-words">
             <Markdown text={text()} />
           </div>
         </Show>
@@ -612,9 +721,10 @@ function Preview(props: { data: unknown }) {
 
 function Data(props: { section: Section; sections: Section[]; onSection: (id: string) => void }) {
   return (
-    <div class="mt-2 space-y-2">
+    <div class="flex h-full min-h-0 flex-col">
       <Show when={props.sections.length > 1}>
-        <div class="flex flex-wrap gap-1.5">
+        <div class="shrink-0 border-b border-border-weaker-base bg-background-base pb-2">
+          <div class="flex flex-wrap gap-1.5">
           <For each={props.sections}>
             {(section) => (
               <button
@@ -630,9 +740,12 @@ function Data(props: { section: Section; sections: Section[]; onSection: (id: st
               </button>
             )}
           </For>
+          </div>
         </div>
       </Show>
-      <Preview data={props.section.data} />
+      <div class="min-h-0 flex-1 overflow-auto pt-2">
+        <Preview data={props.section.data} />
+      </div>
     </div>
   )
 }
@@ -660,9 +773,10 @@ export function SessionLogTimeline(props: { sessionID: string }) {
     logs: [] as Log[],
     open: {} as Record<string, boolean>,
     detail: {} as Record<string, string>,
+    filter: "all" as Filter,
   })
 
-  const rows = createMemo(() => groupLogs(store.logs))
+  const rows = createMemo(() => groupLogs(store.logs, store.filter))
   const stats = createMemo(() => summarizeLogs(store.logs))
   const time = createMemo(() => new Intl.DateTimeFormat(language.intl(), { dateStyle: "medium", timeStyle: "medium" }))
   const num = createMemo(() => new Intl.NumberFormat(language.intl(), { notation: "compact" }))
@@ -723,6 +837,28 @@ export function SessionLogTimeline(props: { sessionID: string }) {
           </div>
         </div>
         <div class="min-w-0 flex flex-wrap items-center justify-end gap-1.5">
+          <button
+            type="button"
+            class="rounded px-2 py-1 text-11-regular transition-colors"
+            classList={{
+              "bg-surface-base text-text-strong": store.filter === "all",
+              "text-text-weak hover:bg-surface-base": store.filter !== "all",
+            }}
+            onClick={() => setStore("filter", "all")}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            class="rounded px-2 py-1 text-11-regular transition-colors"
+            classList={{
+              "bg-surface-base text-text-strong": store.filter === "protocol",
+              "text-text-weak hover:bg-surface-base": store.filter !== "protocol",
+            }}
+            onClick={() => setStore("filter", "protocol")}
+          >
+            Protocol
+          </button>
           <Stat label={language.t("session.logs.stats.requests")} value={num().format(stats().requests)} />
           <Stat label={language.t("session.logs.stats.tools")} value={num().format(stats().tools)} />
           <Stat label={language.t("session.logs.stats.tokens")} value={num().format(stats().tokens.total)} />
@@ -769,8 +905,21 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                     const sections = detailSections(row.logs)
                     const current = () => sections.find((item) => item.id === store.detail[row.id]) ?? sections[0]
                     const section = () => current() ?? { id: "raw", label: "Raw", data: raw(row.logs) }
+                    const open = () => store.open[row.id] === true
+                    const toggle = () => setStore("open", row.id, !open())
                     return (
-                      <div class="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 border-t border-border-weaker-base pt-4 pb-5 last:pb-0">
+                      <div
+                        class="grid cursor-default grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 border-t border-border-weaker-base pt-4 pb-5 last:pb-0"
+                        role="button"
+                        tabIndex={0}
+                        aria-expanded={open()}
+                        onClick={toggle}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return
+                          event.preventDefault()
+                          toggle()
+                        }}
+                      >
                         <div class="text-11-regular text-text-weak tabular-nums pt-0.5">
                           {time().format(new Date(row.time))}
                         </div>
@@ -797,20 +946,19 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                             </div>
                           </Show>
                         </div>
-                        <details
-                          class="col-span-2 min-w-0"
-                          open={store.open[row.id] === true}
-                          onToggle={(event) => setStore("open", row.id, event.currentTarget.open)}
-                        >
-                          <summary class="cursor-default text-11-regular text-text-weaker">
-                            {language.t("session.logs.details")}
-                          </summary>
-                          <Data
-                            sections={sections}
-                            section={section()}
-                            onSection={(id) => setStore("detail", row.id, id)}
-                          />
-                        </details>
+                        <Show when={open()}>
+                          <div
+                            class="col-span-2 mr-5 h-[calc(100vh-18rem)] min-h-80 rounded border border-border-weaker-base bg-background-base px-3 py-3"
+                            onClick={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <Data
+                              sections={sections}
+                              section={section()}
+                              onSection={(id) => setStore("detail", row.id, id)}
+                            />
+                          </div>
+                        </Show>
                       </div>
                     )
                   }}

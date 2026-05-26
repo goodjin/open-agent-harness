@@ -63,7 +63,7 @@ describe("session log timeline", () => {
       ),
     ).toEqual({
       title: "LLM Request",
-      meta: ["4 messages", "2 tools"],
+      meta: [],
     })
 
     expect(describeLog(record("response", 4, "llm.finish", { finish: "tool-calls", cost: 0.0042 }))).toEqual({
@@ -127,6 +127,10 @@ describe("session log timeline", () => {
 
   test("splits llm response details into response and token sections", () => {
     const sections = detailSections([
+      record("reason", 2, "reasoning.end", {
+        text: "I should answer directly.",
+        chars: 25,
+      }),
       record("text", 3, "text.end", {
         text: [
           "Intro",
@@ -150,13 +154,14 @@ describe("session log timeline", () => {
       }),
     ])
 
-    expect(sections.map((item) => item.id)).toEqual(["overview", "output", "protocol", "tokens", "raw"])
+    expect(sections.map((item) => item.id)).toEqual(["overview", "text", "reasoning", "protocol", "tokens", "raw"])
     expect(sections.find((item) => item.id === "overview")?.data).toEqual({
       finish: "tool-calls",
       status: "Tool call",
       cost: 0.0042,
     })
-    expect(sections.find((item) => item.id === "output")?.data).toContain("Intro")
+    expect(sections.find((item) => item.id === "text")?.data).toContain("Intro")
+    expect(sections.find((item) => item.id === "reasoning")?.data).toBe("I should answer directly.")
     expect(sections.find((item) => item.id === "protocol")?.data).toContain("agent.protocol.output")
     expect(sections.find((item) => item.id === "tokens")?.data).toEqual({
       input: 10,
@@ -167,6 +172,30 @@ describe("session log timeline", () => {
         write: 2,
       },
     })
+  })
+
+  test("adds tool and step sections to llm response details", () => {
+    const sections = detailSections([
+      record("step", 2, "step.finish", { reason: "tool-calls", cost: 0.001 }),
+      record("tool", 3, "tool.finish", { tool: "read", title: "Read file", callID: "call_1" }),
+      record("done", 4, "llm.finish", { finish: "tool-calls" }),
+    ])
+
+    expect(sections.map((item) => item.id)).toEqual(["overview", "tools", "steps", "tokens", "raw"])
+    expect(sections.find((item) => item.id === "tools")?.data).toEqual([
+      {
+        time: 3,
+        type: "tool.finish",
+        data: { tool: "read", title: "Read file", callID: "call_1" },
+      },
+    ])
+    expect(sections.find((item) => item.id === "steps")?.data).toEqual([
+      {
+        time: 2,
+        type: "step.finish",
+        data: { reason: "tool-calls", cost: 0.001 },
+      },
+    ])
   })
 
   test("describes protocol events and counts internal tool calls separately", () => {
@@ -206,6 +235,12 @@ describe("session log timeline", () => {
       detail: "apr_1",
       meta: [],
     })
+
+    expect(describeLog(record("plain", 6, "protocol.final.plain", { runID: "apr_1" }))).toEqual({
+      title: "Protocol final plain text",
+      detail: "apr_1",
+      meta: [],
+    })
   })
 
   test("merges records by id and orders the timeline newest first", () => {
@@ -241,6 +276,34 @@ describe("session log timeline", () => {
       ["g", 6],
       ["a", 1],
     ])
+  })
+
+  test("hides protocol lifecycle noise unless protocol filter is active", () => {
+    const logs = [
+      record("a", 1, "protocol.started", { runID: "apr_1", title: "Run" }),
+      record("b", 2, "protocol.completed", { runID: "apr_1" }),
+      record("c", 3, "protocol.final.started", { runID: "apr_1" }),
+      record("d", 4, "protocol.final.plain", { runID: "apr_1" }),
+      record("e", 5, "protocol.final.completed", { runID: "apr_1" }),
+      record("f", 6, "memory.captured", { count: 1 }),
+    ]
+
+    expect(groupLogs(logs).map((row) => [row.id, row.logs.map((log) => log.type)])).toEqual([
+      ["f", ["memory.captured"]],
+    ])
+    expect(groupLogs(logs, "protocol").map((row) => row.id)).toEqual(["e", "d", "c", "b", "a"])
+  })
+
+  test("shows protocol errors and tool call markers in the default timeline", () => {
+    const logs = [
+      record("a", 1, "protocol.action.completed", { runID: "apr_1", actionID: "ok" }),
+      record("b", 2, "protocol.action.tool_call", { runID: "apr_1", callID: "call_1" }),
+      record("c", 3, "protocol.action.failed", { runID: "apr_1", actionID: "bad" }),
+      record("d", 4, "tool.finish", { protocol: true, callID: "call_1", tool: "read" }),
+      record("e", 5, "tool.error", { protocol: true, callID: "call_2", tool: "read", error: "boom" }),
+    ]
+
+    expect(groupLogs(logs).map((row) => row.id)).toEqual(["e", "c", "b"])
   })
 
   test("compacts start end lifecycle pairs in details", () => {
