@@ -56,7 +56,7 @@ type Manage = {
 
 export const scopes: Scope[] = ["project", "user"]
 export const modes: Mode[] = ["primary", "subagent", "all"]
-export const runners: Runner[] = ["chat", "workflow"]
+export const runners: Runner[] = ["chat", "workflow", "protocol"]
 export const costs: Cost[] = ["low", "medium", "high"]
 export const perms: Perm[] = ["custom", "strict", "lax"]
 

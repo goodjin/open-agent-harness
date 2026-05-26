@@ -314,6 +314,7 @@ describe("AgentTemplate.Meta", () => {
 
       expect(AgentTemplate.Meta.safeParse({ ...base, runner: "chat" }).success).toBe(true)
       expect(AgentTemplate.Meta.safeParse({ ...base, runner: "workflow" }).success).toBe(true)
+      expect(AgentTemplate.Meta.safeParse({ ...base, runner: "protocol" }).success).toBe(true)
     })
 
     test("invalid runner fails", () => {

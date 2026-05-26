@@ -227,6 +227,27 @@ describe("createSessionTabs", () => {
     })
   })
 
+  test("keeps protocol out of sortable file tabs", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: "protocol" as string | undefined,
+        all: ["protocol", "file://src/a.ts"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+        protocol: () => true,
+      })
+
+      expect(result.activeTab()).toBe("protocol")
+      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+  })
+
   test("falls back through workflow visibility", () => {
     createRoot((dispose) => {
       const [state] = createStore({

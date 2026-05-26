@@ -2745,6 +2745,165 @@
         ]
       }
     },
+    "/session/{sessionID}/protocol/{runID}/trace": {
+      "get": {
+        "operationId": "session.protocol.trace",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get protocol trace",
+        "description": "Retrieve a structured Agent Protocol DSL trace for comparison with ordinary tool calls.",
+        "tags": [
+          "Session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Protocol trace",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "session_id": {
+                          "type": "string"
+                        },
+                        "run_id": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "type": "string",
+                          "const": "agent.protocol.trace"
+                        },
+                        "version": {
+                          "type": "string",
+                          "const": "1"
+                        },
+                        "declaration": {},
+                        "result": {},
+                        "actions": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "tool_calls": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {}
+                          }
+                        },
+                        "metrics": {
+                          "type": "object",
+                          "properties": {
+                            "actions": {
+                              "type": "number"
+                            },
+                            "internal_tool_calls": {
+                              "type": "number"
+                            },
+                            "direct_model_tool_calls": {
+                              "type": "number"
+                            },
+                            "model_visible_bytes": {
+                              "type": "number"
+                            },
+                            "raw_output_bytes": {
+                              "type": "number"
+                            },
+                            "duration_ms": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "actions",
+                            "internal_tool_calls",
+                            "direct_model_tool_calls",
+                            "model_visible_bytes",
+                            "raw_output_bytes",
+                            "duration_ms"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "session_id",
+                        "run_id",
+                        "type",
+                        "version",
+                        "actions",
+                        "tool_calls",
+                        "metrics"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.protocol.trace({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}": {
       "get": {
         "operationId": "session.get",
@@ -16476,7 +16635,8 @@
             "type": "string",
             "enum": [
               "chat",
-              "workflow"
+              "workflow",
+              "protocol"
             ]
           },
           "hidden": {
@@ -16721,7 +16881,8 @@
                 "type": "string",
                 "enum": [
                   "chat",
-                  "workflow"
+                  "workflow",
+                  "protocol"
                 ]
               },
               "workflow_mode": {
@@ -16941,7 +17102,8 @@
                 "type": "string",
                 "enum": [
                   "chat",
-                  "workflow"
+                  "workflow",
+                  "protocol"
                 ]
               },
               "workflow_mode": {
@@ -17180,7 +17342,8 @@
                 "type": "string",
                 "enum": [
                   "chat",
-                  "workflow"
+                  "workflow",
+                  "protocol"
                 ]
               },
               "workflow_mode": {
@@ -17389,7 +17552,8 @@
                 "type": "string",
                 "enum": [
                   "chat",
-                  "workflow"
+                  "workflow",
+                  "protocol"
                 ]
               },
               "workflow_mode": {
@@ -17786,7 +17950,8 @@
             "type": "string",
             "enum": [
               "chat",
-              "workflow"
+              "workflow",
+              "protocol"
             ]
           },
           "native": {

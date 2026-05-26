@@ -1,8 +1,9 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "opencode-agent",
+      "name": "open-agent-harness-vscode",
       "devDependencies": {
         "@types/mocha": "^10.0.10",
         "@types/node": "20.x",

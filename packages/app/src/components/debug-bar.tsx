@@ -1,5 +1,5 @@
 import { useIsRouting, useLocation } from "@solidjs/router"
-import { batch, createEffect, onCleanup, onMount } from "solid-js"
+import { batch, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { useLanguage } from "@/context/language"
@@ -78,6 +78,7 @@ export function DebugBar() {
   const language = useLanguage()
   const location = useLocation()
   const routing = useIsRouting()
+  const [open, setOpen] = createSignal(globalThis.localStorage?.getItem("opencode.debugBar.closed") !== "true")
   const [state, setState] = createStore({
     cls: undefined as number | undefined,
     delay: undefined as number | undefined,
@@ -360,10 +361,23 @@ export function DebugBar() {
     })
   })
 
+  const close = () => {
+    globalThis.localStorage?.setItem("opencode.debugBar.closed", "true")
+    setOpen(false)
+  }
+
+  const show = () => {
+    globalThis.localStorage?.removeItem("opencode.debugBar.closed")
+    setOpen(true)
+  }
+
   return (
     <aside
       aria-label={language.t("debugBar.ariaLabel")}
-      class="pointer-events-auto fixed bottom-3 right-3 z-50 w-[308px] max-w-[calc(100vw-1.5rem)] overflow-hidden rounded-xl border border-border-weak-base bg-background-base p-0.5 text-text-strong shadow-[var(--shadow-lg-border-base)] sm:bottom-4 sm:right-4 sm:w-[324px]"
+      class="pointer-events-auto fixed bottom-3 right-3 z-50 overflow-hidden rounded-xl border border-border-weak-base bg-background-base p-0.5 text-text-strong shadow-[var(--shadow-lg-border-base)] sm:bottom-4 sm:right-4"
+      classList={{
+        "w-[308px] max-w-[calc(100vw-1.5rem)] sm:w-[324px]": open(),
+      }}
       style={{
         "--background-base": "#f8f8f8",
         "--border-weak-base": "#d8d8d8",
@@ -371,79 +385,103 @@ export function DebugBar() {
         "--text-strong": "#171717",
       }}
     >
-      <div class="grid grid-cols-5 gap-px font-mono">
-        <Cell
-          label={language.t("debugBar.nav.label")}
-          tip={language.t("debugBar.nav.tip")}
-          value={navv()}
-          bad={bad(state.nav.dur, 400)}
-          dim={state.nav.dur === undefined && !state.nav.pending}
-        />
-        <Cell
-          label={language.t("debugBar.fps.label")}
-          tip={language.t("debugBar.fps.tip")}
-          value={state.fps === undefined ? na() : `${Math.round(state.fps)}`}
-          bad={bad(state.fps, 50, true)}
-          dim={state.fps === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.frame.label")}
-          tip={language.t("debugBar.frame.tip")}
-          value={time(state.gap) ?? na()}
-          bad={bad(state.gap, 50)}
-          dim={state.gap === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.jank.label")}
-          tip={language.t("debugBar.jank.tip")}
-          value={state.jank === undefined ? na() : `${state.jank}`}
-          bad={bad(state.jank, 8)}
-          dim={state.jank === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.long.label")}
-          tip={language.t("debugBar.long.tip", { max: ms(state.long.max) ?? na() })}
-          value={longv()}
-          bad={bad(state.long.block, 200)}
-          dim={state.long.count === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.delay.label")}
-          tip={language.t("debugBar.delay.tip")}
-          value={time(state.delay) ?? na()}
-          bad={bad(state.delay, 100)}
-          dim={state.delay === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.inp.label")}
-          tip={language.t("debugBar.inp.tip")}
-          value={time(state.inp) ?? na()}
-          bad={bad(state.inp, 200)}
-          dim={state.inp === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.cls.label")}
-          tip={language.t("debugBar.cls.tip")}
-          value={state.cls === undefined ? na() : state.cls.toFixed(2)}
-          bad={bad(state.cls, 0.1)}
-          dim={state.cls === undefined}
-        />
-        <Cell
-          label={language.t("debugBar.mem.label")}
-          tip={
-            state.heap.used === undefined
-              ? language.t("debugBar.mem.tipUnavailable")
-              : language.t("debugBar.mem.tip", {
-                  used: mb(state.heap.used) ?? na(),
-                  limit: mb(state.heap.limit) ?? na(),
-                })
-          }
-          value={heapv()}
-          bad={bad(heap(), 0.8)}
-          dim={state.heap.used === undefined}
-          wide
-        />
-      </div>
+      <Show
+        when={open()}
+        fallback={
+          <button
+            type="button"
+            class="h-8 min-w-12 rounded-[10px] px-2 font-mono text-[10px] font-black uppercase tracking-[0.04em] hover:bg-black/[0.05]"
+            onClick={show}
+            aria-label="Show debug bar"
+          >
+            DBG
+          </button>
+        }
+      >
+        <div class="flex items-start gap-px">
+          <div class="grid flex-1 grid-cols-5 gap-px font-mono">
+            <Cell
+              label={language.t("debugBar.nav.label")}
+              tip={language.t("debugBar.nav.tip")}
+              value={navv()}
+              bad={bad(state.nav.dur, 400)}
+              dim={state.nav.dur === undefined && !state.nav.pending}
+            />
+            <Cell
+              label={language.t("debugBar.fps.label")}
+              tip={language.t("debugBar.fps.tip")}
+              value={state.fps === undefined ? na() : `${Math.round(state.fps)}`}
+              bad={bad(state.fps, 50, true)}
+              dim={state.fps === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.frame.label")}
+              tip={language.t("debugBar.frame.tip")}
+              value={time(state.gap) ?? na()}
+              bad={bad(state.gap, 50)}
+              dim={state.gap === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.jank.label")}
+              tip={language.t("debugBar.jank.tip")}
+              value={state.jank === undefined ? na() : `${state.jank}`}
+              bad={bad(state.jank, 8)}
+              dim={state.jank === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.long.label")}
+              tip={language.t("debugBar.long.tip", { max: ms(state.long.max) ?? na() })}
+              value={longv()}
+              bad={bad(state.long.block, 200)}
+              dim={state.long.count === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.delay.label")}
+              tip={language.t("debugBar.delay.tip")}
+              value={time(state.delay) ?? na()}
+              bad={bad(state.delay, 100)}
+              dim={state.delay === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.inp.label")}
+              tip={language.t("debugBar.inp.tip")}
+              value={time(state.inp) ?? na()}
+              bad={bad(state.inp, 200)}
+              dim={state.inp === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.cls.label")}
+              tip={language.t("debugBar.cls.tip")}
+              value={state.cls === undefined ? na() : state.cls.toFixed(2)}
+              bad={bad(state.cls, 0.1)}
+              dim={state.cls === undefined}
+            />
+            <Cell
+              label={language.t("debugBar.mem.label")}
+              tip={
+                state.heap.used === undefined
+                  ? language.t("debugBar.mem.tipUnavailable")
+                  : language.t("debugBar.mem.tip", {
+                      used: mb(state.heap.used) ?? na(),
+                      limit: mb(state.heap.limit) ?? na(),
+                    })
+              }
+              value={heapv()}
+              bad={bad(heap(), 0.8)}
+              dim={state.heap.used === undefined}
+              wide
+            />
+          </div>
+          <button
+            type="button"
+            class="flex h-[42px] w-7 shrink-0 items-center justify-center rounded-[8px] bg-black/[0.04] font-mono text-[13px] font-bold hover:bg-black/[0.08]"
+            onClick={close}
+            aria-label="Hide debug bar"
+          >
+            x
+          </button>
+        </div>
+      </Show>
     </aside>
   )
 }

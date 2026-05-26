@@ -11,6 +11,7 @@ import { base64Encode } from "@opencode-ai/util/encode"
 import { decode64 } from "@/utils/base64"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useLanguage } from "@/context/language"
+import HarnessHome from "@/pages/harness-home"
 function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
   const navigate = useNavigate()
   const sync = useSync()
@@ -34,10 +35,12 @@ export default function Layout(props: ParentProps) {
   const location = useLocation()
   const language = useLanguage()
   const globalSDK = useGlobalSDK()
+  const reserved = createMemo(() => params.dir === "harness" && location.pathname === "/harness")
   const directory = createMemo(() => decode64(params.dir) ?? "")
   const [state, setState] = createStore({ invalid: "", resolved: "" })
 
   createEffect(() => {
+    if (reserved()) return
     if (!params.dir) return
     const raw = directory()
     if (!raw) {
@@ -78,6 +81,8 @@ export default function Layout(props: ParentProps) {
         })
       })
   })
+
+  if (reserved()) return <HarnessHome />
 
   return (
     <Show when={state.resolved} keyed>

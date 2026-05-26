@@ -30,6 +30,104 @@ const cap = {
 } satisfies Agent.Info["capability"]
 
 describe("session.llm.hasToolCalls", () => {
+  test("adds protocol instructions for protocol runner even without agent prompt", () => {
+    const system = LLM.compose({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+      } satisfies Agent.Info,
+      model: {} as never,
+      system: [],
+      user: {
+        id: MessageID.make("user-protocol-compose"),
+        sessionID: SessionID.make("session-protocol-compose"),
+        role: "user",
+        time: { created: Date.now() },
+        agent: "protocol-runner",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+      } satisfies MessageV2.User,
+      runtimeTools: {
+        prompt: "# Available Protocol Tools\n\n## read\ninput_schema:",
+      } as never,
+      isCodex: false,
+    })[0]
+
+    expect(system).toContain("Agent Protocol DSL v1")
+    expect(system).toContain("Do not call low-level tools directly")
+    expect(system).toContain("Input contract:")
+    expect(system).toContain("Decision rule:")
+    expect(system).toContain("Output contract:")
+    expect(system).toContain("Runtime turn input:")
+    expect(system).toContain("AgentProtocolOutput")
+    expect(system).toContain("Every turn must end by making this native tool call")
+    expect(system).toContain('call `AgentProtocolOutput` with `kind: "answer"`')
+    expect(system).toContain("message")
+    expect(system).toContain("Available Protocol Tools")
+    expect(system).toContain("## read")
+    expect(system).toContain('kind: "act"')
+    expect(system).toContain("type`, `name")
+    expect(system).toContain("args")
+    expect(system).toContain("calls")
+    expect(system).toContain("calls[].id")
+    expect(system).toContain("calls[].type")
+    expect(system).toContain("calls[].name")
+    expect(system).toContain("depends")
+    expect(system).toContain("result")
+    expect(system).toContain("Provider-specific textual invocation syntax")
+    expect(system).toContain("Never answer in plain text instead of calling `AgentProtocolOutput`")
+    expect(system).toContain("Never print JSON for the protocol")
+    expect(system).toContain("Flat field semantics:")
+    expect(system).toContain("Tool target requirements:")
+    expect(system).toContain("never use `auto`")
+    expect(system).toContain("The runtime executes exactly what you declare")
+    expect(system).toContain("native `AgentProtocolOutput` tool schema")
+    expect(system).toContain("Final protocol reminder:")
+    expect(
+      system.trim().endsWith('For runtime work use `kind: "act"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.'),
+    ).toBe(true)
+    expect(system).not.toContain("AgentProtocolOutput.input.type")
+    expect(system).not.toContain("version")
+    expect(system).not.toContain("actions")
+    expect(system).not.toContain("executor")
+    expect(system).not.toContain("tool/args")
+    expect(system).not.toContain("say")
+    expect(system).not.toContain("calls[].kind")
+    expect(system).not.toContain("after")
+  })
+
+  test("wraps protocol runner messages as conversation turns", () => {
+    const messages = LLM.prepareMessages({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+      } satisfies Agent.Info,
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "hello\nworld" }],
+        },
+      ],
+    })
+
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.role).toBe("user")
+    expect(messages[0]?.content).toContain('<turn index="1">')
+    expect(messages[0]?.content).toContain("## User request")
+    expect(messages[0]?.content).toContain("hello\nworld")
+    expect(messages[1]?.content).toContain("Based on all turns above")
+    expect(messages[1]?.content).not.toContain("<turn")
+  })
+
   test("returns false for empty messages array", () => {
     expect(LLM.hasToolCalls([])).toBe(false)
   })
@@ -188,6 +286,49 @@ function createChatStream(text: string) {
         id: "chatcmpl-1",
         object: "chat.completion.chunk",
         choices: [{ delta: {}, finish_reason: "stop" }],
+      })}`,
+      "data: [DONE]",
+    ].join("\n\n") + "\n\n"
+
+  const encoder = new TextEncoder()
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(payload))
+      controller.close()
+    },
+  })
+}
+
+function createToolStream(input: Record<string, unknown>) {
+  const payload =
+    [
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: { role: "assistant" } }],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [
+          {
+            delta: {
+              tool_calls: [
+                {
+                  index: 0,
+                  id: "call_read",
+                  type: "function",
+                  function: { name: "read", arguments: JSON.stringify(input) },
+                },
+              ],
+            },
+          },
+        ],
+      })}`,
+      `data: ${JSON.stringify({
+        id: "chatcmpl-1",
+        object: "chat.completion.chunk",
+        choices: [{ delta: {}, finish_reason: "tool_calls" }],
       })}`,
       "data: [DONE]",
     ].join("\n\n") + "\n\n"
@@ -429,6 +570,200 @@ describe("session.llm.stream", () => {
         const capture = await request
         const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
         expect(tools?.some((item) => item.function?.name === "question")).toBe(true)
+      },
+    })
+  })
+
+  test("protocol runner exposes only AgentProtocolOutput as native tool", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const model = fixture.model
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createChatStream("Hello"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.make(providerID), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-test-protocol-tool")
+        const agent = {
+          name: "protocol-runner",
+          mode: "primary",
+          runner: "protocol",
+          entry: ent,
+          capability: cap,
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("user-protocol-tool"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: [],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "Hello" }],
+          tools: {
+            bash: tool({
+              description: "Run command",
+              inputSchema: z.object({ command: z.string() }),
+              execute: async () => ({ output: "" }),
+            }),
+          },
+          runtimeTools: {
+            prompt: "# Available Protocol Tools\n\n## bash",
+          } as never,
+        })
+
+        for await (const _ of stream.fullStream) {
+        }
+
+        const capture = await request
+        const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
+        expect(tools?.map((item) => item.function?.name)).toEqual(["AgentProtocolOutput"])
+        expect(JSON.stringify(capture.body.tool_choice)).toContain("AgentProtocolOutput")
+        expect(JSON.stringify(tools)).toContain("message")
+        expect(JSON.stringify(tools)).toContain("depends")
+        expect(JSON.stringify(tools)).toContain("\"type\"")
+        expect(JSON.stringify(tools)).not.toContain("say")
+        expect(JSON.stringify(tools)).not.toContain("after")
+      },
+    })
+  })
+
+  test("protocol runner repairs direct native tool calls into AgentProtocolOutput", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const model = fixture.model
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createToolStream({ filePath: "package.json" }), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.make(providerID), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-test-protocol-repair")
+        const agent = {
+          name: "protocol-runner",
+          mode: "primary",
+          runner: "protocol",
+          entry: ent,
+          capability: cap,
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("user-protocol-repair"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: [],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "read package" }],
+          tools: {},
+          runtimeTools: {
+            prompt: "# Available Protocol Tools\n\n## read",
+            catalog: [{ id: "read", description: "", schema: {} }],
+          } as never,
+        })
+
+        const calls: unknown[] = []
+        for await (const item of stream.fullStream) {
+          if (item.type === "tool-call") calls.push(item.input)
+        }
+
+        const capture = await request
+        const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
+        expect(tools?.map((item) => item.function?.name)).toEqual(["AgentProtocolOutput"])
+        expect(calls).toHaveLength(1)
+        expect(JSON.stringify(calls[0])).toContain("Protocol violation recovered")
+        expect(JSON.stringify(calls[0])).toContain("\"name\":\"read\"")
+        expect(JSON.stringify(calls[0])).toContain("\"type\":\"tool\"")
+        expect(JSON.stringify(calls[0])).toContain("\"filePath\":\"package.json\"")
       },
     })
   })

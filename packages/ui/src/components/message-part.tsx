@@ -466,7 +466,7 @@ function renderable(part: PartType, showReasoningSummaries = true) {
     if (part.tool === "question") return part.state.status !== "pending" && part.state.status !== "running"
     return true
   }
-  if (part.type === "text") return !!part.text?.trim()
+  if (part.type === "text") return !part.ignored && !!part.text?.trim()
   if (part.type === "reasoning") return showReasoningSummaries && !!part.text?.trim()
   return !!PART_MAPPING[part.type]
 }

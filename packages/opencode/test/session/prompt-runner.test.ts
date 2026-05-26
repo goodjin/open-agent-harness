@@ -88,4 +88,78 @@ describe("SessionPrompt runner wiring", () => {
       else process.env.OPENAI_API_KEY = prev
     }
   })
+
+  test("session loop strips model-callable tools for protocol-runner", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-protocol"),
+            fn: async () => {
+              resetRegistry()
+              const seen: { tools: number; system: string; prompt: string }[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push({ tools: Object.keys(stream.tools).length, system: stream.system.join("\n"), prompt: stream.runtimeTools?.prompt ?? "" })
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Protocol runner tools test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "protocol-runner",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: { read: true, glob: true, grep: true, bash: true },
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "analyze project",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(seen).toHaveLength(1)
+                expect(seen[0]?.tools).toBe(0)
+                expect(seen[0]?.system).not.toContain("Available Protocol Tools")
+                expect(seen[0]?.prompt).toContain("Available Protocol Tools")
+                expect(seen[0]?.prompt).toContain("## read")
+                expect(seen[0]?.prompt).toContain("## bash")
+                expect(seen[0]?.prompt).toContain("input_schema:")
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
 })

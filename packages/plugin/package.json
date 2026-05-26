@@ -3,7 +3,7 @@
   "name": "@opencode-ai/plugin",
   "version": "1.2.27",
   "type": "module",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "build": "tsc"

@@ -12,7 +12,7 @@ export namespace AgentTemplate {
   export type RuntimeMode = z.infer<typeof RuntimeMode>
 
   // Runner controls which session runtime handles the agent.
-  export const Runner = z.enum(["chat", "workflow"])
+  export const Runner = z.enum(["chat", "workflow", "protocol"])
   export type Runner = z.infer<typeof Runner>
 
   export const Entry = z

@@ -1,141 +1,49 @@
-<p align="center">
-  <a href="https://opencode.ai">
-    <picture>
-      <source srcset="packages/console/app/src/asset/logo-ornate-dark.svg" media="(prefers-color-scheme: dark)">
-      <source srcset="packages/console/app/src/asset/logo-ornate-light.svg" media="(prefers-color-scheme: light)">
-      <img src="packages/console/app/src/asset/logo-ornate-light.svg" alt="OpenCode logo">
-    </picture>
-  </a>
-</p>
-<p align="center">The open source AI coding agent.</p>
-<p align="center">
-  <a href="https://opencode.ai/discord"><img alt="Discord" src="https://img.shields.io/discord/1391832426048651334?style=flat-square&label=discord" /></a>
-  <a href="https://www.npmjs.com/package/opencode-ai"><img alt="npm" src="https://img.shields.io/npm/v/opencode-ai?style=flat-square" /></a>
-  <a href="https://github.com/anomalyco/opencode/actions/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/anomalyco/opencode/publish.yml?style=flat-square&branch=dev" /></a>
-</p>
+# Open Agent Harness
 
-<p align="center">
-  <a href="README.md">English</a> |
-  <a href="README.zh.md">简体中文</a> |
-  <a href="README.zht.md">繁體中文</a> |
-  <a href="README.ko.md">한국어</a> |
-  <a href="README.de.md">Deutsch</a> |
-  <a href="README.es.md">Español</a> |
-  <a href="README.fr.md">Français</a> |
-  <a href="README.it.md">Italiano</a> |
-  <a href="README.da.md">Dansk</a> |
-  <a href="README.ja.md">日本語</a> |
-  <a href="README.pl.md">Polski</a> |
-  <a href="README.ru.md">Русский</a> |
-  <a href="README.bs.md">Bosanski</a> |
-  <a href="README.ar.md">العربية</a> |
-  <a href="README.no.md">Norsk</a> |
-  <a href="README.br.md">Português (Brasil)</a> |
-  <a href="README.th.md">ไทย</a> |
-  <a href="README.tr.md">Türkçe</a> |
-  <a href="README.uk.md">Українська</a> |
-  <a href="README.bn.md">বাংলা</a> |
-  <a href="README.gr.md">Ελληνικά</a> |
-  <a href="README.vi.md">Tiếng Việt</a>
-</p>
+Open Agent Harness is a source-available runtime for protocol-driven coding agents. It is built from the opencode source tree and keeps the parts that make opencode a strong local coding environment, while reshaping the agent layer around a harness: a managed space where agents, tools, requests, and runtime state can be described, routed, observed, and composed.
 
-[![OpenCode Terminal UI](packages/web/src/assets/lander/screenshot.png)](https://opencode.ai)
+The core idea is simple: creating an agent should feel as lightweight as creating a skill. A skill should not be a loose prompt fragment sitting beside the system. In Open Agent Harness, skills become agents with explicit contracts, request shapes, tool boundaries, and cooperation rules.
 
----
+## What Changed
 
-### Installation
+Open Agent Harness focuses on four design moves:
+
+- Rewrite the tool call mechanism so tool execution is governed by the harness instead of being treated as an opaque model side effect.
+- Redefine the request format so agent input, tool intent, runtime context, and coordination metadata can travel together.
+- Convert skills into first-class agents, making agent creation as simple and repeatable as authoring a skill.
+- Design a multi-agent management protocol for routing, delegation, state sharing, review, and handoff inside a controlled harness environment.
+
+The goal is not only to run a coding agent. The goal is to make agent collaboration legible enough that a runtime can supervise it.
+
+## Harness Philosophy
+
+Agents should be small, named, and understandable. Each agent should know its role, available tools, input contract, and output contract. The harness coordinates those agents without hiding the path work took through the system.
+
+Tool calls should be structured actions, not just strings emitted by a model. A tool call has authority, scope, inputs, outputs, errors, and audit history. Open Agent Harness treats that structure as part of the runtime protocol.
+
+Multi-agent systems should be designed like operating environments. The harness defines how agents are created, how they cooperate, how they ask for help, how they hand off work, and how their work can be inspected later.
+
+## Status
+
+This repository is currently a modified opencode codebase. The public identity, package name, CLI entry, license, and documentation have been changed to Open Agent Harness, while some internal workspace package names and compatibility paths may still reference opencode during the migration.
+
+## Installation
 
 ```bash
-# YOLO
-curl -fsSL https://opencode.ai/install | bash
-
-# Package managers
-npm i -g opencode-ai@latest        # or bun/pnpm/yarn
-scoop install opencode             # Windows
-choco install opencode             # Windows
-brew install anomalyco/tap/opencode # macOS and Linux (recommended, always up to date)
-brew install opencode              # macOS and Linux (official brew formula, updated less)
-sudo pacman -S opencode            # Arch Linux (Stable)
-paru -S opencode-bin               # Arch Linux (Latest from AUR)
-mise use -g opencode               # Any OS
-nix run nixpkgs#opencode           # or github:anomalyco/opencode for latest dev branch
+bun install
+bun run --cwd packages/opencode --conditions=browser ./src/index.ts --help
 ```
 
-> [!TIP]
-> Remove versions older than 0.1.x before installing.
+## License
 
-### Desktop App (BETA)
+Open Agent Harness is dual-licensed under AGPLv3-or-later and a separate commercial license.
 
-OpenCode is also available as a desktop application. Download directly from the [releases page](https://github.com/anomalyco/opencode/releases) or [opencode.ai/download](https://opencode.ai/download).
+The AGPLv3-or-later license lets you use, modify, distribute, and run the software, including commercially, as long as you comply with its source-sharing obligations. If you want to use Open Agent Harness in a commercial or proprietary product or hosted service without complying with those AGPL obligations, you need a commercial license from the Open Agent Harness copyright holder.
 
-| Platform              | Download                              |
-| --------------------- | ------------------------------------- |
-| macOS (Apple Silicon) | `opencode-desktop-darwin-aarch64.dmg` |
-| macOS (Intel)         | `opencode-desktop-darwin-x64.dmg`     |
-| Windows               | `opencode-desktop-windows-x64.exe`    |
-| Linux                 | `.deb`, `.rpm`, or AppImage           |
+This project includes source code derived from opencode, which was originally distributed under the MIT License. The original opencode copyright notice and MIT license text are preserved in [LICENSE](./LICENSE).
 
-```bash
-# macOS (Homebrew)
-brew install --cask opencode-desktop
-# Windows (Scoop)
-scoop bucket add extras; scoop install extras/opencode-desktop
-```
+Open Agent Harness is not built by the OpenCode team and is not affiliated with OpenCode, opencode.ai, or anomalyco.
 
-#### Installation Directory
+## Third-Party Licenses
 
-The install script respects the following priority order for the installation path:
-
-1. `$OPENCODE_INSTALL_DIR` - Custom installation directory
-2. `$XDG_BIN_DIR` - XDG Base Directory Specification compliant path
-3. `$HOME/bin` - Standard user binary directory (if it exists or can be created)
-4. `$HOME/.opencode/bin` - Default fallback
-
-```bash
-# Examples
-OPENCODE_INSTALL_DIR=/usr/local/bin curl -fsSL https://opencode.ai/install | bash
-XDG_BIN_DIR=$HOME/.local/bin curl -fsSL https://opencode.ai/install | bash
-```
-
-### Agents
-
-OpenCode includes two built-in agents you can switch between with the `Tab` key.
-
-- **build** - Default, full-access agent for development work
-- **plan** - Read-only agent for analysis and code exploration
-  - Denies file edits by default
-  - Asks permission before running bash commands
-  - Ideal for exploring unfamiliar codebases or planning changes
-
-Also included is a **general** subagent for complex searches and multistep tasks.
-This is used internally and can be invoked using `@general` in messages.
-
-Learn more about [agents](https://opencode.ai/docs/agents).
-
-### Documentation
-
-For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
-
-### Contributing
-
-If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
-
-### Building on OpenCode
-
-If you are working on a project that's related to OpenCode and is using "opencode" as part of its name, for example "opencode-dashboard" or "opencode-mobile", please add a note to your README to clarify that it is not built by the OpenCode team and is not affiliated with us in any way.
-
-### FAQ
-
-#### How is this different from Claude Code?
-
-It's very similar to Claude Code in terms of capability. Here are the key differences:
-
-- 100% open source
-- Not coupled to any provider. Although we recommend the models we provide through [OpenCode Zen](https://opencode.ai/zen), OpenCode can be used with Claude, OpenAI, Google, or even local models. As models evolve, the gaps between them will close and pricing will drop, so being provider-agnostic is important.
-- Out-of-the-box LSP support
-- A focus on TUI. OpenCode is built by neovim users and the creators of [terminal.shop](https://terminal.shop); we are going to push the limits of what's possible in the terminal.
-- A client/server architecture. This, for example, can allow OpenCode to run on your computer while you drive it remotely from a mobile app, meaning that the TUI frontend is just one of the possible clients.
-
----
-
-**Join our community** [Discord](https://discord.gg/opencode) | [X.com](https://x.com/opencode)
+The runtime depends on third-party packages under MIT, Apache-2.0, BSD-3-Clause, ISC, BlueOak-1.0.0, and related permissive licenses. See [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for the current dependency license inventory and the module that introduces each license.

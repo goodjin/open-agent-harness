@@ -54,12 +54,21 @@ export namespace SessionProcessor {
             type,
             data,
           }).catch((err) => log.warn("session log failed", { err }))
+        const system = (input: LLM.StreamInput) => {
+          if (input.agent.prompt || input.agent.runner === "protocol") return LLM.compose({ ...input, isCodex: false })
+          return input.system
+        }
         const prompt = (input: LLM.StreamInput) => ({
-          system: input.system,
-          messages: input.messages,
+          system: system(input),
+          systemInput: input.system,
+          messages: LLM.prepareMessages(input),
           user: input.user,
+          agent: {
+            name: input.agent.name,
+            runner: input.agent.runner,
+          },
           toolChoice: input.toolChoice,
-          tools: Object.keys(input.tools),
+          tools: input.agent.runner === "protocol" ? [LLM.PROTOCOL_OUTPUT_TOOL] : Object.keys(input.tools),
         })
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
@@ -75,7 +84,7 @@ export namespace SessionProcessor {
               mode: streamInput.agent.mode,
               attempt,
               messages: streamInput.messages.length,
-              tools: Object.keys(streamInput.tools).length,
+              tools: streamInput.agent.runner === "protocol" ? 1 : Object.keys(streamInput.tools).length,
               request: prompt(streamInput),
             })
             const stream = await LLM.stream(streamInput)

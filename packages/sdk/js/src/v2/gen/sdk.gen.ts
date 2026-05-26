@@ -183,6 +183,8 @@ import type {
   SessionPromptAsyncResponses,
   SessionPromptErrors,
   SessionPromptResponses,
+  SessionProtocolTraceErrors,
+  SessionProtocolTraceResponses,
   SessionRestoreErrors,
   SessionRestorePreviewErrors,
   SessionRestorePreviewResponses,
@@ -1499,6 +1501,44 @@ export class Worktree extends HeyApiClient {
   }
 }
 
+export class Protocol extends HeyApiClient {
+  /**
+   * Get protocol trace
+   *
+   * Retrieve a structured Agent Protocol DSL trace for comparison with ordinary tool calls.
+   */
+  public trace<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionProtocolTraceResponses,
+      SessionProtocolTraceErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/protocol/{runID}/trace",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Session3 extends HeyApiClient {
   /**
    * List sessions
@@ -2699,6 +2739,11 @@ export class Session3 extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _protocol?: Protocol
+  get protocol(): Protocol {
+    return (this._protocol ??= new Protocol({ client: this.client }))
   }
 }
 

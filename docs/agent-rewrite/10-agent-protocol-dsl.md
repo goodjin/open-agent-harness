@@ -103,6 +103,291 @@ Ordinary chat agents do not need to emit this DSL.
 
 The agent prompt should clearly say whether the agent may emit Agent Protocol DSL. If the agent is not configured for this protocol, the runtime should ignore protocol-looking text or treat it as ordinary content.
 
+## Simplified v1 Syntax For Existing Models
+
+The first implementation should use a simplified model-facing syntax.
+
+Reason: the full Agent Protocol DSL described later in this document is intentionally richer than ordinary tool calling. It can represent action graphs, typed executors, context references, persistence policies, result policies, recovery policies, and UI projection metadata. That richer protocol is useful as a long-term direction, but current general-purpose models are not specifically trained to emit it reliably. Without dedicated training, grammar constraints, or very strong provider-side structured output support, a deeply nested protocol causes avoidable failures: missing fixed fields, invalid nesting, stringified arrays, malformed JSON, duplicated protocol blocks, and fallback to provider-specific tool-call text.
+
+Therefore v1 uses a small compatibility syntax that is close to common tool-call training data while preserving the protocol boundary:
+
+- The model still calls one protocol entrypoint, `AgentProtocolOutput`.
+- Runtime still validates, logs, executes, projects UI state, and returns protocol observations.
+- Tool and agent execution are still represented as protocol calls, not raw unconstrained assistant text.
+- If the model falls back to original provider/native tool-call syntax, runtime may mark it as a protocol violation and recover it into the same simplified protocol shape when safe.
+- The full action-graph DSL remains the future target, not the required model-facing grammar for this compatibility version.
+
+### Top-Level Shape
+
+The model-facing output has three top-level kinds:
+
+```ts
+type ProtocolOutput =
+  | Act
+  | Answer
+  | Done
+```
+
+`act` asks runtime to execute one or more calls:
+
+```json
+{
+  "kind": "act",
+  "message": "I will inspect the package files first.",
+  "calls": [
+    {
+      "id": "read_package",
+      "type": "tool",
+      "name": "read",
+      "args": {
+        "filePath": "package.json"
+      },
+      "result": "summary"
+    }
+  ]
+}
+```
+
+`answer` returns user-visible Markdown when no more runtime work is needed:
+
+```json
+{
+  "kind": "answer",
+  "message": "This project is a VS Code extension for visual HTML editing."
+}
+```
+
+`done` ends the turn without additional work. It may still include a user-visible closing message:
+
+```json
+{
+  "kind": "done",
+  "message": "The requested check is complete."
+}
+```
+
+### Fields
+
+Top-level fields:
+
+- `kind`: required. One of `act`, `answer`, or `done`.
+- `message`: optional for `act` and `done`, required in practice for `answer`. User-visible Markdown or a short progress note.
+- `calls`: required for `act`; omitted for `answer` and `done`.
+
+Call fields:
+
+- `id`: required. Stable call id used by logs, graph nodes, result references, and dependencies.
+- `type`: required. `tool` or `agent`.
+- `name`: required. For `tool`, this is a concrete tool id from the runtime tool catalog. For `agent`, this is a concrete agent id or `auto`.
+- `args`: optional object. For `tool`, this must match the selected tool's input schema. For `agent`, this is the delegation input.
+- `depends`: optional string or string array. Call ids that must complete before this call starts.
+- `result`: optional. Result return policy. Allowed values: `summary`, `full`, `structured`, `on_failure`, `on_demand`, or `adaptive`. Default is `summary`.
+- `title`: optional short label for UI display.
+
+### Batch Calls
+
+All runtime execution uses `calls`, even when there is only one call. This avoids two equivalent syntaxes for the same concept.
+
+Example with simple dependency:
+
+```json
+{
+  "kind": "act",
+  "message": "I will find project manifests, then read the package manifest.",
+  "calls": [
+    {
+      "id": "find_manifests",
+      "type": "tool",
+      "name": "glob",
+      "args": {
+        "pattern": "*.json"
+      }
+    },
+    {
+      "id": "read_package",
+      "type": "tool",
+      "name": "read",
+      "args": {
+        "filePath": "package.json"
+      },
+      "depends": "find_manifests",
+      "result": "summary"
+    }
+  ]
+}
+```
+
+Example with agent delegation:
+
+```json
+{
+  "kind": "act",
+  "message": "I will delegate a focused code review.",
+  "calls": [
+    {
+      "id": "review_changes",
+      "type": "agent",
+      "name": "auto",
+      "args": {
+        "description": "Review the changed protocol schema and prompt behavior."
+      },
+      "result": "summary"
+    }
+  ]
+}
+```
+
+### Runtime Normalization
+
+Runtime should normalize simplified v1 syntax into the internal action representation used by execution, logging, and UI projection:
+
+- `kind: "act"` maps to `intent: "execute"`.
+- Each `calls[]` item maps to one internal action.
+- `calls[].type` maps to internal executor type.
+- `calls[].name` maps to internal executor target.
+- `calls[].args` maps to internal action input.
+- `calls[].depends` maps to internal dependencies.
+- `calls[].result` maps to internal result policy.
+- `kind: "answer"` maps to a response message.
+- `kind: "done"` maps to a stopped turn, optionally with a visible message.
+
+The simplified syntax is a model-compatibility surface. Runtime maps it into the richer internal protocol representation used for execution, logging, UI projection, and future full-DSL evolution.
+
+### Model-Visible Input Transcript
+
+The v1 output contract is structured: the model submits `AgentProtocolOutput` through the native tool-call channel.
+
+The v1 input contract is different: runtime should not replay provider API objects, raw `tools` declarations, `toolChoice`, or raw `AgentProtocolOutput` arguments as the model-visible history. Those are implementation details. The next request should show what happened in a model-readable transcript.
+
+This is intentionally different from the existing ordinary agent/tool-call format. Ordinary agents keep using the old provider-native message format. Agent Protocol v1 uses a new model-visible transcript format for protocol agents.
+
+Current v1 should use Markdown-oriented turns:
+
+````markdown
+<turn index="1">
+## User request
+
+当前插件各个按钮点了都没效果，你进行一次 code review，定位问题，然后修复
+</turn>
+
+<turn index="2">
+## Assistant protocol request and runtime results
+
+run_id: `apr_abc123`
+Purpose: Inspect extension wiring
+Status: completed
+
+### Call read_extension
+
+Tool: `read`
+
+```shell
+tool read <<'JSON'
+{
+  "filePath": "/Users/jin/github/htmly/src/extension/extension.ts"
+}
+JSON
+```
+
+### Result for read_extension
+
+Status: completed
+Artifacts: artifact://call_read_extension
+
+```md
+extension.ts registers the custom editor provider and command handlers.
+```
+</turn>
+
+Based on all turns above, decide the next step.
+Strictly follow the Agent Protocol output requirements for this request.
+````
+
+Rules:
+
+- Each historical turn should be easy to read as a short transcript, not as provider request JSON.
+- Do not use `role="..."` attributes in v1 turn tags. Use Markdown headings such as `## User request`, `## Assistant protocol request and runtime results`, and `## Assistant answer` to describe what happened.
+- A protocol runtime turn should keep each call immediately next to its corresponding result. Avoid listing all calls first and all results later, because that increases pairing ambiguity for the model.
+- The call section includes the selected tool or agent and the arguments. The result section should not repeat the same arguments. It should contain status, artifact references when available, and the result content.
+- `run_id` is the runtime execution id used to correlate logs, UI projection, hidden context, and artifacts.
+- `Purpose` is the model-provided short reason or title for why the group of calls was requested. Keep the display label neutral and readable; it does not need to be a strict `operation_reason` field.
+- `Status` is the runtime-computed aggregate result for the run: `completed`, `blocked`, or `failed`.
+- The final instruction after the turns is not part of any historical turn. It is a per-request reminder that asks the model to decide the next step and obey the output format.
+- Model reasoning or private thinking should not be replayed as model-visible history. Replay user-visible assistant text, explicit protocol requests, and runtime observations instead.
+
+### Existing Tool-Call Format Comparison
+
+Ordinary agents currently use the existing provider-native tool-call conversation format. A previous assistant message can contain reasoning, visible text, and one or more native tool calls:
+
+```json
+{
+  "role": "assistant",
+  "content": [
+    {
+      "type": "reasoning",
+      "text": "I need to inspect the toolbar styles and z-index hierarchy."
+    },
+    {
+      "type": "text",
+      "text": "I will inspect the table dropdown styles."
+    },
+    {
+      "type": "tool-call",
+      "toolCallId": "call_function_1",
+      "toolName": "read",
+      "input": {
+        "filePath": "/Users/jin/github/jianmo/webview/src/components/Toolbar.vue",
+        "offset": 500,
+        "limit": 30
+      }
+    }
+  ]
+}
+```
+
+The runtime then returns a separate `tool` message with matching `toolCallId` values:
+
+```json
+{
+  "role": "tool",
+  "content": [
+    {
+      "type": "tool-result",
+      "toolCallId": "call_function_1",
+      "toolName": "read",
+      "output": {
+        "type": "text",
+        "value": "<path>...</path>\n<type>file</type>\n<content>...</content>"
+      }
+    }
+  ]
+}
+```
+
+For multiple tools, the old format may place multiple `tool-call` parts in one assistant message and multiple `tool-result` parts in one tool message. Pairing is done by `toolCallId`.
+
+Agent Protocol v1 should not imitate that model-visible history shape. It should translate protocol execution into the Markdown transcript format above:
+
+- old format: provider-native structured messages, paired by `toolCallId`
+- protocol v1 format: model-readable Markdown transcript, each call immediately followed by its result
+- old format: may replay raw `reasoning` parts when the provider exposes them
+- protocol v1 format: should not replay raw private reasoning; use explicit protocol `message`, `Purpose`, call labels, and runtime observations instead
+
+Reasoning can explain why tools were called, but raw reasoning is not a stable protocol boundary. It may be incomplete, provider-specific, unavailable, signed/encrypted, or simply wrong. If the reason matters, the model should put it in the explicit protocol `message` or call title/purpose so runtime can safely store, display, and replay it.
+
+### Compatibility With Original Tool Calls
+
+The compatibility layer should assume that some models may still emit provider-native tool calls or textual tool-call formats under pressure.
+
+Runtime may recover these cases when safe:
+
+- A direct model call to a known runtime tool can be converted into `kind: "act"` with one `calls[]` item.
+- A provider-specific textual tool call, XML invoke block, or similar format can be marked as a protocol violation and recovered only if the intended tool name and arguments are unambiguous.
+- Recovered calls should be visible in logs so protocol adherence can be measured against direct tool-call behavior.
+- Unsafe or ambiguous recovery should not execute. Runtime should ask the model to retry with the simplified protocol shape or surface a clear protocol error.
+
+This fallback does not make raw tool calls the protocol. It is a migration and robustness layer for current models while the protocol remains the model-runtime semantic contract.
+
 ## Vocabulary And Abstraction Boundaries
 
 The protocol should keep its core vocabulary abstract enough to describe many execution domains, while still being concrete enough for validation and UI display.
@@ -169,6 +454,8 @@ The runtime request tells the model what task is being handled, what protocol ca
 
 This input is optimized for model comprehension. XML-like or Markdown sections are acceptable because they handle long text naturally.
 
+For the simplified v1 compatibility surface, prefer the Markdown transcript described above over raw provider request JSON. The runtime may still use native provider tool schemas internally, but the model-visible conversation history should describe prior user requests, assistant protocol requests, concrete calls, and runtime results in readable turns.
+
 Example:
 
 ```xml
@@ -209,7 +496,9 @@ Example:
 
 The model declaration is optimized for program parsing and validation. Use a JSON fenced block for structured metadata and action graph data, with Markdown sections for long text.
 
-Recommended shape:
+For simplified v1, the declaration is submitted through the native `AgentProtocolOutput` tool using the flat `{ kind, message, calls }` shape described above. The JSON fenced block below is the long-term full DSL shape, not the preferred v1 compatibility output.
+
+Recommended full DSL shape:
 
 ````markdown
 ```json agent-protocol
@@ -279,6 +568,8 @@ Review each toolbar button. Check click handlers, selection behavior, focus beha
 Runtime result is the execution outcome that the model should use for the next decision or final user answer.
 
 The result should normally include semantic action ids, titles or descriptions, statuses, and summaries. It should not include every raw tool call or full output by default.
+
+In simplified v1, return results as Markdown transcript entries where each call is immediately followed by its result. This is intentionally more natural-language-like than JSON because current general-purpose models understand long Markdown context more reliably than deeply nested replay objects. Keep structured records in runtime storage and metadata for logs, UI, and recovery, but shape the model-visible text for comprehension.
 
 Example:
 
@@ -687,8 +978,9 @@ Model output may stream token by token. Runtime should not execute a partial JSO
 First version rule:
 
 - collect the full assistant message
-- extract complete `agent-protocol` fenced blocks
-- parse and validate after message completion
+- prefer one complete native `AgentProtocolOutput` call for simplified v1
+- parse and validate the native tool arguments after message completion
+- recover complete `agent-protocol` fenced blocks only as compatibility fallback
 - execute only validated declarations
 
 Future optimization can parse and execute a complete fenced block before the whole assistant message ends, but this is optional and riskier.
@@ -701,6 +993,8 @@ Runtime execution may also stream progress. Do not feed every progress chunk bac
 - permission needed
 - user input needed
 - model decision needed
+
+Do not replay private model reasoning as a runtime result. Reasoning traces are useful for debugging and UI display when allowed, but they are not a reliable source of truth for future model turns. Future turns should receive user-visible assistant messages, explicit protocol declarations, and runtime-produced observations.
 
 ## XML, JSON, And Markdown
 
@@ -740,9 +1034,9 @@ Best for long human/model-readable payloads:
 
 Recommended convention:
 
-- Runtime to model request: XML-like or Markdown sections.
-- Model to runtime declaration: JSON fenced block plus Markdown payload.
-- Runtime to model result: XML-like when mostly for model reading; JSON when programmatic reprocessing is needed.
+- Runtime to model request: Markdown transcript sections for simplified v1; XML-like or Markdown sections for full DSL experiments.
+- Model to runtime declaration: native `AgentProtocolOutput` tool call for simplified v1; JSON fenced block plus Markdown payload for the future full DSL.
+- Runtime to model result: Markdown transcript for simplified v1; XML-like when mostly for model reading or JSON when programmatic reprocessing is needed in full DSL flows.
 - Model to user final answer: normal Markdown.
 
 ## Persistence

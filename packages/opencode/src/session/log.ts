@@ -46,6 +46,26 @@ export namespace SessionLog {
   })
   export type List = z.infer<typeof List>
 
+  export const ProtocolTrace = z.object({
+    session_id: z.string(),
+    run_id: z.string(),
+    type: z.literal("agent.protocol.trace"),
+    version: z.literal("1"),
+    declaration: z.unknown().optional(),
+    result: z.unknown().optional(),
+    actions: z.array(z.record(z.string(), z.unknown())),
+    tool_calls: z.array(z.record(z.string(), z.unknown())),
+    metrics: z.object({
+      actions: z.number(),
+      internal_tool_calls: z.number(),
+      direct_model_tool_calls: z.number(),
+      model_visible_bytes: z.number(),
+      raw_output_bytes: z.number(),
+      duration_ms: z.number(),
+    }),
+  })
+  export type ProtocolTrace = z.infer<typeof ProtocolTrace>
+
   const state = {
     cleanup: 0,
   }
@@ -126,6 +146,46 @@ export namespace SessionLog {
     )
   }
 
+  export async function protocolTrace(input: { sessionID: SessionID; runID: string }) {
+    const logs = await list({ sessionID: input.sessionID, limit: 5000 })
+    const records = logs.filter((item) => item.type.startsWith("protocol.") && item.data.runID === input.runID)
+    if (records.length === 0) return undefined
+
+    const actions: Record<string, unknown>[] = records
+      .filter((item) => item.type.startsWith("protocol.action."))
+      .map((item) => ({ type: item.type, time: item.time, ...item.data }))
+    const tools = records
+      .filter((item) => item.type === "protocol.action.tool_call")
+      .map((item) => ({
+        call_id: item.data.callID,
+        tool: item.data.tool,
+        status: item.data.status ?? "completed",
+        output_bytes: typeof item.data.outputBytes === "number" ? item.data.outputBytes : 0,
+      }))
+    const done = records.find((item) => item.type === "protocol.completed" || item.type === "protocol.failed")
+    const metrics = object(done?.data.metrics)
+    const raw = tools.reduce((sum, item) => sum + (typeof item.output_bytes === "number" ? item.output_bytes : 0), 0)
+
+    return {
+      session_id: input.sessionID,
+      run_id: input.runID,
+      type: "agent.protocol.trace" as const,
+      version: "1" as const,
+      declaration: records.find((item) => item.type === "protocol.validated")?.data.declaration,
+      result: done?.data.result,
+      actions,
+      tool_calls: tools,
+      metrics: {
+        actions: new Set(actions.map((item) => item.actionID).filter((item) => typeof item === "string")).size,
+        internal_tool_calls: tools.length,
+        direct_model_tool_calls: 0,
+        model_visible_bytes: typeof metrics?.modelVisibleBytes === "number" ? metrics.modelVisibleBytes : 0,
+        raw_output_bytes: raw,
+        duration_ms: typeof metrics?.durationMs === "number" ? metrics.durationMs : 0,
+      },
+    } satisfies ProtocolTrace
+  }
+
   function parse(row: typeof SessionLogTable.$inferSelect): Info {
     return {
       id: row.id,
@@ -137,5 +197,10 @@ export namespace SessionLog {
       data: row.data,
       time: row.time_created,
     }
+  }
+
+  function object(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return undefined
+    return input as Record<string, unknown>
   }
 }

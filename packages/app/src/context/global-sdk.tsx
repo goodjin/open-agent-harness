@@ -218,6 +218,19 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
       url: currentServer.http.url,
       client: sdk,
       event: emitter,
+      request(input: string, init?: RequestInit) {
+        const headers = new Headers(init?.headers)
+        if (currentServer.http.password) {
+          headers.set(
+            "Authorization",
+            `Basic ${btoa(`${currentServer.http.username ?? "opencode"}:${currentServer.http.password}`)}`,
+          )
+        }
+        return (platform.fetch ?? fetch)(new URL(input, currentServer.http.url), {
+          ...init,
+          headers,
+        })
+      },
       createClient(opts: Omit<Parameters<typeof createSdkForServer>[0], "server" | "fetch">) {
         const s = server.current
         if (!s) throw new Error(language.t("error.globalSDK.serverNotAvailable"))

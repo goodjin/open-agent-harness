@@ -1,0 +1,29 @@
+# Third-Party Notices
+
+This inventory covers the production dependency surface of the main runtime module:
+
+- Module: `packages/opencode`
+- Source: `packages/opencode/package.json`
+- Scan command: `bunx license-checker --production --json --start packages/opencode`
+
+Open Agent Harness itself is dual-licensed under AGPLv3-or-later and a separate commercial license. The packages below remain under their own licenses.
+
+## Summary
+
+| License | Introduced by `packages/opencode` dependencies |
+| --- | --- |
+| MIT | `@actions/core`, `@actions/github`, `@clack/prompts`, `@gitlab/gitlab-ai-provider`, `@gitlab/opencode-gitlab-auth`, `@hono/standard-validator`, `@hono/zod-validator`, `@modelcontextprotocol/sdk`, `@octokit/graphql`, `@octokit/rest`, `@opencode-ai/sdk`, `@opentui/core`, `@opentui/solid`, `@parcel/watcher`, `@solid-primitives/event-bus`, `@solid-primitives/scheduled`, `@standard-schema/spec`, `ai-gateway-provider`, `bonjour-service`, `bun-pty`, `chokidar`, `clipboardy`, `decimal.js`, `effect`, `fuzzysort`, `gray-matter`, `hono`, `hono-openapi`, `ignore`, `jsonc-parser`, `mime-types`, `open`, `opentui-spinner`, `partial-json`, `remeda`, `solid-js`, `strip-ansi`, `tree-sitter-bash`, `turndown`, `ulid`, `vscode-jsonrpc`, `web-tree-sitter`, `xdg-basedir`, `yargs`, `zod` |
+| Apache-2.0 | `@agentclientprotocol/sdk`, `@ai-sdk/amazon-bedrock`, `@ai-sdk/anthropic`, `@ai-sdk/azure`, `@ai-sdk/cerebras`, `@ai-sdk/cohere`, `@ai-sdk/deepinfra`, `@ai-sdk/gateway`, `@ai-sdk/google`, `@ai-sdk/google-vertex`, `@ai-sdk/groq`, `@ai-sdk/mistral`, `@ai-sdk/openai`, `@ai-sdk/openai-compatible`, `@ai-sdk/perplexity`, `@ai-sdk/provider`, `@ai-sdk/provider-utils`, `@ai-sdk/togetherai`, `@ai-sdk/vercel`, `@ai-sdk/xai`, `@aws-sdk/credential-providers`, `@openrouter/ai-sdk-provider`, `ai`, `drizzle-orm`, `google-auth-library` |
+| BSD-3-Clause | `@zip.js/zip.js`, `diff` |
+| ISC | `minimatch`, `semver`, `which`, `zod-to-json-schema` |
+| BlueOak-1.0.0 | `glob` |
+| Apache-style, scanner reported `Apache*` | `@pierre/diffs` |
+| Workspace/local | `@opencode-ai/script`, `@opencode-ai/util` |
+| Unknown, needs manual confirmation | `@openauthjs/openauth` |
+
+## Notes
+
+- `@opencode-ai/script`, `@opencode-ai/sdk`, and `@opencode-ai/util` are inherited workspace modules from the opencode codebase. Their package names are retained for compatibility during the Open Agent Harness migration.
+- `@opencode-ai/util` was reported as `UNLICENSED` by the scanner because it is a private workspace package. It is part of this repository and covered by the repository license for Open Agent Harness distribution, while original opencode portions retain the upstream MIT notice preserved in `LICENSE`.
+- `@openauthjs/openauth` was reported as `UNKNOWN` by the scanner. Confirm its upstream license before publishing binaries or commercial distributions.
+- This file is a practical license inventory, not legal advice. Re-run the scan after dependency changes.

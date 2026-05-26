@@ -647,7 +647,10 @@ export namespace MessageV2 {
         }
         result.push(userMessage)
         for (const part of msg.parts) {
-          if (part.type === "text" && !part.ignored)
+          if (
+            part.type === "text" &&
+            (!part.ignored || (part.metadata && typeof part.metadata === "object" && part.metadata.kind === "protocol_context"))
+          )
             userMessage.parts.push({
               type: "text",
               text: part.text,
@@ -703,7 +706,10 @@ export namespace MessageV2 {
           parts: [],
         }
         for (const part of msg.parts) {
-          if (part.type === "text")
+          if (
+            part.type === "text" &&
+            (!part.ignored || (part.metadata && typeof part.metadata === "object" && part.metadata.kind === "protocol_context"))
+          )
             assistantMessage.parts.push({
               type: "text",
               text: part.text,

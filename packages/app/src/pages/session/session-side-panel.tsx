@@ -18,6 +18,7 @@ import { useCommand } from "@/context/command"
 import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
+import { useLocal } from "@/context/local"
 import { useSync } from "@/context/sync"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
@@ -91,6 +92,46 @@ type WorkflowRun = {
   }
 }
 
+type ProtocolAction = {
+  id: string
+  title: string
+  operation: string
+  status: "completed" | "blocked" | "failed" | "running" | "pending" | "skipped"
+  summary?: string
+  error?: string
+  executor?: {
+    type?: string
+    target?: string
+    capabilities?: string[]
+  }
+  tool_call_ids?: string[]
+  duration_ms?: number
+  time?: {
+    started?: number
+    completed?: number
+  }
+}
+
+type ProtocolRun = {
+  runID: string
+  title: string
+  status: "completed" | "blocked" | "failed" | "running" | "pending"
+  total: number
+  completed: number
+  actions: ProtocolAction[]
+  metrics?: {
+    internal_tool_calls?: number
+    direct_model_tool_calls?: number
+    model_visible_bytes?: number
+    raw_output_bytes?: number
+    duration_ms?: number
+  }
+  time?: {
+    started?: number
+    completed?: number
+  }
+}
+
 function record(input: unknown): input is Record<string, unknown> {
   return typeof input === "object" && input !== null && !Array.isArray(input)
 }
@@ -128,6 +169,26 @@ function workflows(input: unknown): WorkflowRun[] {
     })
     .filter((item, index, all) => all.findIndex((run) => run.runID === item.runID) === index)
     .sort((a, b) => a.time.started - b.time.started)
+}
+
+function protocols(input: unknown): ProtocolRun[] {
+  if (!record(input)) return []
+  const data = input.protocol
+  if (!record(data)) return []
+  const runs = Array.isArray(data.runs) ? data.runs : []
+  return runs
+    .filter((item): item is ProtocolRun => {
+      if (!record(item)) return false
+      return (
+        typeof item.runID === "string" &&
+        typeof item.title === "string" &&
+        typeof item.status === "string" &&
+        typeof item.total === "number" &&
+        typeof item.completed === "number" &&
+        Array.isArray(item.actions)
+      )
+    })
+    .sort((a, b) => a.runID.localeCompare(b.runID))
 }
 
 function array(input: unknown) {
@@ -193,6 +254,129 @@ function sessionStatus(input: SessionStatus | undefined): WorkflowRun["status"] 
   if (!input || input.type === "idle") return
   if (input.type === "error") return "failed"
   return "running"
+}
+
+function ProtocolPanel(props: { run: ProtocolRun; runs: ProtocolRun[]; select: (runID: string) => void }) {
+  const [active, setActive] = createSignal<string>()
+  const action = createMemo(() => props.run.actions.find((item) => item.id === active()) ?? props.run.actions[0])
+  const language = useLanguage()
+  const date = createMemo(() => new Intl.DateTimeFormat(language.intl(), { dateStyle: "medium", timeStyle: "medium" }))
+  const stamp = (input: number | undefined) => (typeof input === "number" ? date().format(new Date(input)) : "-")
+  createEffect(() => {
+    const item = action()
+    if (item) setActive(item.id)
+  })
+  const statusTone = (input: ProtocolAction["status"] | ProtocolRun["status"]) => {
+    if (input === "completed") return "text-icon-success-base"
+    if (input === "failed" || input === "blocked") return "text-text-danger-base"
+    if (input === "running") return "text-text-interactive-base"
+    return "text-text-weak"
+  }
+  return (
+    <div class="h-full overflow-auto bg-background-stronger px-4 py-4">
+      <div class="flex flex-col gap-4 pb-10">
+        <div class="flex items-start justify-between gap-4">
+          <div class="min-w-0">
+            <div class="truncate text-13-medium text-text-base">{props.run.title}</div>
+            <div class="mt-1 truncate text-11-regular text-text-weak">{props.run.runID}</div>
+            <div class="mt-1 truncate text-11-regular text-text-weak">{stamp(props.run.time?.started)}</div>
+          </div>
+          <div class={`shrink-0 text-11-medium ${statusTone(props.run.status)}`}>{props.run.status}</div>
+        </div>
+        <div class="grid grid-cols-4 gap-2">
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Actions</div>
+            <div class="mt-1 text-14-medium text-text-base">{props.run.total}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Done</div>
+            <div class="mt-1 text-14-medium text-icon-success-base">{props.run.completed}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Tools</div>
+            <div class="mt-1 text-14-medium text-text-base">{props.run.metrics?.internal_tool_calls ?? 0}</div>
+          </div>
+          <div class="border border-border-weaker-base px-2 py-2">
+            <div class="text-11-regular text-text-weak">Bytes</div>
+            <div class="mt-1 text-14-medium text-text-base">{props.run.metrics?.model_visible_bytes ?? 0}</div>
+          </div>
+        </div>
+        <Show when={props.runs.length > 1}>
+          <div class="flex flex-col gap-1">
+            <For each={props.runs}>
+              {(run) => (
+                <button
+                  type="button"
+                  class="border px-3 py-2 text-left text-12-regular text-text-base"
+                  classList={{
+                    "border-border-strong bg-background-base": run.runID === props.run.runID,
+                    "border-border-weaker-base bg-background-stronger": run.runID !== props.run.runID,
+                  }}
+                  onClick={() => props.select(run.runID)}
+                >
+                  <div class="truncate">{run.title}</div>
+                  <div class={`mt-0.5 text-11-regular ${statusTone(run.status)}`}>{run.status}</div>
+                  <div class="mt-0.5 truncate text-11-regular text-text-weak">{stamp(run.time?.started)}</div>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+        <div class="h-px bg-border-strong" />
+        <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)] gap-3">
+          <div class="flex flex-col gap-1.5">
+            <For each={props.run.actions}>
+              {(item) => (
+                <button
+                  type="button"
+                  class="border px-3 py-2 text-left"
+                  classList={{
+                    "border-border-strong bg-background-base": action()?.id === item.id,
+                    "border-border-weaker-base bg-background-stronger": action()?.id !== item.id,
+                  }}
+                  onClick={() => setActive(item.id)}
+                >
+                  <div class="truncate text-12-medium text-text-base">{item.title}</div>
+                  <div class={`mt-0.5 text-11-regular ${statusTone(item.status)}`}>{item.status}</div>
+                  <div class="mt-0.5 truncate text-11-regular text-text-weak">{stamp(item.time?.started)}</div>
+                </button>
+              )}
+            </For>
+          </div>
+          <Show when={action()}>
+            {(item) => (
+              <div class="border border-border-weaker-base bg-background-base px-3 py-3 text-12-regular text-text-muted">
+                <div class="text-13-medium text-text-base">{item().title}</div>
+                <div class="mt-2 grid grid-cols-[76px_1fr] gap-x-3 gap-y-1">
+                  <div class="text-text-weak">Operation</div>
+                  <div>{item().operation}</div>
+                  <div class="text-text-weak">Executor</div>
+                  <div>{item().executor?.type ?? "runtime"}:{item().executor?.target ?? "auto"}</div>
+                  <div class="text-text-weak">Duration</div>
+                  <div>{item().duration_ms ?? 0}ms</div>
+                  <div class="text-text-weak">Started</div>
+                  <div>{stamp(item().time?.started)}</div>
+                  <div class="text-text-weak">Tool calls</div>
+                  <div>{item().tool_call_ids?.join(", ") || "none"}</div>
+                </div>
+                <Show when={item().summary || item().error}>
+                  <pre class="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-11-regular">
+                    {item().error ?? item().summary}
+                  </pre>
+                </Show>
+              </div>
+            )}
+          </Show>
+        </div>
+        <details class="border border-border-weaker-base bg-background-base">
+          <summary class="cursor-pointer list-none px-3 py-2 text-12-medium text-text-base">Comparison</summary>
+          <pre class="max-h-80 overflow-auto border-t border-border-weaker-base px-3 py-3 whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+            {JSON.stringify(props.run.metrics ?? {}, null, 2)}
+          </pre>
+        </details>
+      </div>
+    </div>
+  )
 }
 
 function WorkflowPanel(props: {
@@ -490,6 +674,7 @@ export function SessionSidePanel(props: {
   const sync = useSync()
   const file = useFile()
   const language = useLanguage()
+  const local = useLocal()
   const command = useCommand()
   const dialog = useDialog()
   const { params, sessionKey, tabs, view } = useSessionLayout()
@@ -509,7 +694,9 @@ export function SessionSidePanel(props: {
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
   const runs = createMemo(() => workflows(info()?.dsl_context))
+  const protocolRuns = createMemo(() => protocols(info()?.dsl_context))
   const [selectedWorkflow, setSelectedWorkflow] = createSignal<string>()
+  const [selectedProtocol, setSelectedProtocol] = createSignal<string>()
   createEffect(() => {
     const all = runs()
     if (all.length === 0) {
@@ -521,7 +708,22 @@ export function SessionSidePanel(props: {
     setSelectedWorkflow(all[all.length - 1]?.runID)
   })
   const run = createMemo(() => runs().find((item) => item.runID === selectedWorkflow()) ?? runs()[runs().length - 1])
+  createEffect(() => {
+    const all = protocolRuns()
+    if (all.length === 0) {
+      setSelectedProtocol(undefined)
+      return
+    }
+    const selected = selectedProtocol()
+    if (selected && all.some((run) => run.runID === selected)) return
+    setSelectedProtocol(all[all.length - 1]?.runID)
+  })
+  const protocolRun = createMemo(
+    () => protocolRuns().find((item) => item.runID === selectedProtocol()) ?? protocolRuns()[protocolRuns().length - 1],
+  )
   const workflowTab = createMemo(() => isDesktop() && runs().length > 0)
+  const protocolReady = createMemo(() => protocolRuns().length > 0 || local.agent.current()?.runner === "protocol")
+  const protocolTab = createMemo(() => isDesktop() && protocolReady())
   const diffsReady = createMemo(() => {
     const id = params.id
     if (!id) return true
@@ -604,6 +806,7 @@ export function SessionSidePanel(props: {
     logs: logTab,
     files: fileTab,
     workflow: workflowTab,
+    protocol: protocolTab,
   })
   const contextOpen = tabState.contextOpen
   const openedTabs = tabState.openedTabs
@@ -611,7 +814,7 @@ export function SessionSidePanel(props: {
   const activeFileTab = tabState.activeFileTab
 
   const select = (value: string) => {
-    if (value === "review" || value === "logs" || value === "workflow") {
+    if (value === "review" || value === "logs" || value === "workflow" || value === "protocol") {
       tabs().setActive(value)
       return
     }
@@ -757,6 +960,20 @@ export function SessionSidePanel(props: {
                           </div>
                         </Tabs.Trigger>
                       </Show>
+                      <Show when={protocolTab()}>
+                        <Tabs.Trigger value="protocol">
+                          <div class="flex items-center gap-1.5">
+                            <div>Protocol</div>
+                            <Show when={protocolRun()}>
+                              {(item) => (
+                                <div>
+                                  {item().completed}/{item().total}
+                                </div>
+                              )}
+                            </Show>
+                          </div>
+                        </Tabs.Trigger>
+                      </Show>
                       <Show when={contextOpen()}>
                         <Tabs.Trigger
                           value="context"
@@ -832,6 +1049,16 @@ export function SessionSidePanel(props: {
                             status={(sessionID) => (sessionID ? sync.data.session_status[sessionID] : undefined)}
                           />
                         )}
+                      </Show>
+                    </Tabs.Content>
+                  </Show>
+
+                  <Show when={protocolTab()}>
+                    <Tabs.Content value="protocol" class="flex flex-col h-full overflow-hidden contain-strict">
+                      <Show when={activeTab() === "protocol"}>
+                        <Show when={protocolRun()} fallback={empty("No protocol runs yet")}>
+                          {(item) => <ProtocolPanel run={item()} runs={protocolRuns()} select={setSelectedProtocol} />}
+                        </Show>
                       </Show>
                     </Tabs.Content>
                   </Show>
