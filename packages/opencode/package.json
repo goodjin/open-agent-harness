@@ -1,10 +1,10 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "version": "1.2.27",
-  "name": "jin-opencode",
+  "name": "open-agent-harness",
+  "description": "Protocol-driven multi-agent harness runtime",
   "type": "module",
-  "license": "MIT",
-  "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "test": "bun test --timeout 30000",
@@ -17,7 +17,7 @@
     "db": "bun drizzle-kit"
   },
   "bin": {
-    "jin": "./bin/jin"
+    "open-agent-harness": "./bin/jin"
   },
   "exports": {
     "./*": "./src/*.ts"

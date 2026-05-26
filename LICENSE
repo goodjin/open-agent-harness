@@ -1,3 +1,33 @@
+Open Agent Harness License
+
+Copyright (c) 2026 Open Agent Harness contributors.
+
+Open Agent Harness is dual-licensed:
+
+1. GNU Affero General Public License Version 3 or later (AGPLv3-or-later).
+2. A separate commercial license from the Open Agent Harness copyright holder.
+
+You may use, copy, modify, distribute, and run Open Agent Harness under the
+terms of the AGPLv3-or-later. If you want to use Open Agent Harness in a
+commercial or proprietary product or service without complying with the AGPL
+source-sharing obligations, you must obtain a commercial license.
+
+AGPLv3 text:
+https://www.gnu.org/licenses/agpl-3.0.html
+
+SPDX-License-Identifier: AGPL-3.0-or-later
+
+Commercial License
+
+Commercial licensing is available for users who need proprietary distribution,
+proprietary hosted services, private modifications, indemnity, support, or other
+terms outside the AGPLv3-or-later. Contact the Open Agent Harness copyright
+holder for commercial licensing terms.
+
+Upstream opencode MIT Notice
+
+Portions of this software are based on opencode, originally licensed as follows:
+
 MIT License
 
 Copyright (c) 2025 opencode
