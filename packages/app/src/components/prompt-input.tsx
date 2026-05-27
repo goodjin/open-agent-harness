@@ -56,6 +56,7 @@ import { PromptContextItems } from "./prompt-input/context-items"
 import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
+import { isShellCommand } from "./prompt-input/shell-detect"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
 
 interface PromptInputProps {
@@ -247,6 +248,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const working = createMemo(() => status()?.type !== "idle")
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
+  )
+  const text = createMemo(() => prompt.current().map((part) => ("content" in part ? part.content : "")).join(""))
+  const autoShell = createMemo(
+    () =>
+      store.mode === "normal" &&
+      imageAttachments().length === 0 &&
+      commentCount() === 0 &&
+      prompt.context.items().length === 0 &&
+      isShellCommand(text()),
   )
 
   const [store, setStore] = createStore<{
@@ -1363,6 +1373,21 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
             />
 
             <div class="flex items-center gap-1 pointer-events-auto">
+              <Show when={store.mode === "shell" || autoShell()}>
+                <Tooltip placement="top" inactive={!prompt.dirty()} value="Send to model">
+                  <IconButton
+                    data-action="prompt-submit"
+                    type="button"
+                    disabled={!prompt.dirty()}
+                    icon="prompt"
+                    variant="secondary"
+                    class="size-8"
+                    style={buttons()}
+                    aria-label="Send to model"
+                    onClick={(event) => handleSubmit(event, { mode: "normal" })}
+                  />
+                </Tooltip>
+              </Show>
               <Tooltip
                 placement="top"
                 inactive={!prompt.dirty() && !working()}
@@ -1386,9 +1411,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 <IconButton
                   data-action="prompt-submit"
                   type="submit"
-                  disabled={store.mode !== "normal" || (!prompt.dirty() && !working() && commentCount() === 0)}
-                  tabIndex={store.mode === "normal" ? undefined : -1}
-                  icon={working() ? "stop" : "arrow-up"}
+                  disabled={!prompt.dirty() && !working() && commentCount() === 0}
+                  icon={working() ? "stop" : store.mode === "shell" || autoShell() ? "terminal" : "arrow-up"}
                   variant="primary"
                   class="size-8"
                   style={buttons()}

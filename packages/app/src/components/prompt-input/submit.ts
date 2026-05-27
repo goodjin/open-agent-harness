@@ -18,6 +18,7 @@ import { Worktree as WorktreeState } from "@/utils/worktree"
 import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
+import { isShellCommand } from "./shell-detect"
 
 type PendingPrompt = {
   abort: AbortController
@@ -281,13 +282,20 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     })
   }
 
-  const handleSubmit = async (event: Event) => {
+  const handleSubmit = async (event: Event, opts?: { mode?: "normal" | "shell" }) => {
     event.preventDefault()
 
     const currentPrompt = prompt.current()
     const text = currentPrompt.map((part) => ("content" in part ? part.content : "")).join("")
     const images = input.imageAttachments().slice()
-    const mode = input.mode()
+    const auto =
+      !opts?.mode &&
+      input.mode() === "normal" &&
+      images.length === 0 &&
+      input.commentCount() === 0 &&
+      prompt.context.items().length === 0 &&
+      isShellCommand(text)
+    const mode = opts?.mode ?? (auto ? "shell" : input.mode())
 
     if (text.trim().length === 0 && images.length === 0 && input.commentCount() === 0) {
       if (input.working()) abort()

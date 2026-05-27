@@ -426,6 +426,7 @@ export function SessionTurn(
                     showReasoningSummaries={showReasoningSummaries()}
                     shellToolDefaultOpen={props.shellToolDefaultOpen}
                     editToolDefaultOpen={props.editToolDefaultOpen}
+                    actions={props.actions}
                   />
                 </div>
               </Show>

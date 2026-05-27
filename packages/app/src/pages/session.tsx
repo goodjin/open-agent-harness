@@ -1669,7 +1669,53 @@ export default function Page() {
       .map((item) => ({ id: item.id, text: line(item.id) }))
   })
 
-  const actions = { fork, revert }
+  const shellText = (input: { text: string }) => ({
+    id: Identifier.ascending("part"),
+    type: "text" as const,
+    text: input.text,
+  })
+
+  const shellModel = () => {
+    const item = local.model.current()
+    if (!item) return
+    return {
+      providerID: item.provider.id,
+      modelID: item.id,
+    }
+  }
+
+  const addShellContext = async (input: { sessionID: string; text: string }) => {
+    const model = shellModel()
+    const agent = local.agent.current()?.name
+    if (!model || !agent) return
+    await sdk.client.session.prompt({
+      sessionID: input.sessionID,
+      agent,
+      model,
+      noReply: true,
+      parts: [shellText(input)],
+    })
+    showToast({
+      variant: "success",
+      icon: "circle-check",
+      title: language.t("session.share.copy.copied"),
+      description: "Shell output added to context",
+    })
+  }
+
+  const sendShellPrompt = async (input: { sessionID: string; text: string }) => {
+    const model = shellModel()
+    const agent = local.agent.current()?.name
+    if (!model || !agent) return
+    await sdk.client.session.promptAsync({
+      sessionID: input.sessionID,
+      agent,
+      model,
+      parts: [shellText(input)],
+    })
+  }
+
+  const actions = { fork, revert, context: addShellContext, prompt: sendShellPrompt }
 
   createEffect(() => {
     const sessionID = params.id

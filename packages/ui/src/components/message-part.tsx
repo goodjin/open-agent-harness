@@ -89,6 +89,36 @@ function ShellSubmessage(props: { text: string; animate?: boolean }) {
   )
 }
 
+const save = (name: string, type: string, text: string) => {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const a = document.createElement("a")
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const escapeHtml = (text: string) =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
+
+const exportHtml = (name: string, text: string) =>
+  save(
+    name,
+    "text/html;charset=utf-8",
+    `<!doctype html><meta charset="utf-8"><pre>${escapeHtml(text)}</pre>`,
+  )
+
+const exportPdf = (text: string) => {
+  const win = window.open("", "_blank")
+  if (!win) return
+  win.document.write(`<!doctype html><title>Shell output</title><pre>${escapeHtml(text)}</pre>`)
+  win.document.close()
+  win.focus()
+  win.print()
+}
+
+const filename = (text: string) => text.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "shell"
+
 interface Diagnostic {
   range: {
     start: { line: number; character: number }
@@ -141,11 +171,14 @@ export type SessionAction = (input: { sessionID: string; messageID: string }) =>
 export type UserActions = {
   fork?: SessionAction
   revert?: SessionAction
+  context?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
+  prompt?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
 }
 
 export interface MessagePartProps {
   part: PartType
   message: MessageType
+  actions?: UserActions
   hideDetails?: boolean
   defaultOpen?: boolean
   showAssistantCopyPartID?: string | null
@@ -489,6 +522,7 @@ export function AssistantParts(props: {
   showReasoningSummaries?: boolean
   shellToolDefaultOpen?: boolean
   editToolDefaultOpen?: boolean
+  actions?: UserActions
 }) {
   const data = useData()
   const emptyParts: PartType[] = []
@@ -567,6 +601,7 @@ export function AssistantParts(props: {
                       <Part
                         part={item()!}
                         message={message()!}
+                        actions={props.actions}
                         showAssistantCopyPartID={props.showAssistantCopyPartID}
                         turnDurationMs={props.turnDurationMs}
                         defaultOpen={partDefaultOpen(item()!, props.shellToolDefaultOpen, props.editToolDefaultOpen)}
@@ -700,6 +735,7 @@ export function Message(props: MessageProps) {
           <AssistantMessageDisplay
             message={assistantMessage() as AssistantMessage}
             parts={props.parts}
+            actions={props.actions}
             showAssistantCopyPartID={props.showAssistantCopyPartID}
             showReasoningSummaries={props.showReasoningSummaries}
           />
@@ -712,6 +748,7 @@ export function Message(props: MessageProps) {
 export function AssistantMessageDisplay(props: {
   message: AssistantMessage
   parts: PartType[]
+  actions?: UserActions
   showAssistantCopyPartID?: string | null
   showReasoningSummaries?: boolean
 }) {
@@ -772,6 +809,7 @@ export function AssistantMessageDisplay(props: {
                     <Part
                       part={item()!}
                       message={props.message}
+                      actions={props.actions}
                       showAssistantCopyPartID={props.showAssistantCopyPartID}
                     />
                   </Show>
@@ -1129,6 +1167,7 @@ export function Part(props: MessagePartProps) {
         defaultOpen={props.defaultOpen}
         showAssistantCopyPartID={props.showAssistantCopyPartID}
         turnDurationMs={props.turnDurationMs}
+        actions={props.actions}
       />
     </Show>
   )
@@ -1144,6 +1183,9 @@ export interface ToolProps {
   defaultOpen?: boolean
   forceOpen?: boolean
   locked?: boolean
+  message?: MessageType
+  part?: ToolPart
+  actions?: UserActions
 }
 
 export type ToolComponent = Component<ToolProps>
@@ -1278,6 +1320,9 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
               status={part().state.status}
               hideDetails={props.hideDetails}
               defaultOpen={props.defaultOpen}
+              message={props.message}
+              part={part()}
+              actions={props.actions}
             />
           </Match>
         </Switch>
@@ -1776,12 +1821,13 @@ ToolRegistry.register({
     const i18n = useI18n()
     const pending = () => props.status === "pending" || props.status === "running"
     const sawPending = pending()
+    const cmd = createMemo(() => String(props.input.command ?? props.metadata.command ?? "shell"))
     const text = createMemo(() => {
-      const cmd = props.input.command ?? props.metadata.command ?? ""
       const out = stripAnsi(props.output || props.metadata.output || "")
-      return `$ ${cmd}${out ? "\n\n" + out : ""}`
+      return `$ ${cmd()}${out ? "\n\n" + out : ""}`
     })
     const [copied, setCopied] = createSignal(false)
+    const [busy, setBusy] = createSignal<string>()
 
     const handleCopy = async () => {
       const content = text()
@@ -1789,6 +1835,16 @@ ToolRegistry.register({
       await navigator.clipboard.writeText(content)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+
+    const run = async (kind: "context" | "prompt") => {
+      const act = kind === "context" ? props.actions?.context : props.actions?.prompt
+      const msg = props.message
+      if (!act || !msg || !props.part) return
+      setBusy(kind)
+      await Promise.resolve(act({ sessionID: msg.sessionID, messageID: msg.id, text: text() })).finally(() =>
+        setBusy(undefined),
+      )
     }
 
     return (
@@ -1810,6 +1866,30 @@ ToolRegistry.register({
       >
         <div data-component="bash-output">
           <div data-slot="bash-copy">
+            <Show when={props.actions?.context}>
+              <Tooltip value="Add to context" placement="top" gutter={4}>
+                <IconButton
+                  icon={busy() === "context" ? "check" : "plus"}
+                  size="small"
+                  variant="secondary"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => run("context")}
+                  aria-label="Add to context"
+                />
+              </Tooltip>
+            </Show>
+            <Show when={props.actions?.prompt}>
+              <Tooltip value="Send as prompt" placement="top" gutter={4}>
+                <IconButton
+                  icon={busy() === "prompt" ? "check" : "prompt"}
+                  size="small"
+                  variant="secondary"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => run("prompt")}
+                  aria-label="Send as prompt"
+                />
+              </Tooltip>
+            </Show>
             <Tooltip
               value={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
               placement="top"
@@ -1822,6 +1902,36 @@ ToolRegistry.register({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={handleCopy}
                 aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
+              />
+            </Tooltip>
+            <Tooltip value="Export Markdown" placement="top" gutter={4}>
+              <IconButton
+                icon="download"
+                size="small"
+                variant="secondary"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => save(`${filename(cmd())}.md`, "text/markdown;charset=utf-8", "```shell\n" + text() + "\n```")}
+                aria-label="Export Markdown"
+              />
+            </Tooltip>
+            <Tooltip value="Export HTML" placement="top" gutter={4}>
+              <IconButton
+                icon="download"
+                size="small"
+                variant="secondary"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => exportHtml(`${filename(cmd())}.html`, text())}
+                aria-label="Export HTML"
+              />
+            </Tooltip>
+            <Tooltip value="Export PDF" placement="top" gutter={4}>
+              <IconButton
+                icon="download"
+                size="small"
+                variant="secondary"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => exportPdf(text())}
+                aria-label="Export PDF"
               />
             </Tooltip>
           </div>

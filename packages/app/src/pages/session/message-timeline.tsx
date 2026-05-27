@@ -61,6 +61,8 @@ const done = (messages: MessageType[], id: string) => {
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
+  context?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
+  prompt?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
 }
 
 const messageComments = (parts: Part[]): MessageComment[] =>

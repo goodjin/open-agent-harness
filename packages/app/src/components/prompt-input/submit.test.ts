@@ -29,7 +29,7 @@ let variant: string | undefined
 let currentModel: { id: string; provider: { id: string } } | undefined
 let currentAgent: { name: string } | undefined
 
-const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
+let promptValue: Prompt = [{ type: "text", content: "hello", start: 0, end: 5 }]
 
 const clientFor = (directory: string) => {
   createdClients.push(directory)
@@ -227,6 +227,7 @@ beforeEach(() => {
   variant = undefined
   currentModel = { id: "model", provider: { id: "provider" } }
   currentAgent = { name: "agent" }
+  promptValue = [{ type: "text", content: "hello", start: 0, end: 5 }]
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
 
@@ -355,6 +356,62 @@ describe("prompt submit worktree selection", () => {
 
     expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
     expect(optimistic[0]?.sessionID).toBe("child")
+  })
+
+  test("can submit shell text as a normal prompt", async () => {
+    params = { id: "session-1" }
+    promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "shell",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event, { mode: "normal" })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "session-1" }])
+    expect(sentShell).toEqual([])
+  })
+
+  test("automatically executes detected shell commands", async () => {
+    params = { id: "session-1" }
+    promptValue = [{ type: "text", content: "ls", start: 0, end: 2 }]
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentShell).toEqual(["/repo/main"])
+    expect(sentPrompt).toEqual([])
   })
 
   test("shows an agent-specific toast when only the agent is missing", async () => {

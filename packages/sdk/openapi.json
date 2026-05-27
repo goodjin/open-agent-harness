@@ -12162,6 +12162,9 @@
               "type": "string"
             },
             "additionalProperties": {}
+          },
+          "ignored": {
+            "type": "boolean"
           }
         },
         "required": [

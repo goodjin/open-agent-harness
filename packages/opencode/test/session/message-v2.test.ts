@@ -449,6 +449,51 @@ describe("session.message-v2.toModelMessage", () => {
     ])
   })
 
+  test("filters ignored assistant tool parts out of model messages", () => {
+    const userID = "m-user"
+    const assistantID = "m-assistant"
+
+    const input: MessageV2.WithParts[] = [
+      {
+        info: userInfo(userID),
+        parts: [
+          {
+            ...basePart(userID, "u1"),
+            type: "text",
+            text: "hello",
+          },
+        ] as MessageV2.Part[],
+      },
+      {
+        info: assistantInfo(assistantID, userID),
+        parts: [
+          {
+            ...basePart(assistantID, "a1"),
+            type: "tool",
+            callID: "call-1",
+            tool: "bash",
+            ignored: true,
+            state: {
+              status: "completed",
+              input: { command: "pwd" },
+              output: "/repo",
+              title: "Bash",
+              metadata: {},
+              time: { start: 0, end: 1 },
+            },
+          },
+        ] as MessageV2.Part[],
+      },
+    ]
+
+    expect(MessageV2.toModelMessages(input, model)).toStrictEqual([
+      {
+        role: "user",
+        content: [{ type: "text", text: "hello" }],
+      },
+    ])
+  })
+
   test("omits provider metadata when assistant model differs", () => {
     const userID = "m-user"
     const assistantID = "m-assistant"

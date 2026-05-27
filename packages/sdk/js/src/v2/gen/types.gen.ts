@@ -797,6 +797,7 @@ export type ToolPart = {
   metadata?: {
     [key: string]: unknown
   }
+  ignored?: boolean
 }
 
 export type PermissionAction = "allow" | "deny" | "ask"

@@ -348,6 +348,7 @@ export namespace MessageV2 {
     tool: z.string(),
     state: ToolState,
     metadata: z.record(z.string(), z.any()).optional(),
+    ignored: z.boolean().optional(),
   }).meta({
     ref: "ToolPart",
   })
@@ -720,6 +721,7 @@ export namespace MessageV2 {
               type: "step-start",
             })
           if (part.type === "tool") {
+            if (part.ignored) continue
             toolNames.add(part.tool)
             if (part.state.status === "completed") {
               const outputText = part.state.time.compacted ? "[Old tool result content cleared]" : part.state.output

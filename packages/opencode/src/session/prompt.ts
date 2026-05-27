@@ -1404,6 +1404,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: input.sessionID,
       text: "The following tool was executed by the user",
       synthetic: true,
+      ignored: true,
     }
     await Session.updatePart(userPart)
 
@@ -1439,6 +1440,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: input.sessionID,
       tool: "bash",
       callID: ulid(),
+      ignored: true,
       state: {
         status: "running",
         time: {
