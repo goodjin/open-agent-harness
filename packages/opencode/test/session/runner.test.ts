@@ -836,37 +836,26 @@ describe("SessionRunner", () => {
       limit: { context: 200_000 },
     } as never
     const data = {
-      type: "agent.protocol.output",
-      version: "1",
-      intent: "execute",
-      title: "Read package",
+      kind: "act",
       message: "Protocol violation recovered: direct read was converted.",
-      actions: [
+      calls: [
         {
-          type: "action",
           id: "read_package",
-          title: "Read package",
-          operation: "read",
-          executor: { type: "tool", target: "read", capabilities: ["repo"] },
-          input: { filePath: "package.json" },
-          depends_on: [],
-          context_refs: [],
-          result_policy: "summary",
+          type: "tool",
+          name: "read",
+          args: { filePath: "package.json" },
+          result: "summary",
         },
       ],
     }
     const reply = {
-      type: "agent.protocol.output",
-      version: "1",
-      intent: "respond",
-      title: "Answer",
+      kind: "answer",
       message: "Read package successfully.",
-      actions: [],
     }
     let calls = 0
     const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      const input = calls === 1 ? data : reply
+      const input = calls === 1 ? { input: JSON.stringify(data) } : reply
       return {
         fullStream: (async function* () {
           yield { type: "start" }

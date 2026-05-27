@@ -33,3 +33,6 @@ opencode-dev
 logs/
 *.bun-build
 tsconfig.tsbuildinfo
+
+# Local reference cache
+/docs/harness-protocol/support/raw-references/

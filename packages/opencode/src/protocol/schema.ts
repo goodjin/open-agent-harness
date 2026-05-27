@@ -181,6 +181,8 @@ export namespace AgentProtocol {
   export const Declaration = z.preprocess((input) => {
     if (!input || typeof input !== "object" || Array.isArray(input)) return input
     const value = input as globalThis.Record<string, unknown>
+    const wrap = wrapped(value)
+    if (wrap) return wrap
     const simple = flat(value)
     if (simple) return simple
     if ("payload" in value) return input
@@ -262,6 +264,15 @@ export namespace AgentProtocol {
     const json = decode(input) ?? decode(patched) ?? decode(end(patched))
     if (Array.isArray(json)) return json
     return []
+  }
+
+  function wrapped(input: globalThis.Record<string, unknown>) {
+    const raw = input.input
+    const json = typeof raw === "string" ? decode(raw) : raw
+    if (!json || typeof json !== "object" || Array.isArray(json)) return
+    const value = json as globalThis.Record<string, unknown>
+    if (!("kind" in value)) return
+    return flat(value)
   }
 
   function decode(input: string): unknown | undefined {

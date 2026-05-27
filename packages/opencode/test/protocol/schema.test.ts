@@ -94,6 +94,38 @@ describe("agent protocol schema", () => {
     ])
   })
 
+  test("recovers flat output wrapped in input string", () => {
+    const out = AgentProtocol.parse({
+      input: JSON.stringify({
+        kind: "act",
+        message: "I will inspect the package file.",
+        calls: [
+          { id: "read_package", type: "tool", name: "read", args: { filePath: "package.json" }, result: "summary" },
+        ],
+      }),
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.message).toBe("I will inspect the package file.")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "read_package",
+      operation: "read",
+      executor: { type: "tool", target: "read", capabilities: [] },
+      input: { filePath: "package.json" },
+    })
+  })
+
+  test("rejects unrecoverable input wrappers", () => {
+    expect(() => AgentProtocol.parse({ input: "not json" })).toThrow()
+    expect(() =>
+      AgentProtocol.parse({
+        input: JSON.stringify({ kind: "act", message: "Missing calls." }),
+      }),
+    ).toThrow()
+  })
+
   test("repairs flat calls missing call closing braces", () => {
     const out = AgentProtocol.parse({
       kind: "act",

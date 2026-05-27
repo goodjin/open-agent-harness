@@ -35,6 +35,7 @@ export namespace LLM {
     "Strictly follow the Agent Protocol output requirements for this request.",
     "Call `AgentProtocolOutput` exactly once.",
     "Use the current flat shape only: `{ kind, message, calls }`.",
+    "Never wrap the protocol package in an `input` field; the native tool arguments themselves are exactly `{ kind, message, calls }`.",
     "For runtime work use `kind: \"act\"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.",
   ].join("\n")
   const PROTOCOL_TURN_REMINDER = [
@@ -55,6 +56,7 @@ export namespace LLM {
     "- User turn input: ordinary user text, optionally with prior conversation context. It does not contain runtime results by itself.",
     "- Runtime turn input: a `<turn role=\"runtime\" source=\"agent-protocol\">...</turn>` contains structured Markdown observations produced by the protocol runtime.",
     "- Available tool input: the stable system prefix includes an `Available Protocol Tools` catalog. Use it to choose concrete tool ids and JSON argument schemas.",
+    "- These input terms describe the conversation and tool catalog. They are not a field named `input` in the `AgentProtocolOutput` call.",
     "",
     "Decision rule:",
     "- Always reason from the input turns, then decide the next protocol kind yourself.",
@@ -65,6 +67,8 @@ export namespace LLM {
     "Output contract:",
     "- Do not write the protocol package as text, Markdown, XML, code fences, or provider-specific invocation syntax.",
     "- Submit the protocol package only by calling the native `AgentProtocolOutput` tool.",
+    "- The native `AgentProtocolOutput` arguments are the flat protocol package itself: `{ kind, message, calls }`.",
+    "- Never wrap the protocol package inside `{ input: ... }`, and never stringify the whole package into one field.",
     "- Never answer in plain text instead of calling `AgentProtocolOutput`.",
     "- Never print JSON for the protocol; JSON belongs only inside the native tool call arguments.",
     "- For runtime work, use `calls`: each item has required `id`, `type`, `name`, and optional `args`, `depends`, `result`, `title`.",

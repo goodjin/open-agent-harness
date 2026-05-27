@@ -68,6 +68,10 @@ describe("session.llm.hasToolCalls", () => {
     expect(system).toContain('call `AgentProtocolOutput` with `kind: "answer"`')
     expect(system).toContain("message")
     expect(system).toContain("Available Protocol Tools")
+    expect(system).toContain("They are not a field named `input` in the `AgentProtocolOutput` call")
+    expect(system).toContain("The native `AgentProtocolOutput` arguments are the flat protocol package itself")
+    expect(system).toContain("Never wrap the protocol package inside `{ input: ... }`")
+    expect(system).toContain("never stringify the whole package into one field")
     expect(system).toContain("## read")
     expect(system).toContain('kind: "act"')
     expect(system).toContain("type`, `name")
@@ -87,6 +91,7 @@ describe("session.llm.hasToolCalls", () => {
     expect(system).toContain("The runtime executes exactly what you declare")
     expect(system).toContain("native `AgentProtocolOutput` tool schema")
     expect(system).toContain("Final protocol reminder:")
+    expect(system).toContain("Never wrap the protocol package in an `input` field")
     expect(
       system.trim().endsWith('For runtime work use `kind: "act"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.'),
     ).toBe(true)
