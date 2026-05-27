@@ -1,10 +1,10 @@
 import { Component, For, Match, Show, Switch } from "solid-js"
-import { FileIcon } from "@opencode-ai/ui/file-icon"
-import { Icon } from "@opencode-ai/ui/icon"
-import { getDirectory, getFilename } from "@opencode-ai/util/path"
+import { FileIcon } from "@open-agent-harness/ui/file-icon"
+import { Icon } from "@open-agent-harness/ui/icon"
+import { getDirectory, getFilename } from "@open-agent-harness/util/path"
 
 export type AtOption =
-  | { type: "agent"; name: string; display: string }
+  | { type: "agent"; name: string; display: string; description?: string }
   | { type: "file"; path: string; display: string; recent?: boolean }
 
 export interface SlashCommand {
@@ -64,7 +64,16 @@ export const PromptPopover: Component<PromptPopoverProps> = (props) => {
                         onMouseEnter={() => props.setAtActive(key)}
                       >
                         <Icon name="brain" size="small" class="text-icon-info-active shrink-0" />
-                        <span class="text-14-regular text-text-strong whitespace-nowrap">@{item.name}</span>
+                        <div class="flex items-center gap-2 min-w-0">
+                          <span class="text-14-regular text-text-strong whitespace-nowrap">@{item.name}</span>
+                          <Show when={item.description}>
+                            {(text) => (
+                              <span class="text-13-regular text-text-weak truncate normal-case" title={text()}>
+                                {text()}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
                       </button>
                     )
                   }

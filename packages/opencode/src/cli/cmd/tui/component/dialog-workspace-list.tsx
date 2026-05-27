@@ -3,12 +3,12 @@ import { DialogSelect } from "@tui/ui/dialog-select"
 import { useRoute } from "@tui/context/route"
 import { useSync } from "@tui/context/sync"
 import { createEffect, createMemo, createSignal, onMount } from "solid-js"
-import type { Session } from "@opencode-ai/sdk/v2"
+import type { Session } from "@open-agent-harness/sdk/v2"
 import { useSDK } from "../context/sdk"
 import { useToast } from "../ui/toast"
 import { useKeybind } from "../context/keybind"
 import { DialogSessionList } from "./workspace/dialog-session-list"
-import { createOpencodeClient } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient } from "@open-agent-harness/sdk/v2"
 
 async function openWorkspace(input: {
   dialog: ReturnType<typeof useDialog>

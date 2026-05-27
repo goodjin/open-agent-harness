@@ -7,7 +7,7 @@ const channel = (() => {
 })()
 
 const getBase = (): Configuration => ({
-  artifactName: "opencode-electron-${os}-${arch}.${ext}",
+  artifactName: "open-agent-harness-electron-${os}-${arch}.${ext}",
   directories: {
     output: "dist",
     buildResources: "resources",
@@ -39,7 +39,7 @@ const getBase = (): Configuration => ({
     sign: true,
   },
   protocols: {
-    name: "OpenCode",
+    name: "Open Agent Harness",
     schemes: ["opencode"],
   },
   win: {
@@ -66,29 +66,29 @@ function getConfig() {
     case "dev": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.dev",
-        productName: "OpenCode Dev",
-        rpm: { packageName: "opencode-dev" },
+        appId: "ai.openagentharness.desktop.dev",
+        productName: "Open Agent Harness Dev",
+        rpm: { packageName: "open-agent-harness-dev" },
       }
     }
     case "beta": {
       return {
         ...base,
-        appId: "ai.opencode.desktop.beta",
-        productName: "OpenCode Beta",
-        protocols: { name: "OpenCode Beta", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode-beta", channel: "latest" },
-        rpm: { packageName: "opencode-beta" },
+        appId: "ai.openagentharness.desktop.beta",
+        productName: "Open Agent Harness Beta",
+        protocols: { name: "Open Agent Harness Beta", schemes: ["opencode"] },
+        publish: { provider: "github", owner: "goodjin", repo: "open-agent-harness", channel: "beta" },
+        rpm: { packageName: "open-agent-harness-beta" },
       }
     }
     case "prod": {
       return {
         ...base,
-        appId: "ai.opencode.desktop",
-        productName: "OpenCode",
-        protocols: { name: "OpenCode", schemes: ["opencode"] },
-        publish: { provider: "github", owner: "anomalyco", repo: "opencode", channel: "latest" },
-        rpm: { packageName: "opencode" },
+        appId: "ai.openagentharness.desktop",
+        productName: "Open Agent Harness",
+        protocols: { name: "Open Agent Harness", schemes: ["opencode"] },
+        publish: { provider: "github", owner: "goodjin", repo: "open-agent-harness", channel: "latest" },
+        rpm: { packageName: "open-agent-harness" },
       }
     }
   }

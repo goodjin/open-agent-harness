@@ -2,10 +2,10 @@ import { useGlobalSDK } from "@/context/global-sdk"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLayout } from "@/context/layout"
 import { useServer } from "@/context/server"
-import { Button } from "@opencode-ai/ui/button"
-import { Icon } from "@opencode-ai/ui/icon"
-import { base64Encode } from "@opencode-ai/util/encode"
-import { getFilename } from "@opencode-ai/util/path"
+import { Button } from "@open-agent-harness/ui/button"
+import { Icon } from "@open-agent-harness/ui/icon"
+import { base64Encode } from "@open-agent-harness/util/encode"
+import { getFilename } from "@open-agent-harness/util/path"
 import { A, useNavigate } from "@solidjs/router"
 import { DateTime } from "luxon"
 import { createMemo, createResource, For, Show } from "solid-js"
@@ -104,7 +104,7 @@ export default function HarnessHome() {
         <header class="flex flex-wrap items-start justify-between gap-4 border-b border-border-subtle pb-5">
           <div>
             <A href="/" class="text-12-regular text-text-muted hover:text-text-base">
-              返回 OpenCode 首页
+              返回 Open Agent Harness 首页
             </A>
             <h1 class="mt-3 text-28-bold text-text-strong">Harness 项目总览</h1>
             <p class="mt-2 max-w-2xl text-14-regular text-text-muted">选择一个项目进入多会话 Agent 治理控制台。</p>
@@ -183,7 +183,7 @@ function Empty() {
   return (
     <div class="rounded-md border border-border-subtle bg-surface-panel p-8 text-center">
       <p class="text-14-medium text-text-strong">暂无项目</p>
-      <p class="mt-1 text-12-regular text-text-muted">先在 OpenCode 首页打开一个项目。</p>
+      <p class="mt-1 text-12-regular text-text-muted">先在 Open Agent Harness 首页打开一个项目。</p>
     </div>
   )
 }

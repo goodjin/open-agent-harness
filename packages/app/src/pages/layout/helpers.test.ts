@@ -6,7 +6,7 @@ import {
   parseDeepLink,
   parseNewSessionDeepLink,
 } from "./deep-links"
-import { type Message, type Session } from "@opencode-ai/sdk/v2/client"
+import { type Message, type Session } from "@open-agent-harness/sdk/v2/client"
 import {
   childSessionSummary,
   displayName,

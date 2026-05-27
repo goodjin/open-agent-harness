@@ -1,14 +1,14 @@
 {
-  "name": "@opencode-ai/slack",
+  "name": "@open-agent-harness/slack",
   "version": "1.2.27",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "dev": "bun run src/index.ts",
     "typecheck": "tsgo --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "workspace:*",
+    "@open-agent-harness/sdk": "workspace:*",
     "@slack/bolt": "^3.17.1"
   },
   "devDependencies": {

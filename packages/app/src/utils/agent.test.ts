@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { agentDelegable, agentHidden, agentMentionable, agentPrimary } from "./agent"
+import { agentDelegable, agentHidden, agentMentionable, agentPrimary, agentVisible } from "./agent"
 
 describe("agent entry helpers", () => {
   test("keeps legacy mode semantics when entry is absent", () => {
     expect(agentPrimary({ mode: "all" })).toBe(true)
     expect(agentPrimary({ mode: "primary" })).toBe(true)
     expect(agentPrimary({ mode: "subagent" })).toBe(false)
+    expect(agentVisible({ mode: "subagent" })).toBe(true)
     expect(agentMentionable({ mode: "primary" })).toBe(false)
     expect(agentMentionable({ mode: "subagent" })).toBe(true)
     expect(agentDelegable({ mode: "all" })).toBe(true)

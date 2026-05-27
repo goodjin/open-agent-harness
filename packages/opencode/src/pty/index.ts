@@ -4,7 +4,7 @@ import { type IPty } from "bun-pty"
 import z from "zod"
 import { Log } from "../util/log"
 import { Instance } from "../project/instance"
-import { lazy } from "@opencode-ai/util/lazy"
+import { lazy } from "@open-agent-harness/util/lazy"
 import { Shell } from "@/shell/shell"
 import { PtyID } from "./schema"
 

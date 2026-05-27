@@ -2072,6 +2072,168 @@ export type WorkflowRun = {
   }
 }
 
+export type HarnessRunStatus =
+  | "drafting"
+  | "ready"
+  | "running"
+  | "paused"
+  | "blocked"
+  | "reviewing"
+  | "verifying"
+  | "reworking"
+  | "completed"
+  | "failed"
+  | "aborted"
+
+export type HarnessRun = {
+  id: string
+  name: string
+  status?: HarnessRunStatus
+  goal: string
+  mode?: string
+  constraints?: Array<string>
+  memory_scopes?: Array<"run" | "project" | "team" | "global">
+  automation?: "manual" | "guided" | "auto"
+  progress?: {
+    completed?: number
+    total?: number
+  }
+  active_assignments?: number
+  pending_decisions?: number
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessTaskStatus =
+  | "draft"
+  | "ready"
+  | "assigned"
+  | "running"
+  | "submitted"
+  | "reviewing"
+  | "review_rejected"
+  | "review_approved"
+  | "verifying"
+  | "verify_failed"
+  | "approved"
+  | "merged"
+  | "blocked"
+  | "failed"
+  | "cancelled"
+
+export type HarnessGate = {
+  id: string
+  status?: "pending" | "passed" | "failed" | "blocked"
+  required?: Array<string>
+  evidence?: Array<string>
+  reason?: string
+}
+
+export type HarnessAssignment = {
+  id: string
+  task_id: string
+  actor: string
+  role: string
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+  capabilities?: Array<string>
+  authority?: {
+    [key: string]: unknown
+  }
+  context?: string
+  updated_at: number
+}
+
+export type HarnessTask = {
+  id: string
+  run_id: string
+  title: string
+  type?: string
+  status?: HarnessTaskStatus
+  goal: string
+  depends_on?: Array<string>
+  acceptance?: Array<string>
+  gates?: Array<HarnessGate>
+  assignment?: HarnessAssignment
+  artifacts?: Array<string>
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessArtifact = {
+  id: string
+  run_id: string
+  task_id?: string
+  kind: string
+  path: string
+  summary?: string
+  created_event?: string
+  created_at: number
+}
+
+export type HarnessDecisionStatus = "pending" | "answered" | "rejected" | "cancelled"
+
+export type HarnessDecision = {
+  id: string
+  run_id: string
+  task_id?: string
+  level?: "L0" | "L1" | "L2" | "L3" | "L4"
+  status?: HarnessDecisionStatus
+  question: string
+  options?: Array<{
+    id: string
+    label: string
+    tradeoff?: string
+  }>
+  recommended?: string
+  answer?: string
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessEvent = {
+  id: string
+  run_id?: string
+  type: string
+  actor?: string
+  time: number
+  summary?: string
+  payload?: {
+    [key: string]: unknown
+  }
+}
+
+export type HarnessSummary = {
+  run: HarnessRun
+  tasks: Array<HarnessTask>
+  assignments: Array<HarnessAssignment>
+  artifacts: Array<HarnessArtifact>
+  decisions: Array<HarnessDecision>
+  events: Array<HarnessEvent>
+}
+
+export type HarnessCommand = {
+  type:
+    | "run.create"
+    | "run.pause"
+    | "run.resume"
+    | "run.abort"
+    | "task.retry"
+    | "task.cancel"
+    | "decision.answer"
+    | "verify.rerun"
+    | "concept.replace.request"
+    | "concept.replace.approve"
+    | "concept.replace.reject"
+  run_id?: string
+  task_id?: string
+  decision_id?: string
+  concept_id?: string
+  actor?: string
+  payload?: {
+    [key: string]: unknown
+  }
+}
+
 export type MemoryPrivacy = "project" | "session"
 
 export type MemorySource = {
@@ -2228,6 +2390,7 @@ export type AgentManageInfo = {
   id: string
   name: string
   disabled: boolean
+  kind: "agent" | "skill"
   source: "builtin" | "package" | "user" | "project"
   editable: boolean
   dir?: string
@@ -5454,6 +5617,418 @@ export type WorkflowAbortResponses = {
 }
 
 export type WorkflowAbortResponse = WorkflowAbortResponses[keyof WorkflowAbortResponses]
+
+export type HarnessRunsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs"
+}
+
+export type HarnessRunsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunsError = HarnessRunsErrors[keyof HarnessRunsErrors]
+
+export type HarnessRunsResponses = {
+  /**
+   * Harness runs
+   */
+  200: Array<HarnessRun>
+}
+
+export type HarnessRunsResponse = HarnessRunsResponses[keyof HarnessRunsResponses]
+
+export type HarnessRunCreateData = {
+  body?: {
+    goal: string
+    name?: string
+    mode?: string
+    constraints?: Array<string>
+    memory_scopes?: Array<"run" | "project" | "team" | "global">
+    automation?: "manual" | "guided" | "auto"
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs"
+}
+
+export type HarnessRunCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunCreateError = HarnessRunCreateErrors[keyof HarnessRunCreateErrors]
+
+export type HarnessRunCreateResponses = {
+  /**
+   * Harness run
+   */
+  200: HarnessRun
+}
+
+export type HarnessRunCreateResponse = HarnessRunCreateResponses[keyof HarnessRunCreateResponses]
+
+export type HarnessRunGetData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}"
+}
+
+export type HarnessRunGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunGetError = HarnessRunGetErrors[keyof HarnessRunGetErrors]
+
+export type HarnessRunGetResponses = {
+  /**
+   * Harness run summary
+   */
+  200: HarnessSummary | null
+}
+
+export type HarnessRunGetResponse = HarnessRunGetResponses[keyof HarnessRunGetResponses]
+
+export type GetHarnessRunsRunIdTasksData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/tasks"
+}
+
+export type GetHarnessRunsRunIdTasksResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdAssignmentsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/assignments"
+}
+
+export type GetHarnessRunsRunIdAssignmentsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdArtifactsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/artifacts"
+}
+
+export type GetHarnessRunsRunIdArtifactsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdDecisionsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/decisions"
+}
+
+export type GetHarnessRunsRunIdDecisionsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdEventsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/events"
+}
+
+export type GetHarnessRunsRunIdEventsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdGraphData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/graph"
+}
+
+export type GetHarnessRunsRunIdGraphResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdAuditData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/audit"
+}
+
+export type GetHarnessRunsRunIdAuditResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdAuditExportData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/audit/export"
+}
+
+export type GetHarnessRunsRunIdAuditExportResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdProjectionsRebuildData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/projections/rebuild"
+}
+
+export type GetHarnessRunsRunIdProjectionsRebuildResponses = {
+  200: unknown
+}
+
+export type PostHarnessCommandsData = {
+  body?: HarnessCommand
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/commands"
+}
+
+export type PostHarnessCommandsResponses = {
+  200: unknown
+}
+
+export type PostHarnessRunsRunIdPauseData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/pause"
+}
+
+export type PostHarnessRunsRunIdPauseResponses = {
+  200: unknown
+}
+
+export type PostHarnessRunsRunIdResumeData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/resume"
+}
+
+export type PostHarnessRunsRunIdResumeResponses = {
+  200: unknown
+}
+
+export type PostHarnessRunsRunIdAbortData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/abort"
+}
+
+export type PostHarnessRunsRunIdAbortResponses = {
+  200: unknown
+}
+
+export type PostHarnessTasksTaskIdRetryData = {
+  body?: {
+    run_id: string
+  }
+  path: {
+    taskID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/tasks/{taskID}/retry"
+}
+
+export type PostHarnessTasksTaskIdRetryResponses = {
+  200: unknown
+}
+
+export type PostHarnessTasksTaskIdCancelData = {
+  body?: {
+    run_id: string
+  }
+  path: {
+    taskID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/tasks/{taskID}/cancel"
+}
+
+export type PostHarnessTasksTaskIdCancelResponses = {
+  200: unknown
+}
+
+export type PostHarnessDecisionsDecisionIdAnswerData = {
+  body?: {
+    run_id: string
+    answer: string
+  }
+  path: {
+    decisionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/decisions/{decisionID}/answer"
+}
+
+export type PostHarnessDecisionsDecisionIdAnswerResponses = {
+  200: unknown
+}
+
+export type PostHarnessVerificationsTaskIdRerunData = {
+  body?: {
+    run_id: string
+  }
+  path: {
+    taskID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/verifications/{taskID}/rerun"
+}
+
+export type PostHarnessVerificationsTaskIdRerunResponses = {
+  200: unknown
+}
+
+export type GetHarnessEventsEventIdData = {
+  body?: never
+  path: {
+    eventID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/events/{eventID}"
+}
+
+export type GetHarnessEventsEventIdResponses = {
+  200: unknown
+}
+
+export type GetHarnessEventsEventIdChainData = {
+  body?: never
+  path: {
+    eventID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/events/{eventID}/chain"
+}
+
+export type GetHarnessEventsEventIdChainResponses = {
+  200: unknown
+}
+
+export type GetHarnessConceptsConceptIdGraphData = {
+  body?: never
+  path: {
+    conceptID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/concepts/{conceptID}/graph"
+}
+
+export type GetHarnessConceptsConceptIdGraphResponses = {
+  200: unknown
+}
+
+export type GetHarnessConceptsConceptIdData = {
+  body?: never
+  path: {
+    conceptID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/concepts/{conceptID}"
+}
+
+export type GetHarnessConceptsConceptIdResponses = {
+  200: unknown
+}
 
 export type MemorySearchData = {
   body: MemorySearchInput

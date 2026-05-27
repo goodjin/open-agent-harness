@@ -21,7 +21,8 @@ export const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
     id: "default",
     name: "Default Agent",
     role: "You are a helpful AI assistant that can assist with coding, debugging, and general software development tasks.",
-    description: "The default agent template for general-purpose assistance. Use this agent for most tasks unless a specialized agent is more appropriate.",
+    description:
+      "The default agent template for general-purpose assistance. Use this agent for most tasks unless a specialized agent is more appropriate.",
     mode: "primary",
     entry: {
       primary: true,
@@ -39,7 +40,23 @@ export const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
     hidden: false,
     runner: "chat",
     workflow_mode: "auto",
-    allowed_tools: ["edit", "read", "glob", "grep", "list", "bash", "task", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread", "question"],
+    allowed_tools: [
+      "edit",
+      "read",
+      "glob",
+      "grep",
+      "list",
+      "bash",
+      "task",
+      "webfetch",
+      "websearch",
+      "codesearch",
+      "lsp",
+      "external_directory",
+      "todowrite",
+      "todoread",
+      "question",
+    ],
     denied_tools: [],
     inherit_permissions: true,
     permission_mode: "custom",
@@ -88,11 +105,13 @@ interface Entry {
 export class AgentTemplateLoader {
   private baseDirs: string[]
   private fallbackDir: string
+  private skills: string[]
   private diagnostics: AgentTemplateDiagnostic[] = []
 
-  constructor(baseDir?: string | string[], fallbackDir?: string) {
+  constructor(baseDir?: string | string[], fallbackDir?: string, skills?: string | string[]) {
     this.baseDirs = [baseDir ?? []].flat().filter((dir) => dir.length > 0)
     this.fallbackDir = fallbackDir ?? path.join(import.meta.dir, "..", "..", "config", "agents")
+    this.skills = [skills ?? []].flat().filter((dir) => dir.length > 0)
   }
 
   /**
@@ -103,7 +122,11 @@ export class AgentTemplateLoader {
     return (await this.load()).templates
   }
 
-  async load(): Promise<{ templates: AgentTemplate[]; diagnostics: AgentTemplateDiagnostic[]; statuses: AgentTemplateStatus[] }> {
+  async load(): Promise<{
+    templates: AgentTemplate[]
+    diagnostics: AgentTemplateDiagnostic[]
+    statuses: AgentTemplateStatus[]
+  }> {
     const start = Date.now()
     this.diagnostics = []
     const map = new Map<string, AgentTemplate>()
@@ -124,6 +147,12 @@ export class AgentTemplateLoader {
       for (const item of await this.loadFromDir(dir, "user")) {
         if (item.template) map.set(item.template.id, item.template)
         statuses.push(item.status)
+      }
+    }
+
+    for (const dir of this.skills) {
+      for (const item of await this.loadSkills(dir, "user")) {
+        map.set(item.id, item)
       }
     }
 
@@ -156,7 +185,7 @@ export class AgentTemplateLoader {
   }
 
   async signature(): Promise<string> {
-    const dirs = [this.fallbackDir, ...this.baseDirs]
+    const dirs = [this.fallbackDir, ...this.baseDirs, ...this.skills]
     const stats = await Promise.all(
       dirs.map(async (dir) => {
         try {
@@ -232,12 +261,12 @@ export class AgentTemplateLoader {
     }
 
     const valid = entries.filter((item): item is Entry & { template: AgentTemplate } => !!item.template)
-    const errors = Schema.validateRegistry(valid.map((item) => ({ dir: path.basename(item.template.dir), meta: item.template.meta })))
+    const errors = Schema.validateRegistry(
+      valid.map((item) => ({ dir: path.basename(item.template.dir), meta: item.template.meta })),
+    )
     for (const error of errors) this.warn({ dir, source, message: error })
     const duplicate = new Set(
-      errors
-        .map((error) => error.match(/^Duplicate agent id '([^']+)'/)?.[1])
-        .filter((id): id is string => !!id),
+      errors.map((error) => error.match(/^Duplicate agent id '([^']+)'/)?.[1]).filter((id): id is string => !!id),
     )
     if (duplicate.size === 0) return entries
     return entries.map((item) => {
@@ -254,6 +283,7 @@ export class AgentTemplateLoader {
 
   private skillRoots(dir: string) {
     const base = path.basename(dir)
+    if (base === "skill" || base === "skills") return [dir]
     const root = base === "agent" || base === "agents" ? path.dirname(dir) : dir
     return [path.join(root, "skill"), path.join(root, "skills")]
   }
@@ -338,7 +368,11 @@ export class AgentTemplateLoader {
   /**
    * Load a single agent template from a directory.
    */
-  private async loadTemplate(agentDir: string, agentId: string, source: "package" | "user"): Promise<Entry | undefined> {
+  private async loadTemplate(
+    agentDir: string,
+    agentId: string,
+    source: "package" | "user",
+  ): Promise<Entry | undefined> {
     const metaPath = path.join(agentDir, "meta.json")
     const identityPath = path.join(agentDir, "identity.md")
     const rulesPath = path.join(agentDir, "rules.md")
@@ -371,7 +405,10 @@ export class AgentTemplateLoader {
       }
       return { template, status: { dir: agentDir, source, id: template.id, valid: true, errors: [] } }
     } catch (err) {
-      const msg = err instanceof SyntaxError ? `malformed JSON in meta.json for agent '${agentId}'` : `failed to read meta.json for agent '${agentId}'`
+      const msg =
+        err instanceof SyntaxError
+          ? `malformed JSON in meta.json for agent '${agentId}'`
+          : `failed to read meta.json for agent '${agentId}'`
       errors.push(`${msg}: ${String(err)}`)
       this.warn({ dir: agentDir, source, message: errors.join("; ") })
       return { status: { dir: agentDir, source, id: undefined, valid: false, errors } }

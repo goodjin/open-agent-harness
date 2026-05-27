@@ -1,166 +1,130 @@
-# opencode GitHub Action
+# Open Agent Harness GitHub Action
 
-A GitHub Action that integrates [opencode](https://opencode.ai) directly into your GitHub workflow.
+This package contains the GitHub Action integration for Open Agent Harness.
 
-Mention `/opencode` in your comment, and opencode will execute tasks within your GitHub Actions runner.
+The action is still in migration from upstream opencode. Some code paths, trigger phrases, and package names may still use `opencode` for compatibility. Treat this package as experimental until the GitHub app identity, workflow examples, and published action namespace are finalized for Open Agent Harness.
 
-## Features
+## What It Does
 
-#### Explain an issue
+The action lets maintainers invoke the harness from GitHub issues, pull requests, and review comments. It reads the relevant thread or diff context, runs inside a GitHub Actions runner, and can respond or push changes depending on the event and token permissions.
 
-Leave the following comment on a GitHub issue. `opencode` will read the entire thread, including all comments, and reply with a clear explanation.
+Current trigger phrases are implemented in code as:
 
-```
-/opencode explain this issue
-```
+- `/opencode`
+- `/oc`
 
-#### Fix an issue
+These are legacy compatibility triggers. Do not document them as final Open Agent Harness product branding in external release material.
 
-Leave the following comment on a GitHub issue. opencode will create a new branch, implement the changes, and open a PR with the changes.
+## Typical Requests
 
-```
-/opencode fix this
-```
+Explain an issue:
 
-#### Review PRs and make changes
-
-Leave the following comment on a GitHub PR. opencode will implement the requested change and commit it to the same PR.
-
-```
-Delete the attachment from S3 when the note is removed /oc
+```text
+/oc explain this issue
 ```
 
-#### Review specific code lines
+Ask for a fix:
 
-Leave a comment directly on code lines in the PR's "Files" tab. opencode will automatically detect the file, line numbers, and diff context to provide precise responses.
-
+```text
+/oc fix this
 ```
-[Comment on specific lines in Files tab]
+
+Request a PR change:
+
+```text
+Delete the unused import /oc
+```
+
+Request a line-specific review change from the GitHub PR "Files changed" view:
+
+```text
 /oc add error handling here
 ```
 
-When commenting on specific lines, opencode receives:
+## Manual Workflow Skeleton
 
-- The exact file being reviewed
-- The specific lines of code
-- The surrounding diff context
-- Line number information
+Use this as a local development starting point only. Replace the action reference with the final Open Agent Harness action location before publishing.
 
-This allows for more targeted requests without needing to specify file paths or line numbers manually.
+```yaml
+name: open-agent-harness
 
-## Installation
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
 
-Run the following command in the terminal from your GitHub repo:
+jobs:
+  harness:
+    if: |
+      contains(github.event.comment.body, '/oc') ||
+      contains(github.event.comment.body, '/opencode')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run Open Agent Harness
+        uses: ./github
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          model: anthropic/claude-sonnet-4-20250514
+          use_github_token: true
+```
+
+## Local Development
+
+Run the action package directly from a test repository:
 
 ```bash
-opencode github install
+MODEL=anthropic/claude-sonnet-4-20250514 \
+  ANTHROPIC_API_KEY=sk-ant-api03-placeholder \
+  GITHUB_RUN_ID=dummy \
+  MOCK_TOKEN=github_pat_placeholder \
+  MOCK_EVENT='{"eventName":"issue_comment",...}' \
+  bun /path/to/open-agent-harness/github/index.ts
 ```
 
-This will walk you through installing the GitHub app, creating the workflow, and setting up secrets.
+Inputs:
 
-### Manual Setup
+- `MODEL`: model identifier used by the harness.
+- `ANTHROPIC_API_KEY`: example provider key; use the provider key required by your selected model.
+- `GITHUB_RUN_ID`: dummy value for local action emulation.
+- `MOCK_TOKEN`: GitHub personal access token with access to the test repository.
+- `MOCK_EVENT`: mock GitHub event payload.
 
-1. Install the GitHub app https://github.com/apps/opencode-agent. Make sure it is installed on the target repository.
-2. Add the following workflow file to `.github/workflows/opencode.yml` in your repo. Set the appropriate `model` and required API keys in `env`.
+## Mock Events
 
-   ```yml
-   name: opencode
+Issue comment:
 
-   on:
-     issue_comment:
-       types: [created]
-     pull_request_review_comment:
-       types: [created]
-
-   jobs:
-     opencode:
-       if: |
-         contains(github.event.comment.body, '/oc') ||
-         contains(github.event.comment.body, '/opencode')
-       runs-on: ubuntu-latest
-       permissions:
-         id-token: write
-       steps:
-          - name: Checkout repository
-            uses: actions/checkout@v6
-            with:
-              fetch-depth: 1
-              persist-credentials: false
-
-          - name: Run opencode
-           uses: anomalyco/opencode/github@latest
-           env:
-             ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-           with:
-             model: anthropic/claude-sonnet-4-20250514
-             use_github_token: true
-   ```
-
-3. Store the API keys in secrets. In your organization or project **settings**, expand **Secrets and variables** on the left and select **Actions**. Add the required API keys.
-
-## Support
-
-This is an early release. If you encounter issues or have feedback, please create an issue at https://github.com/anomalyco/opencode/issues.
-
-## Development
-
-To test locally:
-
-1. Navigate to a test repo (e.g. `hello-world`):
-
-   ```bash
-   cd hello-world
-   ```
-
-2. Run:
-
-   ```bash
-   MODEL=anthropic/claude-sonnet-4-20250514 \
-     ANTHROPIC_API_KEY=sk-ant-api03-1234567890 \
-     GITHUB_RUN_ID=dummy \
-     MOCK_TOKEN=github_pat_1234567890 \
-     MOCK_EVENT='{"eventName":"issue_comment",...}' \
-     bun /path/to/opencode/github/index.ts
-   ```
-
-   - `MODEL`: The model used by opencode. Same as the `MODEL` defined in the GitHub workflow.
-   - `ANTHROPIC_API_KEY`: Your model provider API key. Same as the keys defined in the GitHub workflow.
-   - `GITHUB_RUN_ID`: Dummy value to emulate GitHub action environment.
-   - `MOCK_TOKEN`: A GitHub personal access token. This token is used to verify you have `admin` or `write` access to the test repo. Generate a token [here](https://github.com/settings/personal-access-tokens).
-   - `MOCK_EVENT`: Mock GitHub event payload (see templates below).
-   - `/path/to/opencode`: Path to your cloned opencode repo. `bun /path/to/opencode/github/index.ts` runs your local version of `opencode`.
-
-### Issue comment event
-
-```
-MOCK_EVENT='{"eventName":"issue_comment","repo":{"owner":"sst","repo":"hello-world"},"actor":"fwang","payload":{"issue":{"number":4},"comment":{"id":1,"body":"hey opencode, summarize thread"}}}'
+```bash
+MOCK_EVENT='{"eventName":"issue_comment","repo":{"owner":"OWNER","repo":"REPO"},"actor":"USER","payload":{"issue":{"number":4},"comment":{"id":1,"body":"/oc summarize thread"}}}'
 ```
 
-Replace:
+PR issue comment:
 
-- `"owner":"sst"` with repo owner
-- `"repo":"hello-world"` with repo name
-- `"actor":"fwang"` with the GitHub username of commenter
-- `"number":4` with the GitHub issue id
-- `"body":"hey opencode, summarize thread"` with comment body
-
-### Issue comment with image attachment.
-
-```
-MOCK_EVENT='{"eventName":"issue_comment","repo":{"owner":"sst","repo":"hello-world"},"actor":"fwang","payload":{"issue":{"number":4},"comment":{"id":1,"body":"hey opencode, what is in my image ![Image](https://github.com/user-attachments/assets/xxxxxxxx)"}}}'
+```bash
+MOCK_EVENT='{"eventName":"issue_comment","repo":{"owner":"OWNER","repo":"REPO"},"actor":"USER","payload":{"issue":{"number":4,"pull_request":{}},"comment":{"id":1,"body":"/oc summarize this PR"}}}'
 ```
 
-Replace the image URL `https://github.com/user-attachments/assets/xxxxxxxx` with a valid GitHub attachment (you can generate one by commenting with an image in any issue).
+PR review comment:
 
-### PR comment event
-
-```
-MOCK_EVENT='{"eventName":"issue_comment","repo":{"owner":"sst","repo":"hello-world"},"actor":"fwang","payload":{"issue":{"number":4,"pull_request":{}},"comment":{"id":1,"body":"hey opencode, summarize thread"}}}'
+```bash
+MOCK_EVENT='{"eventName":"pull_request_review_comment","repo":{"owner":"OWNER","repo":"REPO"},"actor":"USER","payload":{"pull_request":{"number":7},"comment":{"id":1,"body":"/oc add error handling","path":"src/Button.tsx","diff_hunk":"@@ -1,3 +1,4 @@","line":47,"original_line":45,"position":10,"commit_id":"abc123","original_commit_id":"def456"}}}'
 ```
 
-### PR review comment event
+## Migration Notes
 
-```
-MOCK_EVENT='{"eventName":"pull_request_review_comment","repo":{"owner":"sst","repo":"hello-world"},"actor":"fwang","payload":{"pull_request":{"number":7},"comment":{"id":1,"body":"hey opencode, add error handling","path":"src/components/Button.tsx","diff_hunk":"@@ -45,8 +45,11 @@\n- const handleClick = () => {\n-   console.log('clicked')\n+ const handleClick = useCallback(() => {\n+   console.log('clicked')\n+   doSomething()\n+ }, [doSomething])","line":47,"original_line":45,"position":10,"commit_id":"abc123","original_commit_id":"def456"}}}'
-```
+- The package directory is `github`.
+- The current code still accepts `/opencode`.
+- Some generated links and social-card URLs still reference upstream opencode infrastructure and need code changes before public Open Agent Harness release.

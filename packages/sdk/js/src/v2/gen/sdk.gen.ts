@@ -58,12 +58,32 @@ import type {
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
+  GetHarnessConceptsConceptIdGraphResponses,
+  GetHarnessConceptsConceptIdResponses,
+  GetHarnessEventsEventIdChainResponses,
+  GetHarnessEventsEventIdResponses,
+  GetHarnessRunsRunIdArtifactsResponses,
+  GetHarnessRunsRunIdAssignmentsResponses,
+  GetHarnessRunsRunIdAuditExportResponses,
+  GetHarnessRunsRunIdAuditResponses,
+  GetHarnessRunsRunIdDecisionsResponses,
+  GetHarnessRunsRunIdEventsResponses,
+  GetHarnessRunsRunIdGraphResponses,
+  GetHarnessRunsRunIdProjectionsRebuildResponses,
+  GetHarnessRunsRunIdTasksResponses,
   GlobalConfigGetResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
   GlobalDisposeResponses,
   GlobalEventResponses,
   GlobalHealthResponses,
+  HarnessCommand,
+  HarnessRunCreateErrors,
+  HarnessRunCreateResponses,
+  HarnessRunGetErrors,
+  HarnessRunGetResponses,
+  HarnessRunsErrors,
+  HarnessRunsResponses,
   InstanceDisposeResponses,
   LspStatusResponses,
   McpAddErrors,
@@ -101,6 +121,14 @@ import type {
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PostHarnessCommandsResponses,
+  PostHarnessDecisionsDecisionIdAnswerResponses,
+  PostHarnessRunsRunIdAbortResponses,
+  PostHarnessRunsRunIdPauseResponses,
+  PostHarnessRunsRunIdResumeResponses,
+  PostHarnessTasksTaskIdCancelResponses,
+  PostHarnessTasksTaskIdRetryResponses,
+  PostHarnessVerificationsTaskIdRerunResponses,
   ProjectCurrentResponses,
   ProjectInitGitResponses,
   ProjectInitResponses,
@@ -3184,6 +3212,103 @@ export class Workflow extends HeyApiClient {
   }
 }
 
+export class Run extends HeyApiClient {
+  /**
+   * Create harness run
+   */
+  public create<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      goal?: string
+      name?: string
+      mode?: string
+      constraints?: Array<string>
+      memory_scopes?: Array<"run" | "project" | "team" | "global">
+      automation?: "manual" | "guided" | "auto"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "goal" },
+            { in: "body", key: "name" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "constraints" },
+            { in: "body", key: "memory_scopes" },
+            { in: "body", key: "automation" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<HarnessRunCreateResponses, HarnessRunCreateErrors, ThrowOnError>({
+      url: "/harness/runs",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Get harness run
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HarnessRunGetResponses, HarnessRunGetErrors, ThrowOnError>({
+      url: "/harness/runs/{runID}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Harness extends HeyApiClient {
+  /**
+   * List harness runs
+   */
+  public runs<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<HarnessRunsResponses, HarnessRunsErrors, ThrowOnError>({
+      url: "/harness/runs",
+      ...options,
+      ...params,
+    })
+  }
+
+  private _run?: Run
+  get run(): Run {
+    return (this._run ??= new Run({ client: this.client }))
+  }
+}
+
 export class Memory extends HeyApiClient {
   /**
    * Search memories
@@ -4703,6 +4828,566 @@ export class OpencodeClient extends HeyApiClient {
     OpencodeClient.__registry.set(this, args?.key)
   }
 
+  public getHarnessRunsRunIdTasks<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdTasksResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/tasks",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdAssignments<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdAssignmentsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/assignments",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdArtifacts<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdArtifactsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/artifacts",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdDecisions<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdDecisionsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/decisions",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdEventsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/events",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdGraph<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdGraphResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/graph",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdAudit<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdAuditResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/audit",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdAuditExport<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdAuditExportResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/audit/export",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdProjectionsRebuild<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdProjectionsRebuildResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/projections/rebuild",
+      ...options,
+      ...params,
+    })
+  }
+
+  public postHarnessCommands<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      harnessCommand?: HarnessCommand
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { key: "harnessCommand", map: "body" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessCommandsResponses, unknown, ThrowOnError>({
+      url: "/harness/commands",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessRunsRunIdPause<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessRunsRunIdPauseResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/pause",
+      ...options,
+      ...params,
+    })
+  }
+
+  public postHarnessRunsRunIdResume<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessRunsRunIdResumeResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/resume",
+      ...options,
+      ...params,
+    })
+  }
+
+  public postHarnessRunsRunIdAbort<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessRunsRunIdAbortResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/abort",
+      ...options,
+      ...params,
+    })
+  }
+
+  public postHarnessTasksTaskIdRetry<ThrowOnError extends boolean = false>(
+    parameters: {
+      taskID: string
+      directory?: string
+      run_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "taskID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "run_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessTasksTaskIdRetryResponses, unknown, ThrowOnError>({
+      url: "/harness/tasks/{taskID}/retry",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessTasksTaskIdCancel<ThrowOnError extends boolean = false>(
+    parameters: {
+      taskID: string
+      directory?: string
+      run_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "taskID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "run_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessTasksTaskIdCancelResponses, unknown, ThrowOnError>({
+      url: "/harness/tasks/{taskID}/cancel",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessDecisionsDecisionIdAnswer<ThrowOnError extends boolean = false>(
+    parameters: {
+      decisionID: string
+      directory?: string
+      run_id?: string
+      answer?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "decisionID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "run_id" },
+            { in: "body", key: "answer" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessDecisionsDecisionIdAnswerResponses, unknown, ThrowOnError>({
+      url: "/harness/decisions/{decisionID}/answer",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessVerificationsTaskIdRerun<ThrowOnError extends boolean = false>(
+    parameters: {
+      taskID: string
+      directory?: string
+      run_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "taskID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "run_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessVerificationsTaskIdRerunResponses, unknown, ThrowOnError>({
+      url: "/harness/verifications/{taskID}/rerun",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public getHarnessEventsEventId<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessEventsEventIdResponses, unknown, ThrowOnError>({
+      url: "/harness/events/{eventID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessEventsEventIdChain<ThrowOnError extends boolean = false>(
+    parameters: {
+      eventID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "eventID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessEventsEventIdChainResponses, unknown, ThrowOnError>({
+      url: "/harness/events/{eventID}/chain",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessConceptsConceptIdGraph<ThrowOnError extends boolean = false>(
+    parameters: {
+      conceptID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "conceptID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessConceptsConceptIdGraphResponses, unknown, ThrowOnError>({
+      url: "/harness/concepts/{conceptID}/graph",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessConceptsConceptId<ThrowOnError extends boolean = false>(
+    parameters: {
+      conceptID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "conceptID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessConceptsConceptIdResponses, unknown, ThrowOnError>({
+      url: "/harness/concepts/{conceptID}",
+      ...options,
+      ...params,
+    })
+  }
+
   private _global?: Global
   get global(): Global {
     return (this._global ??= new Global({ client: this.client }))
@@ -4761,6 +5446,11 @@ export class OpencodeClient extends HeyApiClient {
   private _workflow?: Workflow
   get workflow(): Workflow {
     return (this._workflow ??= new Workflow({ client: this.client }))
+  }
+
+  private _harness?: Harness
+  get harness(): Harness {
+    return (this._harness ??= new Harness({ client: this.client }))
   }
 
   private _memory?: Memory

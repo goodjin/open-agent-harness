@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
-  "name": "@opencode-ai/storybook",
+  "name": "@open-agent-harness/storybook",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "storybook": "storybook dev -p 6006",
@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "catalog:",
-    "@opencode-ai/ui": "workspace:*",
+    "@open-agent-harness/ui": "workspace:*",
     "@solidjs/meta": "catalog:",
     "@storybook/addon-a11y": "^10.2.13",
     "@storybook/addon-docs": "^10.2.13",

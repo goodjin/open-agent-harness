@@ -6,10 +6,10 @@ import { SyncProvider, useSync } from "@/context/sync"
 import { LocalProvider } from "@/context/local"
 import { useGlobalSDK } from "@/context/global-sdk"
 
-import { DataProvider } from "@opencode-ai/ui/context"
-import { base64Encode } from "@opencode-ai/util/encode"
+import { DataProvider } from "@open-agent-harness/ui/context"
+import { base64Encode } from "@open-agent-harness/util/encode"
 import { decode64 } from "@/utils/base64"
-import { showToast } from "@opencode-ai/ui/toast"
+import { showToast } from "@open-agent-harness/ui/toast"
 import { useLanguage } from "@/context/language"
 import HarnessHome from "@/pages/harness-home"
 function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {

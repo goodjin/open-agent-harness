@@ -6,7 +6,7 @@ import type {
   AgentManageStateInput,
   AgentManageValidateInput,
   AgentManageValidateOutput,
-} from "@opencode-ai/sdk/v2"
+} from "@open-agent-harness/sdk/v2"
 
 export type Scope = NonNullable<AgentManageSaveInput["scope"]>
 export type Meta = AgentManageSaveInput["meta"]
@@ -15,6 +15,7 @@ export type Runner = NonNullable<Meta["runner"]>
 export type Cost = NonNullable<NonNullable<Meta["capability"]>["cost"]>
 export type Perm = NonNullable<Meta["permission_mode"]>
 export type View = "create" | "edit"
+export type Tab = "all" | "agent" | "skill"
 
 export type Form = {
   base?: Meta
@@ -59,6 +60,7 @@ export const modes: Mode[] = ["primary", "subagent", "all"]
 export const runners: Runner[] = ["chat", "workflow", "protocol"]
 export const costs: Cost[] = ["low", "medium", "high"]
 export const perms: Perm[] = ["custom", "strict", "lax"]
+export const tabs: Tab[] = ["all", "agent", "skill"]
 
 export const data = <T>(value: Raw<T>) => {
   if (typeof value === "object" && value !== null && "data" in value) return (value as { data: T }).data
@@ -143,8 +145,12 @@ export const summary = (item: AgentManageInfo) => {
     item.effective.entry.default ? "default" : undefined,
     item.effective.entry.hidden ? "hidden" : undefined,
   ].filter((part): part is string => !!part)
-  return `${item.effective.runner} / ${item.effective.mode}${entry.length ? ` / ${entry.join(", ")}` : ""}`
+  const kind = item.kind === "skill" ? "legacy skill / " : ""
+  return `${kind}${item.effective.runner} / ${item.effective.mode}${entry.length ? ` / ${entry.join(", ")}` : ""}`
 }
+
+export const typed = (items: readonly AgentManageInfo[] | undefined, tab: Tab) =>
+  (items ?? []).filter((item) => tab === "all" || item.kind === tab)
 
 export const meta = (form: Form): Meta => {
   const tags = split(form.tags)

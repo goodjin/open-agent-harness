@@ -25,7 +25,43 @@ Multi-agent systems should be designed like operating environments. The harness 
 
 ## Status
 
-This repository is currently a modified opencode codebase. The public identity, package name, CLI entry, license, and documentation have been changed to Open Agent Harness, while some internal workspace package names and compatibility paths may still reference opencode during the migration.
+This repository is currently a modified opencode codebase. The public identity, package name, CLI entry, license, and documentation have been changed to Open Agent Harness, while some compatibility paths may still reference opencode during the migration.
+
+## Repository Layout
+
+The repository is a Bun monorepo. The main runtime package still lives under `packages/opencode` during the migration.
+
+| Path | Purpose |
+| --- | --- |
+| `packages/opencode` | Main Open Agent Harness runtime, CLI, server, session system, agent registry, tool execution, ACP support, and protocol implementation. |
+| `packages/app` | Shared Solid/Vite web UI used by browser and desktop clients. |
+| `packages/desktop` | Tauri desktop shell for the shared app. |
+| `packages/desktop-electron` | Electron desktop shell. |
+| `packages/sdk` | OpenAPI definition and generated SDK artifacts. Regenerate the JavaScript SDK with `./packages/sdk/js/script/build.ts`. |
+| `packages/web` | Astro/Starlight documentation site inherited from upstream. Its content still needs product-scope review before release. |
+| `packages/docs` | Mintlify documentation workspace inherited from upstream. It is not the canonical docs surface yet. |
+| `packages/plugin`, `packages/script`, `packages/ui`, `packages/util` | Supporting workspace packages inherited from the upstream codebase. Some package names still use `@open-agent-harness/*` for compatibility. |
+| `github` | GitHub Action integration package. Current trigger compatibility may still include legacy `/opencode` behavior. |
+| `sdks/vscode` | VS Code extension package for launching and interacting with the harness from the editor. |
+| `docs` | Migration plans, architecture notes, bugfix notes, audits, and protocol design material. |
+| `infra` | Infrastructure definitions inherited from the upstream console/cloud surface. Review before production use. |
+| `.github` | GitHub repository automation. Only low-risk CI workflows are retained; publishing, deployment, signing, bot, notification, and mutation workflows were removed pending Open Agent Harness release design. |
+| `.husky` | Local Git hooks. The pre-push hook checks Bun version and runs package-level typechecks. |
+
+## AI Agent Guidelines
+
+AI agents working in this repository should optimize for correctness, traceability, and migration safety.
+
+- Treat Open Agent Harness as the product identity. Mention opencode only for upstream provenance, compatibility paths, or still-unmigrated internal names.
+- Preserve user changes. Do not revert unrelated work in the tree, and inspect touched files before editing around existing modifications.
+- Keep changes scoped. Avoid opportunistic refactors unless they directly reduce risk for the requested change.
+- Follow [AGENTS.md](./AGENTS.md) for style rules. In particular, prefer Bun APIs, avoid `any`, avoid unnecessary destructuring, prefer early returns, and keep new identifiers short when clear.
+- Run checks from package directories, not from the repository root. Use `bun typecheck` inside packages such as `packages/opencode` or `packages/app`.
+- Regenerate SDK artifacts after API or protocol changes with `./packages/sdk/js/script/build.ts`.
+- Keep generated files synchronized with source changes. Do not hand-edit generated SDK files unless the generator is being fixed.
+- Do not reintroduce upstream release, deployment, signing, docs translation, or bot automation without an explicit Open Agent Harness release decision.
+- Do not add project-level `.opencode` agent, command, or tool config unless the repository intentionally ships that config.
+- Document compatibility names explicitly. If a file still needs `packages/opencode`, `OPENCODE_*`, `.opencode`, `@open-agent-harness/*`, or `/opencode`, explain whether it is a migration constraint or public behavior.
 
 ## Installation
 
@@ -42,7 +78,7 @@ bun run --cwd packages/opencode --conditions=browser ./src/index.ts --help
 
 ## License
 
-Open Agent Harness is distributed under the PolyForm Noncommercial License 1.0.0. Noncommercial use is permitted under that license. Commercial use requires a separate commercial license from the Open Agent Harness copyright holder.
+Open Agent Harness is distributed under the GNU Affero General Public License v3.0, following the same open source licensing model used by MinIO. Commercial licensing exceptions may be offered separately by the Open Agent Harness copyright holder.
 
 This project includes source code derived from opencode, which was originally distributed under the MIT License. The original opencode copyright notice and MIT license text are preserved in [LICENSE](./LICENSE).
 

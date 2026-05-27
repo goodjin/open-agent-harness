@@ -1,4 +1,4 @@
-import type { Agent } from "@opencode-ai/sdk/v2"
+import type { Agent } from "@open-agent-harness/sdk/v2"
 
 type Entry = {
   mode?: Agent["mode"]
@@ -19,6 +19,10 @@ export function agentHidden(item: Entry) {
 
 export function agentPrimary(item: Entry) {
   return (item.entry?.primary ?? item.mode !== "subagent") && !agentHidden(item)
+}
+
+export function agentVisible(item: Entry) {
+  return !agentHidden(item)
 }
 
 export function agentMentionable(item: Entry) {

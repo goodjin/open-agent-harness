@@ -1,8 +1,8 @@
 {
-  "name": "@opencode-ai/ui",
+  "name": "@open-agent-harness/ui",
   "version": "1.2.27",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "exports": {
     "./package.json": "./package.json",
     "./*": "./src/components/*.tsx",
@@ -43,8 +43,8 @@
   },
   "dependencies": {
     "@kobalte/core": "catalog:",
-    "@opencode-ai/sdk": "workspace:*",
-    "@opencode-ai/util": "workspace:*",
+    "@open-agent-harness/sdk": "workspace:*",
+    "@open-agent-harness/util": "workspace:*",
     "@pierre/diffs": "catalog:",
     "@shikijs/transformers": "3.9.2",
     "@solid-primitives/bounds": "0.1.3",

@@ -1,7 +1,7 @@
 import { useIsRouting, useLocation } from "@solidjs/router"
 import { batch, createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { Tooltip } from "@opencode-ai/ui/tooltip"
+import { Tooltip } from "@open-agent-harness/ui/tooltip"
 import { useLanguage } from "@/context/language"
 
 type Mem = Performance & {

@@ -1,10 +1,10 @@
 {
-  "name": "@opencode-ai/function",
+  "name": "@open-agent-harness/function",
   "version": "1.2.27",
   "$schema": "https://json.schemastore.org/package.json",
   "private": true,
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:",
     "@tsconfig/node22": "22.0.2",

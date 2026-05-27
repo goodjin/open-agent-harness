@@ -1,7 +1,7 @@
 import { BusEvent } from "@/bus/bus-event"
 import path from "path"
 import z from "zod"
-import { NamedError } from "@opencode-ai/util/error"
+import { NamedError } from "@open-agent-harness/util/error"
 import { Log } from "../util/log"
 import { iife } from "@/util/iife"
 import { Flag } from "../flag/flag"
@@ -137,7 +137,7 @@ export namespace Installation {
     for (const check of checks) {
       const output = await check.command()
       const installedName =
-        check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+        check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "open-agent-harness"
       if (output.includes(installedName)) {
         return check.name
       }
@@ -168,13 +168,13 @@ export namespace Installation {
         result = await upgradeCurl(target)
         break
       case "npm":
-        result = await Process.run(["npm", "install", "-g", `opencode-ai@${target}`], { nothrow: true })
+        result = await Process.run(["npm", "install", "-g", `open-agent-harness@${target}`], { nothrow: true })
         break
       case "pnpm":
-        result = await Process.run(["pnpm", "install", "-g", `opencode-ai@${target}`], { nothrow: true })
+        result = await Process.run(["pnpm", "install", "-g", `open-agent-harness@${target}`], { nothrow: true })
         break
       case "bun":
-        result = await Process.run(["bun", "install", "-g", `opencode-ai@${target}`], { nothrow: true })
+        result = await Process.run(["bun", "install", "-g", `open-agent-harness@${target}`], { nothrow: true })
         break
       case "brew": {
         const formula = await getBrewFormula()
@@ -262,7 +262,7 @@ export namespace Installation {
         return reg.endsWith("/") ? reg.slice(0, -1) : reg
       })
       const channel = CHANNEL
-      return fetch(`${registry}/opencode-ai/${channel}`)
+      return fetch(`${registry}/open-agent-harness/${channel}`)
         .then((res) => {
           if (!res.ok) throw new Error(res.statusText)
           return res.json()

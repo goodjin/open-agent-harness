@@ -1,51 +1,58 @@
-## Usage
+# Open Agent Harness App
 
-Dependencies for these templates are managed with [pnpm](https://pnpm.io) using `pnpm up -Lri`.
+`packages/app` contains the shared Solid/Vite web UI used by the browser app and desktop shells.
 
-This is the reason you see a `pnpm-lock.yaml`. That said, any package manager will work. This file can safely be removed once you clone a template.
+The UI talks to a running Open Agent Harness server. During migration, the backend package path is still `packages/opencode`.
+
+## Development
+
+Start the harness server from the repository root:
 
 ```bash
-$ npm install # or pnpm install or yarn install
+bun dev serve
 ```
 
-### Learn more on the [Solid Website](https://solidjs.com) and come chat with us on our [Discord](https://discord.com/invite/solidjs)
+Start the web app:
 
-## Available Scripts
+```bash
+bun run --cwd packages/app dev
+```
 
-In the project directory, you can run:
+The Vite server prints the local URL, usually `http://localhost:3000` or another available port.
 
-### `npm run dev` or `npm start`
+## Build
 
-Runs the app in the development mode.<br>
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+```bash
+bun run --cwd packages/app build
+```
 
-The page will reload if you make edits.<br>
+## Type Checking
 
-### `npm run build`
+```bash
+bun run --cwd packages/app typecheck
+```
 
-Builds the app for production to the `dist` folder.<br>
-It correctly bundles Solid in production mode and optimizes the build for the best performance.
+## Unit Tests
 
-The build is minified and the filenames include the hashes.<br>
-Your app is ready to be deployed!
+```bash
+bun run --cwd packages/app test:unit
+```
 
-## E2E Testing
+## E2E Tests
 
-Playwright starts the Vite dev server automatically via `webServer`, and UI tests need an opencode backend (defaults to `localhost:4096`).
-Use the local runner to create a temp sandbox, seed data, and run the tests.
+Playwright starts the Vite dev server automatically via `webServer`. UI tests need a harness backend, defaulting to `localhost:4096`.
+
+Use the local runner to create a temporary sandbox, seed data, and run tests:
 
 ```bash
 bunx playwright install
-bun run test:e2e:local
-bun run test:e2e:local -- --grep "settings"
+bun run --cwd packages/app test:e2e:local
+bun run --cwd packages/app test:e2e:local -- --grep "settings"
 ```
 
 Environment options:
 
-- `PLAYWRIGHT_SERVER_HOST` / `PLAYWRIGHT_SERVER_PORT` (backend address, default: `localhost:4096`)
-- `PLAYWRIGHT_PORT` (Vite dev server port, default: `3000`)
-- `PLAYWRIGHT_BASE_URL` (override base URL, default: `http://localhost:<PLAYWRIGHT_PORT>`)
-
-## Deployment
-
-You can deploy the `dist` folder to any static host provider (netlify, surge, now, etc.)
+- `PLAYWRIGHT_SERVER_HOST`: backend host, default `localhost`.
+- `PLAYWRIGHT_SERVER_PORT`: backend port, default `4096`.
+- `PLAYWRIGHT_PORT`: Vite dev server port, default `3000`.
+- `PLAYWRIGHT_BASE_URL`: override base URL, default `http://localhost:<PLAYWRIGHT_PORT>`.

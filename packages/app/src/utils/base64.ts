@@ -1,4 +1,4 @@
-import { base64Decode, base64Encode } from "@opencode-ai/util/encode"
+import { base64Decode, base64Encode } from "@open-agent-harness/util/encode"
 
 export function decode64(value: string | undefined) {
   if (value === undefined) return

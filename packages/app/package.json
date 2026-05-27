@@ -1,5 +1,5 @@
 {
-  "name": "@opencode-ai/app",
+  "name": "@open-agent-harness/app",
   "version": "1.2.27",
   "description": "",
   "type": "module",
@@ -22,7 +22,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:report": "playwright show-report e2e/playwright-report"
   },
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "devDependencies": {
     "@happy-dom/global-registrator": "20.0.11",
     "@playwright/test": "1.57.0",
@@ -39,9 +39,9 @@
   },
   "dependencies": {
     "@kobalte/core": "catalog:",
-    "@opencode-ai/sdk": "workspace:*",
-    "@opencode-ai/ui": "workspace:*",
-    "@opencode-ai/util": "workspace:*",
+    "@open-agent-harness/sdk": "workspace:*",
+    "@open-agent-harness/ui": "workspace:*",
+    "@open-agent-harness/util": "workspace:*",
     "@shikijs/transformers": "3.9.2",
     "@solid-primitives/active-element": "2.1.3",
     "@solid-primitives/audio": "1.4.2",

@@ -1,4 +1,8 @@
 .DS_Store
+.claude
+.signpath
+.zed
+.opencode
 node_modules
 .worktrees
 .sst
@@ -12,6 +16,7 @@ tmp
 dist
 ts-dist
 .turbo
+.playwright-mcp
 **/.serena
 .serena/
 /result

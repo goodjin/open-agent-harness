@@ -1,7 +1,7 @@
 {
-  "name": "@opencode-ai/web",
+  "name": "@open-agent-harness/web",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "version": "1.2.27",
   "scripts": {
     "dev": "astro dev",

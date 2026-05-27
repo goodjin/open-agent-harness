@@ -1,4 +1,4 @@
-import type { SessionStatus } from "@opencode-ai/sdk/v2"
+import type { SessionStatus } from "@open-agent-harness/sdk/v2"
 
 type Item = {
   id: string

@@ -1,9 +1,9 @@
 {
-  "name": "@opencode-ai/enterprise",
+  "name": "@open-agent-harness/enterprise",
   "version": "1.2.27",
   "private": true,
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "typecheck": "tsgo --noEmit",
     "dev": "vite dev",
@@ -13,8 +13,8 @@
     "shell-prod": "sst shell --target Teams --stage production"
   },
   "dependencies": {
-    "@opencode-ai/util": "workspace:*",
-    "@opencode-ai/ui": "workspace:*",
+    "@open-agent-harness/util": "workspace:*",
+    "@open-agent-harness/ui": "workspace:*",
     "aws4fetch": "^1.0.20",
     "@pierre/diffs": "catalog:",
     "@solidjs/router": "catalog:",

@@ -12,7 +12,7 @@ const dir = path.resolve(__dirname, "..")
 
 process.chdir(dir)
 
-import { Script } from "@opencode-ai/script"
+import { Script } from "@open-agent-harness/script"
 import pkg from "../package.json"
 
 const modelsUrl = process.env.OPENCODE_MODELS_URL || "https://models.dev"

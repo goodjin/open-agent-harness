@@ -1,8 +1,8 @@
 import { For, Show } from "solid-js"
-import type { PermissionRequest } from "@opencode-ai/sdk/v2"
-import { Button } from "@opencode-ai/ui/button"
-import { DockPrompt } from "@opencode-ai/ui/dock-prompt"
-import { Icon } from "@opencode-ai/ui/icon"
+import type { PermissionRequest } from "@open-agent-harness/sdk/v2"
+import { Button } from "@open-agent-harness/ui/button"
+import { DockPrompt } from "@open-agent-harness/ui/dock-prompt"
+import { Icon } from "@open-agent-harness/ui/icon"
 import { useLanguage } from "@/context/language"
 
 export function SessionPermissionDock(props: {

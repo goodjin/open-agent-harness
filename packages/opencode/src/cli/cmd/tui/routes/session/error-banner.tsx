@@ -7,7 +7,7 @@ import { useKeyboard } from "@opentui/solid"
 import { useKeybind } from "../../context/keybind"
 import { useDialog } from "../../ui/dialog"
 import { SplitBorder } from "../../component/border"
-import type { SessionStatus } from "@opencode-ai/sdk/v2"
+import type { SessionStatus } from "@open-agent-harness/sdk/v2"
 
 export function ErrorBanner(props: { sessionID: string }) {
   const sdk = useSDK()

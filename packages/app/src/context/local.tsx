@@ -1,12 +1,12 @@
-import { createSimpleContext } from "@opencode-ai/ui/context"
-import { base64Encode } from "@opencode-ai/util/encode"
+import { createSimpleContext } from "@open-agent-harness/ui/context"
+import { base64Encode } from "@open-agent-harness/util/encode"
 import { useParams } from "@solidjs/router"
 import { batch, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useModels } from "@/context/models"
 import { useProviders } from "@/hooks/use-providers"
 import { modelEnabled, modelProbe } from "@/testing/model-selection"
-import { agentPrimary } from "@/utils/agent"
+import { agentPrimary, agentVisible } from "@/utils/agent"
 import { Persist, persisted } from "@/utils/persist"
 import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
 import { useSDK } from "./sdk"
@@ -63,7 +63,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const models = useModels()
 
     const id = createMemo(() => params.id || undefined)
-    const list = createMemo(() => sync.data.agent.filter(agentPrimary))
+    const list = createMemo(() => sync.data.agent.filter(agentVisible))
+    const primary = createMemo(() => sync.data.agent.filter(agentPrimary))
     const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
 
     const [saved, setSaved] = persisted(
@@ -86,7 +87,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         variant?: string | null
       }
     }>({
-      current: list()[0]?.name,
+      current: primary()[0]?.name ?? list()[0]?.name,
       draft: undefined,
       last: undefined,
     })
@@ -107,7 +108,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const pickAgent = (name: string | undefined) => {
       const items = list()
       if (items.length === 0) return undefined
-      return items.find((item) => item.name === name) ?? items[0]
+      return items.find((item) => item.name === name) ?? primary()[0] ?? items[0]
     }
 
     createEffect(() => {
@@ -117,7 +118,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         return
       }
       if (items.some((item) => item.name === store.current)) return
-      setStore("current", items[0]?.name)
+      setStore("current", (primary()[0] ?? items[0])?.name)
     })
 
     const scope = createMemo<State | undefined>(() => {

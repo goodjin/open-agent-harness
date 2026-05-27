@@ -1,10 +1,11 @@
-import { Button } from "@opencode-ai/ui/button"
-import { Icon } from "@opencode-ai/ui/icon"
-import { Switch } from "@opencode-ai/ui/switch"
-import { Tag } from "@opencode-ai/ui/tag"
-import { TextField } from "@opencode-ai/ui/text-field"
-import { showToast } from "@opencode-ai/ui/toast"
-import type { AgentManageDiagnostic, AgentManageInfo } from "@opencode-ai/sdk/v2"
+import { Button } from "@open-agent-harness/ui/button"
+import { Icon } from "@open-agent-harness/ui/icon"
+import { Switch } from "@open-agent-harness/ui/switch"
+import { Tag } from "@open-agent-harness/ui/tag"
+import { TextField } from "@open-agent-harness/ui/text-field"
+import { showToast } from "@open-agent-harness/ui/toast"
+import { Tabs } from "@open-agent-harness/ui/tabs"
+import type { AgentManageDiagnostic, AgentManageInfo } from "@open-agent-harness/sdk/v2"
 import { createResource, For, Show, type Component, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useGlobalSDK } from "@/context/global-sdk"
@@ -22,13 +23,16 @@ import {
   save as saveAgent,
   scopes,
   summary,
+  tabs,
   toggle as toggleAgent,
+  typed,
   type Cost,
   type Form,
   type Mode,
   type Perm,
   type Runner,
   type Scope,
+  type Tab,
   type View,
 } from "./settings-agents-helpers"
 
@@ -108,6 +112,7 @@ export const SettingsAgents: Component = () => {
     selected: string
     saving: boolean
     state: string
+    tab: Tab
     diagnostics: AgentManageDiagnostic[]
   }>({
     page: "list",
@@ -115,6 +120,7 @@ export const SettingsAgents: Component = () => {
     selected: "",
     saving: false,
     state: "",
+    tab: "all",
     diagnostics: [],
   })
   const [form, setForm] = createStore<Form>(blank())
@@ -206,6 +212,17 @@ export const SettingsAgents: Component = () => {
             </div>
 
             <div class="flex max-w-[960px] flex-col gap-1">
+              <Tabs value={view.tab} onChange={(value) => setView("tab", value as Tab)} variant="settings" class="mb-3">
+                <Tabs.List>
+                  <For each={tabs}>
+                    {(tab) => (
+                      <Tabs.Trigger value={tab}>
+                        {tab === "all" ? "All" : tab === "agent" ? "Agents" : "Legacy skills"}
+                      </Tabs.Trigger>
+                    )}
+                  </For>
+                </Tabs.List>
+              </Tabs>
               <SettingsList>
                 <Show
                   when={!agents.loading}
@@ -217,25 +234,36 @@ export const SettingsAgents: Component = () => {
                   }
                 >
                   <Show
-                    when={(agents()?.length ?? 0) > 0}
+                    when={typed(agents(), view.tab).length > 0}
                     fallback={<div class="py-4 text-14-regular text-text-weak">No manageable agents</div>}
                   >
-                    <For each={agents()}>
+                    <For each={typed(agents(), view.tab)}>
                       {(item) => (
                         <div class="flex flex-wrap items-center justify-between gap-4 border-b border-border-weak-base py-4 last:border-none">
                           <div class="flex min-w-0 flex-1 flex-col gap-2">
                             <div class="flex min-w-0 items-center gap-2">
                               <span class="truncate text-14-medium text-text-strong">{item.name}</span>
                               <Tag>{source(item)}</Tag>
+                              <Show when={item.kind === "skill"}>
+                                <Tag>Legacy skill</Tag>
+                              </Show>
                               <Show when={item.disabled}>
                                 <Tag>Disabled</Tag>
                               </Show>
                             </div>
-                            <span class="line-clamp-2 text-12-regular text-text-weak">{item.effective.description}</span>
+                            <span class="line-clamp-2 text-12-regular text-text-weak">
+                              {item.effective.description}
+                            </span>
                             <span class="text-11-regular text-text-weaker">{summary(item)}</span>
                           </div>
                           <div class="flex shrink-0 items-center gap-2">
-                            <Button data-action="agent-select" size="small" variant="secondary" icon="edit" onClick={() => select(item)}>
+                            <Button
+                              data-action="agent-select"
+                              size="small"
+                              variant="secondary"
+                              icon="edit"
+                              onClick={() => select(item)}
+                            >
                               Details
                             </Button>
                             <Button
@@ -306,10 +334,19 @@ export const SettingsAgents: Component = () => {
           <SettingsList>
             <div class="flex flex-col gap-5 py-4">
               <Section title="Profile">
-                <Field label="ID" value={form.id} disabled={view.mode !== "create"} onChange={(value) => setForm("id", value)} />
+                <Field
+                  label="ID"
+                  value={form.id}
+                  disabled={view.mode !== "create"}
+                  onChange={(value) => setForm("id", value)}
+                />
                 <Field label="Name" value={form.name} onChange={(value) => setForm("name", value)} />
                 <Field label="Role" value={form.role} onChange={(value) => setForm("role", value)} />
-                <Field label="Description" value={form.description} onChange={(value) => setForm("description", value)} />
+                <Field
+                  label="Description"
+                  value={form.description}
+                  onChange={(value) => setForm("description", value)}
+                />
                 <Field
                   label="Identity"
                   value={form.identity}
@@ -317,11 +354,22 @@ export const SettingsAgents: Component = () => {
                   class="min-h-48"
                   onChange={(value) => setForm("identity", value)}
                 />
-                <Field label="Rules" value={form.rules} multiline class="min-h-48" onChange={(value) => setForm("rules", value)} />
+                <Field
+                  label="Rules"
+                  value={form.rules}
+                  multiline
+                  class="min-h-48"
+                  onChange={(value) => setForm("rules", value)}
+                />
               </Section>
 
               <Section title="Runtime">
-                <SelectField label="Mode" value={form.mode} options={modes} onChange={(value) => setForm("mode", value as Mode)} />
+                <SelectField
+                  label="Mode"
+                  value={form.mode}
+                  options={modes}
+                  onChange={(value) => setForm("mode", value as Mode)}
+                />
                 <SelectField
                   label="Runner"
                   value={form.runner}
@@ -330,16 +378,33 @@ export const SettingsAgents: Component = () => {
                 />
                 <Check label="Hidden" checked={form.hidden} onChange={(value) => setForm("hidden", value)} />
                 <Check label="Entry primary" checked={form.primary} onChange={(value) => setForm("primary", value)} />
-                <Check label="Entry delegable" checked={form.delegable} onChange={(value) => setForm("delegable", value)} />
-                <Check label="Entry mentionable" checked={form.mentionable} onChange={(value) => setForm("mentionable", value)} />
+                <Check
+                  label="Entry delegable"
+                  checked={form.delegable}
+                  onChange={(value) => setForm("delegable", value)}
+                />
+                <Check
+                  label="Entry mentionable"
+                  checked={form.mentionable}
+                  onChange={(value) => setForm("mentionable", value)}
+                />
                 <Check label="Entry default" checked={form.default} onChange={(value) => setForm("default", value)} />
-                <Check label="Entry hidden" checked={form.entryHidden} onChange={(value) => setForm("entryHidden", value)} />
+                <Check
+                  label="Entry hidden"
+                  checked={form.entryHidden}
+                  onChange={(value) => setForm("entryHidden", value)}
+                />
               </Section>
 
               <Section title="Capability">
                 <Field label="Purpose" value={form.purpose} onChange={(value) => setForm("purpose", value)} />
                 <Field label="Tags" value={form.tags} onChange={(value) => setForm("tags", value)} />
-                <SelectField label="Cost" value={form.cost} options={costs} onChange={(value) => setForm("cost", value as Cost)} />
+                <SelectField
+                  label="Cost"
+                  value={form.cost}
+                  options={costs}
+                  onChange={(value) => setForm("cost", value as Cost)}
+                />
                 <Check label="Writes files" checked={form.writes} onChange={(value) => setForm("writes", value)} />
               </Section>
 
@@ -350,9 +415,23 @@ export const SettingsAgents: Component = () => {
                   options={perms}
                   onChange={(value) => setForm("perm", value as Perm)}
                 />
-                <Check label="Inherit permissions" checked={form.inherit} onChange={(value) => setForm("inherit", value)} />
-                <Field label="Allowed tools" value={form.allowed} multiline onChange={(value) => setForm("allowed", value)} />
-                <Field label="Denied tools" value={form.denied} multiline onChange={(value) => setForm("denied", value)} />
+                <Check
+                  label="Inherit permissions"
+                  checked={form.inherit}
+                  onChange={(value) => setForm("inherit", value)}
+                />
+                <Field
+                  label="Allowed tools"
+                  value={form.allowed}
+                  multiline
+                  onChange={(value) => setForm("allowed", value)}
+                />
+                <Field
+                  label="Denied tools"
+                  value={form.denied}
+                  multiline
+                  onChange={(value) => setForm("denied", value)}
+                />
               </Section>
 
               <Show when={view.diagnostics.length > 0}>

@@ -1,18 +1,28 @@
-# OpenCode Desktop
+# Open Agent Harness Desktop
 
-Native OpenCode desktop app, built with Tauri v2.
+This package is the Tauri desktop shell for Open Agent Harness. It wraps the shared web UI from `packages/app`.
 
 ## Prerequisites
 
-Building the desktop app requires additional Tauri dependencies (Rust toolchain, platform-specific libraries). See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for setup instructions.
+- Bun 1.3+
+- Rust toolchain
+- Platform-specific Tauri dependencies
+
+See the Tauri v2 prerequisites for operating-system setup: https://v2.tauri.app/start/prerequisites/
 
 ## Development
 
-From the repo root:
+From the repository root:
 
 ```bash
 bun install
 bun run --cwd packages/desktop tauri dev
+```
+
+Run only the Vite dev server:
+
+```bash
+bun run --cwd packages/desktop dev
 ```
 
 ## Build
@@ -23,9 +33,7 @@ bun run --cwd packages/desktop tauri build
 
 ## Troubleshooting
 
-### Rust compiler not found
-
-If you see errors about Rust not being found, install it via [rustup](https://rustup.rs/):
+If Rust is missing, install it with rustup:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

@@ -1,4 +1,4 @@
-import type { Agent } from "@opencode-ai/sdk/v2"
+import type { Agent } from "@open-agent-harness/sdk/v2"
 import { AgentEntry } from "@/agent/entry"
 
 export type LocalAgentItem = {

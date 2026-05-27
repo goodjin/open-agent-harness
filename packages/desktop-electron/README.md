@@ -1,32 +1,37 @@
-# OpenCode Desktop
+# Open Agent Harness Electron Desktop
 
-Native OpenCode desktop app, built with Tauri v2.
+This package is the Electron desktop shell for Open Agent Harness. It uses `electron-vite` and is separate from the Tauri desktop package in `packages/desktop`.
 
 ## Development
 
-From the repo root:
+From the repository root:
 
 ```bash
 bun install
-bun run --cwd packages/desktop tauri dev
-```
-
-This starts the Vite dev server on http://localhost:1420 and opens the native window.
-
-If you only want the web dev server (no native shell):
-
-```bash
-bun run --cwd packages/desktop dev
+bun run --cwd packages/desktop-electron dev
 ```
 
 ## Build
 
-To create a production `dist/` and build the native app bundle:
+Create the production Electron bundle:
 
 ```bash
-bun run --cwd packages/desktop tauri build
+bun run --cwd packages/desktop-electron build
 ```
 
-## Prerequisites
+Package platform artifacts:
 
-Running the desktop app requires additional Tauri dependencies (Rust toolchain, platform-specific libraries). See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for setup instructions.
+```bash
+bun run --cwd packages/desktop-electron package
+bun run --cwd packages/desktop-electron package:mac
+bun run --cwd packages/desktop-electron package:win
+bun run --cwd packages/desktop-electron package:linux
+```
+
+## Native Helper
+
+If the native helper changes, build it from this package:
+
+```bash
+bun run --cwd packages/desktop-electron native:build
+```

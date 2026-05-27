@@ -1,6 +1,6 @@
 import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
-import type { Message, SessionStatus } from "@opencode-ai/sdk/v2/client"
+import type { Message, SessionStatus } from "@open-agent-harness/sdk/v2/client"
 import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []

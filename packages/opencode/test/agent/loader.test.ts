@@ -121,7 +121,8 @@ describe("AgentTemplateLoader", () => {
       const agents = await loader.loadAll()
 
       for (const agent of agents.filter((item) => item.source === "package")) {
-        const expected = agent.id === "workflow-runner" ? "workflow" : agent.id === "protocol-runner" ? "protocol" : "chat"
+        const expected =
+          agent.id === "workflow-runner" ? "workflow" : agent.id === "protocol-runner" ? "protocol" : "chat"
         expect(agent.meta.runner).toBe(expected)
       }
     })
@@ -209,6 +210,41 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.meta.capability.purpose).toBe("legacy_skill")
         expect(agent?.identity).toContain("You review code for bugs.")
         expect(agent?.rules).toContain("Read the diff.")
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
+
+    test("loads claude skills as virtual agent templates", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      try {
+        const dir = path.join(tmp, ".claude", "skills", "planner")
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(
+          path.join(dir, "SKILL.md"),
+          [
+            "---",
+            "name: claude-planner",
+            "description: Use when planning work from Claude skills.",
+            "---",
+            "",
+            "# Claude Planner",
+            "",
+            "Plan the work.",
+            "",
+          ].join("\n"),
+        )
+
+        const testLoader = new AgentTemplateLoader(
+          path.join(tmp, "agents"),
+          "/nonexistent/fallback",
+          path.join(tmp, ".claude", "skills"),
+        )
+        const agents = await testLoader.loadAll()
+        const agent = agents.find((item) => item.id === "claude-planner")
+        expect(agent?.source).toBe("user")
+        expect(agent?.meta.description).toBe("Use when planning work from Claude skills.")
+        expect(agent?.meta.capability.purpose).toBe("legacy_skill")
       } finally {
         await fs.rm(tmp, { recursive: true })
       }

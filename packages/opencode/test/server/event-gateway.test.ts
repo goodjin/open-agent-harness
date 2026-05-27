@@ -11,7 +11,7 @@ import { PermissionID } from "../../src/permission/schema"
 import { SessionTimeline } from "../../src/session/timeline"
 import { Server } from "../../src/server/server"
 import { parseSSE } from "../../src/control-plane/sse"
-import { createOpencodeClient, type EventEnvelope } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type EventEnvelope } from "@open-agent-harness/sdk/v2"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 

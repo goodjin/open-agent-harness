@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { Script } from "@opencode-ai/script"
+import { Script } from "@open-agent-harness/script"
 import { $ } from "bun"
 import { buildNotes, getLatestRelease } from "./changelog"
 

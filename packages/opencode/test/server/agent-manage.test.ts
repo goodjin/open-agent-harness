@@ -36,7 +36,7 @@ async function request(dir: string, url: string, init?: RequestInit) {
           ...init?.headers,
         },
       }),
-    })
+  })
 }
 
 async function direct(dir: string, url: string, init?: RequestInit) {
@@ -123,7 +123,11 @@ describe("agent management routes", () => {
     })
 
     expect(updated.status).toBe(200)
-    const next = (await updated.json()) as { meta: { description: string; permission_mode: string }; identity: string; rules: string }
+    const next = (await updated.json()) as {
+      meta: { description: string; permission_mode: string }
+      identity: string
+      rules: string
+    }
     expect(next.meta.description).toBe("updated description")
     expect(next.meta.permission_mode).toBe("lax")
     expect(next.identity).toBe("Updated identity")
@@ -214,9 +218,9 @@ describe("agent management routes", () => {
         }),
       })
       expect(state.status).toBe(200)
-      expect(JSON.parse(await Bun.file(path.join(tmp.path, ".opencode", "opencode.json")).text()).agent.default.disable).toBe(
-        true,
-      )
+      expect(
+        JSON.parse(await Bun.file(path.join(tmp.path, ".opencode", "opencode.json")).text()).agent.default.disable,
+      ).toBe(true)
     } finally {
       await fs.rename(bak, src).catch(async () => {
         if (!(await Bun.file(src).exists())) await fs.rename(bak, src)
@@ -293,9 +297,82 @@ describe("agent management routes", () => {
     expect(shown.map((item) => item.name)).toContain("switchable")
   })
 
+  test("claude skills appear as skill-backed agents in ordinary and manage lists", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const dir = path.join(Global.Path.home, ".claude", "skills", "reviewer")
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(
+      path.join(dir, "SKILL.md"),
+      [
+        "---",
+        "name: skill-reviewer",
+        "description: Reviews work from a Claude skill.",
+        "---",
+        "",
+        "# Reviewer",
+        "",
+        "Review the work.",
+        "",
+      ].join("\n"),
+    )
+    resetRegistry()
+    try {
+      const agents = (await (await request(tmp.path, "/agent")).json()) as {
+        name: string
+        description?: string
+        capability: { purpose: string }
+      }[]
+      expect(agents.find((item) => item.name === "skill-reviewer")).toMatchObject({
+        description: "Reviews work from a Claude skill.",
+        capability: { purpose: "legacy_skill" },
+      })
+
+      const manage = (await (await request(tmp.path, "/agent/manage")).json()) as {
+        id: string
+        kind: string
+        source: string
+        editable: boolean
+      }[]
+      expect(manage.find((item) => item.id === "skill-reviewer")).toMatchObject({
+        kind: "skill",
+        source: "user",
+        editable: false,
+      })
+    } finally {
+      await fs.rm(path.join(Global.Path.home, ".claude"), { recursive: true, force: true })
+      resetRegistry()
+    }
+  })
+
+  test("template identity and rules markdown are not loaded as legacy agents", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const dir = path.join(tmp.path, ".opencode", "agents", "atlas")
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(
+      path.join(dir, "meta.json"),
+      JSON.stringify({
+        id: "atlas",
+        name: "Atlas",
+        role: "Atlas role",
+        description: "Atlas description",
+      }),
+    )
+    await fs.writeFile(path.join(dir, "identity.md"), "# Identity")
+    await fs.writeFile(path.join(dir, "rules.md"), "# Rules")
+    resetRegistry()
+
+    const agents = (await (await request(tmp.path, "/agent")).json()) as { name: string }[]
+
+    expect(agents.map((item) => item.name)).toContain("atlas")
+    expect(agents.map((item) => item.name)).not.toContain("atlas/identity")
+    expect(agents.map((item) => item.name)).not.toContain("atlas/rules")
+  })
+
   test("editing package agent writes project override", async () => {
     await using tmp = await tmpdir({ git: true })
-    const original = await Bun.file(path.join(import.meta.dir, "..", "..", "config", "agents", "build", "identity.md")).text()
+    const original = await Bun.file(
+      path.join(import.meta.dir, "..", "..", "config", "agents", "build", "identity.md"),
+    ).text()
     const response = await request(tmp.path, "/agent/manage/build", {
       method: "PATCH",
       body: JSON.stringify({
@@ -311,7 +388,9 @@ describe("agent management routes", () => {
     expect(await Bun.file(path.join(tmp.path, ".opencode", "agents", "build", "identity.md")).text()).toBe(
       "Project build identity",
     )
-    expect(await Bun.file(path.join(import.meta.dir, "..", "..", "config", "agents", "build", "identity.md")).text()).toBe(original)
+    expect(
+      await Bun.file(path.join(import.meta.dir, "..", "..", "config", "agents", "build", "identity.md")).text(),
+    ).toBe(original)
 
     await fs.rm(path.join(tmp.path, ".opencode", "agents", "build"), { recursive: true, force: true })
   })

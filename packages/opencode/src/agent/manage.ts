@@ -7,13 +7,15 @@ import { Global } from "@/global"
 import { Instance } from "@/project/instance"
 import { Filesystem } from "@/util/filesystem"
 import { Glob } from "@/util/glob"
-import { BUILTIN_DEFAULT_AGENT } from "./loader"
+import { AgentTemplateLoader, BUILTIN_DEFAULT_AGENT } from "./loader"
 import { resetRegistry } from "./registry"
 import { AgentTemplate as Template } from "./schema"
 
 export namespace AgentManage {
   export const Source = z.enum(["builtin", "package", "user", "project"])
   export type Source = z.infer<typeof Source>
+  export const Kind = z.enum(["agent", "skill"])
+  export type Kind = z.infer<typeof Kind>
 
   export const Scope = z.enum(["user", "project"])
   export type Scope = z.infer<typeof Scope>
@@ -58,6 +60,7 @@ export namespace AgentManage {
       id: z.string(),
       name: z.string(),
       disabled: z.boolean(),
+      kind: Kind,
       source: Source,
       editable: z.boolean(),
       dir: z.string().optional(),
@@ -123,6 +126,7 @@ export namespace AgentManage {
     name: string
     dir: string
     source: Source
+    kind: Kind
     meta: Template.Meta
     identity: string
     rules: string
@@ -133,6 +137,10 @@ export namespace AgentManage {
 
   function pkg() {
     return path.join(import.meta.dir, "..", "..", "config", "agents")
+  }
+
+  function claude() {
+    return path.join(Global.Path.home, ".claude", "skills")
   }
 
   function root(scope: Scope) {
@@ -206,15 +214,17 @@ export namespace AgentManage {
       files.map(async (file) => {
         const root = path.dirname(file)
         const id = path.basename(root)
-        const parsed = await Bun.file(file).json().catch((err) => {
-          diagnostics.push({
-            level: "error",
-            source,
-            dir: root,
-            message: `failed to read meta.json for agent '${id}': ${String(err)}`,
+        const parsed = await Bun.file(file)
+          .json()
+          .catch((err) => {
+            diagnostics.push({
+              level: "error",
+              source,
+              dir: root,
+              message: `failed to read meta.json for agent '${id}': ${String(err)}`,
+            })
+            return undefined
           })
-          return undefined
-        })
         if (!parsed) return
 
         const result = validate(source === "project" ? "project" : "user", parsed)
@@ -234,6 +244,7 @@ export namespace AgentManage {
           name: result.meta.name,
           dir: root,
           source,
+          kind: "agent",
           meta: result.meta,
           identity: await text(path.join(root, "identity.md")),
           rules: await text(path.join(root, "rules.md")),
@@ -243,6 +254,25 @@ export namespace AgentManage {
     )
 
     return { items, diagnostics }
+  }
+
+  async function skills() {
+    const loader = new AgentTemplateLoader([root("user"), root("project")], pkg(), claude())
+    return (await loader.loadAll())
+      .filter((item) => item.meta.capability.purpose === "legacy_skill")
+      .map(
+        (item): Item => ({
+          id: item.id,
+          name: item.name,
+          dir: item.dir,
+          source: item.source === "package" ? "package" : "user",
+          kind: "skill",
+          meta: item.meta,
+          identity: item.identity,
+          rules: item.rules,
+          diagnostics: [],
+        }),
+      )
   }
 
   function effective(item: Item, cfg: Config.Agent | undefined, disabled: boolean) {
@@ -261,7 +291,11 @@ export namespace AgentManage {
       runner: item.meta.runner,
       hidden,
       disabled,
-      model: cfg?.model ?? (item.meta.model_preference ? `${item.meta.model_preference.providerID}/${item.meta.model_preference.modelID}` : undefined),
+      model:
+        cfg?.model ??
+        (item.meta.model_preference
+          ? `${item.meta.model_preference.providerID}/${item.meta.model_preference.modelID}`
+          : undefined),
       variant: cfg?.variant,
       color: cfg?.color,
       permission: cfg?.permission,
@@ -271,6 +305,7 @@ export namespace AgentManage {
   async function entries() {
     const cfg = await Config.get()
     const all = await Promise.all([
+      skills().then((items) => ({ items, diagnostics: [] as Diagnostic[] })),
       scan(pkg(), "package"),
       scan(root("user"), "user"),
       scan(root("project"), "project"),
@@ -285,6 +320,7 @@ export namespace AgentManage {
         name: BUILTIN_DEFAULT_AGENT.name,
         dir: BUILTIN_DEFAULT_AGENT.dir,
         source: BUILTIN_DEFAULT_AGENT.source,
+        kind: "agent",
         meta: BUILTIN_DEFAULT_AGENT.meta,
         identity: BUILTIN_DEFAULT_AGENT.identity,
         rules: BUILTIN_DEFAULT_AGENT.rules,
@@ -299,8 +335,9 @@ export namespace AgentManage {
           id: item.id,
           name: item.name,
           disabled,
+          kind: item.kind,
           source: item.source,
-          editable: true,
+          editable: item.kind === "agent",
           dir: item.dir,
           meta: item.meta,
           identity: item.identity,

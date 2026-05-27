@@ -519,6 +519,14 @@ export namespace SessionRunner {
             "You already requested additional runtime calls after a completed protocol run.",
             "Read the full prior runtime observations before asking for more calls.",
             "Do not repeat the same read/search/build/check calls. If enough information is available, answer or edit instead of looping.",
+            retry >= 6
+              ? [
+                  "",
+                  "Soft runtime limit reached:",
+                  "Do not request more runtime calls unless this turn will make a concrete change or verification that is impossible from current observations.",
+                  "If you are still diagnosing, answer with a concise diagnosis, the specific missing fact, and the next recommended action instead of calling runtime again.",
+                ].join("\n")
+              : "",
           ].join("\n")
         : "",
     ].join("\n")
@@ -699,10 +707,9 @@ export namespace SessionRunner {
   }
 
   function cycle(run: AgentProtocol.Result, declaration: AgentProtocol.Declaration, retry: number) {
-    if (retry >= 6) return "The model requested too many consecutive runtime execution turns after a completed protocol run."
     if (retry === 0) return
-    if (!repeat(run, declaration)) return
-    return "The model repeated the same runtime calls after it had already been warned to avoid repeated protocol execution."
+    if (repeat(run, declaration)) return "The model repeated the same runtime calls after it had already been warned to avoid repeated protocol execution."
+    if (retry >= 12) return "The model kept requesting runtime execution after the soft runtime limit instead of providing a diagnosis and next step."
   }
 
   function repeat(run: AgentProtocol.Result, declaration: AgentProtocol.Declaration) {

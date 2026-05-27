@@ -4,7 +4,7 @@
   "description": "Open Agent Harness for VS Code",
   "version": "1.2.27",
   "publisher": "sst-dev",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "icon": "images/icon.png",
   "galleryBanner": {
     "color": "#000000",

@@ -4,7 +4,7 @@ import { WorkspaceServer } from "../../src/control-plane/workspace-server/server
 import { parseSSE } from "../../src/control-plane/sse"
 import { GlobalBus } from "../../src/bus/global"
 import { EventGateway } from "../../src/server/event"
-import { createOpencodeClient, type EventEnvelope } from "@opencode-ai/sdk/v2"
+import { createOpencodeClient, type EventEnvelope } from "@open-agent-harness/sdk/v2"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 

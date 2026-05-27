@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
-import type { AgentManageInfo, AgentManageValidateOutput } from "@opencode-ai/sdk/v2"
-import { fill, input, load, save, summary, toggle } from "./settings-agents-helpers"
+import type { AgentManageInfo, AgentManageValidateOutput } from "@open-agent-harness/sdk/v2"
+import { fill, input, load, save, summary, tabs, toggle, typed } from "./settings-agents-helpers"
 
 let valid: AgentManageValidateOutput = { valid: true, diagnostics: [] }
 
@@ -17,6 +17,7 @@ function agent(next: Partial<AgentManageInfo> = {}): AgentManageInfo {
     id: "reviewer",
     name: "Reviewer",
     disabled: false,
+    kind: "agent",
     source: "project",
     editable: true,
     meta: {
@@ -88,6 +89,34 @@ describe("settings agent helpers", () => {
       denied: "write",
       inherit: true,
     })
+  })
+
+  test("labels and filters skill-backed agents", () => {
+    const items = [
+      agent(),
+      agent({
+        id: "skill-reviewer",
+        name: "Skill Reviewer",
+        kind: "skill",
+        editable: false,
+        source: "user",
+        meta: {
+          ...agent().meta,
+          id: "skill-reviewer",
+          name: "Skill Reviewer",
+          capability: {
+            purpose: "legacy_skill",
+            tags: ["skill", "skill-reviewer"],
+            cost: "medium",
+            writes: true,
+          },
+        },
+      }),
+    ]
+
+    expect(tabs).toEqual(["all", "agent", "skill"])
+    expect(typed(items, "skill").map((item) => item.id)).toEqual(["skill-reviewer"])
+    expect(summary(items[1])).toContain("legacy skill")
   })
 
   test("builds a save payload with editable schema fields", () => {

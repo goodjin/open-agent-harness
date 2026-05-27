@@ -51,8 +51,8 @@ export class AgentRegistry {
   private signature: string | undefined
   private currentAgentId: string | undefined
 
-  constructor(baseDir?: string | string[], fallbackDir?: string) {
-    this.loader = new AgentTemplateLoader(baseDir, fallbackDir)
+  constructor(baseDir?: string | string[], fallbackDir?: string, skills?: string | string[]) {
+    this.loader = new AgentTemplateLoader(baseDir, fallbackDir, skills)
   }
 
   /**
@@ -234,7 +234,11 @@ export function getRegistry(): AgentRegistry {
   const dir = Instance.directory
   let registry = registryByDirectory.get(dir)
   if (!registry) {
-    registry = new AgentRegistry([path.join(Global.Path.config, "agents"), path.join(Instance.worktree, ".opencode", "agents")])
+    registry = new AgentRegistry(
+      [path.join(Global.Path.config, "agents"), path.join(Instance.worktree, ".opencode", "agents")],
+      undefined,
+      path.join(Global.Path.home, ".claude", "skills"),
+    )
     registryByDirectory.set(dir, registry)
   }
   return registry

@@ -1,4 +1,4 @@
-import { base64Decode } from "@opencode-ai/util/encode"
+import { base64Decode } from "@open-agent-harness/util/encode"
 import type { Locator, Page } from "@playwright/test"
 import { test, expect } from "../fixtures"
 import { openSidebar, sessionIDFromUrl, setWorkspacesEnabled, waitSessionIdle, waitSlug } from "../actions"

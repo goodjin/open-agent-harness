@@ -1,4 +1,4 @@
-import { NamedError } from "@opencode-ai/util/error"
+import { NamedError } from "@open-agent-harness/util/error"
 import * as Auth from "@/auth/service"
 import { ProviderID } from "./schema"
 import { Effect, Layer, ServiceMap } from "effect"

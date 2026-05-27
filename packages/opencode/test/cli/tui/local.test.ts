@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Agent } from "@opencode-ai/sdk/v2"
+import type { Agent } from "@open-agent-harness/sdk/v2"
 import { LocalAgent } from "../../../src/cli/cmd/tui/context/agent-state"
 
 function agent(name: string): Agent {

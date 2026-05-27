@@ -1,13 +1,12 @@
 {
-  "name": "@opencode-ai/desktop-electron",
+  "name": "@open-agent-harness/desktop-electron",
   "private": true,
   "version": "1.2.27",
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
-  "homepage": "https://opencode.ai",
+  "license": "AGPL-3.0-only",
+  "homepage": "https://github.com/goodjin/open-agent-harness",
   "author": {
-    "name": "OpenCode",
-    "email": "hello@opencode.ai"
+    "name": "Open Agent Harness"
   },
   "scripts": {
     "typecheck": "tsgo -b",
@@ -24,8 +23,8 @@
   },
   "main": "./out/main/index.js",
   "dependencies": {
-    "@opencode-ai/app": "workspace:*",
-    "@opencode-ai/ui": "workspace:*",
+    "@open-agent-harness/app": "workspace:*",
+    "@open-agent-harness/ui": "workspace:*",
     "@solid-primitives/i18n": "2.2.1",
     "@solid-primitives/storage": "catalog:",
     "@solidjs/meta": "catalog:",

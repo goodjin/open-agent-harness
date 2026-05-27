@@ -1,47 +1,52 @@
 # Security
 
-## IMPORTANT
+## Important
 
-We do not accept AI generated security reports. We receive a large number of
-these and we absolutely do not have the resources to review them all. If you
-submit one that will be an automatic ban from the project.
+Do not submit AI-generated security reports. Reports must contain a concrete, reproducible issue with impact specific to this repository.
 
 ## Threat Model
 
-### Overview
+Open Agent Harness is a local coding-agent runtime. It can run shell commands, read and write files, call configured tools, and send context to configured LLM providers. Treat it as software that can act with the permissions of the user account running it.
 
-OpenCode is an AI-powered coding assistant that runs locally on your machine. It provides an agent system with access to powerful tools including shell execution, file operations, and web access.
+## No Sandbox
 
-### No Sandbox
+Open Agent Harness does not provide a security sandbox. Permission prompts and tool policies are product controls for awareness, workflow, and auditability. They are not isolation boundaries.
 
-OpenCode does **not** sandbox the agent. The permission system exists as a UX feature to help users stay aware of what actions the agent is taking - it prompts for confirmation before executing commands, writing files, etc. However, it is not designed to provide security isolation.
+If you need isolation, run the runtime inside a container, virtual machine, disposable user account, or other operating-system sandbox.
 
-If you need true isolation, run OpenCode inside a Docker container or VM.
+## Server Mode
 
-### Server Mode
+Server mode is opt-in. When enabled, set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth. The environment variable name is retained for compatibility during the migration from opencode.
 
-Server mode is opt-in only. When enabled, set `OPENCODE_SERVER_PASSWORD` to require HTTP Basic Auth. Without this, the server runs unauthenticated (with a warning). It is the end user's responsibility to secure the server - any functionality it provides is not a vulnerability.
+Without a password, the server can run unauthenticated and will warn at startup. Securing an intentionally exposed server is the operator's responsibility.
 
-### Out of Scope
+## LLM And Tool Boundaries
 
-| Category                        | Rationale                                                               |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| **Server access when opted-in** | If you enable server mode, API access is expected behavior              |
-| **Sandbox escapes**             | The permission system is not a sandbox (see above)                      |
-| **LLM provider data handling**  | Data sent to your configured LLM provider is governed by their policies |
-| **MCP server behavior**         | External MCP servers you configure are outside our trust boundary       |
-| **Malicious config files**      | Users control their own config; modifying it is not an attack vector    |
+Data sent to a configured LLM provider is governed by that provider's terms and data-handling policy.
 
----
+External MCP servers, custom tools, shell commands, and local configuration files are outside the trust boundary of the harness. Only install and enable tools you trust.
 
-# Reporting Security Issues
+## Out Of Scope
 
-We appreciate your efforts to responsibly disclose your findings, and will make every effort to acknowledge your contributions.
+| Category | Rationale |
+| --- | --- |
+| Server access when intentionally enabled | Server mode exposes API functionality by design. |
+| Sandbox escapes | The runtime is not a sandbox. |
+| LLM provider retention or training policy | Provider behavior is controlled by the selected provider. |
+| External MCP server behavior | MCP servers are independently operated tools. |
+| Malicious local config | Users control their own repository and config files. |
+| Prompt injection causing unwanted model output | This is a model-behavior risk unless it bypasses an explicit runtime security boundary. |
 
-To report a security issue, please use the GitHub Security Advisory ["Report a Vulnerability"](https://github.com/anomalyco/opencode/security/advisories/new) tab.
+## Reporting Security Issues
 
-The team will send a response indicating the next steps in handling your report. After the initial reply to your report, the security team will keep you informed of the progress towards a fix and full announcement, and may ask for additional information or guidance.
+Report security issues through this repository's GitHub Security Advisory flow.
 
-## Escalation
+Include:
 
-If you do not receive an acknowledgement of your report within 6 business days, you may send an email to security@anoma.ly
+- Affected version or commit
+- Reproduction steps
+- Expected and actual behavior
+- Impact
+- Any relevant logs or minimal test files
+
+If private advisory reporting is unavailable, contact the repository owner through the GitHub organization or maintainer channel for this fork.

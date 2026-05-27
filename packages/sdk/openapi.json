@@ -39,7 +39,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.health({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.global.health({\n  ...\n})"
           }
         ]
       }
@@ -93,7 +93,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.event({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.global.event({\n  ...\n})"
           }
         ]
       }
@@ -118,7 +118,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.config.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.global.config.get({\n  ...\n})"
           }
         ]
       },
@@ -160,7 +160,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.config.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.global.config.update({\n  ...\n})"
           }
         ]
       }
@@ -185,7 +185,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.global.dispose({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.global.dispose({\n  ...\n})"
           }
         ]
       }
@@ -239,7 +239,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.auth.set({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.auth.set({\n  ...\n})"
           }
         ]
       },
@@ -282,7 +282,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.auth.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.auth.remove({\n  ...\n})"
           }
         ]
       }
@@ -319,7 +319,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.list({\n  ...\n})"
           }
         ]
       }
@@ -353,7 +353,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.current({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.current({\n  ...\n})"
           }
         ]
       }
@@ -387,7 +387,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.init({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.init({\n  ...\n})"
           }
         ]
       }
@@ -421,7 +421,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.initGit({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.initGit({\n  ...\n})"
           }
         ]
       }
@@ -529,7 +529,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.list({\n  ...\n})"
           }
         ]
       },
@@ -627,7 +627,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.create({\n  ...\n})"
           }
         ]
       }
@@ -708,7 +708,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.get({\n  ...\n})"
           }
         ]
       }
@@ -789,7 +789,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.status({\n  ...\n})"
           }
         ]
       }
@@ -912,7 +912,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.findFiles({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.findFiles({\n  ...\n})"
           }
         ]
       }
@@ -1001,7 +1001,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.file({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.file({\n  ...\n})"
           }
         ]
       }
@@ -1085,7 +1085,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.fileStatus({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.session.fileStatus({\n  ...\n})"
           }
         ]
       }
@@ -1184,7 +1184,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.project.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.project.update({\n  ...\n})"
           }
         ]
       }
@@ -1221,7 +1221,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.list({\n  ...\n})"
           }
         ]
       },
@@ -1298,7 +1298,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.create({\n  ...\n})"
           }
         ]
       }
@@ -1351,7 +1351,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.get({\n  ...\n})"
           }
         ]
       },
@@ -1431,7 +1431,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.update({\n  ...\n})"
           }
         ]
       },
@@ -1482,7 +1482,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.remove({\n  ...\n})"
           }
         ]
       }
@@ -1535,7 +1535,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.connect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.pty.connect({\n  ...\n})"
           }
         ]
       }
@@ -1569,7 +1569,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.config.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.config.get({\n  ...\n})"
           }
         ]
       },
@@ -1620,7 +1620,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.config.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.config.update({\n  ...\n})"
           }
         ]
       }
@@ -1675,7 +1675,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.config.providers({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.config.providers({\n  ...\n})"
           }
         ]
       }
@@ -1719,7 +1719,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tool.ids({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tool.ids({\n  ...\n})"
           }
         ]
       }
@@ -1779,7 +1779,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tool.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tool.list({\n  ...\n})"
           }
         ]
       }
@@ -1864,7 +1864,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.create({\n  ...\n})"
           }
         ]
       },
@@ -1899,7 +1899,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.list({\n  ...\n})"
           }
         ]
       }
@@ -1952,7 +1952,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.workspace.remove({\n  ...\n})"
           }
         ]
       }
@@ -2005,7 +2005,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.create({\n  ...\n})"
           }
         ]
       },
@@ -2040,7 +2040,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.list({\n  ...\n})"
           }
         ]
       },
@@ -2091,7 +2091,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.remove({\n  ...\n})"
           }
         ]
       }
@@ -2144,7 +2144,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.reset({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.worktree.reset({\n  ...\n})"
           }
         ]
       }
@@ -2230,7 +2230,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.session.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.session.list({\n  ...\n})"
           }
         ]
       }
@@ -2270,7 +2270,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.resource.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.experimental.resource.list({\n  ...\n})"
           }
         ]
       }
@@ -2340,7 +2340,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.list({\n  ...\n})"
           }
         ]
       },
@@ -2403,7 +2403,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.create({\n  ...\n})"
           }
         ]
       }
@@ -2453,7 +2453,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.status({\n  ...\n})"
           }
         ]
       }
@@ -2545,7 +2545,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendantsBatch({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendantsBatch({\n  ...\n})"
           }
         ]
       }
@@ -2608,7 +2608,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.getStatus({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.getStatus({\n  ...\n})"
           }
         ]
       }
@@ -2740,7 +2740,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.log({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.log({\n  ...\n})"
           }
         ]
       }
@@ -2899,7 +2899,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.protocol.trace({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.protocol.trace({\n  ...\n})"
           }
         ]
       }
@@ -2965,7 +2965,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.get({\n  ...\n})"
           }
         ]
       },
@@ -3026,7 +3026,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.delete({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.delete({\n  ...\n})"
           }
         ]
       },
@@ -3109,7 +3109,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.update({\n  ...\n})"
           }
         ]
       }
@@ -3178,7 +3178,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
           }
         ]
       }
@@ -3257,7 +3257,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendants({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendants({\n  ...\n})"
           }
         ]
       }
@@ -3323,7 +3323,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.todo({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.todo({\n  ...\n})"
           }
         ]
       }
@@ -3412,7 +3412,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.init({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.init({\n  ...\n})"
           }
         ]
       }
@@ -3470,7 +3470,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.fork({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.fork({\n  ...\n})"
           }
         ]
       }
@@ -3533,7 +3533,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.dismissStatus({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.dismissStatus({\n  ...\n})"
           }
         ]
       }
@@ -3596,7 +3596,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.abort({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.abort({\n  ...\n})"
           }
         ]
       }
@@ -3659,7 +3659,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.share({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.share({\n  ...\n})"
           }
         ]
       },
@@ -3720,7 +3720,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.unshare({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.unshare({\n  ...\n})"
           }
         ]
       }
@@ -3774,7 +3774,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.diff({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.diff({\n  ...\n})"
           }
         ]
       }
@@ -3862,7 +3862,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.summarize({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.summarize({\n  ...\n})"
           }
         ]
       }
@@ -3960,7 +3960,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.messages({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.messages({\n  ...\n})"
           }
         ]
       },
@@ -4113,7 +4113,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.prompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.prompt({\n  ...\n})"
           }
         ]
       }
@@ -4200,7 +4200,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.message({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.message({\n  ...\n})"
           }
         ]
       },
@@ -4270,7 +4270,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.deleteMessage({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.deleteMessage({\n  ...\n})"
           }
         ]
       }
@@ -4350,7 +4350,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.part.delete({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.part.delete({\n  ...\n})"
           }
         ]
       },
@@ -4437,7 +4437,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.part.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.part.update({\n  ...\n})"
           }
         ]
       }
@@ -4570,7 +4570,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.prompt_async({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.prompt_async({\n  ...\n})"
           }
         ]
       }
@@ -4719,7 +4719,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.command({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.command({\n  ...\n})"
           }
         ]
       }
@@ -4818,7 +4818,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.shell({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.shell({\n  ...\n})"
           }
         ]
       }
@@ -4903,7 +4903,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.revert({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.revert({\n  ...\n})"
           }
         ]
       }
@@ -4966,7 +4966,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.unrevert({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.unrevert({\n  ...\n})"
           }
         ]
       }
@@ -5071,7 +5071,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.respond({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.respond({\n  ...\n})"
           }
         ]
       }
@@ -5178,7 +5178,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.checkpoints({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.checkpoints({\n  ...\n})"
           }
         ]
       }
@@ -5268,7 +5268,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.restore({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.restore({\n  ...\n})"
           }
         ]
       }
@@ -5408,7 +5408,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.restorePreview({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.restorePreview({\n  ...\n})"
           }
         ]
       }
@@ -5499,7 +5499,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.session.setDslContext({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.setDslContext({\n  ...\n})"
           }
         ]
       }
@@ -5546,7 +5546,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.list({\n  ...\n})"
           }
         ]
       }
@@ -5603,7 +5603,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.runs({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.runs({\n  ...\n})"
           }
         ]
       },
@@ -5695,7 +5695,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.run({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.run({\n  ...\n})"
           }
         ]
       }
@@ -5788,7 +5788,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.resume({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.resume({\n  ...\n})"
           }
         ]
       }
@@ -5868,7 +5868,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.status({\n  ...\n})"
           }
         ]
       }
@@ -5941,7 +5941,932 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.abort({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.workflow.abort({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs": {
+      "get": {
+        "operationId": "harness.runs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List harness runs",
+        "responses": {
+          "200": {
+            "description": "Harness runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessRun"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.runs({\n  ...\n})"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "harness.run.create",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Create harness run",
+        "responses": {
+          "200": {
+            "description": "Harness run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HarnessRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "goal": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string"
+                  },
+                  "constraints": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "memory_scopes": {
+                    "default": [
+                      "project"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "run",
+                        "project",
+                        "team",
+                        "global"
+                      ]
+                    }
+                  },
+                  "automation": {
+                    "default": "guided",
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "guided",
+                      "auto"
+                    ]
+                  }
+                },
+                "required": [
+                  "goal"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.create({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}": {
+      "get": {
+        "operationId": "harness.run.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get harness run",
+        "responses": {
+          "200": {
+            "description": "Harness run summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HarnessSummary"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.get({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/tasks": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDTasks",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDTasks({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/assignments": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDAssignments",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDAssignments({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/artifacts": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDArtifacts",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDArtifacts({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/decisions": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDDecisions",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDDecisions({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/events": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDEvents",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDEvents({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/graph": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDGraph",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDGraph({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/audit": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDAudit",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDAudit({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/audit/export": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDAuditExport",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDAuditExport({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/projections/rebuild": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDProjectionsRebuild",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDProjectionsRebuild({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/commands": {
+      "post": {
+        "operationId": "postHarnessCommands",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HarnessCommand"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessCommands({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/pause": {
+      "post": {
+        "operationId": "postHarnessRuns:runIDPause",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessRuns:runIDPause({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/resume": {
+      "post": {
+        "operationId": "postHarnessRuns:runIDResume",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessRuns:runIDResume({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/abort": {
+      "post": {
+        "operationId": "postHarnessRuns:runIDAbort",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessRuns:runIDAbort({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/tasks/{taskID}/retry": {
+      "post": {
+        "operationId": "postHarnessTasks:taskIDRetry",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "run_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessTasks:taskIDRetry({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/tasks/{taskID}/cancel": {
+      "post": {
+        "operationId": "postHarnessTasks:taskIDCancel",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "run_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessTasks:taskIDCancel({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/decisions/{decisionID}/answer": {
+      "post": {
+        "operationId": "postHarnessDecisions:decisionIDAnswer",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "decisionID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  },
+                  "answer": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "run_id",
+                  "answer"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessDecisions:decisionIDAnswer({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/verifications/{taskID}/rerun": {
+      "post": {
+        "operationId": "postHarnessVerifications:taskIDRerun",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "taskID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "run_id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "run_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.postHarnessVerifications:taskIDRerun({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/events/{eventID}": {
+      "get": {
+        "operationId": "getHarnessEvents:eventID",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eventID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessEvents:eventID({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/events/{eventID}/chain": {
+      "get": {
+        "operationId": "getHarnessEvents:eventIDChain",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eventID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessEvents:eventIDChain({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/concepts/{conceptID}/graph": {
+      "get": {
+        "operationId": "getHarnessConcepts:conceptIDGraph",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conceptID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessConcepts:conceptIDGraph({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/concepts/{conceptID}": {
+      "get": {
+        "operationId": "getHarnessConcepts:conceptID",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conceptID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessConcepts:conceptID({\n  ...\n})"
           }
         ]
       }
@@ -6018,7 +6943,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.memory.search({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.memory.search({\n  ...\n})"
           }
         ]
       }
@@ -6124,7 +7049,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.audit.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.audit.list({\n  ...\n})"
           }
         ]
       }
@@ -6223,7 +7148,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.inspect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.inspect({\n  ...\n})"
           }
         ]
       }
@@ -6321,7 +7246,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.reply({\n  ...\n})"
           }
         ]
       }
@@ -6387,7 +7312,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.listBySession({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.listBySession({\n  ...\n})"
           }
         ]
       }
@@ -6432,7 +7357,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.permission.list({\n  ...\n})"
           }
         ]
       }
@@ -6469,7 +7394,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.question.list({\n  ...\n})"
           }
         ]
       }
@@ -6553,7 +7478,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reply({\n  ...\n})"
           }
         ]
       }
@@ -6616,7 +7541,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.question.reject({\n  ...\n})"
           }
         ]
       }
@@ -6920,7 +7845,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.list({\n  ...\n})"
           }
         ]
       }
@@ -6963,7 +7888,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.auth({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.auth({\n  ...\n})"
           }
         ]
       }
@@ -7034,7 +7959,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.authorize({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.authorize({\n  ...\n})"
           }
         ]
       }
@@ -7109,7 +8034,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.callback({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.provider.oauth.callback({\n  ...\n})"
           }
         ]
       }
@@ -7166,7 +8091,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.list({\n  ...\n})"
           }
         ]
       },
@@ -7228,7 +8153,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.create({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.create({\n  ...\n})"
           }
         ]
       }
@@ -7292,7 +8217,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.validate({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.validate({\n  ...\n})"
           }
         ]
       }
@@ -7364,7 +8289,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.get({\n  ...\n})"
           }
         ]
       },
@@ -7444,7 +8369,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.update({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.update({\n  ...\n})"
           }
         ]
       }
@@ -7526,7 +8451,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.state({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.agent.manage.state({\n  ...\n})"
           }
         ]
       }
@@ -7638,7 +8563,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.find.text({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.find.text({\n  ...\n})"
           }
         ]
       }
@@ -7714,7 +8639,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.find.files({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.find.files({\n  ...\n})"
           }
         ]
       }
@@ -7759,7 +8684,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.find.symbols({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.find.symbols({\n  ...\n})"
           }
         ]
       }
@@ -7804,7 +8729,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.file.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.file.list({\n  ...\n})"
           }
         ]
       }
@@ -7846,7 +8771,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.file.read({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.file.read({\n  ...\n})"
           }
         ]
       }
@@ -7883,7 +8808,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.file.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.file.status({\n  ...\n})"
           }
         ]
       }
@@ -7923,7 +8848,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.status({\n  ...\n})"
           }
         ]
       },
@@ -7999,7 +8924,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.add({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.add({\n  ...\n})"
           }
         ]
       }
@@ -8070,7 +8995,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.start({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.start({\n  ...\n})"
           }
         ]
       },
@@ -8129,7 +9054,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.remove({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.remove({\n  ...\n})"
           }
         ]
       }
@@ -8209,7 +9134,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.callback({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.callback({\n  ...\n})"
           }
         ]
       }
@@ -8271,7 +9196,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.authenticate({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.auth.authenticate({\n  ...\n})"
           }
         ]
       }
@@ -8312,7 +9237,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.connect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.connect({\n  ...\n})"
           }
         ]
       }
@@ -8353,7 +9278,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.disconnect({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.mcp.disconnect({\n  ...\n})"
           }
         ]
       }
@@ -8414,7 +9339,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.appendPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.appendPrompt({\n  ...\n})"
           }
         ]
       }
@@ -8448,7 +9373,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openHelp({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openHelp({\n  ...\n})"
           }
         ]
       }
@@ -8482,7 +9407,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openSessions({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openSessions({\n  ...\n})"
           }
         ]
       }
@@ -8516,7 +9441,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openThemes({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openThemes({\n  ...\n})"
           }
         ]
       }
@@ -8550,7 +9475,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openModels({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.openModels({\n  ...\n})"
           }
         ]
       }
@@ -8584,7 +9509,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.submitPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.submitPrompt({\n  ...\n})"
           }
         ]
       }
@@ -8618,7 +9543,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.clearPrompt({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.clearPrompt({\n  ...\n})"
           }
         ]
       }
@@ -8679,7 +9604,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.executeCommand({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.executeCommand({\n  ...\n})"
           }
         ]
       }
@@ -8748,7 +9673,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.showToast({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.showToast({\n  ...\n})"
           }
         ]
       }
@@ -8814,7 +9739,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.publish({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.publish({\n  ...\n})"
           }
         ]
       }
@@ -8887,7 +9812,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.selectSession({\n  ...\n})"
           }
         ]
       }
@@ -8931,7 +9856,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.control.next({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.control.next({\n  ...\n})"
           }
         ]
       }
@@ -8972,7 +9897,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.control.response({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.tui.control.response({\n  ...\n})"
           }
         ]
       }
@@ -9006,7 +9931,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.instance.dispose({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.instance.dispose({\n  ...\n})"
           }
         ]
       }
@@ -9040,7 +9965,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.path.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.path.get({\n  ...\n})"
           }
         ]
       }
@@ -9074,7 +9999,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.vcs.get({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.vcs.get({\n  ...\n})"
           }
         ]
       }
@@ -9111,7 +10036,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.command.list({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.command.list({\n  ...\n})"
           }
         ]
       }
@@ -9197,7 +10122,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.app.log({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.app.log({\n  ...\n})"
           }
         ]
       }
@@ -9234,7 +10159,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.app.agents({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.app.agents({\n  ...\n})"
           }
         ]
       }
@@ -9271,7 +10196,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.lsp.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.lsp.status({\n  ...\n})"
           }
         ]
       }
@@ -9308,7 +10233,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.formatter.status({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.formatter.status({\n  ...\n})"
           }
         ]
       }
@@ -9362,7 +10287,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@opencode-ai/sdk\n\nconst client = createOpencodeClient()\nawait client.event.subscribe({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.event.subscribe({\n  ...\n})"
           }
         ]
       }
@@ -16043,6 +16968,565 @@
         ],
         "additionalProperties": false
       },
+      "HarnessRunStatus": {
+        "default": "ready",
+        "type": "string",
+        "enum": [
+          "drafting",
+          "ready",
+          "running",
+          "paused",
+          "blocked",
+          "reviewing",
+          "verifying",
+          "reworking",
+          "completed",
+          "failed",
+          "aborted"
+        ]
+      },
+      "HarnessRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HarnessRunStatus"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "mode": {
+            "default": "development",
+            "type": "string"
+          },
+          "constraints": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "memory_scopes": {
+            "default": [
+              "project"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "run",
+                "project",
+                "team",
+                "global"
+              ]
+            }
+          },
+          "automation": {
+            "default": "guided",
+            "type": "string",
+            "enum": [
+              "manual",
+              "guided",
+              "auto"
+            ]
+          },
+          "progress": {
+            "default": {
+              "completed": 0,
+              "total": 0
+            },
+            "type": "object",
+            "properties": {
+              "completed": {
+                "default": 0,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "total": {
+                "default": 0,
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": false
+          },
+          "active_assignments": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "pending_decisions": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "goal",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessTaskStatus": {
+        "default": "ready",
+        "type": "string",
+        "enum": [
+          "draft",
+          "ready",
+          "assigned",
+          "running",
+          "submitted",
+          "reviewing",
+          "review_rejected",
+          "review_approved",
+          "verifying",
+          "verify_failed",
+          "approved",
+          "merged",
+          "blocked",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "HarnessGate": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "default": "pending",
+            "type": "string",
+            "enum": [
+              "pending",
+              "passed",
+              "failed",
+              "blocked"
+            ]
+          },
+          "required": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAssignment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "status": {
+            "default": "pending",
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "capabilities": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "authority": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "context": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "task_id",
+          "actor",
+          "role",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessTask": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "default": "task",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HarnessTaskStatus"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "acceptance": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gates": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessGate"
+            }
+          },
+          "assignment": {
+            "$ref": "#/components/schemas/HarnessAssignment"
+          },
+          "artifacts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "title",
+          "goal",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessArtifact": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "created_event": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "path",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessDecisionStatus": {
+        "default": "pending",
+        "type": "string",
+        "enum": [
+          "pending",
+          "answered",
+          "rejected",
+          "cancelled"
+        ]
+      },
+      "HarnessDecision": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "level": {
+            "default": "L3",
+            "type": "string",
+            "enum": [
+              "L0",
+              "L1",
+              "L2",
+              "L3",
+              "L4"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/HarnessDecisionStatus"
+          },
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "tradeoff": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "label"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "recommended": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "question",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessEvent": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "actor": {
+            "default": "runtime",
+            "type": "string"
+          },
+          "time": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "payload": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "time"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessSummary": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "$ref": "#/components/schemas/HarnessRun"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessTask"
+            }
+          },
+          "assignments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessAssignment"
+            }
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessArtifact"
+            }
+          },
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessDecision"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessEvent"
+            }
+          }
+        },
+        "required": [
+          "run",
+          "tasks",
+          "assignments",
+          "artifacts",
+          "decisions",
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessCommand": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "run.create",
+              "run.pause",
+              "run.resume",
+              "run.abort",
+              "task.retry",
+              "task.cancel",
+              "decision.answer",
+              "verify.rerun",
+              "concept.replace.request",
+              "concept.replace.approve",
+              "concept.replace.reject"
+            ]
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "decision_id": {
+            "type": "string"
+          },
+          "concept_id": {
+            "type": "string"
+          },
+          "actor": {
+            "default": "user",
+            "type": "string"
+          },
+          "payload": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": false
+      },
       "MemoryPrivacy": {
         "type": "string",
         "enum": [
@@ -16739,6 +18223,13 @@
           "disabled": {
             "type": "boolean"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "skill"
+            ]
+          },
           "source": {
             "type": "string",
             "enum": [
@@ -16960,6 +18451,7 @@
           "id",
           "name",
           "disabled",
+          "kind",
           "source",
           "editable",
           "meta",

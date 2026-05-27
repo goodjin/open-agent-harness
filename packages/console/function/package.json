@@ -1,10 +1,10 @@
 {
-  "name": "@opencode-ai/console-function",
+  "name": "@open-agent-harness/console-function",
   "version": "1.2.27",
   "$schema": "https://json.schemastore.org/package.json",
   "private": true,
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "typecheck": "tsgo --noEmit"
   },
@@ -21,8 +21,8 @@
     "@ai-sdk/openai": "2.0.2",
     "@ai-sdk/openai-compatible": "1.0.1",
     "@hono/zod-validator": "catalog:",
-    "@opencode-ai/console-core": "workspace:*",
-    "@opencode-ai/console-resource": "workspace:*",
+    "@open-agent-harness/console-core": "workspace:*",
+    "@open-agent-harness/console-resource": "workspace:*",
     "@openauthjs/openauth": "0.0.0-20250322224806",
     "ai": "catalog:",
     "hono": "catalog:",

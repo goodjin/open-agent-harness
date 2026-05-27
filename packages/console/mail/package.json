@@ -1,5 +1,5 @@
 {
-  "name": "@opencode-ai/console-mail",
+  "name": "@open-agent-harness/console-mail",
   "version": "1.2.27",
   "dependencies": {
     "@jsx-email/all": "2.2.3",
@@ -18,5 +18,5 @@
     "dev": "email preview emails/templates"
   },
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE"
+  "license": "AGPL-3.0-only"
 }

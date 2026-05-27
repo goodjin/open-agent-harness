@@ -1,9 +1,9 @@
 {
-  "name": "@opencode-ai/util",
+  "name": "@open-agent-harness/util",
   "version": "1.2.27",
   "private": true,
   "type": "module",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "AGPL-3.0-only",
   "exports": {
     "./*": "./src/*.ts"
   },

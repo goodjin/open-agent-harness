@@ -1,5 +1,5 @@
-import { useFilteredList } from "@opencode-ai/ui/hooks"
-import { useSpring } from "@opencode-ai/ui/motion-spring"
+import { useFilteredList } from "@open-agent-harness/ui/hooks"
+import { useSpring } from "@open-agent-harness/ui/motion-spring"
 import { createEffect, on, Component, Show, onCleanup, Switch, Match, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLocal } from "@/context/local"
@@ -18,14 +18,14 @@ import { useLayout } from "@/context/layout"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useComments } from "@/context/comments"
-import { Button } from "@opencode-ai/ui/button"
-import { DockShellForm, DockTray } from "@opencode-ai/ui/dock-surface"
-import { Icon } from "@opencode-ai/ui/icon"
-import { ProviderIcon } from "@opencode-ai/ui/provider-icon"
-import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
-import { IconButton } from "@opencode-ai/ui/icon-button"
-import { Select } from "@opencode-ai/ui/select"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { Button } from "@open-agent-harness/ui/button"
+import { DockShellForm, DockTray } from "@open-agent-harness/ui/dock-surface"
+import { Icon } from "@open-agent-harness/ui/icon"
+import { ProviderIcon } from "@open-agent-harness/ui/provider-icon"
+import { Tooltip, TooltipKeybind } from "@open-agent-harness/ui/tooltip"
+import { IconButton } from "@open-agent-harness/ui/icon-button"
+import { Select } from "@open-agent-harness/ui/select"
+import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import { ModelSelectorPopover } from "@/components/dialog-select-model"
 import { DialogSelectModelUnpaid } from "@/components/dialog-select-model-unpaid"
 import { useProviders } from "@/hooks/use-providers"
@@ -57,7 +57,7 @@ import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { isShellCommand } from "./prompt-input/shell-detect"
-import { ImagePreview } from "@opencode-ai/ui/image-preview"
+import { ImagePreview } from "@open-agent-harness/ui/image-preview"
 
 interface PromptInputProps {
   class?: string
@@ -249,15 +249,6 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
   )
-  const text = createMemo(() => prompt.current().map((part) => ("content" in part ? part.content : "")).join(""))
-  const autoShell = createMemo(
-    () =>
-      store.mode === "normal" &&
-      imageAttachments().length === 0 &&
-      commentCount() === 0 &&
-      prompt.context.items().length === 0 &&
-      isShellCommand(text()),
-  )
 
   const [store, setStore] = createStore<{
     popover: "at" | "slash" | null
@@ -292,6 +283,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (store.mode === "shell") return 0
     return prompt.context.items().filter((item) => !!item.comment?.trim()).length
   })
+  const text = createMemo(() => prompt.current().map((part) => ("content" in part ? part.content : "")).join(""))
+  const autoShell = createMemo(
+    () =>
+      store.mode === "normal" &&
+      imageAttachments().length === 0 &&
+      commentCount() === 0 &&
+      prompt.context.items().length === 0 &&
+      isShellCommand(text()),
+  )
 
   const contextItems = createMemo(() => {
     const items = prompt.context.items()
@@ -536,9 +536,13 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const agentList = createMemo(() =>
     sync.data.agent
       .filter(agentMentionable)
-      .map((agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name })),
+      .map(
+        (agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name, description: agent.description }),
+      ),
   )
-  const agentNames = createMemo(() => local.agent.list().map((agent) => agent.name))
+  const agents = createMemo(() => local.agent.list())
+  const agentNames = createMemo(() => agents().map((agent) => agent.name))
+  const desc = (name: string | undefined) => agents().find((agent) => agent.name === name)?.description
 
   const handleAtSelect = (option: AtOption | undefined) => {
     if (!option) return
@@ -1485,7 +1489,20 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                       triggerStyle={control()}
                       triggerProps={{ "data-action": "prompt-agent" }}
                       variant="ghost"
-                    />
+                    >
+                      {(name) => (
+                        <div class="flex min-w-0 items-center gap-2">
+                          <span class="text-13-regular text-text-strong whitespace-nowrap">{name}</span>
+                          <Show when={desc(name)}>
+                            {(text) => (
+                              <span class="text-12-regular text-text-weak truncate normal-case" title={text()}>
+                                {text()}
+                              </span>
+                            )}
+                          </Show>
+                        </div>
+                      )}
+                    </Select>
                   </TooltipKeybind>
                 </div>
                 <div data-component="prompt-model-control">

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionLogResponse } from "@opencode-ai/sdk/v2/client"
+import type { SessionLogResponse } from "@open-agent-harness/sdk/v2/client"
 import {
   compactLogs,
   describeLog,

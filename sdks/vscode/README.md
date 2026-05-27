@@ -1,34 +1,47 @@
-# opencode VS Code Extension
+# Open Agent Harness VS Code Extension
 
-A Visual Studio Code extension that integrates [opencode](https://opencode.ai) directly into your development workflow.
+This package contains the VS Code extension for Open Agent Harness.
+
+The extension opens the harness CLI in an integrated terminal, starts new sessions, and can insert file references from the active editor into the terminal prompt.
 
 ## Prerequisites
 
-This extension requires the [opencode CLI](https://opencode.ai) to be installed on your system. Visit [opencode.ai](https://opencode.ai) for installation instructions.
+Install dependencies inside the extension package:
+
+```bash
+cd sdks/vscode
+bun install
+```
+
+For runtime use, the Open Agent Harness CLI must be available on `PATH`. During local repository development, run the CLI from `packages/opencode`:
+
+```bash
+bun run --cwd packages/opencode --conditions=browser ./src/index.ts --help
+```
 
 ## Features
 
-- **Quick Launch**: Use `Cmd+Esc` (Mac) or `Ctrl+Esc` (Windows/Linux) to open opencode in a split terminal view, or focus an existing terminal session if one is already running.
-- **New Session**: Use `Cmd+Shift+Esc` (Mac) or `Ctrl+Shift+Esc` (Windows/Linux) to start a new opencode terminal session, even if one is already open. You can also click the opencode button in the UI.
-- **Context Awareness**: Automatically share your current selection or tab with opencode.
-- **File Reference Shortcuts**: Use `Cmd+Option+K` (Mac) or `Alt+Ctrl+K` (Linux/Windows) to insert file references. For example, `@File#L37-42`.
-
-## Support
-
-This is an early release. If you encounter issues or have feedback, please create an issue at https://github.com/anomalyco/opencode/issues.
+- Quick launch: `Cmd+Esc` on macOS or `Ctrl+Esc` on Windows/Linux opens or focuses a harness terminal.
+- New session: `Cmd+Shift+Esc` on macOS or `Ctrl+Shift+Esc` on Windows/Linux starts a separate terminal session.
+- Context sharing: selected editor text and active files can be sent to the terminal.
+- File references: `Cmd+Option+K` on macOS or `Alt+Ctrl+K` on Windows/Linux inserts references such as `@File#L37-42`.
 
 ## Development
 
-1. `code sdks/vscode` - Open the `sdks/vscode` directory in VS Code. **Do not open from repo root.**
-2. `bun install` - Run inside the `sdks/vscode` directory.
-3. Press `F5` to start debugging - This launches a new VS Code window with the extension loaded.
+1. Open `sdks/vscode` in VS Code. Do not open the repository root for extension debugging.
+2. Run `bun install` in `sdks/vscode`.
+3. Press `F5` to launch an Extension Development Host.
 
-#### Making Changes
+Type-check, lint, and package:
 
-`tsc` and `esbuild` watchers run automatically during debugging (visible in the Terminal tab). Changes to the extension are automatically rebuilt in the background.
+```bash
+bun run check-types
+bun run lint
+bun run package
+```
 
-To test your changes:
+During debugging, the TypeScript and esbuild watchers run in the VS Code terminal. Reload the Extension Development Host with `Developer: Reload Window` after changes.
 
-1. In the debug VS Code window, press `Cmd+Shift+P`
-2. Search for `Developer: Reload Window`
-3. Reload to see your changes without restarting the debug session
+## Migration Notes
+
+The extension package name and display name have been migrated to Open Agent Harness. Some command identifiers may still use the historical `opencode.*` namespace for compatibility with existing keybindings and extension state. Rename those identifiers only as part of a deliberate extension migration.

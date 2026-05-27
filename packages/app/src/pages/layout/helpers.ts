@@ -1,5 +1,5 @@
-import { getFilename } from "@opencode-ai/util/path"
-import { type Message, type Session } from "@opencode-ai/sdk/v2/client"
+import { getFilename } from "@open-agent-harness/util/path"
+import { type Message, type Session } from "@open-agent-harness/sdk/v2/client"
 
 export const workspaceKey = (directory: string) => {
   const drive = directory.match(/^([A-Za-z]:)[\\/]+$/)

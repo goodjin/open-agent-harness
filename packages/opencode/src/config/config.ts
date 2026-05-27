@@ -8,7 +8,7 @@ import { mergeDeep, pipe, unique } from "remeda"
 import { Global } from "../global"
 import fs from "fs/promises"
 import { lazy } from "../util/lazy"
-import { NamedError } from "@opencode-ai/util/error"
+import { NamedError } from "@open-agent-harness/util/error"
 import { Flag } from "../flag/flag"
 import { Auth } from "../auth"
 import { Env } from "../env"
@@ -394,6 +394,13 @@ export namespace Config {
       dot: true,
       symlink: true,
     })) {
+      if (
+        ["identity.md", "rules.md"].includes(path.basename(item)) &&
+        (await Bun.file(path.join(path.dirname(item), "meta.json")).exists())
+      ) {
+        continue
+      }
+
       const md = await ConfigMarkdown.parse(item).catch(async (err) => {
         const message = ConfigMarkdown.FrontmatterError.isInstance(err)
           ? err.data.message
