@@ -6,13 +6,13 @@ Open Agent Harness can import `SKILL.md` files as virtual agents. The runtime no
 
 Skills and agents describe the same product object at different authoring depths: reusable instructions for doing a specific piece of work.
 
-A skill usually begins as a shortcut for a repeated prompt. As it matures, it grows into a reusable workflow: what role to take, what steps to follow, what rules to obey, what exceptions to handle, and what output to produce. Agent teams describe the same structure from the opposite direction: break a larger job into roles, give each role a focused workflow, and let the system delegate to the right specialist.
+A skill usually begins as a shortcut for a repeated prompt. As it matures, it grows into a reusable workflow: what identity to adopt, what steps to follow, what rules to obey, what exceptions to handle, and what output to produce. Agent teams describe the same structure from the opposite direction: break a larger job into specialist agents, give each specialist a focused workflow, and let the system delegate to the right agent.
 
 The product position is that this overlap should resolve toward agents.
 
 Agents are the stronger runtime abstraction because they give reusable workflows a complete execution boundary:
 
-- Identity and role are first-class.
+- Identity and behavior are first-class.
 - Context is isolated per task instead of accumulating many unrelated skills in one conversation.
 - Lifecycle is explicit: create an agent instance for the job, complete the job, then discard that context.
 - Permissions, tools, model choice, cost, and entry behavior can be governed per agent.
@@ -64,7 +64,7 @@ The imported description comes from:
 
 The imported prompt is built from the skill body:
 
-- `## Role` becomes the agent identity when present.
+- Source identity/persona section is imported into agent `persona` when present.
 - `## Workflow` and `## Rules` become agent rules when present.
 - If those sections are absent, the full skill body is used.
 

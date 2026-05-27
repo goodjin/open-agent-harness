@@ -309,7 +309,7 @@ Strictly follow the Agent Protocol output requirements for this request.
 Rules:
 
 - Each historical turn should be easy to read as a short transcript, not as provider request JSON.
-- Do not use `role="..."` attributes in v1 turn tags. Use Markdown headings such as `## User request`, `## Assistant protocol request and runtime results`, and `## Assistant answer` to describe what happened.
+- Do not encode provider message identity as attributes in v1 turn tags. Use Markdown headings such as `## User request`, `## Assistant protocol request and runtime results`, and `## Assistant answer` to describe what happened.
 - A protocol runtime turn should keep each call immediately next to its corresponding result. Avoid listing all calls first and all results later, because that increases pairing ambiguity for the model.
 - The call section includes the selected tool or agent and the arguments. The result section should not repeat the same arguments. It should contain status, artifact references when available, and the result content.
 - `run_id` is the runtime execution id used to correlate logs, UI projection, hidden context, and artifacts.
@@ -410,7 +410,7 @@ Example:
 
   <agent>
     <name>protocol-runner</name>
-    <role>orchestration</role>
+    <persona>orchestration</persona>
   </agent>
 
   <user-goal>

@@ -16,7 +16,7 @@ Harness separates three concerns:
 
 - `id`: stable template id. Use the same value as the directory name. Whitespace is trimmed and blank values are rejected.
 - `name`: display name. Whitespace is trimmed and blank values are rejected.
-- `role`: short behavioral contract for prompt construction. Whitespace is trimmed and blank values are rejected.
+- `persona`: short behavioral contract for prompt construction. Whitespace is trimmed and blank values are rejected.
 - `description`: user-facing summary. Whitespace is trimmed and blank values are rejected.
 
 ## Optional fields and defaults
@@ -115,7 +115,7 @@ Field meanings:
 {
   "id": "coder",
   "name": "Coder Agent",
-  "role": "Write and verify focused code changes.",
+  "persona": "Write and verify focused code changes.",
   "description": "A coding agent for implementation tasks."
 }
 ```
@@ -126,7 +126,7 @@ Field meanings:
 {
   "id": "reviewer",
   "name": "Reviewer Agent",
-  "role": "Review code for correctness, regressions, and missing tests.",
+  "persona": "Review code for correctness, regressions, and missing tests.",
   "description": "A review agent for high-signal code review.",
   "entry": {
     "primary": false,

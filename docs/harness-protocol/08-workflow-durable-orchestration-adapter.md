@@ -55,7 +55,7 @@ Do not generate a workflow for:
 
 Worker agents do not create workflows. They execute one assigned node and update that node's state file. If a worker cannot complete the node, it reports a structured status such as `blocked`, `failed`, or `needs_replan`.
 
-## Roles
+## Workflow Agent Types
 
 ### Planner / Orchestrator
 
@@ -69,7 +69,7 @@ The Worker should not know the full workflow generation rules. It only needs the
 
 ### Decision Agent
 
-The Decision Agent handles exceptional execution states. In the first implementation, this can be the same agent as Planner. The runtime should still treat it as a separate role so a future Recovery agent can replace it without changing the workflow DSL.
+The Decision Agent handles exceptional execution states. In the first implementation, this can be the same agent template as Planner. The runtime should still bind it through capability and authority so a future Recovery agent can replace it without changing the workflow DSL.
 
 The Decision Agent may choose one of a bounded set of actions:
 
@@ -84,7 +84,7 @@ The Decision Agent may choose one of a bounded set of actions:
 
 ## Workflow Runner Agent Contract
 
-Workflow Runner is the adapter-specific agent role that understands and creates durable workflow run records. It can be primary and delegable, but should not be the default general coding agent unless the product explicitly wants workflow-first orchestration behavior.
+Workflow Runner is the adapter-specific agent that understands and creates durable workflow run records. It can be primary and delegable, but should not be the default general coding agent unless the product explicitly wants workflow-first orchestration behavior.
 
 Recommended template:
 
@@ -92,7 +92,7 @@ Recommended template:
 {
   "id": "workflow-runner",
   "name": "Workflow Runner",
-  "role": "You are the Workflow Runner. You convert complex goals into durable workflow DAG runs, coordinate execution through the runtime, and make bounded decisions when execution is blocked.",
+  "persona": "You are the Workflow Runner. You convert complex goals into durable workflow DAG runs, coordinate execution through the runtime, and make bounded decisions when execution is blocked.",
   "description": "Primary orchestration agent for durable workflow DAG generation, execution coordination, and recovery decisions.",
   "entry": {
     "primary": true,
@@ -221,7 +221,7 @@ Runtime semantics:
 - child step run keys are scoped as `parent.child`, such as `feedback_loop.test`
 - `until` is evaluated against the parent run context after child steps update variables
 - `max_attempts` is a hard safety limit
-- child agents run in separate sessions with their own role prompts
+- child agents run in separate sessions with their own persona prompts
 - runtime builds scoped context snapshots from structured workflow state and artifacts; it should not blindly copy the full parent conversation
 - `per_call` creates a fresh child session for each call
 - `per_loop` reuses the same child session for that child step within the loop node when possible
@@ -934,7 +934,7 @@ The workflow adapter target shape is:
 - workflow definition separated from per-node durable state files
 - routing by node type and agent capability
 - scheduler-owned concurrency policy
-- Planner / Workflow Runner as the first Decision Agent role
+- Planner / Workflow Runner as the first Decision-capable agent
 - checkpoint, permission, and gate behavior enforced by runtime policies
 
 ## Implementation Plan

@@ -213,7 +213,7 @@ Goal: users can manage agents as governed runtime objects.
 Expected behavior:
 
 - Settings includes an Agents tab
-- list agents with source, role, entry flags, capability, permission mode, enabled state, diagnostics
+- list agents with source, persona, entry flags, capability, permission mode, enabled state, diagnostics
 - create user/project agent templates
 - edit metadata, identity/rules content, model defaults, entry flags, and custom permissions
 - disable or re-enable an agent without deleting its config

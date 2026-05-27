@@ -47,7 +47,6 @@ When an action delegates to an agent, runtime creates an assignment:
   "id": "assign_review_changes",
   "action_id": "review_changes",
   "agent_id": "reviewer",
-  "role": "evaluation",
   "capabilities": ["code_review", "testing"],
   "authority": {
     "read": ["repo://current"],
@@ -71,7 +70,7 @@ Agent delegation must produce inspectable child records:
 - parent action id
 - child session id
 - assigned agent id
-- effective role
+- effective capability match
 - effective authority
 - input context refs
 - result summary
