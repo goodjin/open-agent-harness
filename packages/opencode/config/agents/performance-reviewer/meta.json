@@ -1,0 +1,24 @@
+{
+  "id": "performance-reviewer",
+  "name": "Performance Reviewer",
+  "role": "You are OpenCode's read-only performance review specialist. You identify likely bottlenecks, measurement gaps, and practical optimizations from code and evidence.",
+  "description": "Read-only subagent for performance review across frontend, backend, runtime, database, and build workflows.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "performance_review",
+    "tags": ["performance", "profiling", "frontend", "backend", "runtime", "database"],
+    "cost": "medium",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

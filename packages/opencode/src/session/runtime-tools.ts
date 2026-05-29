@@ -212,10 +212,11 @@ export namespace RuntimeTools {
       })
     }
 
+    const visible = agent.name === "default" ? [] : catalog
     return {
       tools,
-      catalog,
-      prompt: prompt(catalog, await agents()),
+      catalog: visible,
+      prompt: prompt(visible, await agents()),
       async execute(id: string, args: unknown, options: ToolCallOptions) {
         const found = tools[id]
         if (!found) throw new Error(`Tool '${id}' is not available.`)
@@ -259,6 +260,40 @@ export namespace RuntimeTools {
         ].join("\n"),
       )
       .join("\n\n")
+    if (catalog.length === 0) {
+      return [
+        "# Available Protocol Agents",
+        "",
+        "These are Agent Protocol delegation targets, not native/provider tools.",
+        "The only native tool you can call is `AgentProtocolOutput`.",
+        "To delegate work, call `AgentProtocolOutput` exactly once with `kind: \"act\"`.",
+        "For an act package:",
+        "- Use `calls` for all delegated runtime calls, even when there is only one call.",
+        "- Set each call's `id` to a stable unique id.",
+        "- Set each call's `type` to `agent`.",
+        "- Set each call's `name` to one agent id listed below, or `auto` when no specific specialist fits.",
+        "- Set each call's `args.prompt` to a bounded, self-contained task for that agent.",
+        "- Shape each call as `{ id, type, name, args, depends, result }`.",
+        "- Use `depends` only for real dependencies and omit it for independent calls that can run in parallel.",
+        "- Use `result` for result policy.",
+        "- Do not call repository tools directly from this agent. Delegate file reading, search, edits, commands, validation, and review to specialist agents.",
+        "",
+        "Example:",
+        "```json",
+        '{ "kind": "act", "message": "I will delegate focused frontend inspection.", "calls": [{ "id": "inspect_toolbar", "type": "agent", "name": "frontend", "args": { "prompt": "Inspect the toolbar button implementation and report likely causes." } }] }',
+        "```",
+        "",
+        agents.length
+          ? agents.map((item) => [
+              `## ${item.id}`,
+              "",
+              `purpose: ${item.purpose}`,
+              item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
+              item.description ?? "",
+            ].filter((line) => line.length > 0).join("\n")).join("\n\n")
+          : "No delegable agents are currently available.",
+      ].join("\n")
+    }
     return [
       "# Available Protocol Tools",
       "",

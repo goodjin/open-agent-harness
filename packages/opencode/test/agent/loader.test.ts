@@ -88,10 +88,10 @@ describe("AgentTemplateLoader", () => {
         prometheus: ["plan_building", "high", true, true, true, true, false, false],
         atlas: ["plan_execution", "high", true, true, true, true, false, false],
         "sisyphus-junior": ["focused_execution", "medium", true, false, true, true, false, false],
-        oracle: ["technical_advice", "high", false, false, true, true, false, false],
+        "technical-reviewer": ["technical_review", "high", false, false, true, true, false, false],
         librarian: ["source_research", "low", false, false, true, true, false, false],
-        metis: ["pre_planning", "medium", false, false, true, true, false, false],
-        momus: ["plan_review", "medium", false, false, true, true, false, false],
+        "requirements-clarifier": ["requirements_clarification", "medium", false, false, true, true, false, false],
+        "plan-reviewer": ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
         "workflow-runner": ["workflow_orchestration", "low", true, true, false, true, false, false],
         "protocol-runner": ["protocol_orchestration", "low", false, true, false, true, false, false],
@@ -122,9 +122,28 @@ describe("AgentTemplateLoader", () => {
 
       for (const agent of agents.filter((item) => item.source === "package")) {
         const expected =
-          agent.id === "workflow-runner" ? "workflow" : agent.id === "protocol-runner" ? "protocol" : "chat"
+          agent.id === "workflow-runner" ||
+          agent.id === "migration-runner" ||
+          agent.id === "release-runner" ||
+          agent.id === "data-migration-runner" ||
+          agent.id === "incident-responder"
+            ? "workflow"
+            : agent.id === "protocol-runner" || agent.id === "default"
+              ? "protocol"
+              : "chat"
         expect(agent.meta.runner).toBe(expected)
       }
+    })
+
+    test("migration-runner package template exposes workflow metadata", async () => {
+      const agents = await loader.loadAll()
+      const agent = agents.find((item) => item.id === "migration-runner")
+
+      expect(agent).toBeDefined()
+      expect(agent?.meta.runner).toBe("workflow")
+      expect(agent?.meta.capability.purpose).toBe("migration")
+      expect(agent?.identity).toContain("many files")
+      expect(agent?.rules).toContain("workflow DAG")
     })
 
     test("workflow-runner package template exposes workflow metadata", async () => {

@@ -1,8 +1,8 @@
 {
-  "id": "oracle",
-  "name": "oracle",
-  "role": "You are Oracle, a strategic technical advisor with deep reasoning capabilities.",
-  "description": "Subagent advisor for architecture, hard debugging, tradeoffs, and post-implementation review.",
+  "id": "requirements-clarifier",
+  "name": "Requirements Clarifier",
+  "role": "You are OpenCode's read-only requirements clarification specialist.",
+  "description": "Subagent that clarifies intent, hidden requirements, ambiguity, risk, and planning directives before planning or implementation.",
   "entry": {
     "primary": false,
     "delegable": true,
@@ -11,9 +11,9 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "technical_advice",
-    "tags": ["architecture", "debugging", "review"],
-    "cost": "high",
+    "purpose": "requirements_clarification",
+    "tags": ["planning", "requirements", "risk"],
+    "cost": "medium",
     "writes": false
   },
   "workflow_mode": "auto",

@@ -1,0 +1,24 @@
+{
+  "id": "accessibility-reviewer",
+  "name": "Accessibility Reviewer",
+  "role": "You are OpenCode's read-only accessibility review specialist. You review UI behavior for keyboard access, semantics, labels, focus, contrast, and assistive technology compatibility.",
+  "description": "Read-only subagent for accessibility review of UI semantics, keyboard access, labels, focus, contrast, and assistive technology compatibility.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "accessibility_review",
+    "tags": ["accessibility", "a11y", "frontend", "keyboard", "semantics", "focus"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "ux-reviewer",
+  "name": "UX Reviewer",
+  "role": "You are OpenCode's read-only UX review specialist. You review flows, information architecture, interaction clarity, empty states, and user-facing friction.",
+  "description": "Read-only subagent for UX review of flows, information architecture, interaction clarity, empty states, and user-facing friction.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "ux_review",
+    "tags": ["ux", "frontend", "interaction", "flows", "copy", "usability"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

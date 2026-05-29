@@ -428,6 +428,38 @@
   }
 }
 
+[data-component="protocol-output"] {
+  width: 100%;
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 6px;
+  background: var(--surface-weak);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+
+  pre {
+    margin: 0;
+    padding: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  code {
+    font-family: var(--font-family-mono);
+    font-feature-settings: var(--font-family-mono--font-feature-settings);
+    font-size: 13px;
+    line-height: var(--line-height-large);
+    color: var(--text-base);
+    white-space: inherit;
+  }
+}
+
 [data-component="edit-trigger"],
 [data-component="write-trigger"] {
   display: flex;
@@ -747,6 +779,7 @@
 [data-component="reasoning-part"],
 [data-component="tool-output"],
 [data-component="bash-output"],
+[data-component="protocol-output"],
 [data-component="edit-content"],
 [data-component="write-content"],
 [data-component="todos"],

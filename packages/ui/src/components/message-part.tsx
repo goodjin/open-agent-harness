@@ -119,6 +119,21 @@ const exportPdf = (text: string) => {
 
 const filename = (text: string) => text.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "shell"
 
+const pretty = (input: unknown) => JSON.stringify(unwrap(input), null, 2)
+
+const unwrap = (input: unknown): unknown => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input
+  const obj = input as Record<string, unknown>
+  if (typeof obj.input !== "string") return input
+  try {
+    const json = JSON.parse(obj.input)
+    if (json && typeof json === "object" && !Array.isArray(json)) return json
+  } catch {
+    return input
+  }
+  return input
+}
+
 interface Diagnostic {
   range: {
     start: { line: number; character: number }
@@ -1940,6 +1955,71 @@ ToolRegistry.register({
               <code>{text()}</code>
             </pre>
           </div>
+        </div>
+      </BasicTool>
+    )
+  },
+})
+
+ToolRegistry.register({
+  name: "AgentProtocolOutput",
+  render(props) {
+    const i18n = useI18n()
+    const text = createMemo(() => pretty(props.input))
+    const kind = createMemo(() => {
+      const val = unwrap(props.input)
+      if (!val || typeof val !== "object" || Array.isArray(val)) return
+      const type = (val as Record<string, unknown>).kind
+      if (typeof type === "string" && type) return type
+    })
+    const calls = createMemo(() => {
+      const val = unwrap(props.input)
+      if (!val || typeof val !== "object" || Array.isArray(val)) return
+      const list = (val as Record<string, unknown>).calls
+      if (Array.isArray(list)) return String(list.length)
+    })
+    const [copied, setCopied] = createSignal(false)
+
+    const copy = async () => {
+      await navigator.clipboard.writeText(text())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+
+    return (
+      <BasicTool
+        {...props}
+        icon="code"
+        defaultOpen={props.defaultOpen ?? true}
+        trigger={{
+          title: "Agent Protocol Output",
+          subtitle: kind() ? `kind=${kind()}` : undefined,
+          args: calls() ? [`calls=${calls()}`] : [],
+          action: (
+            <Tooltip
+              value={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
+              placement="top"
+              gutter={4}
+            >
+              <IconButton
+                icon={copied() ? "check" : "copy"}
+                size="small"
+                variant="ghost"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  copy()
+                }}
+                aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
+              />
+            </Tooltip>
+          ),
+        }}
+      >
+        <div data-component="protocol-output" data-scrollable>
+          <pre>
+            <code>{text()}</code>
+          </pre>
         </div>
       </BasicTool>
     )

@@ -31,6 +31,7 @@ export namespace LocalAgent {
   export function pick(input: { list: readonly LocalAgentItem[]; config?: string; current?: string }) {
     if (input.current && input.list.some((item) => item.name === input.current)) return input.current
     if (input.config && input.list.some((item) => item.name === input.config)) return input.config
+    if (input.list.some((item) => item.name === "default")) return "default"
     return input.list[0]?.name ?? "default"
   }
 

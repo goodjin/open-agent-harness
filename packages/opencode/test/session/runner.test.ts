@@ -991,6 +991,7 @@ describe("SessionRunner", () => {
       ],
     }
     let calls = 0
+    const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
     const stream = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
       if (calls === 2) {
@@ -1042,6 +1043,7 @@ describe("SessionRunner", () => {
       } as never
     })
     const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
         sessionID: input.sessionID,
@@ -1156,12 +1158,20 @@ describe("SessionRunner", () => {
               const protocol = after.dsl_context?.protocol as {
                 runs?: { actions: { output?: string }[] }[]
               } | undefined
+              const parts = await MessageV2.parts(assistant.id)
 
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
               expect(children[0]?.parentID).toBe(session.id)
               expect(children[0]?.title).toContain("Protocol: review_toolbar_buttons")
               expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("Child agent reviewed toolbar buttons.")
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_summary" && part.text.includes("Child agent reviewed toolbar buttons."))).toBe(true)
+              expect(inputs[0]?.agent).toBe("default")
+              expect(inputs[0]?.parts?.some((part) => part.type === "agent")).toBe(false)
+              const text = inputs[0]?.parts?.map((part) => part.type === "text" ? part.text : "").join("\n")
+              expect(text).not.toContain("<agent-protocol-call>")
+              expect(text).not.toContain("@default")
+              expect(text).not.toContain("call the task tool")
               expect(logs.some((item) => item.type === "protocol.agent.started")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.agent.completed")).toBe(true)
             },

@@ -16,6 +16,7 @@
     "cost": "medium",
     "writes": true
   },
+  "runner": "protocol",
   "workflow_mode": "auto",
   "allowed_tools": ["edit", "read", "glob", "grep", "list", "bash", "task", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread", "question"],
   "denied_tools": [],

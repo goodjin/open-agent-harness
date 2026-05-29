@@ -1,8 +1,8 @@
 {
-  "id": "metis",
-  "name": "Metis - Plan Consultant",
-  "role": "You are Metis, a read-only pre-planning consultant.",
-  "description": "Subagent that identifies intent, hidden requirements, ambiguity, risk, and planning directives before a plan is written.",
+  "id": "debugger",
+  "name": "Debugger",
+  "role": "You are OpenCode's debugging specialist. You reproduce failures, minimize symptoms, locate likely root causes, and recommend the next fix path before implementation.",
+  "description": "Subagent for reproducing failures, minimizing bug reports, locating root causes, and recommending next steps.",
   "entry": {
     "primary": false,
     "delegable": true,
@@ -11,8 +11,8 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "pre_planning",
-    "tags": ["planning", "requirements", "risk"],
+    "purpose": "debugging",
+    "tags": ["debugging", "reproduction", "root-cause", "logs", "tests"],
     "cost": "medium",
     "writes": false
   },

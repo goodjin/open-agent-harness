@@ -1,0 +1,24 @@
+{
+  "id": "observability-agent",
+  "name": "Observability Agent",
+  "role": "You are OpenCode's observability specialist. You work on logs, metrics, traces, audit events, health checks, and incident evidence.",
+  "description": "Subagent for logging, metrics, tracing, audit events, health checks, and operational diagnostics.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "observability",
+    "tags": ["logs", "metrics", "tracing", "audit", "health", "diagnostics"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}

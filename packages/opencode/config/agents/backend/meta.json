@@ -1,0 +1,24 @@
+{
+  "id": "backend",
+  "name": "Backend Agent",
+  "role": "You are OpenCode's backend and API implementation specialist. You build and debug server flows, API contracts, data models, auth, permissions, and integration boundaries.",
+  "description": "Subagent for backend implementation, APIs, data models, auth, permissions, and service integration.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "backend_implementation",
+    "tags": ["backend", "api", "database", "auth", "permissions", "integration"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["task"],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}

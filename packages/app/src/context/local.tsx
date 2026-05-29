@@ -66,6 +66,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const list = createMemo(() => sync.data.agent.filter(agentVisible))
     const primary = createMemo(() => sync.data.agent.filter(agentPrimary))
     const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
+    const preferred = () => sync.data.config.default_agent ?? "default"
 
     const [saved, setSaved] = persisted(
       {
@@ -87,7 +88,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         variant?: string | null
       }
     }>({
-      current: primary()[0]?.name ?? list()[0]?.name,
+      current: undefined,
       draft: undefined,
       last: undefined,
     })
@@ -108,7 +109,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const pickAgent = (name: string | undefined) => {
       const items = list()
       if (items.length === 0) return undefined
-      return items.find((item) => item.name === name) ?? primary()[0] ?? items[0]
+      return items.find((item) => item.name === name) ?? primary().find((item) => item.name === preferred()) ?? primary()[0] ?? items[0]
     }
 
     createEffect(() => {
@@ -118,7 +119,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
         return
       }
       if (items.some((item) => item.name === store.current)) return
-      setStore("current", (primary()[0] ?? items[0])?.name)
+      setStore("current", pickAgent(preferred())?.name)
     })
 
     const scope = createMemo<State | undefined>(() => {

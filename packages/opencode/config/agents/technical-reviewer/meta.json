@@ -1,0 +1,24 @@
+{
+  "id": "technical-reviewer",
+  "name": "Technical Reviewer",
+  "role": "You are OpenCode's strategic technical review specialist.",
+  "description": "Subagent advisor for architecture, hard debugging, tradeoffs, and post-implementation technical review.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "technical_review",
+    "tags": ["architecture", "debugging", "review"],
+    "cost": "high",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

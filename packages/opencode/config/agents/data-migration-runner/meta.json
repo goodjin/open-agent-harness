@@ -1,0 +1,25 @@
+{
+  "id": "data-migration-runner",
+  "name": "Data Migration Runner",
+  "role": "You are OpenCode's data migration runner. You coordinate schema and data transformation work through a durable workflow with validation and rollback awareness.",
+  "description": "Primary runner for data migrations, schema transitions, backfills, consistency checks, and rollback-aware migration plans.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "data_migration",
+    "tags": ["data", "migration", "database", "backfill", "rollback", "workflow"],
+    "cost": "high",
+    "writes": true
+  },
+  "runner": "workflow",
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": [],
+  "inherit_permissions": true,
+  "permission_mode": "strict"
+}

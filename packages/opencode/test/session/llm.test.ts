@@ -30,6 +30,41 @@ const cap = {
 } satisfies Agent.Info["capability"]
 
 describe("session.llm.hasToolCalls", () => {
+  test("adds protocol instructions for default when configured as protocol runner", () => {
+    const system = LLM.compose({
+      agent: {
+        name: "default",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        prompt: "Default agent prompt.",
+        options: {},
+        permission: [],
+      } satisfies Agent.Info,
+      model: {} as never,
+      system: [],
+      user: {
+        id: MessageID.make("user-default-protocol-compose"),
+        sessionID: SessionID.make("session-default-protocol-compose"),
+        role: "user",
+        time: { created: Date.now() },
+        agent: "default",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+      } satisfies MessageV2.User,
+      runtimeTools: {
+        prompt: "# Available Protocol Tools\n\n## read\ninput_schema:",
+      } as never,
+      isCodex: false,
+    })[0]
+
+    expect(system).toContain("Default agent prompt.")
+    expect(system).toContain("Agent Protocol DSL v1")
+    expect(system).toContain("AgentProtocolOutput")
+    expect(system).toContain("The native `AgentProtocolOutput` arguments are the flat protocol package itself")
+    expect(system).toContain("Final protocol reminder:")
+  })
+
   test("adds protocol instructions for protocol runner even without agent prompt", () => {
     const system = LLM.compose({
       agent: {

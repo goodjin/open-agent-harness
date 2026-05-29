@@ -1,7 +1,7 @@
 {
-  "id": "momus",
-  "name": "Momus - Plan Critic",
-  "role": "You are Momus, a practical work-plan reviewer.",
+  "id": "plan-reviewer",
+  "name": "Plan Reviewer",
+  "role": "You are OpenCode's practical work-plan reviewer.",
   "description": "Subagent that reviews plans for executable tasks, valid references, and true blockers.",
   "entry": {
     "primary": false,

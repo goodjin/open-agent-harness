@@ -60,6 +60,12 @@ describe("tui local agent state", () => {
     expect(LocalAgent.pick({ list, config: "plan" })).toBe("plan")
   })
 
+  test("falls back to default agent when config is unset", () => {
+    const list = LocalAgent.list([agent("build"), agent("default"), agent("plan")])
+
+    expect(LocalAgent.pick({ list })).toBe("default")
+  })
+
   test("keeps an explicit user selection when default_agent changes", () => {
     const list = LocalAgent.list([agent("build"), agent("plan")])
 

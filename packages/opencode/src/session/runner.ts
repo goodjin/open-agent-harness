@@ -328,6 +328,25 @@ export namespace SessionRunner {
     chat.message.time.completed = Date.now()
     await Session.updateMessage(chat.message)
     if (run.status !== "blocked") {
+      await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: chat.message.id,
+        sessionID,
+        type: "text",
+        text: report(run),
+        metadata: {
+          kind: "protocol_summary",
+          action: run.status,
+          protocol: {
+            runID: run.run_id,
+            status: run.status,
+            title: run.title,
+            metrics: run.metrics,
+            resultPartID: raw.id,
+          },
+        },
+        time: { start: Date.now(), end: Date.now() },
+      })
       await final({
         stream,
         run,
@@ -579,6 +598,25 @@ export namespace SessionRunner {
         })
         await project(sessionID, run)
         if (run.status !== "blocked") {
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: processor.message.id,
+            sessionID,
+            type: "text",
+            text: report(run),
+            metadata: {
+              kind: "protocol_summary",
+              action: run.status,
+              protocol: {
+                runID: run.run_id,
+                status: run.status,
+                title: run.title,
+                metrics: run.metrics,
+                resultPartID: raw.id,
+              },
+            },
+            time: { start: Date.now(), end: Date.now() },
+          })
           await final({
             stream: input.stream,
             run,
@@ -936,6 +974,33 @@ export namespace SessionRunner {
       .join("\n")
   }
 
+  function report(run: AgentProtocol.Result) {
+    return [
+      `Protocol results: ${run.title ?? run.run_id}`,
+      `Status: ${run.status}`,
+      "",
+      ...run.actions.flatMap((item) => {
+        const out = item.error ?? item.output ?? item.summary
+        return [
+          `### ${item.title}`,
+          `Agent: \`${item.executor.target}\``,
+          `Status: ${item.status}`,
+          "",
+          clip(out),
+          "",
+        ]
+      }),
+      `Run ID: ${run.run_id}`,
+    ]
+      .filter((item) => item.length > 0)
+      .join("\n")
+  }
+
+  function clip(input: string) {
+    if (input.length <= 8000) return input
+    return `${input.slice(0, 8000)}\n\n[Output truncated: ${input.length - 8000} more characters]`
+  }
+
   function goal(stream: LLM.StreamInput) {
     const last = stream.messages.findLast((item) => item.role === "user")
     if (!last) return ""
@@ -1142,25 +1207,24 @@ export namespace SessionRunner {
 
   function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {
     return [
-      `Execute Agent Protocol call "${action.id}" as @${agent}.`,
+      `Please handle this delegated task: ${action.title}.`,
       "",
-      "Return only the call result. Include what you did, important findings, changed files, test results, blockers, and whether the call goal is complete.",
-      "",
-      "<agent-protocol-call>",
-      JSON.stringify({
-        id: action.id,
-        title: action.title,
-        operation: action.operation,
-        executor: action.executor,
-        input: action.input ?? {},
-        result_policy: action.result_policy,
-      }),
-      "</agent-protocol-call>",
+      "When you are done, return the result for the parent session. Include what you did, important findings, changed files, test results, blockers, and whether the task goal is complete.",
+      policy(action.result_policy),
       "",
       "<task>",
       prompt ?? text(action.input) ?? action.description ?? action.reason ?? action.title,
       "</task>",
     ].join("\n")
+  }
+
+  function policy(input: AgentProtocol.Action["result_policy"]) {
+    if (input === "summary") return "Keep the result concise and focused on the outcome."
+    if (input === "structured") return "Use a structured result with clear sections or bullets."
+    if (input === "full") return "Include the full relevant details needed by the parent session."
+    if (input === "on_failure") return "Keep the result brief unless the task fails; if it fails, include the failure details and next step."
+    if (input === "on_demand") return "Keep the result brief and mention where more detail is available if needed."
+    return "Adapt the level of detail to the task complexity and risk."
   }
 
   function text(input: unknown) {

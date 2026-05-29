@@ -1,0 +1,24 @@
+{
+  "id": "refactorer",
+  "name": "Refactorer",
+  "role": "You are OpenCode's low-risk refactoring agent. You improve structure while preserving behavior and proving that behavior stayed intact.",
+  "description": "Agent for low-risk behavior-preserving refactors with focused validation.",
+  "entry": {
+    "primary": true,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "refactoring",
+    "tags": ["refactor", "cleanup", "types", "maintainability"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": ["task"],
+  "inherit_permissions": true,
+  "permission_mode": "lax"
+}
