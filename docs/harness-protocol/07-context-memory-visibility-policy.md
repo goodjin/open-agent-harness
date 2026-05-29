@@ -1,20 +1,20 @@
-# Context, Memory, And Visibility Policy
+# 上下文、Memory 与 Visibility 策略
 
-## Purpose
+## 目的
 
-This document defines how Harness controls what information agents receive, what is stored, what is replayed to the model, and what is visible to users.
+本文定义 Harness 如何控制 Agent 接收什么信息、存储什么信息、向模型回放什么信息，以及什么信息对用户可见。
 
-## Core Rule
+## 核心规则
 
-Runtime shapes context. Agents should not receive full raw transcripts by default.
+Runtime 构造上下文。Agent 默认不接收完整原始 transcript。
 
 ```txt
 Projection + Memory Service + Artifact refs -> Context Bundle -> Assignment
 ```
 
-## Context Bundle
+## Context Bundle 上下文包
 
-An assignment context bundle should include:
+Assignment context bundle 应包含：
 
 ```json
 {
@@ -34,39 +34,39 @@ An assignment context bundle should include:
 }
 ```
 
-## Memory Scope
+## Memory 作用域
 
-Memory records must declare scope:
+Memory record 必须声明 scope：
 
 - `run`
 - `project`
 - `team`
 - `global`
 
-Scope precedence must be explicit. Current Projection overrides historical memory. Project memory may override team/global preferences inside the project scope.
+Scope precedence 必须明确。当前 Projection 覆盖 historical memory。Project memory 可以在 project scope 内覆盖 team/global preferences。
 
-## Data Visibility
+## 数据可见性
 
-Every action result should classify visibility:
+每个 Action result 都应分类 visibility：
 
-| Channel | Meaning |
+| Channel | 含义 |
 |---|---|
-| `model` | Replayed into future model context. |
-| `user` | Displayed in UI or final answer. |
-| `logs` | Stored for audit/export. |
-| `future_runs` | Available as memory/reference for later runs. |
-| `runtime_only` | Used for control decisions but not exposed by default. |
+| `model` | 回放到未来模型上下文。 |
+| `user` | 展示在 UI 或最终回答中。 |
+| `logs` | 为 audit/export 存储。 |
+| `future_runs` | 作为 memory/reference 可供后续 run 使用。 |
+| `runtime_only` | 用于控制决策，默认不暴露。 |
 
-Default policy:
+默认策略：
 
-- model receives summaries and refs
-- user receives concise progress/result projection
-- logs store full structured trace subject to redaction
-- future runs receive curated memory, not raw logs
+- 模型接收 summary 和 refs
+- 用户接收简洁 progress/result projection
+- logs 存储完整结构化 trace，并受 redaction 约束
+- future runs 接收 curated memory，而不是 raw logs
 
-## Result Granularity
+## 结果粒度
 
-Allowed return modes:
+允许的返回模式：
 
 - `summary`
 - `structured`
@@ -75,33 +75,33 @@ Allowed return modes:
 - `on_demand`
 - `adaptive`
 
-Runtime may reduce the model-visible result below the requested granularity for privacy, safety, or context budget reasons. Runtime may not increase visibility beyond policy.
+Runtime 可以出于 privacy、safety 或 context budget 原因，将模型可见结果降级到低于请求粒度。Runtime 不能超出策略提升 visibility。
 
-## Privacy And Redaction
+## 隐私与脱敏
 
-Before replaying or exporting data, runtime should check:
+在回放或导出数据前，Runtime 应检查：
 
 - secrets
 - credentials
 - private keys
 - personal data
 - proprietary external content
-- raw command output containing sensitive paths or tokens
+- 包含敏感路径或 token 的 raw command output
 
-Redaction policy must apply consistently to tool output, protocol logs, workflow artifacts, and UI exports.
+Redaction policy 必须一致应用于 tool output、protocol logs、workflow artifacts 和 UI exports。
 
-## Shell And Automatic Actions
+## Shell 与自动 Action
 
-Automatic shell execution records may be visible in UI while ignored in model context by default. This behavior is aligned with Harness context isolation: visible timeline output is not automatically model-visible context.
+自动 shell execution record 可以在 UI 中可见，同时默认被模型上下文忽略。这与 Harness context isolation 一致：timeline 中可见的输出不会自动成为模型可见上下文。
 
-If the user explicitly adds shell output to context, runtime should create a normal context record with source refs and visibility metadata.
+如果用户明确把 shell output 加入上下文，Runtime 应创建普通 context record，并附带 source refs 和 visibility metadata。
 
-## V1 Boundary
+## 第一版边界
 
-V1 should implement:
+第一版应实现：
 
-- context bundle refs rather than full transcript replay
-- concise protocol result replay
-- full output stored as artifacts/logs
-- explicit `ignored` or equivalent metadata for non-model-visible UI records
-- memory query results with scope, namespace, status, and evidence refs
+- context bundle refs，而不是完整 transcript replay
+- 简洁 protocol result replay
+- 完整 output 作为 artifacts/logs 存储
+- 为非模型可见 UI record 提供显式 `ignored` 或等价 metadata
+- 带有 scope、namespace、status 和 evidence refs 的 memory query results

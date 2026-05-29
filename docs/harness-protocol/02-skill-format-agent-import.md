@@ -1,74 +1,74 @@
-# Skill Format Agent Import
+# Skill 格式 Agent 导入
 
-Open Agent Harness can import `SKILL.md` files as virtual agents. The runtime normalizes reusable instruction packages into the same agent registry, selection, delegation, permission, and management surfaces as authored agents.
+Open Agent Harness 可以将 `SKILL.md` 文件导入为虚拟 Agent。Runtime 会把可复用 instruction package 归一化到与手写 Agent 相同的 registry、选择、delegation、permission 和管理界面中。
 
-## Philosophy
+## 设计理念
 
-Skills and agents describe the same product object at different authoring depths: reusable instructions for doing a specific piece of work.
+Skill 和 Agent 描述的是同一种产品对象的不同编写深度：用于完成特定工作的可复用指令。
 
-A skill usually begins as a shortcut for a repeated prompt. As it matures, it grows into a reusable workflow: what identity to adopt, what steps to follow, what rules to obey, what exceptions to handle, and what output to produce. Agent teams describe the same structure from the opposite direction: break a larger job into specialist agents, give each specialist a focused workflow, and let the system delegate to the right agent.
+Skill 通常从重复 prompt 的快捷方式开始。随着它成熟，会逐渐变成一个可复用 workflow：采用什么身份、遵循什么步骤、遵守什么规则、处理什么异常、产出什么结果。Agent team 从相反方向描述同一结构：把较大的工作拆给专业 Agent，让每个专业 Agent 拥有聚焦 workflow，并由系统委托给合适的 Agent。
 
-The product position is that this overlap should resolve toward agents.
+产品定位是：这类重叠最终应收敛到 Agent。
 
-Agents are the stronger runtime abstraction because they give reusable workflows a complete execution boundary:
+Agent 是更强的 runtime 抽象，因为它为可复用 workflow 提供完整执行边界：
 
-- Identity and behavior are first-class.
-- Context is isolated per task instead of accumulating many unrelated skills in one conversation.
-- Lifecycle is explicit: create an agent instance for the job, complete the job, then discard that context.
-- Permissions, tools, model choice, cost, and entry behavior can be governed per agent.
-- Future memory or operational history belongs naturally to the agent, not to a stateless prompt snippet.
+- 身份和行为是一等对象。
+- 上下文按任务隔离，而不是在同一长会话中累积多个无关 Skill。
+- 生命周期明确：为任务创建 Agent 实例，完成任务，然后丢弃该上下文。
+- 权限、工具、模型选择、成本和入口行为都可以按 Agent 治理。
+- 未来的 memory 或运行历史自然归属于 Agent，而不是无状态 prompt 片段。
 
-This matters for context engineering. Calling multiple skills inside one long conversation mixes unrelated instructions and history. That increases context length, attention drift, and accidental cross-contamination between tasks. Running the same workflow as a subagent keeps each unit of work focused: one agent instance, one task boundary, one clean context.
+这对上下文工程很重要。在同一长会话中调用多个 Skill 会混合无关指令和历史，增加上下文长度、注意力漂移和任务之间的意外污染。把同一个 workflow 作为 subagent 运行，可以让每个工作单元保持聚焦：一个 Agent 实例、一个任务边界、一个干净上下文。
 
-Skills remain valuable as a low-friction authoring format. The protocol treats them as a compact way to define agents when a full template is unnecessary.
+Skill 仍然是低摩擦的编写格式。协议把它们视为一种紧凑的 Agent 定义方式，适用于不需要完整模板的情况。
 
-In short: skills are accepted as authoring input; agents are the execution model.
+简言之：Skill 是可接受的编写输入；Agent 是执行模型。
 
-## Rationale
+## 原理
 
-The core product direction is that reusable behavior is represented as agents. A separate skill execution path would duplicate discovery, invocation rules, permissions, and UI behavior.
+核心产品方向是用 Agent 表示可复用行为。单独的 Skill 执行路径会重复 discovery、invocation rules、permissions 和 UI behavior。
 
-The import layer keeps the authoring convenience of `SKILL.md` while execution stays inside the agent model. After import, the system sees a skill package as an agent with metadata, prompt text, entry flags, capability tags, and permission policy.
+导入层保留 `SKILL.md` 的编写便利性，同时让执行保持在 Agent 模型内。导入后，系统会把一个 Skill package 视为带有 metadata、prompt text、entry flags、capability tags 和 permission policy 的 Agent。
 
-## Supported Input
+## 支持输入
 
-The runtime scans supported skill roots for files named:
+Runtime 扫描受支持 skill roots 中名为以下形式的文件：
 
 ```text
 */SKILL.md
 ```
 
-The default global skill root is:
+默认全局 skill root 是：
 
 ```text
 ~/.claude/skills/
 ```
 
-The loader may also support sibling `skill/` and `skills/` directories when an agent directory root is provided. The main user-facing global path is `~/.claude/skills/`.
+当提供 Agent 目录 root 时，loader 也可以支持同级 `skill/` 和 `skills/` 目录。主要面向用户的全局路径是 `~/.claude/skills/`。
 
-## Import Rules
+## 导入规则
 
-Each `SKILL.md` is parsed as Markdown with optional frontmatter.
+每个 `SKILL.md` 都按 Markdown 解析，并允许可选 frontmatter。
 
-The imported agent id comes from:
+导入后的 Agent id 来自：
 
-1. `name` in frontmatter, when present.
-2. The skill directory name, when `name` is absent.
+1. frontmatter 中的 `name`，如果存在。
+2. 当 `name` 不存在时，使用 Skill 目录名。
 
-The id is normalized to lowercase and may contain letters, numbers, dots, underscores, and dashes.
+id 会被归一化为小写，可包含字母、数字、点、下划线和短横线。
 
-The imported description comes from:
+导入后的 description 来自：
 
-1. `description` in frontmatter, when present.
-2. A generated default description.
+1. frontmatter 中的 `description`，如果存在。
+2. 生成的默认 description。
 
-The imported prompt is built from the skill body:
+导入后的 prompt 从 Skill body 构造：
 
-- Source identity/persona section is imported into agent `persona` when present.
-- `## Workflow` and `## Rules` become agent rules when present.
-- If those sections are absent, the full skill body is used.
+- 如果存在来源 identity/persona 章节，则导入为 Agent `persona`。
+- 如果存在 `## Workflow` 和 `## Rules`，则成为 Agent rules。
+- 如果这些章节不存在，则使用完整 Skill body。
 
-The generated agent metadata uses:
+生成的 Agent metadata 使用：
 
 ```json
 {
@@ -83,30 +83,30 @@ The generated agent metadata uses:
 }
 ```
 
-These agents are virtual. The runtime does not write generated `meta.json`, `identity.md`, or `rules.md` files back to disk.
+这些 Agent 是虚拟 Agent。Runtime 不会把生成的 `meta.json`、`identity.md` 或 `rules.md` 写回磁盘。
 
-## Precedence
+## 优先级
 
-Explicit agent templates override imported skills with the same id.
+显式 Agent 模板会覆盖相同 id 的导入 Skill。
 
-This lets a lightweight `SKILL.md` evolve into a full agent template without changing its invocation id.
+这允许轻量 `SKILL.md` 逐步演进为完整 Agent 模板，并保持 invocation id 不变。
 
-## Runtime Behavior
+## Runtime 行为
 
-Imported skills appear in `/agent` as normal agent records with:
+导入 Skill 会在 `/agent` 中表现为普通 Agent record，包含：
 
-- `name`: the imported agent id
-- `mode`: `subagent`
-- `capability.purpose`: `skill_import`
-- `capability.tags`: `["skill", id]`
+- `name`：导入后的 Agent id
+- `mode`：`subagent`
+- `capability.purpose`：`skill_import`
+- `capability.tags`：`["skill", id]`
 
-They are visible in session agent selection unless hidden by agent metadata or configuration.
+除非被 Agent metadata 或配置隐藏，否则它们会出现在 session Agent 选择中。
 
-They are mentionable and delegable by default because their generated entry metadata follows subagent semantics.
+它们默认可 mention、可 delegation，因为生成的 entry metadata 遵循 subagent 语义。
 
-## Agent Management UI
+## Agent 管理 UI
 
-The management API marks imported skills as:
+管理 API 将导入 Skill 标记为：
 
 ```json
 {
@@ -115,7 +115,7 @@ The management API marks imported skills as:
 }
 ```
 
-This distinguishes them from authored agents:
+这将它们与手写 Agent 区分开：
 
 ```json
 {
@@ -124,29 +124,29 @@ This distinguishes them from authored agents:
 }
 ```
 
-The settings UI can filter by type:
+设置 UI 可以按类型过滤：
 
-- all
-- authored agents
-- imported skills
+- 全部
+- 手写 Agent
+- 导入 Skill
 
-Imported skills are not directly editable in the agent manager because their source of truth is `SKILL.md`. To customize one, either edit the source skill file or create an authored agent template with the same id.
+导入 Skill 不能在 Agent Manager 中直接编辑，因为它们的事实来源是 `SKILL.md`。要定制某个 Skill，可以编辑来源 Skill 文件，或创建一个相同 id 的手写 Agent 模板。
 
-## Non Goals
+## 执行边界
 
-This import layer does not create a separate skill runtime.
+这个导入层把 Skill 统一纳入 Agent runtime。
 
-Specifically:
+具体规则：
 
-- There is no `skill` tool.
-- Top-level `skills` config is unsupported.
-- `permission.skill` config is unsupported.
-- Imported skills do not execute through a skill-specific dispatcher.
+- 系统不提供独立 `skill` tool。
+- 顶层 `skills` 配置不作为执行入口。
+- `permission.skill` 配置不作为执行权限模型。
+- 导入 Skill 不通过 Skill 专用 dispatcher 执行。
 
-The only supported execution path is through the agent runtime.
+受支持的执行路径是 Agent runtime。
 
-## Known Boundaries
+## 已知边界
 
-Imported skills preserve the main prompt content and description, but they do not infer rich agent metadata such as model preference, detailed tool policy, cost beyond the default, or custom entry flags.
+导入 Skill 会保留主要 prompt 内容和 description，但不会推断丰富 Agent metadata，例如模型偏好、详细工具策略、超过默认值的成本信息或自定义 entry flags。
 
-For production-quality behavior, prefer an authored agent template once the skill has stabilized.
+当 Skill 稳定后，生产级行为应使用手写 Agent 模板表达。

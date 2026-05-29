@@ -2,7 +2,7 @@
 
 本文档是 Open Agent Harness 的治理协议总纲。它按顺序说明协议目标、设计原则、协议架构、控制流、决策边界、Workflow/UI 定位、对象定义、待讨论问题和文档地图。
 
-详细规范由 `01` 到 `09` 承接。总纲聚焦稳定抽象和关系边界。
+`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent、Skill 导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、状态、上下文、Workflow Adapter 和 UI 管理。总纲聚焦稳定抽象和关系边界。
 
 ## 协议目标
 
@@ -59,11 +59,23 @@ Runtime 将被接受的状态变更记录为 Event，并从 Event 和状态文�
 
 Projection 是 Runtime、Agent Session 和 UI 的默认操作视图；Event Log 用于审计、回放、调试和恢复。
 
-### 7. 场景编排通过 Adapter 扩展
+### 7. Trace / Observability 是治理证据层
+
+Trace 是 Runtime 从 Event、Action、Assignment、executor invocation、Artifact、Gate、Decision 和 observation 中组织出的可观察证据链。
+
+Observability 是 Harness 治理能力的一部分，用于解释系统为什么执行、执行到了哪里、哪个环节失败、哪些证据支撑当前 Projection，以及如何审计、评测和恢复。
+
+### 8. 场景编排通过 Adapter 扩展
 
 Harness 基础 DSL 提供通用语义表达。针对常见场景，可以定制场景化结构、模板和约束，例如 Workflow、evaluation loop、release gate、long-running monitor。
 
 这些场景化结构最终由 Runtime 按统一的 Action、状态迁移和事件投影模型执行。
+
+### 9. 协议产物面向人和 Agent 可读
+
+Artifact、Trace、Projection 和 UI 视图都需要提供稳定 id、结构化摘要、状态、引用、来源、证据和可见性信息。
+
+这些产物既服务人类观察和治理，也服务后续 Agent Session 读取、接续、审查和复用。
 
 ## 协议架构
 
@@ -76,7 +88,7 @@ Harness 协议由六类协议构件协同工作：
 - **Model**：负责判断、规划、解释和产生产物，通过模型-Runtime 协议声明意图。
 - **Runtime**：负责状态、权限、调度、执行、门禁、持久化、审计和恢复。
 - **Agent**：可复用执行模板。Runtime 基于 Agent 模板创建会话，由会话接收 assignment，并在授权上下文中完成具体工作。
-- **State**：通过 Event Log、Projection、Artifact、Memory 和 Concept 表示可审计系统状态。
+- **State**：通过 Event Log、Projection、Trace、Artifact、Memory 和 Concept 表示可审计系统状态。
 - **Adapter**：在 Harness 协议之上实现 Workflow、release gate、evaluation loop、long-running automation 等编排形态。
 - **UI**：负责观察、管理、批准、暂停、恢复和追溯，通过 Command 推进系统。
 
@@ -105,6 +117,7 @@ Execution plane
 State plane
   -> Event Log
   -> Projection
+  -> Trace
   -> Artifact
   -> Concept
 
@@ -134,7 +147,7 @@ Adapter and product access plane
 执行平面由 `04-action-executor-contract.md` 和 `05-routing-and-delegation-policy.md` 定义。
 
 - **Action**：Runtime 接受后的可执行语义单元，描述要执行什么操作、携带什么参数、涉及哪些资源、具有什么 side effect、期望什么结果返回策略，以及建议由哪类 executor 执行。所有模型请求、toolCall、delegation request、runtime operation 或 human approval 在执行前都归一化为 Action。
-- **Executor**：执行 Action 的统一抽象，表示由哪类执行者完成这个 Action。具体目标可以是 tool、Agent Session、runtime service、human、pipeline 或 external service。
+- **Executor**：执行 Action 的统一抽象，表示由哪类执行者完成这个 Action。具体目标可以是 tool、Agent Session、runtime service、human、pipeline 或 external service。Executor 的执行环境契约覆盖 Sandbox、Workspace、Manifest、Snapshot 和 Rehydration。
 - **Routing**：Runtime 把 Action 绑定到具体 executor 的选择过程。Routing 根据 operation、executor hint、资源范围、side effect、权限、可用性、成本、agent entry/capability 和当前 run state 做选择，并记录选择结果。
 - **Delegation**：Routing 选择 Agent Session 作为 executor 时形成的执行形态。Runtime 基于 Agent 模板创建会话，生成 Assignment，并记录 child session trace；Assignment 是 Action 绑定给 Agent Session 后形成的执行边界。
 
@@ -146,6 +159,7 @@ Adapter and product access plane
 
 - **Event**：状态变更记录，说明发生了什么，用于审计、回放和恢复。
 - **Projection**：当前操作视图，由 Event 和状态规则推导，供 Runtime、Agent Session 和 UI 读取。
+- **Trace / Observability**：围绕 run、action、assignment、executor、artifact、gate、decision 和 observation 组织出的可观察证据链，供 UI、审计、调试、评测和恢复使用。
 - **Materialized state**：状态的持久化形态，例如数据库行、状态文件、adapter JSON、索引文件和 UI summary，用于快速查询、展示、调度和恢复。
 - **Canonical status**：统一状态词汇，例如 `ready`、`running`、`blocked`、`completed`，用于对齐 run、action、assignment、adapter 的状态含义。
 - **Transaction / replay / export**：状态控制机制，定义状态如何安全写入、如何从历史重建、如何导出为可审计 trace。
@@ -181,7 +195,7 @@ Workflow adapter 由 `08-workflow-durable-orchestration-adapter.md` 定义。UI 
 | Model Layer | 判断、计划、协议声明、用户可见解释 | 协议输出、DSL 声明、回答、恢复输入 |
 | Runtime Layer | 状态迁移、权限校验、调度、门禁、事件追加、投影更新、恢复 | `Command`、`Action`、`Assignment`、`Event`、`Projection` |
 | Execution Layer | 工具、Agent 会话、Runtime 服务、人工批准、流水线、外部服务 | 执行器调用、执行结果、产物 |
-| State Layer | Event Log、Projection、Artifact、Memory、Concept、Adapter 状态 | 状态查询、上下文引用、trace/export 引用 |
+| State Layer | Event Log、Projection、Trace、Artifact、Memory、Concept、Adapter 状态 | 状态查询、上下文引用、trace/export 引用 |
 | Adapter Layer | Workflow、evaluation loop、release gate、long-running automation | 场景化操作、Adapter 状态投影 |
 | Product Layer | Harness Console、Session Tree、Agent Manager、Protocol Panel | UI 命令、批准、观察、trace 视图 |
 
@@ -250,6 +264,8 @@ UI 是 Harness 治理能力的操作面。
 
 UI 读取 Projection、Event、Artifact、Trace、Memory 和 Concept。UI 中会改变系统状态的操作提交 Command，由 Runtime 执行状态变更。
 
+UI 视图、Trace export 和 Artifact summary 需要保持 agent-readable：提供稳定引用、结构化摘要、状态、来源、证据和可见性信息，让人类和后续 Agent Session 都能理解和复用。
+
 UI 需要展示：
 
 - run 当前状态
@@ -306,9 +322,11 @@ Agent 模型由 `01-agent-model-and-authoring.md` 定义。
 
 ### Agent Session
 
-Runtime 基于 Agent 模板创建的执行会话。Agent Session 有会话 id、上下文、trace、状态和权限边界，可以作为 root session、child session 或 descendant session 存在。
+Runtime 基于 Agent 模板创建的执行会话。Agent Session 有会话 id、session log、trace、状态和权限边界，可以作为 root session、child session 或 descendant session 存在。
 
 Agent Session 接收 assignment，生成协议输出、Action 请求、Artifact 或结果摘要。Agent 会话之间不直接通信，协作由 Runtime 通过 assignment、event、projection 和 trace 协调。
+
+Agent Session 不等同于模型上下文。Session log 是会话的持久记录，保存会话中被 Runtime 接受和引用的消息、协议输出、Action、observation、Artifact ref 和状态变化；Context 是 Runtime 在模型调用前基于 session log、Projection、Memory、Artifact、环境信息和语义解释动态构造出的模型输入。
 
 示例：
 
@@ -450,14 +468,30 @@ Assignment 包含 action refs、agent session refs、authority、input contract�
 
 ### Contract
 
-Assignment 或 Action 的输入输出契约。Contract 定义执行者收到什么、提交什么、需要提供什么证据、结果如何被 Runtime 验收。
+Assignment 或 Action 的输入输出契约。Contract 定义执行者收到什么、要达成什么目标、遵守什么约束、依赖哪些对象、提交什么 Artifact、提供什么证据、消耗什么预算、披露什么风险、遗留哪些未决问题，以及结果如何被 Runtime 验收。
 
 示例：
 
-- 输入：`Context Bundle`
-- 输出：result summary、artifact refs
+- 目标：完成指定 review、实现或验证任务
+- 约束：scope、权限、时间、成本、风格、兼容性
+- 依赖：upstream action、artifact refs、decision refs
+- 输出：result summary、artifact refs、status
 - 证据：test log、diff artifact、review finding
+- 风险：已知失败、未验证路径、scope drift
+- 未决问题：需要 owner、reviewer 或后续 Agent Session 继续判断的事项
 - 验收：status、summary、gate result
+
+### Handoff
+
+Runtime 在 Assignment 之间建立的结构化交接关系。Handoff 用于把一个 Agent Session 的结果、证据、风险和未决问题交给另一个 Agent Session 或 human owner 继续处理。
+
+Handoff 包含目标、约束、依赖、证据、Artifact refs、预算、风险、未决问题、来源 session 和目标 executor。
+
+示例：
+
+- coding session 完成 patch 后交给 review session
+- review session 提出 rework 后交给 coding session
+- verification session 发现 blocker 后交给 human owner 决策
 
 ### Event
 
@@ -499,6 +533,18 @@ UI、Runtime 调度、Agent Session 上下文都默认读取 Projection。
 - artifact index
 - concept current version
 - memory index
+
+### Trace
+
+围绕一次 run、action、assignment 或 Agent Session 组织出的可观察证据链。Trace 连接 Event、Projection、executor invocation、Artifact、observation、Gate、Decision 和 error，用于审计、调试、评测、恢复和后续 Agent Session 接续。
+
+示例：
+
+- protocol action trace
+- child session trace
+- executor invocation trace
+- gate failure trace
+- audit export trace
 
 ### Materialized State
 
@@ -689,6 +735,8 @@ Run 的目标边界。Goal Contract 记录目标、non-goal、约束和成功标
 - Memory ranking 与 historical evidence 返回规则。
 - Concept replacement 的 evidence 和 impact scan 规则。
 - UI audit/export 的 redaction policy。
+- Model Policy：模型选择、成本预算、fallback、缓存和调用策略。
+- Evaluation Adapter：Trial、Grader、Outcome、Metric 和 Regression Gate。
 
 ## 文档地图
 
@@ -698,9 +746,9 @@ Run 的目标边界。Goal Contract 记录目标、non-goal、约束和成功标
 | 01 | `01-agent-model-and-authoring.md` | Agent 模板、entry、capability、permission、authoring contract。 |
 | 02 | `02-skill-format-agent-import.md` | 将 `SKILL.md` authoring format 导入为 virtual agent。 |
 | 03 | `03-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
-| 04 | `04-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization。 |
+| 04 | `04-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
 | 05 | `05-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace、handoff。 |
-| 06 | `06-state-event-projection-model.md` | Event source、Projection、状态映射、事务边界、replay。 |
+| 06 | `06-state-event-projection-model.md` | Event source、Projection、Trace / Observability、状态映射、事务边界、replay。 |
 | 07 | `07-context-memory-visibility-policy.md` | Context Bundle、Memory Scope、visibility、privacy、replay policy。 |
 | 08 | `08-workflow-durable-orchestration-adapter.md` | Workflow 作为 DSL 之上的 durable orchestration adapter。 |
 | 09 | `09-ui-console-and-agent-management.md` | UI 如何管理、观察和使用 Harness 系统。 |

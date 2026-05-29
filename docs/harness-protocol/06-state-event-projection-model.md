@@ -1,22 +1,30 @@
-# State, Event, And Projection Model
+# 状态、事件、Projection 与 Trace 模型
 
-## Purpose
+## 目的
 
-This document defines the state model shared by Harness runs, actions, assignments, workflow adapter records, protocol runs, UI projection, and audit.
+本文定义 Harness run、Action、Assignment、workflow adapter record、protocol run、UI projection、audit、evaluation 和 recovery 共享的状态、projection、trace 与 observability 模型。
 
-## Source Of Truth
+## 事实来源
 
-Accepted events are the normative history. Projections are current operational truth derived from accepted events.
+已接受 Event 是规范历史。Projection 是从已接受 Event 派生出来的当前操作视图。
 
-State files, database rows, and adapter-specific JSON files may act as materialized projections, but they must not contradict accepted events.
+状态文件、数据库行和 adapter-specific JSON 文件可以作为 materialized projection，但不能与已接受 Event 矛盾。
 
 ```txt
 Command -> validation -> Event -> Projection -> Trigger/Gate -> next Action/Assignment
 ```
 
+## Trace 与可观测性
+
+Trace 是 Harness run 的结构化可观测视图。它连接已接受 Event、Action envelope、Assignment record、executor invocation、模型可见 Observation、Artifact refs、gate decision、决策、失败和恢复步骤。
+
+Trace 是协议对象，用于 UI、audit、debugging、evaluation 和 recovery。它不是单独的事实来源，而是从已接受 Event、execution record 以及引用的 artifact/log 派生出来。
+
+Trace record 应同时便于人类 operator 和后续 Agent Session 阅读。Trace entry 应携带稳定 id、status、summary、actor、time、refs、visibility，以及足够的 provenance，用来解释它与当前 Projection 的关系。
+
 ## Event Envelope
 
-Recommended event shape:
+推荐 Event 形态：
 
 ```json
 {
@@ -38,19 +46,19 @@ Recommended event shape:
 }
 ```
 
-Required properties:
+必需属性：
 
-- stable id
-- monotonic sequence inside the event log
+- 稳定 id
+- Event log 内单调递增的 sequence
 - timestamp
 - type
 - actor
 - scope
 - data payload
 
-## Projection Types
+## Projection 类型
 
-Core projections:
+核心 Projection：
 
 - run status
 - task/action status
@@ -58,70 +66,74 @@ Core projections:
 - open decision queue
 - gate status
 - artifact index
+- trace index
+- observability summary
 - child session tree
 - memory index
 - concept state
 - UI summary
 
-Projections should be rebuildable from events and stored state. If rebuild fails, runtime should block mutation and surface a repair decision instead of continuing with uncertain state.
+Projection 应能从 Event 和 stored state 重建。如果重建失败，Runtime 应阻塞 mutation，并暴露 repair decision，而不是在不确定状态下继续执行。
 
-## Canonical Status
+## 规范状态
 
-Use a common status vocabulary across adapters:
+不同 adapter 使用共同状态词汇：
 
-| Canonical | Meaning |
+| Canonical | 含义 |
 |---|---|
-| `draft` | Created but not ready for execution. |
-| `ready` | Valid and schedulable. |
-| `running` | Currently executing. |
-| `waiting_user` | Waiting for user/Owner input. |
-| `waiting_permission` | Waiting for approval. |
-| `blocked` | Cannot continue without decision or missing prerequisite. |
-| `failed` | Execution failed. |
-| `completed` | Finished successfully. |
-| `cancelled` | Runtime/user cancelled before completion. |
-| `aborted` | Run intentionally terminated as final state. |
+| `draft` | 已创建，但尚未准备执行。 |
+| `ready` | 合法且可调度。 |
+| `running` | 正在执行。 |
+| `waiting_user` | 等待用户/Owner 输入。 |
+| `waiting_permission` | 等待审批。 |
+| `blocked` | 缺少决策或前置条件，无法继续。 |
+| `failed` | 执行失败。 |
+| `completed` | 成功完成。 |
+| `cancelled` | Runtime/用户在完成前取消。 |
+| `aborted` | Run 被有意终止为最终状态。 |
 
-Adapter mappings:
+Adapter 映射：
 
 - workflow `success` -> `completed`
-- workflow `needs_decision` -> `blocked` with `reason: "needs_decision"`
-- workflow `needs_replan` -> `blocked` with `reason: "needs_replan"`
+- workflow `needs_decision` -> `blocked`，并带 `reason: "needs_decision"`
+- workflow `needs_replan` -> `blocked`，并带 `reason: "needs_replan"`
 - protocol `completed` -> `completed`
 - protocol `blocked` -> `blocked`
 
-## Transaction Boundary
+## 事务边界
 
-For any state-changing command:
+对任何改变状态的 Command：
 
-1. Validate schema.
-2. Validate authority.
-3. Validate gate and current projection.
-4. Append accepted event.
-5. Update projection.
-6. Emit subscription/update event.
+1. 校验 schema。
+2. 校验 authority。
+3. 校验 gate 和当前 Projection。
+4. 追加 accepted Event。
+5. 更新 Projection。
+6. 发出 subscription/update event。
 
-If any step before event append fails, no state changes. If projection update fails after append, runtime must mark projection stale and require rebuild before accepting further mutations.
+如果 Event append 前任一步失败，则不产生状态变更。如果 append 后 Projection update 失败，Runtime 必须将 Projection 标记为 stale，并要求 rebuild，之后才能接受进一步 mutation。
 
-## Storage Layers
+## 存储层
 
-Recommended storage relationship:
+推荐存储关系：
 
 ```txt
 events.jsonl or event table
   -> projections/
+  -> traces/
   -> adapter state files
   -> UI/API responses
 ```
 
-Workflow adapter files live under workflow-specific directories inside the durable Harness run store defined by `docs/harness-protocol/00-harness-governance-protocol.md`.
+Workflow adapter 文件位于 `docs/harness-protocol/00-harness-governance-protocol.md` 定义的 durable Harness run store 内部的 workflow-specific 目录下。
 
-## V1 Boundary
+## 第一版边界
 
-V1 should define:
+第一版应定义：
 
 - event envelope
-- projection summary shape for UI
-- status mapping across protocol/workflow/session
-- event replay from sequence id
-- trace/export shape for protocol runs
+- 面向 UI 的 projection summary shape
+- protocol/workflow/session 之间的 status mapping
+- 从 sequence id 开始的 event replay
+- protocol run 的 trace/export shape
+- 面向 UI 和 Agent Session 消费的 observability summary

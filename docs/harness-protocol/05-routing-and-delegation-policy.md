@@ -1,46 +1,60 @@
-# Routing And Delegation Policy
+# 路由与委托策略
 
-## Purpose
+## 目的
 
-This document defines how Harness chooses executors and delegates work.
+本文定义 Harness 如何选择 executor，以及如何委托工作。
 
-Routing converts a normalized `Action` into an executable `Assignment` or direct executor invocation. Delegation is a routing result where the executor is an agent session.
+Routing 将归一化后的 `Action` 转换为可执行的 `Assignment` 或直接 executor invocation。Delegation 是一种 routing 结果，其 executor 是 Agent Session。
 
-## Inputs
+## 输入
 
-Runtime routing uses:
+Runtime routing 使用：
 
 - action `operation`
-- requested `executor.type`
-- requested `executor.target`
-- required capabilities
-- resource read/write scope
+- 请求的 `executor.type`
+- 请求的 `executor.target`
+- 所需 capability
+- resource 读写范围
 - side effects
-- agent `entry`
-- agent `capability`
-- effective permission policy
-- availability, cost, and model preference
-- current run state and dependency state
+- Agent `entry`
+- Agent `capability`
+- 生效 permission policy
+- 可用性、成本和模型偏好
+- 当前 run state 和 dependency state
 
-## Candidate Filtering
+## 多 Agent 适用条件
 
-Recommended order:
+当任务形态能从分离的执行上下文中获益时，Runtime 应将工作路由给多个 Agent Session。
 
-1. Select executor class from `executor.type`.
-2. If `target` is concrete, load that executor and reject if missing.
-3. If `target` is `auto`, build candidates from registry metadata.
-4. Reject hidden or disabled agents unless the runtime has explicit system authority.
-5. For agent delegation, require `entry.delegable === true`.
-6. Match capability purpose and tags.
-7. Reject candidates whose permission profile cannot satisfy action side effects.
-8. Apply cost, availability, and model constraints.
-9. Choose the lowest-surprise candidate and record the decision.
+推荐适用条件：
 
-The model may suggest an executor. Runtime owns the final choice.
+- **任务可分解**：工作可以拆成相对独立的子目标，且每个子目标都有清晰输入和验收标准。
+- **上下文可隔离**：每个子任务可以在独立 Context Bundle 中运行，而不继承完整会话历史。
+- **成本收益匹配**：并行 session 带来的质量、覆盖率、速度或风险降低，足以覆盖额外模型、工具和协调成本。
+- **结果可聚合**：子任务结果可以通过 artifact、summary、evidence、status 和 unresolved issues 合并回 parent run。
+- **治理边界清晰**：每个子任务都能获得清晰的 authority、contract、trace 和 handoff boundary。
 
-## Assignment Binding
+高度耦合且依赖共享可变上下文的工作，更适合先由一个 Agent Session 完成，直到 Runtime 能定义可靠的 contract boundary。
 
-When an action delegates to an agent, runtime creates an assignment:
+## 候选过滤
+
+推荐顺序：
+
+1. 从 `executor.type` 选择 executor class。
+2. 如果 `target` 是具体对象，加载该 executor，缺失则拒绝。
+3. 如果 `target` 是 `auto`，根据 registry metadata 构建候选。
+4. 拒绝 hidden 或 disabled Agent，除非 Runtime 拥有明确 system authority。
+5. 对 Agent delegation，要求 `entry.delegable === true`。
+6. 匹配 capability purpose 和 tags。
+7. 拒绝 permission profile 无法满足 Action side effects 的候选。
+8. 应用成本、可用性和模型约束。
+9. 选择最少意外的候选，并记录该决策。
+
+模型可以建议 executor。最终选择由 Runtime 控制。
+
+## Assignment 绑定
+
+当 Action 委托给 Agent 时，Runtime 创建 assignment：
 
 ```json
 {
@@ -54,59 +68,99 @@ When an action delegates to an agent, runtime creates an assignment:
     "approve": ["task.review"]
   },
   "contract": {
+    "goal": "Review the current patch for correctness and regression risk.",
     "input": "context_bundle",
+    "constraints": ["read_only", "focus_on_changed_files"],
+    "dependencies": ["artifact://diff/current"],
+    "evidence": ["finding_refs", "test_refs"],
+    "artifacts": ["review_report"],
+    "budget": {
+      "cost": "medium",
+      "timeout_ms": 600000
+    },
+    "risks": ["missed_runtime_regression"],
+    "unresolved": [],
     "output": "evaluation_result"
   }
 }
 ```
 
-Template-level metadata does not grant authority by itself. Runtime derives assignment authority from action policy, run policy, user approval, and gate requirements.
+模板级 metadata 本身不授予 authority。Runtime 根据 Action policy、run policy、用户审批和 gate requirements 推导 assignment authority。
 
 ## Child Session Trace
 
-Agent delegation must produce inspectable child records:
+Agent delegation 必须产生可检查的 child records：
 
 - parent run id
 - parent action id
 - child session id
 - assigned agent id
-- effective capability match
-- effective authority
+- 生效 capability match
+- 生效 authority
+- contract summary
 - input context refs
 - result summary
 - artifact refs
+- unresolved issues
 - failure/block reason
 
-Failed child work must not be silently dropped from the parent action. The parent action should become `failed`, `blocked`, or `partial` according to failure policy.
+失败的 child work 不能从 parent action 中静默丢弃。Parent action 应根据 failure policy 进入 `failed`、`blocked` 或 `partial`。
 
-## Handoff Rules
+## Handoff 契约
 
-Handoff from one agent to another must go through Runtime:
+从一个 Agent 到另一个 Agent 的 handoff 通过 Runtime 表示：
 
 ```txt
 Agent A -> action result / command -> Runtime -> assignment -> Agent B
 ```
 
-Agent A should not directly instruct Agent B as a control mechanism. It may propose a next action, but Runtime validates and dispatches.
+Agent A 可以提出 next Action 或 handoff request。Runtime 校验该请求、创建 Assignment，并将工作分发给 Agent B。
 
-## Delegation Request Recovery
+Handoff 应保留 contract boundary，而不是依赖自由文本 transcript continuation。
 
-If model emits a direct task/delegation request, runtime may recover it into an agent action only when:
+推荐 handoff 字段：
 
-- target agent is concrete or safely resolvable
-- description is specific enough for an assignment
-- scope and expected result are known
-- permissions can be enforced
+```json
+{
+  "goal": "Rework the failing timeout handling after review.",
+  "source_session": "session_coder",
+  "target": {
+    "executor": "agent",
+    "capability": "implementation"
+  },
+  "constraints": ["keep_public_api", "touch_auth_module_only"],
+  "dependencies": ["artifact://review/findings"],
+  "evidence": ["artifact://test/logs/auth_timeout"],
+  "artifacts": ["artifact://patch/current"],
+  "budget": {
+    "cost": "medium",
+    "timeout_ms": 900000
+  },
+  "risks": ["retry_loop_regression"],
+  "unresolved": ["confirm whether timeout should be configurable"]
+}
+```
 
-Otherwise runtime should return a protocol violation and ask for a structured action.
+Runtime 使用该结构创建下一个 Assignment、构造目标 Context Bundle，并保持 session 之间的 trace continuity。
 
-## V1 Boundary
+## Delegation Request 恢复
 
-V1 can start with:
+如果模型输出直接 task/delegation request，Runtime 只有在以下条件成立时才可以将其恢复为 Agent Action：
 
-- `target: "auto"` agent selection using `entry` and `capability`
-- read-only or review-style delegated agents
+- target Agent 具体或可安全解析
+- description 足够具体，可以形成 assignment
+- scope 和 expected result 已知
+- permissions 可以 enforcement
+
+否则 Runtime 应返回协议违规，并要求结构化 Action。
+
+## 第一版边界
+
+第一版可以从以下能力开始：
+
+- 使用 `entry` 和 `capability` 做 `target: "auto"` Agent 选择
+- 只读或 review-style 委托 Agent
 - child session trace links
-- rejection for hidden, disabled, non-delegable, or permission-mismatched agents
+- 拒绝 hidden、disabled、non-delegable 或 permission-mismatched Agent
 
-Full multi-agent recovery loops can wait until workflow and protocol logs are stable.
+完整多 Agent recovery loop 可以等 workflow 和 protocol logs 稳定后再定义。
