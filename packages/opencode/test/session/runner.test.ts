@@ -2444,6 +2444,145 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner recovers textual AgentProtocolOutput json before file fallback", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "text-start" }
+          yield {
+            type: "text-delta",
+            text: [
+              "T-CMD-001 completed. Dispatch the next task.",
+              JSON.stringify({
+                type: "tool-call",
+                toolCallId: "call_textual_json",
+                toolName: "AgentProtocolOutput",
+                input: {
+                  kind: "act",
+                  message: "Dispatch database work.",
+                  calls: [
+                    {
+                      id: "exec_t_cmd_002",
+                      type: "agent",
+                      name: "database-agent",
+                      args: {
+                        prompt: "Implement src/db/schema/commands.ts after reviewing src/command/schema.ts.",
+                      },
+                      result: "summary",
+                    },
+                  ],
+                },
+              }),
+            ].join("\n"),
+          }
+          yield { type: "text-end" }
+          yield {
+            type: "finish-step",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "task", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "continue after T-CMD-001" }],
+                tools: {},
+                runtimeTools: {
+                  tools: {},
+                  catalog: [],
+                  prompt: "",
+                  execute: async () => {
+                    throw new Error("No direct tools should run")
+                  },
+                },
+              })
+              const sessionAfter = await Session.get(session.id)
+              const protocol = sessionAfter.dsl_context?.protocol as {
+                runs?: { title?: string; status: string; actions: { operation: string; executor: { target: string } }[] }[]
+              } | undefined
+
+              expect(result).toBe("stop")
+              expect(protocol?.runs?.[0]?.status).toBe("completed")
+              expect(protocol?.runs?.[0]?.title).toBe("database-agent")
+              expect(protocol?.runs?.[0]?.actions[0]?.operation).toBe("agent")
+              expect(protocol?.runs?.[0]?.actions[0]?.executor.target).toBe("database-agent")
+              expect(JSON.stringify(protocol)).not.toContain("Recover textual tool request")
+              expect(JSON.stringify(protocol)).not.toContain("\"target\":\"read\"")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
   test("protocol runner recovers xml glob tool calls with input", async () => {
     await using tmp = await tmpdir()
     const model = {

@@ -1107,7 +1107,7 @@ export namespace SessionRunner {
 
   function recover(text: string, stream: LLM.StreamInput): AgentProtocolParser.Parsed | undefined {
     if (!pseudo(text)) return
-    const output = flatOutput(text) ?? bareOutput(text)
+    const output = jsonOutput(text) ?? flatOutput(text) ?? bareOutput(text)
     if (output) {
       return {
         declaration: AgentProtocol.parse(output),
@@ -1148,10 +1148,13 @@ export namespace SessionRunner {
       .map((item) => item[1])
       .filter((item): item is string => !!item)
     if (refs.length === 0) return
-    const actions = refs.map((ref, idx) => {
+    if (!available(stream, "read") && !available(stream, "glob")) return
+    const actions: AgentProtocol.Action[] = refs.flatMap((ref, idx) => {
       const globbed = /[*?]/.test(ref)
+      if (globbed && !available(stream, "glob")) return []
+      if (!globbed && !available(stream, "read")) return []
       const file = globbed && ref.startsWith("/*.") ? `**${ref}` : ref
-      return {
+      return [{
         type: "action" as const,
         id: `recover-${idx + 1}`,
         title: globbed ? `Find ${file}` : `Read ${file}`,
@@ -1162,8 +1165,9 @@ export namespace SessionRunner {
         context_refs: [],
         prompt_ref: file,
         result_policy: "summary" as const,
-      }
+      }]
     })
+    if (actions.length === 0) return
     return {
       declaration: {
         type: "agent.protocol",
@@ -1179,6 +1183,67 @@ export namespace SessionRunner {
       },
       sections: { goal: goal(stream) },
       raw: text,
+    }
+  }
+
+  function available(stream: LLM.StreamInput, id: string) {
+    if (!stream.runtimeTools) return true
+    return stream.runtimeTools.catalog.some((item) => item.id === id)
+  }
+
+  function jsonOutput(text: string) {
+    for (const item of jsonObjects(text)) {
+      const parsed = parseJson(item)
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
+      const value = parsed as Record<string, unknown>
+      const name = value.toolName ?? value.name
+      if (value.type !== "tool-call" || typeof name !== "string") continue
+      if (name.toLowerCase() !== LLM.PROTOCOL_OUTPUT_TOOL.toLowerCase()) continue
+      const input = value.input
+      if (!input || typeof input !== "object" || Array.isArray(input)) continue
+      return input
+    }
+  }
+
+  function jsonObjects(text: string) {
+    const out: string[] = []
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] !== "{") continue
+      let depth = 0
+      let quoted = false
+      let slash = false
+      for (let j = i; j < text.length; j++) {
+        const char = text[j]
+        if (slash) {
+          slash = false
+          continue
+        }
+        if (char === "\\") {
+          slash = true
+          continue
+        }
+        if (char === '"') {
+          quoted = !quoted
+          continue
+        }
+        if (quoted) continue
+        if (char === "{") depth++
+        if (char === "}") depth--
+        if (depth === 0) {
+          out.push(text.slice(i, j + 1))
+          i = j
+          break
+        }
+      }
+    }
+    return out
+  }
+
+  function parseJson(input: string) {
+    try {
+      return JSON.parse(input)
+    } catch {
+      return undefined
     }
   }
 
