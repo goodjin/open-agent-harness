@@ -206,49 +206,49 @@ describe("createSessionTabs", () => {
     })
   })
 
-  test("keeps workflow out of sortable file tabs", () => {
+  test("keeps graph out of sortable file tabs", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: "graph" as string | undefined,
+        all: ["graph", "file://src/a.ts"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+        graph: () => true,
+      })
+
+      expect(result.activeTab()).toBe("graph")
+      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
+  })
+
+  test("maps legacy workflow and protocol tabs to graph", () => {
     createRoot((dispose) => {
       const [state] = createStore({
         active: "workflow" as string | undefined,
-        all: ["workflow", "file://src/a.ts"],
+        all: ["workflow", "protocol", "file://src/a.ts"],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
       const result = createSessionTabs({
         tabs,
         pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
         normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
-        workflow: () => true,
+        graph: () => true,
       })
 
-      expect(result.activeTab()).toBe("workflow")
+      expect(result.activeTab()).toBe("graph")
       expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
       expect(result.closableTab()).toBeUndefined()
       dispose()
     })
   })
 
-  test("keeps protocol out of sortable file tabs", () => {
-    createRoot((dispose) => {
-      const [state] = createStore({
-        active: "protocol" as string | undefined,
-        all: ["protocol", "file://src/a.ts"],
-      })
-      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
-      const result = createSessionTabs({
-        tabs,
-        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
-        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
-        protocol: () => true,
-      })
-
-      expect(result.activeTab()).toBe("protocol")
-      expect(result.openedTabs()).toEqual(["norm:src/a.ts"])
-      expect(result.closableTab()).toBeUndefined()
-      dispose()
-    })
-  })
-
-  test("falls back through workflow visibility", () => {
+  test("falls back through graph visibility", () => {
     createRoot((dispose) => {
       const [state] = createStore({
         active: undefined as string | undefined,
@@ -259,11 +259,11 @@ describe("createSessionTabs", () => {
         tabs,
         pathFromTab: () => undefined,
         normalizeTab: (tab) => tab,
-        workflow: () => true,
+        graph: () => true,
         logs: () => true,
       })
 
-      expect(result.activeTab()).toBe("workflow")
+      expect(result.activeTab()).toBe("graph")
       expect(result.activeFileTab()).toBeUndefined()
       expect(result.closableTab()).toBeUndefined()
       dispose()
@@ -271,7 +271,7 @@ describe("createSessionTabs", () => {
 
     createRoot((dispose) => {
       const [state] = createStore({
-        active: "workflow" as string | undefined,
+        active: "graph" as string | undefined,
         all: [],
       })
       const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
@@ -279,7 +279,7 @@ describe("createSessionTabs", () => {
         tabs,
         pathFromTab: () => undefined,
         normalizeTab: (tab) => tab,
-        workflow: () => false,
+        graph: () => false,
         logs: () => true,
       })
 
