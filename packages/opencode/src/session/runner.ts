@@ -98,17 +98,20 @@ export namespace SessionRunner {
       .join("\n")
     const native = await nativeOutput(chat.message.id)
     const parsed = native ? { ok: true as const, value: native } : AgentProtocolParser.parse(text)
+    const invalid = await invalidOutput(chat.message.id)
     const partial = chat.message.finish === "length"
     const first = parsed.ok || partial || parsed.error.code === "multiple_blocks" ? undefined : AgentProtocolParser.first(text)
     const fixed = parsed.ok || partial ? undefined : first?.ok ? first.value : retry > 0 ? recover(text, stream) : undefined
     const valid = parsed.ok && !partial
     const problem = partial
       ? { code: "partial_output", message: "Model output stopped because it reached the output length limit." }
+      : invalid
+        ? { code: "invalid_tool_call", message: invalid.error }
       : parsed.ok
         ? undefined
         : parsed.error
     const sessionID = SessionID.make(stream.sessionID)
-    if (await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish })) {
+    if (!invalid && await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish })) {
       await completeAssigned({
         messageID: chat.message.id,
         output: await textOf(chat.message.id),
@@ -141,7 +144,7 @@ export namespace SessionRunner {
         level: "warn",
         type: "protocol.retry",
         data: {
-          reason: partial ? "partial_protocol_output" : pseudo(text) ? "non_protocol_tool_call" : "non_protocol_output",
+          reason: invalid ? "invalid_protocol_tool_call" : partial ? "partial_protocol_output" : pseudo(text) ? "non_protocol_tool_call" : "non_protocol_output",
           error: problem,
         },
       })
@@ -183,7 +186,13 @@ export namespace SessionRunner {
             ...stream.system,
             [
               "Your previous response violated Agent Protocol DSL v1.",
-              pseudo(text)
+              invalid
+                ? [
+                    `Your ${LLM.PROTOCOL_OUTPUT_TOOL} tool call was malformed and could not be parsed as valid JSON.`,
+                    "This means the model did not strictly follow the required protocol shape.",
+                    invalid.error,
+                  ].join("\n")
+                : pseudo(text)
                 ? "You output a provider-specific textual tool call instead of `agent.protocol.output`."
                 : partial
                   ? "Your output was cut off by the model output length limit."
@@ -1061,6 +1070,24 @@ export namespace SessionRunner {
       }
     } catch {
       return
+    }
+  }
+
+  async function invalidOutput(messageID: MessageID) {
+    const parts = await MessageV2.parts(messageID)
+    const part = parts.find(
+      (item): item is MessageV2.ToolPart =>
+        item.type === "tool" &&
+        item.tool === "invalid" &&
+        item.state.status === "completed" &&
+        item.state.metadata?.protocol === true &&
+        item.state.metadata.violation === "direct_tool_call" &&
+        item.state.input.tool === LLM.PROTOCOL_OUTPUT_TOOL,
+    )
+    if (!part || part.state.status !== "completed") return
+    return {
+      error: part.state.input.error?.toString() || part.state.output,
+      output: part.state.output,
     }
   }
 

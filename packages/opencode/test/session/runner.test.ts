@@ -965,6 +965,179 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner retries malformed native AgentProtocolOutput after plain progress text", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const inputs: LLM.StreamInput[] = []
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
+      calls++
+      inputs.push(input)
+      if (calls === 2) {
+        return {
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol_retry", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol_retry",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: {
+                kind: "answer",
+                message: "Retried with valid protocol output.",
+              },
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol_retry",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: {
+                kind: "answer",
+                message: "Retried with valid protocol output.",
+              },
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        } as never
+      }
+      return {
+        fullStream: (async function* () {
+          const err = "Invalid input for tool AgentProtocolOutput: JSON parsing failed: Text: {\"kind\":\"act\",\"calls\": . Error message: JSON Parse error: Unexpected EOF"
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "text-start" }
+          yield { type: "text-delta", text: "Batch 1 completed. Dispatching batch 2." }
+          yield { type: "text-end" }
+          yield { type: "tool-input-start", id: "call_invalid_protocol", toolName: "invalid" }
+          yield {
+            type: "tool-call",
+            toolCallId: "call_invalid_protocol",
+            toolName: "invalid",
+            input: {
+              tool: LLM.PROTOCOL_OUTPUT_TOOL,
+              error: err,
+            },
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: "call_invalid_protocol",
+            toolName: "invalid",
+            input: {
+              tool: LLM.PROTOCOL_OUTPUT_TOOL,
+              error: err,
+            },
+            output: {
+              title: "Invalid Protocol Tool Call",
+              output: `Protocol violation: attempted to call native tool '${LLM.PROTOCOL_OUTPUT_TOOL}'. ${err}`,
+              metadata: {
+                protocol: true,
+                violation: "direct_tool_call",
+                tool: LLM.PROTOCOL_OUTPUT_TOOL,
+              },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "continue batch 2" }],
+                tools: {},
+              })
+              const parts = await MessageV2.parts(assistant.id)
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const messages = await Session.messages({ sessionID: session.id })
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored)).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.retry" && item.data.reason === "invalid_protocol_tool_call")).toBe(true)
+              expect(JSON.stringify(inputs[1]?.system)).toContain("tool call was malformed")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("model did not strictly follow")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("JSON Parse error")
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Retried with valid protocol output.")))).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
   test("protocol runner executes agent calls in child sessions", async () => {
     await using tmp = await tmpdir()
     const model = {
