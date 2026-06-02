@@ -201,6 +201,147 @@ Agent Manager 展示这些 diagnostics；Runtime 对 required 项按严重度决
 | `observability` | trace/log/metrics config | normalize | summary | trace/log detail | observability |
 | `lifecycle` | deprecated/replacement | normalize | badge | routing/snapshot | lifecycle |
 
+## RFC 对齐核查矩阵
+
+| RFC 章节 / 逻辑 | 实现方案覆盖 | 状态 |
+|---|---|---|
+| Summary 中的 metadata control plane | 实现总览、字段到实现矩阵、Phase 1-12 | covered |
+| Core Principle: metadata 不直接授予 authority | 设计约束、Phase 9 Runtime Boundary、风险处理 | covered |
+| Top-level shape | Normalized Meta、Phase 1 schema | covered |
+| Identity and logo | 字段到实现矩阵、Phase 1、UI Overview/List | covered |
+| Capability, input and output contracts | Phase 5 Input Contracts、Phase 6 Output Contracts、Contracts UI | covered |
+| Runtime uses contracts in input check/context/output/routing | Phase 5、Phase 6、Phase 7、端到端场景 | covered |
+| Instruction files | Phase 3、Instructions UI | covered |
+| Event-driven model messages | Phase 4、Instructions UI、Trace/Event 规则 | covered |
+| Collaboration beyond before/after | Phase 8、Collaboration UI、端到端场景 | covered |
+| Runtime boundary for non-programming agents | Phase 9、Runtime Boundary UI、业务客服场景 | covered |
+| Artifact Contract | Phase 6、Artifact Record Implementation、测试矩阵 | covered |
+| Completion Contract | Phase 7、Completion UI、端到端场景 | covered |
+| Versioning and old-run preservation | Phase 11 Lifecycle 与 Version Snapshot | covered |
+| Non-goals: no full workflow language, no direct Agent messaging | 设计约束、Phase 8 expansion 规则、风险处理 | covered |
+| Submission / PR plan | 推荐 PR 拆分 | covered |
+| Tests required for schema, loader, Agent Manager, routing and completion | 测试总矩阵、各 Phase 测试 | covered |
+
+## 关键定义实现细节
+
+### Logo
+
+RFC 定义 `logo.uri` 支持 local path、package path、data URI 或 trusted remote URI。实现上分三类处理：
+
+- Local/package path：允许 path variables，解析后必须落在 `${agent.dir}`、package agent dir 或受信任 assets root 内。
+- Data URI：只允许 image MIME，设置 size cap，超限产生 diagnostic。
+- Remote URI：默认不自动加载；只有命中 allowlist 且 hash 存在时才允许 UI 使用。
+
+`hash` 用于 package/remote asset integrity。hash 不匹配时，UI 使用 fallback initials，Runtime 记录 logo diagnostic，但不阻止 Agent 运行。
+
+### Input Contract
+
+Input contract 的实现字段应覆盖 RFC 中的“格式”和“语义”两层：
+
+- source：user、artifact、memory、url、file、event、decision、api_payload。
+- content_type：text、json、markdown、image、pdf、csv、patch、browser_state、email_thread 等。
+- artifact_type：当 source 包含 artifact 时使用。
+- schema_ref：JSON Schema 或 domain validator key。
+- semantic：freshness、citations、language、scope、confidence、market、resource range。
+- visibility：model/user/logs/trace/future_runs/runtime_only 约束。
+
+Runtime 使用 input contract 判断是否可以创建 Assignment；缺输入时进入 `blocked` / `waiting_user`，或触发 collaboration prerequisite。
+
+### Output Contract
+
+Output contract 的实现字段应覆盖：
+
+- name
+- required
+- artifact_type
+- content_type
+- schema_ref
+- required evidence
+- downstream consumers
+- visibility
+- completion_role
+
+Runtime 不把 output contract 当 prompt 建议。模型可以按 contract 生成结果，但 Runtime 要在 Artifact acceptance 阶段校验是否满足 contract。
+
+### Collaboration Edge Semantics
+
+| Edge kind | Runtime 展开行为 |
+|---|---|
+| prerequisite | 当前 Assignment 启动前创建上游 Assignment，产物进入当前 Context Bundle。 |
+| verifier | 当前 Artifact 产生后创建验证 Assignment，验证结果进入 completion。 |
+| reviewer | 当前结果产生后创建审查 Assignment，审查结果进入 gate 或 completion。 |
+| arbiter | 多个结果冲突时创建仲裁 Assignment。 |
+| fallback | 首选 target 不可用或失败时选择替代 target。 |
+| recovery | 当前失败后创建诊断/恢复 Assignment。 |
+| monitor | 对长任务或外部状态创建周期/条件观察 Action。 |
+| splitter | 把一个目标拆成多个 child Assignment。 |
+| aggregator | 合并多个 child Artifact，生成聚合 Artifact。 |
+| escalation | 创建 human 或高权限 Agent Decision/Assignment。 |
+| peer | 并行创建同类 Agent 以获得多样化结果。 |
+| blocker | 匹配风险条件时阻止自动展开或进入 approval gate。 |
+
+所有 edge 展开都必须经过 routing、permission、budget、gate、event、projection 和 trace。Agent Session 不直接互相通信。
+
+### Artifact Record Implementation
+
+Artifact contract 定义期望产物，Artifact record 记录实际产物。
+
+实际 Artifact record 至少包含：
+
+- `id`
+- `name`
+- `artifact_type`
+- `producer`
+- `status`
+- `uri`
+- `schema_ref`
+- `validation.status`
+- `validation.validator`
+- `summary`
+- `evidence`
+- `visibility`
+
+状态建议：
+
+- `expected`
+- `available`
+- `invalid`
+- `missing`
+- `redacted`
+- `superseded`
+
+Output contract validation 只把 `available` 且 validation passed 的 Artifact 作为 completion 输入。`invalid` 或 `missing` 会进入 completion reason。
+
+### Completion Sources
+
+Completion evaluator 支持多种证据来源：
+
+- deterministic validators
+- tool results
+- Artifact validation
+- verifier Agent result
+- reviewer Agent result
+- human decision
+- service callback
+- external gate
+
+模型输出 `done` 只是候选信号。Runtime 根据 completion contract 选择 `completed`、`partial`、`blocked`、`failed` 或 `waiting_user`。
+
+### Versioning Fields
+
+Lifecycle/version 实现应覆盖 RFC 的所有版本字段：
+
+- `schema_version`
+- `agent_version`
+- `revision`
+- `compatibility`
+- `deprecated`
+- `replacement`
+- `migration`
+- `retention`
+
+`revision` 可以是 package revision、content hash 或 config revision。Assignment snapshot 同时记录 `agent_version` 和 `revision`，避免同版本号下内容变更导致 replay 不稳定。
+
 ## Phase 1: Schema、Loader、API 兼容
 
 目标：让 RFC 全量字段都能被解析、校验、保存和通过 API 返回，但不改变 Runtime 行为。
