@@ -367,7 +367,7 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
-  test("session loop exposes only agent delegation catalog for default protocol runner", async () => {
+  test("session loop exposes delegation status and agent catalog for default protocol runner", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"
 
@@ -425,11 +425,13 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.tools).toBe(0)
                 expect(seen[0]?.system).not.toContain("Available Protocol Tools")
                 expect(seen[0]?.prompt).toContain("Available Protocol Agents")
-                expect(seen[0]?.prompt).not.toContain("Available Protocol Tools")
+                expect(seen[0]?.prompt).toContain("Available Protocol Tools")
+                expect(seen[0]?.prompt).toContain("## delegation_status")
                 expect(seen[0]?.prompt).not.toContain("## read")
                 expect(seen[0]?.prompt).not.toContain("## bash")
-                expect(seen[0]?.prompt).not.toContain("input_schema:")
-                expect(seen[0]?.prompt).toContain('"type": "agent"')
+                expect(seen[0]?.prompt).toContain("input_schema:")
+                expect(seen[0]?.prompt).toContain('calls[].type: "agent"')
+                expect(seen[0]?.prompt).toContain('"type": "tool"')
                 expect(seen[0]?.prompt).toContain("## frontend")
                 await Session.remove(session.id)
               } finally {

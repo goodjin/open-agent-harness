@@ -12,6 +12,7 @@ import { ShareNext } from "@/share/share-next"
 import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
 import { runPromiseInstance } from "@/effect/runtime"
+import { SessionDelegation } from "@/session/delegation"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -23,6 +24,7 @@ export async function InstanceBootstrap() {
   await runPromiseInstance(VcsService.use((s) => s.init()))
   Snapshot.init()
   Truncate.init()
+  SessionDelegation.init()
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {

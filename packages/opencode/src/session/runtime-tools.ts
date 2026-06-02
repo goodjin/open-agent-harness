@@ -1,7 +1,7 @@
 import z from "zod"
 import { asSchema, jsonSchema, tool, type Tool as AITool, type ToolCallOptions } from "ai"
 import { Agent } from "@/agent/agent"
-import { AgentEntry } from "@/agent/entry"
+import { AgentDelegation } from "@/agent/delegation"
 import { MCP } from "@/mcp"
 import { Metrics } from "@/observability/metrics"
 import { Trace } from "@/observability/trace"
@@ -9,6 +9,7 @@ import { ModelID } from "@/provider/schema"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Session } from "@/session"
+import { SessionDelegation } from "@/session/delegation"
 import { MessageV2 } from "@/session/message-v2"
 import { PartID } from "@/session/schema"
 import { SessionProcessor } from "@/session/processor"
@@ -212,7 +213,47 @@ export namespace RuntimeTools {
       })
     }
 
-    const visible = agent.name === "default" ? [] : catalog
+    if (delegating(agent)) {
+      const desc = [
+        "Query this parent session's delegated child task status from dsl_context.protocol.",
+        "Use it only to inspect pending or completed delegated agent tasks before deciding the next Agent Protocol step.",
+      ].join(" ")
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          child_session_id: {
+            type: "string",
+            description: "Optional child session id to inspect.",
+          },
+          status: {
+            type: "string",
+            enum: ["pending", "completed", "partial", "blocked", "failed", "waiting_user"],
+            description: "Optional status filter.",
+          },
+          include_output: {
+            type: "boolean",
+            description: "Include full child output. Defaults to false and returns summaries only.",
+          },
+        },
+      }
+      add("delegation_status", desc, schema, async (args) => {
+        const req = object(args)
+        const info = await SessionDelegation.query({
+          sessionID: input.session.id,
+          childID: text(req.child_session_id),
+          status: status(req.status),
+          output: req.include_output === true,
+        })
+        return {
+          title: "Delegation status",
+          metadata: info.counts,
+          output: JSON.stringify(info, null, 2),
+        }
+      })
+    }
+
+    const visible = agent.name === "default" ? catalog.filter((item) => item.id === "delegation_status") : catalog
     return {
       tools,
       catalog: visible,
@@ -231,10 +272,33 @@ export namespace RuntimeTools {
     return id !== "task"
   }
 
+  function delegating(agent: Agent.Info) {
+    if (agent.runner !== "protocol") return false
+    return PermissionNext.trace("task", "*", agent.permission).rule.action === "allow"
+  }
+
+  function object(input: unknown) {
+    if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>
+    return {}
+  }
+
+  function text(input: unknown) {
+    if (typeof input === "string") return input
+  }
+
+  function status(input: unknown): SessionDelegation.QueryStatus | undefined {
+    if (
+      input === "pending" ||
+      input === "completed" ||
+      input === "partial" ||
+      input === "blocked" ||
+      input === "failed" ||
+      input === "waiting_user"
+    ) return input
+  }
+
   async function agents(agent: Agent.Info) {
-    return (await Agent.list())
-      .filter((item) => AgentEntry.delegable(item))
-      .filter((item) => !(agent.name === "default" && item.name === "default"))
+    return AgentDelegation.list(await Agent.list(), agent.name)
       .map((item) => ({
         id: item.name,
         purpose: item.capability.purpose,
@@ -353,6 +417,16 @@ export namespace RuntimeTools {
         "Example:",
         "```json",
         '{ "kind": "act", "message": "I need one clarification.", "calls": [{ "id": "ask_scope", "type": "tool", "name": "question", "args": { "questions": [{ "question": "Which scope should be planned first?", "header": "Scope", "options": [{ "label": "Current slice", "description": "Plan only the delegated slice." }, { "label": "Broader scope", "description": "Include adjacent work in the plan." }] }] } }] }',
+        "```",
+        "",
+      ].join("\n")
+    }
+    const status = catalog.find((item) => item.id === "delegation_status")
+    if (status) {
+      return [
+        "Example:",
+        "```json",
+        '{ "kind": "act", "message": "I will check delegated task status.", "calls": [{ "id": "check_delegations", "type": "tool", "name": "delegation_status", "args": {} }] }',
         "```",
         "",
       ].join("\n")

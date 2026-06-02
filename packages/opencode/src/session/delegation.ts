@@ -24,6 +24,7 @@ export namespace SessionDelegation {
   )
 
   type Status = "completed" | "partial" | "blocked" | "failed" | "waiting_user"
+  export type QueryStatus = "pending" | Status
   type Item = {
     type: "agent.delegation.assignment"
     version: "1"
@@ -195,6 +196,34 @@ export namespace SessionDelegation {
     for (const session of Session.list({ directory: Instance.directory, limit: 5000 })) {
       if (!assignment(session)) continue
       await complete({ sessionID: session.id })
+    }
+  }
+
+  export async function query(input: {
+    childID?: string
+    output?: boolean
+    sessionID: SessionID
+    status?: QueryStatus
+  }) {
+    const session = await Session.get(input.sessionID)
+    const prev = object(object(session.dsl_context).protocol)
+    const pending = Object.entries(object(prev.pending_delegations))
+      .map(([id, item]) => row(item, "pending", input.output === true, id))
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .filter((item) => match(item, input))
+    const done = (Array.isArray(prev.completed_delegations) ? prev.completed_delegations : [])
+      .map((item) => row(item, "completed", input.output === true))
+      .filter((item): item is NonNullable<typeof item> => !!item)
+      .filter((item) => match(item, input))
+    return {
+      session_id: session.id,
+      counts: {
+        pending: pending.length,
+        completed: done.length,
+        total: pending.length + done.length,
+      },
+      pending,
+      completed: done,
     }
   }
 
@@ -440,7 +469,38 @@ export namespace SessionDelegation {
     })
   }
 
-  function statusof(item: Item) {
+  function row(input: unknown, fallback: QueryStatus, output: boolean, childID?: string) {
+    const item = object(input)
+    const child = text(item.child_session_id) ?? childID
+    if (!child) return
+    const out = text(item.output)
+    return {
+      status: statusof(item) ?? fallback,
+      run_id: text(item.run_id),
+      action_id: text(item.action_id),
+      action_title: text(item.action_title),
+      parent_agent: text(item.parent_agent),
+      child_session_id: child,
+      agent: text(item.agent),
+      result_policy: text(item.result_policy),
+      created_at: number(item.created_at),
+      completed_at: number(item.completed_at),
+      notified_at: number(item.notified_at),
+      summary: text(item.summary) ?? out?.slice(0, 4000),
+      ...(output && out !== undefined ? { output: out } : {}),
+    }
+  }
+
+  function match(item: NonNullable<ReturnType<typeof row>>, input: {
+    childID?: string
+    status?: QueryStatus
+  }) {
+    if (input.childID && item.child_session_id !== input.childID) return false
+    if (input.status && item.status !== input.status) return false
+    return true
+  }
+
+  function statusof(item: { status?: unknown }) {
     if (
       item.status === "completed" ||
       item.status === "partial" ||
@@ -471,5 +531,9 @@ export namespace SessionDelegation {
 
   function text(input: unknown) {
     if (typeof input === "string") return input
+  }
+
+  function number(input: unknown) {
+    if (typeof input === "number") return input
   }
 }
