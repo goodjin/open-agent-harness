@@ -10,6 +10,7 @@ import { Glob } from "@/util/glob"
 import { AgentTemplateLoader, BUILTIN_DEFAULT_AGENT } from "./loader"
 import { resetRegistry } from "./registry"
 import { AgentTemplate as Template } from "./schema"
+import { BUILTIN_AGENTS } from "./builtin.generated"
 
 export namespace AgentManage {
   export const Source = z.enum(["builtin", "package", "user", "project"])
@@ -275,6 +276,23 @@ export namespace AgentManage {
       )
   }
 
+  function bundled() {
+    return {
+      items: BUILTIN_AGENTS.map((item): Item => ({
+        id: item.id,
+        name: item.name,
+        dir: item.dir,
+        source: "package",
+        kind: "agent",
+        meta: item.meta,
+        identity: item.identity,
+        rules: item.rules,
+        diagnostics: [],
+      })),
+      diagnostics: [] as Diagnostic[],
+    }
+  }
+
   function effective(item: Item, cfg: Config.Agent | undefined, disabled: boolean) {
     const mode = cfg?.mode ?? Template.mode(item.meta)
     const entry = cfg?.mode ? Template.EntryDefaults[cfg.mode] : item.meta.entry
@@ -305,6 +323,7 @@ export namespace AgentManage {
   async function entries() {
     const cfg = await Config.get()
     const all = await Promise.all([
+      bundled(),
       skills().then((items) => ({ items, diagnostics: [] as Diagnostic[] })),
       scan(pkg(), "package"),
       scan(root("user"), "user"),

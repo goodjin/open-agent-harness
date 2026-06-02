@@ -4,12 +4,13 @@ import { HoverCard } from "@open-agent-harness/ui/hover-card"
 import { Icon } from "@open-agent-harness/ui/icon"
 import { IconButton } from "@open-agent-harness/ui/icon-button"
 import { MessageNav } from "@open-agent-harness/ui/message-nav"
+import { Spinner } from "@open-agent-harness/ui/spinner"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { Tooltip } from "@open-agent-harness/ui/tooltip"
 import { base64Encode } from "@open-agent-harness/util/encode"
 import { getFilename } from "@open-agent-harness/util/path"
 import { A, useNavigate, useParams } from "@solidjs/router"
-import { type Accessor, createMemo, For, type JSX, Match, onCleanup, Show, Switch } from "solid-js"
+import { type Accessor, createEffect, createMemo, createSignal, For, type JSX, onCleanup, Show } from "solid-js"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
@@ -21,17 +22,133 @@ import { childSessionSummary, displaySessionTitle, hasProjectPermissions, sessio
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
-const RunningIcon = (): JSX.Element => (
-  <div class="relative size-5 flex items-center justify-center text-icon-info-active" aria-label="Running" title="Running">
-    <span class="absolute size-4 rounded-full border border-icon-info-active opacity-30 animate-ping motion-reduce:animate-none" />
-    <span class="absolute size-3 rounded-full bg-icon-info-active opacity-10 animate-pulse motion-reduce:animate-none" />
-    <Icon
-      name="reset"
-      size="small"
-      class="relative text-icon-info-active animate-spin [animation-duration:1.1s] motion-reduce:animate-none"
-    />
+export type Filter = "running" | "ended" | "failed" | "success"
+
+const indent = 24
+
+const formatDuration = (ms: number) => {
+  const s = Math.max(0, Math.floor(ms / 1000))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h`
+  return `${Math.floor(h / 24)}d`
+}
+
+const duration = (session: Session, messages: Message[] | undefined, working: boolean, now: number) => {
+  const user = messages?.find((item) => item.role === "user")
+  const assistant = messages?.findLast((item) => item.role === "assistant")
+  const start = user?.time.created ?? session.time.created
+  const end = working ? now : assistant?.time.completed ?? session.time.updated ?? session.time.created
+  return formatDuration(end - start)
+}
+
+const StatusBadge = (props: {
+  label: Accessor<string>
+  isWorking: Accessor<boolean>
+  isPaused: Accessor<boolean>
+  isDone: Accessor<boolean>
+  hasError: Accessor<boolean>
+  hasPermissions: Accessor<boolean>
+  unseenCount: Accessor<number>
+}): JSX.Element => (
+  <div
+    class="relative shrink-0 size-5 rounded-full flex items-center justify-center border bg-background-base"
+    classList={{
+      "border-icon-info-active text-text-interactive-base": props.isWorking(),
+      "border-icon-warning-base text-icon-warning-base": props.isPaused() || props.hasPermissions(),
+      "border-icon-critical-base text-icon-critical-base": props.hasError(),
+      "border-text-diff-add-base text-text-diff-add-base": props.isDone(),
+      "border-border-weak-base text-text-weak": !props.isWorking() && !props.isPaused() && !props.hasPermissions() && !props.hasError() && !props.isDone(),
+    }}
+  >
+    <Show when={props.isWorking()}>
+      <span class="absolute inset-0 rounded-full border border-icon-info-active opacity-25 animate-ping motion-reduce:animate-none" />
+      <Spinner class="absolute size-4 opacity-30" />
+    </Show>
+    <span class="relative z-10 max-w-[18px] overflow-hidden text-center text-[7px] leading-none font-medium tabular-nums">
+      {props.label()}
+    </span>
+    <Show when={props.unseenCount() > 0 && !props.isWorking() && !props.isPaused() && !props.hasError() && !props.isDone()}>
+      <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-text-interactive-base" />
+    </Show>
   </div>
 )
+
+const filterLabel = (filter: Filter) => {
+  if (filter === "running") return "运行中"
+  if (filter === "ended") return "已结束"
+  if (filter === "failed") return "已失败"
+  return "已成功"
+}
+
+export const SessionFilterBar = (props: {
+  filter: Accessor<Filter | undefined>
+  setFilter: (filter: Filter | undefined) => void
+}): JSX.Element => (
+  <div class="px-2 pb-1 flex flex-wrap gap-1">
+    <button
+      type="button"
+      class="rounded px-2 py-0.5 text-11-regular transition-colors"
+      classList={{
+        "bg-surface-base-active text-text-strong": props.filter() === undefined,
+        "bg-transparent text-text-weak hover:bg-surface-base-hover": props.filter() !== undefined,
+      }}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        props.setFilter(undefined)
+      }}
+    >
+      全部
+    </button>
+    <For each={["running", "ended", "failed", "success"] as Filter[]}>
+      {(item) => (
+        <button
+          type="button"
+          class="rounded px-2 py-0.5 text-11-regular transition-colors"
+          classList={{
+            "bg-surface-base-active text-text-strong": props.filter() === item,
+            "bg-transparent text-text-weak hover:bg-surface-base-hover": props.filter() !== item,
+          }}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            props.setFilter(props.filter() === item ? undefined : item)
+          }}
+        >
+          {filterLabel(item)}
+        </button>
+      )}
+    </For>
+  </div>
+)
+
+const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 40
+const row = (dense?: boolean) => (dense ? "24px" : "28px")
+const trunk = (first?: boolean, last?: boolean) => {
+  if (first && last) return { top: "1rem", height: "0px" }
+  if (last) return { top: "0", height: "1rem" }
+  return { top: first ? "1rem" : "0", bottom: "0" }
+}
+
+const sessionFilter = (input: {
+  session: Session
+  filter: Filter | undefined
+  messages: Message[] | undefined
+  status: { type?: string } | undefined
+  hasError: boolean
+  hasPermissions: boolean
+}) => {
+  if (!input.filter) return true
+  const working = !input.hasPermissions && sessionWorking(input.messages, input.status)
+  const done = !input.hasPermissions && !working && !input.hasError && sessionCompleted(input.session, input.messages, input.status)
+  if (input.filter === "running") return working
+  if (input.filter === "failed") return input.hasError
+  if (input.filter === "success") return done
+  return !working
+}
 
 export const ProjectIcon = (props: { project: LocalProject; class?: string; notify?: boolean }): JSX.Element => {
   const globalSync = useGlobalSync()
@@ -86,8 +203,11 @@ export type SessionItemProps = {
   dense?: boolean
   popover?: boolean
   depth?: number
+  first?: boolean
+  last?: boolean
   expanded?: Accessor<Record<string, boolean>>
   lineage?: Accessor<Set<string>>
+  filter?: Accessor<Filter | undefined>
   setExpanded?: (id: string, value: boolean) => void
   children: Map<string, string[]>
   sidebarExpanded: Accessor<boolean>
@@ -114,6 +234,7 @@ const SessionRow = (props: {
   hasPermissions: Accessor<boolean>
   hasError: Accessor<boolean>
   unseenCount: Accessor<number>
+  durationLabel: Accessor<string>
   setHoverSession: (id: string | undefined) => void
   clearHoverProjectSoon: () => void
   sidebarOpened: Accessor<boolean>
@@ -126,11 +247,15 @@ const SessionRow = (props: {
   expanded?: Accessor<boolean>
   toggle?: () => void
 }): JSX.Element => (
-  <div class="flex items-center min-w-0" style={{ "padding-left": `${(props.depth ?? 0) * 14}px` }}>
+  <div class="flex items-center min-w-0" style={{ "padding-left": `${(props.depth ?? 0) * indent}px` }}>
     <Show when={props.canExpand?.()} fallback={<span class="shrink-0 size-5" aria-hidden="true" />}>
       <button
         type="button"
-        class="shrink-0 size-5 rounded flex items-center justify-center text-icon-weak hover:bg-surface-base-hover focus:outline-none focus-visible:bg-surface-base-active"
+        class="shrink-0 size-5 rounded flex items-center justify-center text-icon-weak focus:outline-none focus-visible:bg-surface-base-active"
+        classList={{
+          "hover:bg-surface-base-hover": !props.expanded?.(),
+          "opacity-0 group-hover/session:opacity-100 group-focus-within/session:opacity-100": props.expanded?.(),
+        }}
         aria-expanded={props.expanded?.() ?? false}
         aria-label="Toggle session children"
         onClick={(event) => {
@@ -139,7 +264,9 @@ const SessionRow = (props: {
           props.toggle?.()
         }}
       >
-        <Icon name={props.expanded?.() ? "chevron-down" : "chevron-right"} size="small" />
+        <Show when={!props.expanded?.()} fallback={<Icon name="chevron-down" size="small" />}>
+          <Icon name="chevron-right" size="small" />
+        </Show>
       </button>
     </Show>
     <A
@@ -156,31 +283,15 @@ const SessionRow = (props: {
       }}
     >
       <div class="flex items-center gap-1 w-full">
-        <div
-          class="shrink-0 size-6 flex items-center justify-center"
-          style={{ color: props.tint() ?? "var(--icon-interactive-base)" }}
-        >
-          <Switch fallback={<div class="size-1.5 rounded-full bg-icon-weak-base" aria-label="Idle" title="Idle" />}>
-            <Match when={props.isPaused()}>
-              <Icon name="stop" size="small" class="text-icon-warning-base" aria-label="Paused" />
-            </Match>
-            <Match when={props.isWorking()}>
-              <RunningIcon />
-            </Match>
-            <Match when={props.hasPermissions()}>
-              <Icon name="warning" size="small" class="text-icon-warning-base" aria-label="Permission required" />
-            </Match>
-            <Match when={props.hasError()}>
-              <Icon name="circle-x" size="small" class="text-icon-critical-base" aria-label="Error" />
-            </Match>
-            <Match when={props.isDone()}>
-              <Icon name="circle-check" size="small" class="text-text-diff-add-base" aria-label="Done" />
-            </Match>
-            <Match when={props.unseenCount() > 0}>
-              <div class="size-1.5 rounded-full bg-text-interactive-base" />
-            </Match>
-          </Switch>
-        </div>
+        <StatusBadge
+          label={props.durationLabel}
+          isWorking={props.isWorking}
+          isPaused={props.isPaused}
+          isDone={props.isDone}
+          hasPermissions={props.hasPermissions}
+          hasError={props.hasError}
+          unseenCount={props.unseenCount}
+        />
         <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
           {props.title()}
         </span>
@@ -248,15 +359,16 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const notification = useNotification()
   const permission = usePermission()
   const globalSync = useGlobalSync()
-  const unseenCount = createMemo(() => notification.session.unseenCount(props.session.id))
-  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id))
   const [sessionStore] = globalSync.child(props.session.directory)
+  const status = createMemo(() => sessionStore.session_status[props.session.id])
+  const unseenCount = createMemo(() => notification.session.unseenCount(props.session.id))
+  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id) || status()?.type === "error")
   const hasPermissions = createMemo(() => {
     return !!sessionPermissionRequest(sessionStore.session, sessionStore.permission, props.session.id, (item) => {
       return !permission.autoResponds(item, props.session.directory)
     })
   })
-  const status = createMemo(() => sessionStore.session_status[props.session.id])
+  const [now, setNow] = createSignal(Date.now())
   const isPaused = createMemo(() => {
     const next = status()?.type
     return hasPermissions() || next === "waiting_user" || next === "waiting_permission"
@@ -269,10 +381,18 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     if (hasPermissions() || isWorking() || hasError()) return false
     return sessionCompleted(props.session, sessionStore.message[props.session.id], status())
   })
+  createEffect(() => {
+    if (!isWorking()) return
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    onCleanup(() => window.clearInterval(id))
+  })
 
   const tint = createMemo(() => {
     return messageAgentColor(sessionStore.message[props.session.id], sessionStore.agent)
   })
+  const durationLabel = createMemo(() =>
+    duration(props.session, sessionStore.message[props.session.id], isWorking(), now()),
+  )
 
   const hoverMessages = createMemo(() =>
     sessionStore.message[props.session.id]?.filter((message): message is UserMessage => message.role === "user"),
@@ -287,6 +407,30 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       .map((id) => by.get(id))
       .filter((session): session is Session => !!session && !session.time?.archived)
   })
+  const matches = (session: Session) => {
+    const next = sessionStore.session_status[session.id]
+    const blocked = !!sessionPermissionRequest(sessionStore.session, sessionStore.permission, session.id, (item) => {
+      return !permission.autoResponds(item, session.directory)
+    })
+    return sessionFilter({
+      session,
+      filter: props.filter?.(),
+      messages: sessionStore.message[session.id],
+      status: next,
+      hasError: notification.session.unseenHasError(session.id) || next?.type === "error",
+      hasPermissions: blocked,
+    })
+  }
+  const visible = (session: Session): boolean => {
+    if (matches(session)) return true
+    const by = new Map(props.list.map((item) => [item.id, item]))
+    return (props.children.get(session.id) ?? []).some((id) => {
+      const child = by.get(id)
+      return !!child && !child.time?.archived && visible(child)
+    })
+  }
+  const childVisible = (session: Session) => visible(session)
+  const filteredChildren = createMemo(() => childSessions().filter(childVisible))
   const title = createMemo(() => {
     if (!props.session.parentID) return displaySessionTitle(props.session)
     const ids = props.children.get(props.session.parentID) ?? []
@@ -300,7 +444,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     return childSessionSummary(children, sessionStore.message, sessionStore.session_status)
   })
   const canExpand = createMemo(() => childSessions().length > 0)
-  const expanded = createMemo(() => !!props.expanded?.()[props.session.id] || !!props.lineage?.().has(props.session.id))
+  const expanded = createMemo(() => props.expanded?.()[props.session.id] !== false || !!props.lineage?.().has(props.session.id))
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
   const copy = () => {
     void navigator.clipboard
@@ -380,6 +524,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       hasPermissions={hasPermissions}
       hasError={hasError}
       unseenCount={unseenCount}
+      durationLabel={durationLabel}
       setHoverSession={props.setHoverSession}
       clearHoverProjectSoon={props.clearHoverProjectSoon}
       sidebarOpened={layout.sidebar.opened}
@@ -395,90 +540,120 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   )
 
   return (
-    <div>
-      <div
-        data-session-id={props.session.id}
-        class="group/session relative w-full rounded-md cursor-default pl-2 pr-3 transition-colors
-               hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
-      >
-        <Show
-          when={hoverEnabled()}
-          fallback={
-            <Tooltip placement={props.mobile ? "bottom" : "right"} value={title()} gutter={10}>
-              {item}
-            </Tooltip>
-          }
-        >
-          <SessionHoverPreview
-            mobile={props.mobile}
-            nav={props.nav}
-            hoverSession={props.hoverSession}
-            session={props.session}
-            sidebarHovering={props.sidebarHovering}
-            hoverReady={hoverReady}
-            hoverMessages={hoverMessages}
-            language={language}
-            isActive={isActive}
-            slug={props.slug}
-            setHoverSession={props.setHoverSession}
-            messageLabel={messageLabel}
-            onMessageSelect={(message) => {
-              if (!isActive())
-                layout.pendingMessage.set(`${base64Encode(props.session.directory)}/${props.session.id}`, message.id)
-
-              navigate(`${props.slug}/session/${props.session.id}#message-${message.id}`)
+    <Show when={visible(props.session)}>
+      <div class="relative">
+        <Show when={expanded() && filteredChildren().length > 0}>
+          <div
+            class="pointer-events-none absolute top-4 z-10 w-px bg-border-weak-base"
+            style={{
+              left: `${treeX((props.depth ?? 0) + 1)}px`,
+              height: row(props.dense),
             }}
-            trigger={item}
           />
         </Show>
-
-        <div
-          class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 pointer-events-auto`}
-        >
-          <Tooltip value={language.t("session.copyName")} placement="top">
-            <IconButton
-              icon="copy"
-              variant="ghost"
-              class="size-6 rounded-md"
-              aria-label={language.t("session.copyName")}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                copy()
-              }}
-            />
-          </Tooltip>
+        <Show when={props.session.parentID}>
           <div
-            class="transition-opacity"
-            classList={{
-              "opacity-100 pointer-events-auto": !!props.mobile,
-              "opacity-0 pointer-events-none": !props.mobile,
-              "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-              "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-            }}
+            class="pointer-events-none absolute w-px bg-border-weak-base"
+            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.first, props.last) }}
+          />
+          <div
+            class="pointer-events-none absolute top-4 h-px bg-border-weak-base"
+            style={{ left: `${treeX(props.depth) - 17}px`, width: "17px" }}
+          />
+        </Show>
+        <div
+          data-session-id={props.session.id}
+          class="group/session relative w-full rounded-md cursor-default pl-2 pr-3 transition-colors
+               hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+        >
+          <Show
+            when={hoverEnabled()}
+            fallback={
+              <Tooltip placement={props.mobile ? "bottom" : "right"} value={title()} gutter={10}>
+                {item}
+              </Tooltip>
+            }
           >
-            <Tooltip value={language.t("common.archive")} placement="top">
+            <SessionHoverPreview
+              mobile={props.mobile}
+              nav={props.nav}
+              hoverSession={props.hoverSession}
+              session={props.session}
+              sidebarHovering={props.sidebarHovering}
+              hoverReady={hoverReady}
+              hoverMessages={hoverMessages}
+              language={language}
+              isActive={isActive}
+              slug={props.slug}
+              setHoverSession={props.setHoverSession}
+              messageLabel={messageLabel}
+              onMessageSelect={(message) => {
+                if (!isActive())
+                  layout.pendingMessage.set(`${base64Encode(props.session.directory)}/${props.session.id}`, message.id)
+
+                navigate(`${props.slug}/session/${props.session.id}#message-${message.id}`)
+              }}
+              trigger={item}
+            />
+          </Show>
+
+          <div
+            class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 pointer-events-auto`}
+          >
+            <Tooltip value={language.t("session.copyName")} placement="top">
               <IconButton
-                icon="archive"
+                icon="copy"
                 variant="ghost"
                 class="size-6 rounded-md"
-                aria-label={language.t("common.archive")}
+                aria-label={language.t("session.copyName")}
                 onClick={(event) => {
                   event.preventDefault()
                   event.stopPropagation()
-                  void props.archiveSession(props.session)
+                  copy()
                 }}
               />
             </Tooltip>
+            <div
+              class="transition-opacity"
+              classList={{
+                "opacity-100 pointer-events-auto": !!props.mobile,
+                "opacity-0 pointer-events-none": !props.mobile,
+                "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+                "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
+              }}
+            >
+              <Tooltip value={language.t("common.archive")} placement="top">
+                <IconButton
+                  icon="archive"
+                  variant="ghost"
+                  class="size-6 rounded-md"
+                  aria-label={language.t("common.archive")}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void props.archiveSession(props.session)
+                  }}
+                />
+              </Tooltip>
+            </div>
           </div>
         </div>
+
+        <Show when={expanded()}>
+          <For each={filteredChildren()}>
+            {(session, index) => (
+              <SessionItem
+                {...props}
+                session={session}
+                depth={(props.depth ?? 0) + 1}
+                first={index() === 0}
+                last={index() === filteredChildren().length - 1}
+              />
+            )}
+          </For>
+        </Show>
       </div>
-      <Show when={expanded()}>
-        <For each={childSessions()}>
-          {(session) => <SessionItem {...props} session={session} depth={(props.depth ?? 0) + 1} />}
-        </For>
-      </Show>
-    </div>
+    </Show>
   )
 }
 

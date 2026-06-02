@@ -3,6 +3,7 @@ import * as fs from "fs/promises"
 import path from "path"
 import { AgentTemplateLoader } from "../../src/agent/loader"
 import { AgentRegistry } from "../../src/agent/registry"
+import { BUILTIN_AGENTS } from "../../src/agent/builtin.generated"
 
 describe("AgentTemplateLoader", () => {
   const loader = new AgentTemplateLoader()
@@ -37,6 +38,19 @@ describe("AgentTemplateLoader", () => {
       // Should always have built-in default agent
       expect(agents.find((a) => a.id === "default")).toBeDefined()
       expect(agents.length).toBeGreaterThanOrEqual(1)
+    })
+
+    test("loads bundled package agents when package directory is absent", async () => {
+      const emptyLoader = new AgentTemplateLoader("/nonexistent/path", "/also/nonexistent")
+      const agents = await emptyLoader.loadAll()
+      const ids = agents.map((item) => item.id)
+
+      expect(ids).toContain("default")
+      expect(ids).toContain("frontend")
+      expect(ids).toContain("backend")
+      expect(ids).toContain("security-reviewer")
+      expect(agents.find((item) => item.id === "default")?.source).toBe("package")
+      expect(agents.find((item) => item.id === "default")?.meta.runner).toBe("protocol")
     })
 
     test("built-in default fallback keeps custom allowed tool policy", async () => {
@@ -128,7 +142,11 @@ describe("AgentTemplateLoader", () => {
           agent.id === "data-migration-runner" ||
           agent.id === "incident-responder"
             ? "workflow"
-            : agent.id === "protocol-runner" || agent.id === "default"
+            : agent.id === "protocol-runner" ||
+                agent.id === "default" ||
+                agent.id === "milestone-planner" ||
+                agent.id === "epic-planner" ||
+                agent.id === "feature-planner"
               ? "protocol"
               : "chat"
         expect(agent.meta.runner).toBe(expected)
@@ -514,8 +532,8 @@ describe("AgentTemplateLoader", () => {
         const agents = await testLoader.loadAll()
         const duration = Date.now() - start
 
-        // User agents + built-in default (always included)
-        expect(agents.length).toBe(51)
+        // User agents + bundled package agents
+        expect(agents.length).toBe(50 + BUILTIN_AGENTS.length)
         expect(duration).toBeLessThan(1000)
       } finally {
         await fs.rm(tmp, { recursive: true })

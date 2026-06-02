@@ -50,6 +50,41 @@ const parser = lazy(async () => {
   return p
 })
 
+function quote(input: string) {
+  return input.replace(/^['"]|['"]$/g, "")
+}
+
+function exact(input: string, cwd: string) {
+  return /(^|\s)(--port|-p)\s+\d+(\s|$)/.test(input) || /:\d{2,5}\b/.test(input) || input.includes(cwd)
+}
+
+function pipeline(input: string, cwd: string) {
+  if (!/\b(?:kill|xargs\b[^;&|]*\bkill)\b/.test(input)) return false
+  if (!/\b(?:ps|pgrep)\b/.test(input)) return false
+  const match = input.match(/\bgrep\b[^;&|]*?(["'])(?<pattern>.*?)\1/)
+  const pattern = match?.groups?.pattern
+  if (!pattern) return false
+  if (!/(^|[| ])(?:vite|tsx\.\*src\/index)([| ]|$)/.test(pattern)) return false
+  return !exact(pattern, cwd)
+}
+
+function blocked(command: string, cwd: string) {
+  const normalized = command.replace(/\s+/g, " ")
+  if (pipeline(normalized, cwd)) return true
+  if (/\bkillall\s+(-\S+\s+)*vite(\s|$|[;&|])/.test(normalized)) return true
+  const match = normalized.match(/\bpkill\b(?<args>[^;&|]*)/)
+  if (!match?.groups?.args) return false
+  const raw = match.groups.args.trim()
+  const args = raw.split(/\s+/).map(quote)
+  const f = args.includes("-f") || args.some((arg) => arg.includes("f") && arg.startsWith("-"))
+  if (!f) return false
+  const quoted = raw.match(/(?:^|\s)-\S*f\S*\s+(["'])(?<pattern>.*?)\1/)
+  const pattern = quoted?.groups?.pattern ?? args.find((arg) => !arg.startsWith("-"))
+  if (!pattern) return false
+  if (!/\bvite\b/.test(pattern)) return false
+  return !exact(pattern, cwd)
+}
+
 // TODO: we may wanna rename this tool so it works better on other shells
 export const BashTool = Tool.define("bash", async () => {
   const shell = Shell.acceptable()
@@ -76,6 +111,11 @@ export const BashTool = Tool.define("bash", async () => {
     }),
     async execute(params, ctx) {
       const cwd = params.workdir || Instance.directory
+      if (blocked(params.command, cwd)) {
+        throw new Error(
+          "Refusing broad Vite process termination. Target the process by exact pid, port, or cwd before killing it.",
+        )
+      }
       if (params.timeout !== undefined && params.timeout < 0) {
         throw new Error(`Invalid timeout value: ${params.timeout}. Timeout must be a positive number.`)
       }

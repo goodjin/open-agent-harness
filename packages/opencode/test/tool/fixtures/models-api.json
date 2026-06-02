@@ -38321,9 +38321,24 @@
     "env": ["MINIMAX_API_KEY"],
     "npm": "@ai-sdk/anthropic",
     "api": "https://api.minimaxi.com/anthropic/v1",
-    "name": "MiniMax Coding Plan (minimaxi.com)",
-    "doc": "https://platform.minimaxi.com/docs/coding-plan/intro",
+    "name": "MiniMax Token Plan (minimaxi.com)",
+    "doc": "https://platform.minimaxi.com/docs/token-plan/intro",
     "models": {
+      "MiniMax-M3": {
+        "id": "MiniMax-M3",
+        "name": "MiniMax-M3",
+        "family": "minimax",
+        "attachment": true,
+        "reasoning": true,
+        "tool_call": true,
+        "temperature": true,
+        "release_date": "2026-05-31",
+        "last_updated": "2026-05-31",
+        "modalities": { "input": ["text", "image", "video"], "output": ["text"] },
+        "open_weights": true,
+        "cost": { "input": 0, "output": 0, "cache_read": 0, "cache_write": 0 },
+        "limit": { "context": 1000000, "output": 131072 }
+      },
       "MiniMax-M2": {
         "id": "MiniMax-M2",
         "name": "MiniMax-M2",

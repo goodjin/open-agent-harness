@@ -7,6 +7,7 @@ import { useGlobalSDK } from "@/context/global-sdk"
 import { useGlobalSync } from "./global-sync"
 import { useParams } from "@solidjs/router"
 import { decode64 } from "@/utils/base64"
+import { useSettings } from "./settings"
 import {
   acceptKey,
   directoryAcceptKey,
@@ -50,6 +51,7 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
     const params = useParams()
     const globalSDK = useGlobalSDK()
     const globalSync = useGlobalSync()
+    const settings = useSettings()
 
     const permissionsEnabled = createMemo(() => {
       const directory = decode64(params.dir)
@@ -140,16 +142,16 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
 
     function isAutoAccepting(sessionID: string, directory?: string) {
       const session = directory ? globalSync.child(directory, { bootstrap: false })[0].session : []
-      return autoRespondsPermission(store.autoAccept, session, { sessionID }, directory)
+      return autoRespondsPermission(store.autoAccept, session, { sessionID }, directory, settings.permissions.autoApprove())
     }
 
     function isAutoAcceptingDirectory(directory: string) {
-      return isDirectoryAutoAccepting(store.autoAccept, directory)
+      return isDirectoryAutoAccepting(store.autoAccept, directory, settings.permissions.autoApprove())
     }
 
     function shouldAutoRespond(permission: PermissionRequest, directory?: string) {
       const session = directory ? globalSync.child(directory, { bootstrap: false })[0].session : []
-      return autoRespondsPermission(store.autoAccept, session, permission, directory)
+      return autoRespondsPermission(store.autoAccept, session, permission, directory, settings.permissions.autoApprove())
     }
 
     function bumpEnableVersion(sessionID: string, directory?: string) {

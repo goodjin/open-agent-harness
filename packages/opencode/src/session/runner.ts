@@ -80,8 +80,17 @@ export namespace SessionRunner {
       : parsed.ok
         ? undefined
         : parsed.error
+    const sessionID = SessionID.make(stream.sessionID)
+    if (await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish })) {
+      await completeAssigned({
+        messageID: chat.message.id,
+        output: await textOf(chat.message.id),
+        sessionID,
+        status: chat.message.finish === "error" ? "failed" : "completed",
+      })
+      return "stop"
+    }
     if (!valid && !fixed && retry < 1) {
-      const sessionID = SessionID.make(stream.sessionID)
       await Promise.all(
         parts.flatMap((part) => {
           if (part.type !== "text") return []
@@ -182,7 +191,6 @@ export namespace SessionRunner {
       return result
     }
 
-    const sessionID = SessionID.make(stream.sessionID)
     await Promise.all(
       parts.flatMap((part) => {
         if (part.type === "text" && part.text.includes("agent-protocol")) {
@@ -305,6 +313,12 @@ export namespace SessionRunner {
         sessionID,
         parsed: parsedValue,
       })
+      await completeAssigned({
+        messageID: chat.message.id,
+        output: await textOf(chat.message.id),
+        sessionID,
+        status: chat.message.finish === "error" ? "failed" : "completed",
+      })
       return "stop"
     }
     const run = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: !!fixed })
@@ -347,10 +361,12 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
-      await final({
-        stream,
-        run,
-      }, 0)
+      if (!delegated(run)) {
+        await final({
+          stream,
+          run,
+        }, 0)
+      }
     } else {
       await Session.updatePart({
         id: PartID.ascending(),
@@ -419,6 +435,8 @@ export namespace SessionRunner {
             ? delegate({
                 action,
                 prompt,
+                parentAgent: input.stream.agent.name,
+                runID,
                 sessionID: input.sessionID,
                 messageID: input.chat.message.id,
                 abort: input.stream.abort,
@@ -485,6 +503,40 @@ export namespace SessionRunner {
       },
     })
     return run
+  }
+
+  async function answer(input: {
+    sessionID: SessionID
+    messageID: MessageID
+    text: string
+    problem: { code: string } | undefined
+    finish: MessageV2.Assistant["finish"]
+  }) {
+    const text = input.text.trim()
+    if (!text) return false
+    if (input.finish !== "stop") return false
+    if (input.problem?.code !== "missing_block") return false
+    if (pseudo(text)) return false
+    if (!(await previous(input.sessionID))) return false
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      level: "info",
+      type: "protocol.final.plain",
+      data: { textBytes: text.length, source: "followup" },
+    })
+    return true
+  }
+
+  async function previous(sessionID: SessionID) {
+    const session = await Session.get(sessionID)
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const protocol = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : undefined
+    if (!protocol) return false
+    if (Array.isArray(protocol.runs) && protocol.runs.length > 0) return true
+    if (Array.isArray(protocol.completed_delegations) && protocol.completed_delegations.length > 0) return true
+    if (protocol.delegation && typeof protocol.delegation === "object") return true
+    return false
   }
 
   async function final(input: {
@@ -570,6 +622,12 @@ export namespace SessionRunner {
     if (parsed) {
       const sessionID = SessionID.make(input.stream.sessionID)
       if (parsed.declaration.intent === "execute") {
+        await intro({
+          messageID: msg.id,
+          sessionID,
+          parsed,
+          recovered: false,
+        })
         const reason = cycle(input.run, parsed.declaration, retry)
         if (reason) {
           await loop({
@@ -617,10 +675,12 @@ export namespace SessionRunner {
             },
             time: { start: Date.now(), end: Date.now() },
           })
-          await final({
-            stream: input.stream,
-            run,
-          }, retry + 1)
+          if (!delegated(run)) {
+            await final({
+              stream: input.stream,
+              run,
+            }, retry + 1)
+          }
           return
         } else {
           await Session.updatePart({
@@ -694,6 +754,12 @@ export namespace SessionRunner {
       level: "info",
       type: "protocol.final.completed",
       data: { runID: input.run.run_id },
+    })
+    await completeAssigned({
+      messageID: msg.id,
+      output: await textOf(msg.id),
+      sessionID: SessionID.make(input.stream.sessionID),
+      status: msg.finish === "error" ? "failed" : "completed",
     })
   }
 
@@ -831,6 +897,28 @@ export namespace SessionRunner {
     input.chat.message.finish = "stop"
     input.chat.message.time.completed = Date.now()
     await Session.updateMessage(input.chat.message)
+  }
+
+  async function intro(input: {
+    messageID: MessageID
+    sessionID: SessionID
+    parsed: AgentProtocolParser.Parsed
+    recovered: boolean
+  }) {
+    const msg = input.parsed.declaration.message?.trim()
+    if (!msg) return
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: input.messageID,
+      sessionID: input.sessionID,
+      type: "text",
+      text: msg,
+      metadata: {
+        kind: "protocol_intro",
+        recovered: input.recovered,
+      },
+      time: { start: Date.now(), end: Date.now() },
+    })
   }
 
   async function protocolOutput(messageID: MessageID) {
@@ -1001,6 +1089,12 @@ export namespace SessionRunner {
     return `${input.slice(0, 8000)}\n\n[Output truncated: ${input.length - 8000} more characters]`
   }
 
+  function delegated(run: AgentProtocol.Result) {
+    return run.actions.some((item) =>
+      (item.output ?? item.summary).includes("The parent session will resume automatically when the child result is available.")
+    )
+  }
+
   function goal(stream: LLM.StreamInput) {
     const last = stream.messages.findLast((item) => item.role === "user")
     if (!last) return ""
@@ -1013,6 +1107,14 @@ export namespace SessionRunner {
 
   function recover(text: string, stream: LLM.StreamInput): AgentProtocolParser.Parsed | undefined {
     if (!pseudo(text)) return
+    const output = flatOutput(text) ?? bareOutput(text)
+    if (output) {
+      return {
+        declaration: AgentProtocol.parse(output),
+        sections: { goal: goal(stream) },
+        raw: text,
+      }
+    }
     const invoked = invoke(text)
     if (invoked.length > 0) {
       return {
@@ -1042,10 +1144,11 @@ export namespace SessionRunner {
         raw: text,
       }
     }
-    const refs = [...text.matchAll(/(?:^|\s)(\/?[\w./*-]+\.(?:html|js|ts|tsx|jsx|vue|json|md|css))(?=\s|$|[,，。])/giu)]
+    const refs = [...text.matchAll(/(?:^|[\s`"'(（])((?:\/|\.{1,2}\/)?[\w./*-]+\.(?:html|js|ts|tsx|jsx|vue|json|md|css))(?=\s|$|[`"')），,，。:：])/giu)]
       .map((item) => item[1])
       .filter((item): item is string => !!item)
-    const actions = (refs.length ? refs : ["**/*.{html,js,ts,tsx,jsx,vue,json,md,css}"]).map((ref, idx) => {
+    if (refs.length === 0) return
+    const actions = refs.map((ref, idx) => {
       const globbed = /[*?]/.test(ref)
       const file = globbed && ref.startsWith("/*.") ? `**${ref}` : ref
       return {
@@ -1077,6 +1180,98 @@ export namespace SessionRunner {
       sections: { goal: goal(stream) },
       raw: text,
     }
+  }
+
+  function flatOutput(text: string) {
+    const body = invokeBody(text, "agentprotocoloutput")
+    if (!body) return
+    const kind = tag(body, "kind")
+    if (kind !== "act" && kind !== "answer" && kind !== "done") return
+    const message = tag(body, "message") ?? ""
+    if (kind !== "act") return { kind, message }
+    const calls = [...(tag(body, "calls") ?? "").matchAll(/<item>([\s\S]*?)<\/item>/gi)]
+      .map((item) => xmlCall(item[1] ?? ""))
+      .filter((item): item is { id: string; type: "tool" | "agent"; name: string; args: Record<string, unknown>; depends: string[]; result: string } => !!item)
+    if (calls.length === 0) return
+    return { kind, message, calls }
+  }
+
+  function bareOutput(text: string) {
+    const body = normalized(text)
+    if (!/"type"\s*:\s*"tool-call"|<tool_call>|\btool_call\b/i.test(body)) return
+    const call = xmlCall(body)
+    if (!call) return
+    return {
+      kind: "act",
+      message: message(text),
+      calls: [call],
+    }
+  }
+
+  function invokeBody(text: string, name: string) {
+    return [...normalized(text).matchAll(/<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi)]
+      .find((item) => item[1]?.trim().toLowerCase() === name)?.[2]
+  }
+
+  function normalized(text: string) {
+    return text.replace(/\]<\]minimax\[>\[/g, "")
+  }
+
+  function message(text: string) {
+    return text
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .find((item) => item.length > 0 && !/"type"\s*:\s*"tool-call"|<tool_call>|\btool_call\b|<id>|<type>|<name>|<args>/i.test(item))
+      ?? "Recovered textual tool request"
+  }
+
+
+  function xmlCall(input: string) {
+    const id = tag(input, "id")
+    const type = tag(input, "type")
+    const name = tag(input, "name")
+    if (!id || !name || (type !== "tool" && type !== "agent")) return
+    const args = argsOf(tag(input, "args") ?? "")
+    return {
+      id,
+      type,
+      name,
+      args,
+      depends: depends(tag(input, "depends")),
+      result: tag(input, "result") ?? "summary",
+    }
+  }
+
+  function argsOf(input: string) {
+    const out: Record<string, unknown> = {}
+    for (const item of input.matchAll(/<([A-Za-z0-9_.-]+)>([\s\S]*?)<\/\1>/g)) {
+      const key = item[1]
+      if (!key) continue
+      out[key] = xml(item[2] ?? "")
+    }
+    return out
+  }
+
+  function depends(input: string | undefined) {
+    if (!input) return []
+    return input
+      .split(/[\s,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  function tag(input: string, name: string) {
+    return xml(input.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "i"))?.[1])
+  }
+
+  function xml(input: string | undefined) {
+    return input
+      ?.trim()
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&")
   }
 
   function invoke(text: string) {
@@ -1118,12 +1313,14 @@ export namespace SessionRunner {
   }
 
   function pseudo(text: string) {
-    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool_call\b|\btool\s*=>/i.test(text)
+    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|\btool\s*=>/i.test(text)
   }
 
   async function delegate(input: {
     action: AgentProtocol.Action
     prompt: string | undefined
+    parentAgent: string
+    runID: string
     sessionID: SessionID
     messageID: MessageID
     abort: AbortSignal
@@ -1162,28 +1359,52 @@ export namespace SessionRunner {
       type: "protocol.agent.started",
       data: { actionID: input.action.id, agent: selected.agent.name, childSessionID: child.id },
     })
-    function cancel() {
-      SessionPrompt.cancel(child.id)
-    }
-    input.abort.addEventListener("abort", cancel)
-    using _ = defer(() => input.abort.removeEventListener("abort", cancel))
-    const text = await SessionPrompt.prompt({
-      sessionID: child.id,
+    await handoffPending({
+      action: input.action,
       agent: selected.agent.name,
-      parts: await SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent.name)),
-    }).then((msg) => msg.parts.findLast((part) => part.type === "text")?.text ?? "")
-    input.abort.throwIfAborted()
-    await SessionLog.emit({
-      sessionID: input.sessionID,
+      childID: child.id,
       messageID: input.messageID,
-      level: "info",
-      type: "protocol.agent.completed",
-      data: { actionID: input.action.id, agent: selected.agent.name, childSessionID: child.id, outputBytes: text.length },
+      parentAgent: input.parentAgent,
+      runID: input.runID,
+      sessionID: input.sessionID,
     })
+    setTimeout(() => {
+      SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent.name))
+        .then((parts) =>
+          SessionPrompt.prompt({
+            sessionID: child.id,
+            agent: selected.agent.name,
+            parts,
+          }))
+        .then((msg) => finishDelegation({
+          action: input.action,
+          agent: selected.agent.name,
+          childID: child.id,
+          messageID: input.messageID,
+          parentAgent: input.parentAgent,
+          parentID: input.sessionID,
+          result: msg,
+          runID: input.runID,
+        }))
+        .catch((err) => failDelegation({
+          action: input.action,
+          agent: selected.agent.name,
+          childID: child.id,
+          messageID: input.messageID,
+          parentAgent: input.parentAgent,
+          parentID: input.sessionID,
+          runID: input.runID,
+          error: err,
+        }))
+    }, 0)
     return {
       title: input.action.title,
-      output: text,
-      metadata: { agentID: selected.agent.name, childSessionID: child.id },
+      output: [
+        `Delegated to ${selected.agent.name}.`,
+        `Child session: ${child.id}`,
+        "The parent session will resume automatically when the child result is available.",
+      ].join("\n"),
+      metadata: { agentID: selected.agent.name, childSessionID: child.id, delegated: true },
     }
   }
 
@@ -1225,6 +1446,274 @@ export namespace SessionRunner {
     if (input === "on_failure") return "Keep the result brief unless the task fails; if it fails, include the failure details and next step."
     if (input === "on_demand") return "Keep the result brief and mention where more detail is available if needed."
     return "Adapt the level of detail to the task complexity and risk."
+  }
+
+  async function handoffPending(input: {
+    action: AgentProtocol.Action
+    agent: string
+    childID: SessionID
+    messageID: MessageID
+    parentAgent: string
+    runID: string
+    sessionID: SessionID
+  }) {
+    const session = await Session.get(input.sessionID)
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
+    const pending = prev.pending_delegations && typeof prev.pending_delegations === "object" && !Array.isArray(prev.pending_delegations)
+      ? prev.pending_delegations as Record<string, unknown>
+      : {}
+    await Session.setDslContext({
+      sessionID: input.sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          pending_delegations: {
+            ...pending,
+            [input.childID]: {
+              type: "agent.delegation.pending",
+              version: "1",
+              run_id: input.runID,
+              action_id: input.action.id,
+              action_title: input.action.title,
+              parent_session_id: input.sessionID,
+              parent_message_id: input.messageID,
+              parent_agent: input.parentAgent,
+              child_session_id: input.childID,
+              agent: input.agent,
+              result_policy: input.action.result_policy,
+              created_at: Date.now(),
+            },
+          },
+        },
+      },
+    })
+    await Session.setDslContext({
+      sessionID: input.childID,
+      dsl_context: {
+        protocol: {
+          delegation: {
+            type: "agent.delegation.assignment",
+            version: "1",
+            run_id: input.runID,
+            action_id: input.action.id,
+            action_title: input.action.title,
+            parent_session_id: input.sessionID,
+            parent_message_id: input.messageID,
+            parent_agent: input.parentAgent,
+            child_session_id: input.childID,
+            agent: input.agent,
+            result_policy: input.action.result_policy,
+            created_at: Date.now(),
+          },
+        },
+      },
+    })
+  }
+
+  async function finishDelegation(input: {
+    action: AgentProtocol.Action
+    agent: string
+    childID: SessionID
+    messageID: MessageID
+    parentAgent: string
+    parentID: SessionID
+    result: MessageV2.WithParts
+    runID: string
+  }) {
+    const text = input.result.parts.findLast((part) => part.type === "text")?.text ?? ""
+    if (text.includes("The parent session will resume automatically when the child result is available.")) {
+      await SessionLog.emit({
+        sessionID: input.parentID,
+        messageID: input.messageID,
+        level: "info",
+        type: "protocol.agent.waiting",
+        data: { actionID: input.action.id, agent: input.agent, childSessionID: input.childID },
+      })
+      return
+    }
+    await SessionLog.emit({
+      sessionID: input.parentID,
+      messageID: input.messageID,
+      level: "info",
+      type: "protocol.agent.completed",
+      data: { actionID: input.action.id, agent: input.agent, childSessionID: input.childID, outputBytes: text.length },
+    })
+    await completeDelegation({
+      action: input.action,
+      agent: input.agent,
+      childID: input.childID,
+      messageID: input.messageID,
+      parentAgent: input.parentAgent,
+      parentID: input.parentID,
+      runID: input.runID,
+      status: input.result.info.role === "assistant" && input.result.info.finish === "error" ? "failed" : "completed",
+      output: text,
+    })
+  }
+
+  async function failDelegation(input: {
+    action: AgentProtocol.Action
+    agent: string
+    childID: SessionID
+    error: unknown
+    messageID: MessageID
+    parentAgent: string
+    parentID: SessionID
+    runID: string
+  }) {
+    const msg = input.error instanceof Error ? input.error.message : String(input.error)
+    await SessionLog.emit({
+      sessionID: input.parentID,
+      messageID: input.messageID,
+      level: "warn",
+      type: "protocol.agent.failed",
+      data: { actionID: input.action.id, agent: input.agent, childSessionID: input.childID, error: msg },
+    })
+    await completeDelegation({
+      action: input.action,
+      agent: input.agent,
+      childID: input.childID,
+      messageID: input.messageID,
+      parentAgent: input.parentAgent,
+      parentID: input.parentID,
+      runID: input.runID,
+      status: "failed",
+      output: msg,
+    })
+  }
+
+  async function completeDelegation(input: {
+    action: AgentProtocol.Action
+    agent: string
+    childID: SessionID
+    messageID: MessageID
+    parentAgent: string
+    parentID: SessionID
+    runID: string
+    status: "completed" | "failed"
+    output: string
+  }) {
+    const packet = {
+      type: "agent.delegation.result",
+      version: "1",
+      status: input.status,
+      run_id: input.runID,
+      action_id: input.action.id,
+      action_title: input.action.title,
+      parent_session_id: input.parentID,
+      parent_message_id: input.messageID,
+      child_session_id: input.childID,
+      agent: input.agent,
+      result_policy: input.action.result_policy,
+      completed_at: Date.now(),
+      summary: input.output.slice(0, 4000),
+      output: input.output,
+    }
+    await completeContext(input.parentID, input.childID, packet)
+    await SessionPrompt.prompt({
+      sessionID: input.parentID,
+      agent: input.parentAgent,
+      parts: [
+        {
+          type: "text",
+          text: [
+            "A delegated agent task has completed. Continue the parent task using this result.",
+            "",
+            "<agent-delegation-result>",
+            JSON.stringify(packet, null, 2),
+            "</agent-delegation-result>",
+            "",
+            "Use the result to decide the next step. If more delegated work is needed, issue the next AgentProtocolOutput package. If the parent task is complete, answer the user with the current status.",
+          ].join("\n"),
+        },
+      ],
+    })
+  }
+
+  async function completeAssigned(input: {
+    messageID: MessageID
+    output: string
+    sessionID: SessionID
+    status: "completed" | "failed"
+  }) {
+    const session = await Session.get(input.sessionID)
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
+    const item = prev.delegation && typeof prev.delegation === "object" && !Array.isArray(prev.delegation)
+      ? prev.delegation as Record<string, unknown>
+      : undefined
+    if (!item || item.type !== "agent.delegation.assignment" || item.status === "completed" || item.status === "failed") return
+    if (
+      typeof item.action_id !== "string" ||
+      typeof item.action_title !== "string" ||
+      typeof item.agent !== "string" ||
+      typeof item.child_session_id !== "string" ||
+      typeof item.parent_agent !== "string" ||
+      typeof item.parent_message_id !== "string" ||
+      typeof item.parent_session_id !== "string" ||
+      typeof item.result_policy !== "string" ||
+      typeof item.run_id !== "string"
+    ) return
+    await completeDelegation({
+      action: {
+        type: "action",
+        id: item.action_id,
+        title: item.action_title,
+        operation: "agent",
+        executor: { type: "agent", target: item.agent, capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: item.result_policy as AgentProtocol.Action["result_policy"],
+      },
+      agent: item.agent,
+      childID: SessionID.make(item.child_session_id),
+      messageID: MessageID.make(item.parent_message_id),
+      parentAgent: item.parent_agent,
+      parentID: SessionID.make(item.parent_session_id),
+      runID: item.run_id,
+      status: input.status,
+      output: input.output,
+    })
+    await Session.setDslContext({
+      sessionID: input.sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          delegation: {
+            ...item,
+            status: input.status,
+            completed_at: Date.now(),
+            completed_message_id: input.messageID,
+          },
+        },
+      },
+    })
+  }
+
+  async function completeContext(sessionID: SessionID, childID: SessionID, packet: Record<string, unknown>) {
+    const session = await Session.get(sessionID)
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
+    const pending = prev.pending_delegations && typeof prev.pending_delegations === "object" && !Array.isArray(prev.pending_delegations)
+      ? { ...prev.pending_delegations as Record<string, unknown> }
+      : {}
+    delete pending[childID]
+    const completed = Array.isArray(prev.completed_delegations) ? prev.completed_delegations : []
+    await Session.setDslContext({
+      sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          pending_delegations: pending,
+          completed_delegations: [...completed, packet],
+        },
+      },
+    })
   }
 
   function text(input: unknown) {

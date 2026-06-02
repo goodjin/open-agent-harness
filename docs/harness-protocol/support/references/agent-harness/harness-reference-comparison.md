@@ -89,6 +89,22 @@ OpenAI Agents SDK 的 model-native harness 更接近运行层：sandbox、worksp
 - 本协议以 provider-agnostic 的 Runtime、Action DSL、Event / Projection 和治理边界为中心。
 - OpenAI 用 SDK primitives 表达能力；本协议需要定义跨模型、跨工具、跨 adapter 的规范对象。
 
+## 与 Agent Harness Engineering 综述的关系
+
+《Agent Harness Engineering: A Survey》提出 ETCLOVG 七层分类：Execution、Tooling、Context、Lifecycle、Observability、Verification、Governance。
+
+这套分类与我们的协议架构基本兼容：
+
+- Execution 对应执行平面、Executor、sandbox / workspace contract。
+- Tooling 对应模型交互平面和执行平面之间的 Action / toolCall normalization / tool protocol。
+- Context 对应上下文构造平面。
+- Lifecycle 对应 Run、Assignment、Workflow adapter、Trigger 和 Decision。
+- Observability 对应状态控制平面中的 Event、Trace、Artifact、Projection 和 export。
+- Verification 对应 Gate、Review、Verification 和 evaluation loop adapter。
+- Governance 对应 Authority、Scope、Command、approval、audit 和 UI 操作面。
+
+该综述对本协议的最大补充是：Observability 和 Governance 不应只是执行流程旁边的附属能力，而应作为生产 Harness 的独立控制维度持续展开。它也提出 trace-native evaluation 和 harness coupling problem，这两点会影响状态协议、评测 adapter 和后续兼容策略。
+
 ## 与 Anthropic 的差异
 
 Anthropic 的资料与本协议关系最直接，尤其是 Managed Agents 中的 session / harness / sandbox 解耦。

@@ -5,6 +5,7 @@ import { Log } from "../util/log"
 import { AgentTemplate as Schema } from "./schema"
 import { Metrics } from "@/observability/metrics"
 import { ConfigMarkdown } from "@/config/markdown"
+import { BUILTIN_AGENTS } from "./builtin.generated"
 
 const log = Log.create({ service: "agent-loader" })
 
@@ -131,6 +132,10 @@ export class AgentTemplateLoader {
     this.diagnostics = []
     const map = new Map<string, AgentTemplate>()
     const statuses: AgentTemplateStatus[] = []
+
+    for (const item of BUILTIN_AGENTS) {
+      map.set(item.id, item)
+    }
 
     for (const item of await this.loadSkills(this.fallbackDir, "package")) {
       map.set(item.id, item)

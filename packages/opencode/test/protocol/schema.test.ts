@@ -94,6 +94,24 @@ describe("agent protocol schema", () => {
     ])
   })
 
+  test("accepts calls string with raw control characters inside prompts", () => {
+    const out = AgentProtocol.parse({
+      kind: "act",
+      message: "Continue with parser work.",
+      calls:
+        '[{"id":"implement_parser","type":"agent","name":"backend","args":{"prompt":"Read the guide.\nThen implement the parser.\tKeep errors useful."},"result":"summary"}]',
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "implement_parser",
+      executor: { type: "agent", target: "backend", capabilities: [] },
+      input: { prompt: "Read the guide.\nThen implement the parser.\tKeep errors useful." },
+    })
+  })
+
   test("recovers flat output wrapped in input string", () => {
     const out = AgentProtocol.parse({
       input: JSON.stringify({
@@ -142,6 +160,22 @@ describe("agent protocol schema", () => {
       executor: { type: "agent", target: "auto", capabilities: ["general"] },
       input: { description: "A", subagent_type: "general", depends: [] },
     })
+  })
+
+  test("repairs flat calls missing closing braces before dependency-first calls", () => {
+    const out = AgentProtocol.parse({
+      kind: "act",
+      message: "Continue implementation.",
+      calls:
+        '[{"id":"write_sample","type":"agent","name":"frontend","args":{"prompt":"Write files"}}, {"depends":["write_sample"],"id":"verify_sample","type":"agent","name":"verifier","args":{"prompt":"Verify files"}}]',
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions.map((item) => [item.id, item.depends_on])).toEqual([
+      ["write_sample", []],
+      ["verify_sample", ["write_sample"]],
+    ])
   })
 
   test("accepts flat agent calls", () => {

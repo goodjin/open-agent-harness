@@ -1,0 +1,1231 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Protocol DSL：LLM 与 Runtime 的交互协议</title>
+    <meta
+      name="description"
+      content="Agent Protocol DSL 是 Open Agent Harness 治理协议中的模型-Runtime 交互协议，用于声明式表达模型意图并交由 Runtime 治理执行。"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f8;
+        --paper: #ffffff;
+        --ink: #172026;
+        --muted: #5c6873;
+        --line: #d8dee4;
+        --soft: #f7f9fb;
+        --code: #0f172a;
+        --accent: #0f766e;
+        --accent-soft: #e7f7f4;
+        --accent-2: #7c3aed;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 16px;
+        line-height: 1.68;
+      }
+
+      main {
+        width: min(1120px, calc(100vw - 36px));
+        margin: 0 auto;
+        background: var(--paper);
+        min-height: 100vh;
+        padding: 56px 72px 84px;
+        box-shadow: 0 18px 64px rgba(15, 23, 42, 0.08);
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        margin-bottom: 34px;
+        padding-bottom: 30px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 14px;
+      }
+
+      h1 {
+        font-size: clamp(32px, 5vw, 52px);
+        line-height: 1.08;
+        letter-spacing: 0;
+        margin: 0 0 18px;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 19px;
+        max-width: 860px;
+        margin: 0;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 22px;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 4px 11px;
+        background: #fbfcfd;
+      }
+
+      section { margin: 34px 0; }
+
+      .lead {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 18px 20px;
+      }
+
+      .panel h2 { margin-top: 0; }
+
+      .principles {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .principle {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px 16px;
+        background: #fff;
+      }
+
+      .principle strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      .note {
+        border-left: 4px solid var(--accent-2);
+        background: #f5f3ff;
+        padding: 12px 16px;
+        margin: 18px 0 24px;
+      }
+
+      h2 {
+        font-size: 25px;
+        line-height: 1.25;
+        margin: 38px 0 12px;
+      }
+
+      h3 {
+        font-size: 19px;
+        line-height: 1.3;
+        margin: 28px 0 8px;
+      }
+
+      h4 {
+        font-size: 16px;
+        margin: 22px 0 6px;
+      }
+
+      p { margin: 0 0 14px; }
+      ul, ol { margin: 10px 0 18px 24px; padding: 0; }
+      li { margin: 5px 0; }
+      a { color: var(--accent); }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 18px 0 26px;
+        font-size: 14px;
+      }
+
+      th, td {
+        border: 1px solid var(--line);
+        padding: 9px 11px;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--soft);
+        text-align: left;
+      }
+
+      code {
+        color: var(--code);
+        background: #eef2f6;
+        border-radius: 5px;
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      pre {
+        overflow-x: auto;
+        background: #0f172a;
+        color: #e5e7eb;
+        border-radius: 8px;
+        padding: 16px 18px;
+        line-height: 1.52;
+        margin: 16px 0 24px;
+      }
+
+      pre code {
+        color: inherit;
+        background: transparent;
+        padding: 0;
+      }
+
+      blockquote {
+        border-left: 4px solid var(--accent);
+        margin: 18px 0 24px;
+        padding: 10px 16px;
+        background: var(--accent-soft);
+        color: #134e4a;
+      }
+
+      .protocol {
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+        margin-top: 42px;
+      }
+
+      .protocol > h1:first-child {
+        font-size: 34px;
+        margin-top: 0;
+      }
+
+      @media (max-width: 860px) {
+        main {
+          width: 100%;
+          padding: 34px 22px 54px;
+          box-shadow: none;
+        }
+        .lead, .principles { grid-template-columns: 1fr; }
+      }
+
+      @media print {
+        body { background: #fff; }
+        main { width: auto; max-width: none; padding: 32px 44px; box-shadow: none; }
+        a { color: inherit; text-decoration: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">Open Agent Harness · Model-Runtime Protocol</div>
+        <h1>Agent Protocol DSL</h1>
+        <p class="subtitle">
+          这是 Open Agent Harness 治理协议中的模型-Runtime 交互协议章节，定义模型如何声明意图、Runtime 如何治理执行、以及执行结果如何以可控 observation 返回模型。
+        </p>
+        <div class="meta">
+          <span class="pill">Model-Runtime Protocol</span>
+          <span class="pill">Declarative Action Graph</span>
+          <span class="pill">Runtime Governance</span>
+          <span class="pill">ToolCall Carrier Compatible</span>
+          <span class="pill">Trace / Observability</span>
+        </div>
+      </header>
+
+      <section class="lead">
+        <div class="panel">
+          <h2>协议定位</h2>
+          <p>
+            Agent Protocol DSL 不是多 Agent 治理协议总纲，而是其中的模型交互协议。总纲定义 Harness 的治理愿景、对象关系、状态模型和分层边界；本协议只处理模型与 Runtime 之间如何表达、校验、执行和返回结果。
+          </p>
+          <p>
+            它的目标是让模型声明“想做什么”，而不是让模型直接拥有工具执行权。Runtime 接收声明后负责解析、校验、调度、执行、记录、投影和恢复。
+          </p>
+        </div>
+        <div class="panel">
+          <h2>设计思路</h2>
+          <p>
+            模型保留判断、规划和解释能力；Runtime 接管权限、状态、执行、观测和恢复。协议的核心形态是声明式 action graph：模型描述语义动作、依赖关系、上下文引用、结果策略和持久化意图。
+          </p>
+          <p>
+            为了适配当前模型能力，协议可以通过 Runtime 拥有的 toolCall carrier 承载，例如 <code>AgentProtocolOutput</code>。ToolCall 只是承载方式，协议边界仍然是 Runtime 接受并归一化后的 Action。
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>对现有 Agent 交互方式的改变</h2>
+        <div class="principles">
+          <div class="principle">
+            <strong>1. 从工具调用变成意图声明</strong>
+            模型声明语义 Action，Runtime 决定是否允许、由谁执行、如何记录。
+          </div>
+          <div class="principle">
+            <strong>2. 从逐步循环变成 Action Graph</strong>
+            模型可以声明多个 Action 及其依赖，Runtime 可以并行、排序、阻塞、恢复和压缩结果。
+          </div>
+          <div class="principle">
+            <strong>3. 从原样返回变成 Observation Policy</strong>
+            Runtime 按策略返回摘要、结构化结果、引用或失败信息，完整输出进入 Artifact 和 Trace。
+          </div>
+          <div class="principle">
+            <strong>4. 从会话历史变成上下文构造</strong>
+            Session log 是持久记录；模型上下文是 Runtime 根据场景动态构造的输入。
+          </div>
+          <div class="principle">
+            <strong>5. 从隐式委派变成受控 Assignment</strong>
+            Agent delegation 先归一化为 Action，再由 Runtime 创建 Assignment；当工作需要跨会话接续时，再生成结构化 Handoff。
+          </div>
+          <div class="principle">
+            <strong>6. 从聊天痕迹变成治理证据</strong>
+            Event、Projection、Trace 和 Artifact 共同构成可审计、可恢复、可评测的运行记录。
+          </div>
+        </div>
+      </section>
+
+      <section class="note">
+        <p>
+          以下是模型-Runtime 交互协议全文。本协议是 Open Agent Harness 治理协议的一部分，负责定义模型输出、Runtime 归一化、执行结果回放、上下文噪声控制和 Workflow Adapter 的连接边界。
+        </p>
+      </section>
+
+      <article class="protocol">
+        <h1>Agent Protocol DSL</h1>
+<h2>目标</h2>
+<p>Agent Protocol DSL 是 Open Agent Harness 中的模型-Runtime 交互协议。</p>
+<p>它的目标形态是一套通用 DSL：模型声明语义 Action、依赖关系、上下文引用、结果策略、持久化策略和恢复意图；Runtime 在 Harness 治理边界内校验并执行这些声明。</p>
+<p>该协议可以表达短生命周期的工具编排、Agent 任务委派、上下文请求、引用展开、UI 可见的结构化结果、恢复决策和最终报告。Workflow 这类 durable orchestration 可以建立在本协议之上，但 Workflow 不是本协议的边界。</p>
+<p>本协议不是让模型编写一门替代 Runtime 的程序语言。它让模型以结构化方式声明意图，同时让 Runtime 拥有解析、校验、执行、权限、调度、存储、恢复和上下文构造的控制权。</p>
+<h2>协议载体与恢复</h2>
+<p>协议目标是通用 DSL。模型侧载体可以随 Runtime 版本和模型能力变化。</p>
+<p>当前可通过 Runtime 拥有的 toolCall entrypoint 承载协议声明，例如 <code>AgentProtocolOutput</code>。这个 toolCall 是协议载体，不是协议边界本身。</p>
+<p>Runtime 应把所有被接受的执行请求归一化为同一种内部 Action 表示：</p>
+<ul>
+<li>Harness DSL 声明</li>
+<li><code>AgentProtocolOutput</code> toolCall carrier</li>
+<li>可安全恢复的直接工具请求</li>
+<li>可安全恢复的任务或委派请求</li>
+</ul>
+<p>只有当意图明确且 policy 允许时，Runtime 才可以执行恢复。如果 Runtime 无法确定 executor、参数、side effect、依赖或权限，就不执行；它应返回协议错误，或要求模型按协议格式重试。</p>
+<h2>核心主张</h2>
+<p>Agent Protocol DSL 是声明式协议。</p>
+<pre><code class="language-txt">模型声明一个 action graph：
+- 检查这些来源
+- 并行执行这些 Action
+- 将一个结果作为后续 Action 的输入
+- 除非需要细节，否则只返回摘要
+- 当任务需要 durable recovery 时持久化运行记录
+</code></pre>
+<p>Runtime 解释并执行这个声明。模型专注于目标、计划、判断和最终解释，不再管理每一个底层工具步骤。</p>
+<h2>为什么使用 Action Graph</h2>
+<p>Agent Protocol DSL 可以表达更高层的 Action Graph：</p>
+<ul>
+<li>语义 Action，而不是原始工具调用</li>
+<li>Action 之间的依赖</li>
+<li>条件执行</li>
+<li>有边界的循环</li>
+<li>结果返回策略</li>
+<li>持久化策略</li>
+<li>失败策略</li>
+<li>权限要求</li>
+<li>模型可见摘要策略</li>
+<li>Runtime 可见完整 Artifact 存储</li>
+</ul>
+<p>DSL 的价值不是消除所有信息量，而是让 Runtime 能把大量低层工具操作压缩成更少的语义 Action，并只把有用的结果层返回给模型。</p>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;title&quot;: &quot;Review Toolbar&quot;,
+  &quot;description&quot;: &quot;Review toolbar button implementation and interaction boundaries.&quot;,
+  &quot;reason&quot;: &quot;The user asked for per-button review across behavior, display, focus, undo/redo, and edge cases.&quot;,
+  &quot;operation&quot;: &quot;review_code&quot;,
+  &quot;executor&quot;: {
+    &quot;type&quot;: &quot;agent&quot;,
+    &quot;target&quot;: &quot;auto&quot;,
+    &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;frontend&quot;]
+  }
+}
+</code></pre>
+<p>模型随后收到的是：</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;title&quot;: &quot;Review Toolbar&quot;,
+  &quot;description&quot;: &quot;Review toolbar button implementation and interaction boundaries.&quot;,
+  &quot;status&quot;: &quot;completed&quot;,
+  &quot;summary&quot;: &quot;Found two issues: undo/redo state is not wired through, and the table dropdown can be hidden by a higher layer.&quot;
+}
+</code></pre>
+<p>这里仍然保留 <code>id</code>，但避免把每次搜索、读取、编辑、测试、重试和原始 stdout 都暴露给模型，除非模型确实需要这些细节。</p>
+<h2>上下文噪声策略</h2>
+<p>Provider 侧缓存可以降低重复 prompt 前缀的成本和延迟，但它不会消除语义噪声。</p>
+<p>如果过期 trace、失败尝试、冗长原始输出和已废弃计划都出现在模型上下文中，模型仍然可能关注它们。缓存 token 可能更便宜，但它们仍是 prompt 的一部分。噪声关乎注意力、显著性、歧义和过期信息，不只是 token 计算成本。</p>
+<p>因此，Agent Protocol DSL 把上下文构造作为 Runtime 的一等职责。</p>
+<h2>适用范围</h2>
+<p>本协议面向明确配置为可使用该协议的 Agent，例如 protocol runner、planner、controller 或其他编排类 Agent。</p>
+<p>Workflow 使用 durable orchestration adapter，并通过显式 adapter 边界连接到本协议。</p>
+<p>普通聊天 Agent 不需要输出本 DSL。</p>
+<p>Agent prompt 应明确说明该 Agent 是否允许输出 Agent Protocol DSL。如果某个 Agent 未配置为使用本协议，Runtime 应忽略看起来像协议的文本，或把它当作普通 assistant 内容处理。</p>
+<h2>兼容载体语法</h2>
+<p>协议完整形态较丰富，可以表达 action graph、typed executor、上下文引用、持久化策略、结果策略、恢复策略和 UI projection metadata。兼容载体语法保持模型侧表面尽量小，同时保留 Runtime 拥有协议边界这一原则。</p>
+<p>载体语法包含三种顶层输出：</p>
+<pre><code class="language-ts">type ProtocolOutput =
+  | Act
+  | Answer
+  | Done
+</code></pre>
+<p><code>act</code> 请求 Runtime 执行一个或多个 call：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;act&quot;,
+  &quot;message&quot;: &quot;I will inspect the package files first.&quot;,
+  &quot;calls&quot;: [
+    {
+      &quot;id&quot;: &quot;read_package&quot;,
+      &quot;type&quot;: &quot;tool&quot;,
+      &quot;name&quot;: &quot;read&quot;,
+      &quot;args&quot;: {
+        &quot;filePath&quot;: &quot;package.json&quot;
+      },
+      &quot;result&quot;: &quot;summary&quot;
+    }
+  ]
+}
+</code></pre>
+<p><code>answer</code> 在不需要更多 Runtime 工作时返回用户可见 Markdown：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;answer&quot;,
+  &quot;message&quot;: &quot;This project is a VS Code extension for visual HTML editing.&quot;
+}
+</code></pre>
+<p><code>done</code> 结束当前 turn，不再请求额外工作；它仍可以包含用户可见结束语：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;done&quot;,
+  &quot;message&quot;: &quot;The requested check is complete.&quot;
+}
+</code></pre>
+<h3>顶层字段</h3>
+<ul>
+<li><code>kind</code>：必填。取值为 <code>act</code>、<code>answer</code> 或 <code>done</code>。</li>
+<li><code>message</code>：<code>act</code> 和 <code>done</code> 可选，<code>answer</code> 实际上应提供。内容是用户可见 Markdown 或短进度说明。</li>
+<li><code>calls</code>：<code>act</code> 必填；<code>answer</code> 和 <code>done</code> 不使用。</li>
+</ul>
+<h3>Call 字段</h3>
+<ul>
+<li><code>id</code>：必填。稳定 call id，用于日志、图节点、结果引用和依赖。</li>
+<li><code>type</code>：必填。<code>tool</code> 或 <code>agent</code>。</li>
+<li><code>name</code>：必填。对 <code>tool</code> 来说是 Runtime 工具目录中的具体工具 id；对 <code>agent</code> 来说是具体 agent id 或 <code>auto</code>。</li>
+<li><code>args</code>：可选对象。对 <code>tool</code> 必须匹配所选工具的输入 schema；对 <code>agent</code> 是委派输入。</li>
+<li><code>depends</code>：可选字符串或字符串数组。表示当前 call 启动前必须完成的 call id。</li>
+<li><code>result</code>：可选结果返回策略。允许值包括 <code>summary</code>、<code>full</code>、<code>structured</code>、<code>on_failure</code>、<code>on_demand</code>、<code>adaptive</code>。默认是 <code>summary</code>。</li>
+<li><code>title</code>：可选短标签，用于 UI 展示。</li>
+</ul>
+<h3>批量 Call</h3>
+<p>Runtime 执行统一使用 <code>calls</code>，即使只有一个 call。这样可以避免同一个概念出现两种等价语法。</p>
+<p>简单依赖示例：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;act&quot;,
+  &quot;message&quot;: &quot;I will find project manifests, then read the package manifest.&quot;,
+  &quot;calls&quot;: [
+    {
+      &quot;id&quot;: &quot;find_manifests&quot;,
+      &quot;type&quot;: &quot;tool&quot;,
+      &quot;name&quot;: &quot;glob&quot;,
+      &quot;args&quot;: {
+        &quot;pattern&quot;: &quot;*.json&quot;
+      }
+    },
+    {
+      &quot;id&quot;: &quot;read_package&quot;,
+      &quot;type&quot;: &quot;tool&quot;,
+      &quot;name&quot;: &quot;read&quot;,
+      &quot;args&quot;: {
+        &quot;filePath&quot;: &quot;package.json&quot;
+      },
+      &quot;depends&quot;: &quot;find_manifests&quot;,
+      &quot;result&quot;: &quot;summary&quot;
+    }
+  ]
+}
+</code></pre>
+<p>Agent 委派示例：</p>
+<pre><code class="language-json">{
+  &quot;kind&quot;: &quot;act&quot;,
+  &quot;message&quot;: &quot;I will delegate a focused code review.&quot;,
+  &quot;calls&quot;: [
+    {
+      &quot;id&quot;: &quot;review_changes&quot;,
+      &quot;type&quot;: &quot;agent&quot;,
+      &quot;name&quot;: &quot;auto&quot;,
+      &quot;args&quot;: {
+        &quot;description&quot;: &quot;Review the protocol schema and prompt behavior.&quot;
+      },
+      &quot;result&quot;: &quot;summary&quot;
+    }
+  ]
+}
+</code></pre>
+<h2>Runtime 归一化</h2>
+<p>Runtime 应把兼容载体语法归一化为内部 Action 表示，用于执行、日志和 UI projection：</p>
+<ul>
+<li><code>kind: &quot;act&quot;</code> 映射为 <code>intent: &quot;execute&quot;</code>。</li>
+<li>每个 <code>calls[]</code> item 映射为一个内部 Action。</li>
+<li><code>calls[].type</code> 映射为内部 executor type。</li>
+<li><code>calls[].name</code> 映射为内部 executor target。</li>
+<li><code>calls[].args</code> 映射为内部 Action input。</li>
+<li><code>calls[].depends</code> 映射为内部依赖。</li>
+<li><code>calls[].result</code> 映射为内部 result policy。</li>
+<li><code>kind: &quot;answer&quot;</code> 映射为响应消息。</li>
+<li><code>kind: &quot;done&quot;</code> 映射为停止当前 turn，可选包含可见消息。</li>
+</ul>
+<p>兼容载体语法是模型侧 carrier。Runtime 将它映射到更丰富的内部协议表示，用于执行、日志、UI projection 和完整 DSL 演进。</p>
+<h2>Runtime 到模型：Request Transcript</h2>
+<p>模型侧输出可以是结构化的：模型通过原生 tool-call 通道提交 <code>AgentProtocolOutput</code>。</p>
+<p>模型侧输入应不同：Runtime 不应把 provider API 对象、原始 <code>tools</code> 声明、<code>toolChoice</code> 或原始 <code>AgentProtocolOutput</code> 参数作为模型可见历史。这些是实现细节。下一轮请求应以模型可读 transcript 说明发生了什么。</p>
+<p>协议 Agent 使用一种与 provider request JSON 不同的模型可见 transcript 格式。Runtime 内部可以使用 provider tool schema，但回放给模型的内容应保持协议形态且易读。</p>
+<p>这个 transcript 是兼容载体下唯一的 Runtime 到模型 request 格式。它包含用户请求、先前 assistant 协议声明、Runtime observation、协议能力说明，以及当前模型调用的输出要求。</p>
+<p>当前建议使用 Markdown turn：</p>
+<pre><code class="language-markdown">&lt;turn index=&quot;1&quot;&gt;
+## User request
+
+当前插件各个按钮点了都没效果，你进行一次 code review，定位问题，然后修复
+&lt;/turn&gt;
+
+&lt;turn index=&quot;2&quot;&gt;
+## Assistant protocol request and runtime observations
+
+run_id: `apr_abc123`
+Purpose: Inspect extension wiring
+Status: completed
+
+### Call read_extension
+
+Tool: `read`
+
+```shell
+tool read &lt;&lt;&#39;JSON&#39;
+{
+  &quot;filePath&quot;: &quot;src/extension/extension.ts&quot;
+}
+JSON
+```
+
+### Result for read_extension
+
+Status: completed
+Artifacts: artifact://call_read_extension
+
+```md
+extension.ts registers the custom editor provider and command handlers.
+```
+&lt;/turn&gt;
+
+Based on all turns above, decide the next step.
+Strictly follow the Agent Protocol output requirements for this request.
+</code></pre>
+<p>规则：</p>
+<ul>
+<li>每个历史 turn 应像简短 transcript 一样易读，而不是 provider request JSON。</li>
+<li>不在 turn tag 中编码 provider message identity。使用 <code>## User request</code>、<code>## Assistant protocol request and runtime observations</code>、<code>## Assistant answer</code> 等 Markdown 标题描述发生了什么。</li>
+<li>一个 protocol runtime turn 应把每个 call 和对应 result 放在一起，避免先列所有 call 再列所有 result，减少模型配对歧义。</li>
+<li>call section 包含所选 tool 或 agent 及其参数。result section 不重复参数，只包含 status、artifact reference 和结果内容。</li>
+<li><code>run_id</code> 是 Runtime 执行 id，用于关联日志、UI projection、隐藏上下文和 artifact。</li>
+<li><code>Purpose</code> 是模型提供的短理由或标题，用于说明这组 call 为什么被请求。显示标签保持中性可读，不必定义成严格字段。</li>
+<li><code>Status</code> 是 Runtime 计算的聚合结果：<code>completed</code>、<code>blocked</code> 或 <code>failed</code>。</li>
+<li>turn 之后的最终指令不是历史 turn 的一部分，而是本次请求提醒模型判断下一步并遵守输出格式。</li>
+<li>不把模型私有推理回放为模型可见历史。只回放用户可见 assistant 文本、显式协议请求和 Runtime 生成的 observation。</li>
+</ul>
+<h2>直接请求恢复</h2>
+<p>Runtime 可以在安全时恢复直接工具请求或委派请求：</p>
+<ul>
+<li>模型对已知 Runtime 工具的直接请求，可以转换为 <code>kind: &quot;act&quot;</code>，并生成一个 <code>calls[]</code> item。</li>
+<li>文本调用块只有在目标工具名和参数都明确时，才能被标记为协议违例并恢复。</li>
+<li>被恢复的 call 必须在日志中可见，这样可以衡量协议遵循率和恢复率。</li>
+<li>不安全或含糊的恢复必须 fail closed。Runtime 应要求模型用简化协议形态重试，或返回清晰的协议错误。</li>
+</ul>
+<p>恢复请求不定义协议。它们只是 Runtime normalization 的输入；归一化后的 Action 继续走同一套校验、权限、日志和 projection 路径。</p>
+<h2>词汇与抽象边界</h2>
+<p>协议核心词汇应足够抽象，以描述多个执行领域；同时又要足够具体，以便校验和 UI 展示。</p>
+<p>推荐核心概念：</p>
+<ul>
+<li><code>Protocol</code>：模型-Runtime contract 和版本化 grammar。示例：<code>agent.protocol</code> version <code>1</code>、<code>agent.protocol.result</code> version <code>1</code>、<code>agent-protocol</code> fenced JSON block。</li>
+<li><code>Declaration</code>：模型生成的一个协议块。示例：包含 action graph 的 <code>execute</code> declaration、请求更多细节的 <code>expand_ref</code> declaration、失败后的 <code>revise</code> declaration。</li>
+<li><code>Envelope</code>：declaration 的顶层路由 metadata。示例：<code>type</code>、<code>version</code>、<code>intent</code>、<code>persist</code>、<code>title</code>、<code>execution</code>、<code>payload</code>。</li>
+<li><code>Payload</code>：declaration 的结构化主体。示例：<code>action_graph</code> payload、<code>expand_ref</code> payload、<code>decision</code> payload。</li>
+<li><code>Action</code>：语义工作单元。示例：检查相关文件、审查一个模块、运行测试命令、请求用户批准风险变更、总结结果。</li>
+<li><code>Operation</code>：Action 想做什么。示例：<code>search</code>、<code>read</code>、<code>review_code</code>、<code>run_tests</code>、<code>edit</code>、<code>summarize</code>、<code>ask_user</code>、<code>expand_reference</code>。</li>
+<li><code>Executor</code>：Runtime 能执行 Action 的能力类别。示例：读取文件的 <code>tool</code>、审查代码的 <code>agent</code>、合并摘要的 <code>runtime</code> operation、用户批准请求、执行 lint/test 的 <code>pipeline</code>。</li>
+<li><code>Assignment</code>：Runtime 将一个 Action 绑定给 Agent Session 后形成的执行边界。它描述谁来执行、带着什么 authority、接收什么 Context Bundle、产出什么 result、写入哪些 Artifact 和 Trace。</li>
+<li><code>Handoff</code>：Runtime 在两个 Assignment 或执行者之间建立的结构化交接边界。Handoff 不是执行结果本身，而是把上一个 Assignment 的 result summary、evidence、Artifact refs、risks、unresolved issues 与下一步 goal、constraints、dependencies 组织起来，交给下一个 Agent Session、human 或其他 executor 继续处理。</li>
+<li><code>Target</code>：具体 executor 名称或 <code>auto</code>。示例：<code>read_file</code>、<code>code-reviewer</code>、<code>ask_user</code>、<code>test_pipeline</code>、<code>auto</code>。</li>
+<li><code>Capability</code>：用于匹配的可复用能力标签。示例：<code>filesystem.read</code>、<code>code_review</code>、<code>frontend</code>、<code>testing</code>、<code>approval</code>、<code>summarization</code>、<code>external.search</code>。</li>
+<li><code>Resource</code>：Action 可能读取或写入的数据、文件、服务、artifact 或上下文。示例：<code>repo://current</code>、<code>file:src/toolbar.ts</code>、<code>artifact:source_index</code>、<code>runtime://runs/run_123/actions/review/output</code>、<code>input:user.goal</code>。</li>
+<li><code>Policy</code>：执行、失败处理、结果返回、持久化、权限和预算约束。示例：<code>persist: true</code>、<code>return_to_model: &quot;summary&quot;</code>、<code>max_tokens: 6000</code>、<code>requires_approval: true</code>、<code>on_failure: &quot;ask_model&quot;</code>、<code>store_full: true</code>。</li>
+<li><code>Result</code>：Runtime 产生的 declaration 或 Action 结果。示例：<code>status: &quot;completed&quot;</code>、受影响文件列表、测试报告摘要、review findings、artifact references、failure reason。</li>
+<li><code>Reference</code>：指向 Markdown section、先前 Action 输出、Runtime record 或 artifact 的引用。示例：<code>md:review.prompt</code>、<code>action:inspect.summary</code>、<code>artifact:test_report</code>、<code>runtime://runs/run_123</code>、<code>input:user.goal</code>。</li>
+<li><code>User Visible Note</code>：可选的人类可见说明，用于展示进度和建立信任。示例：“我会检查 toolbar 代码，然后返回逐按钮审查结果。”</li>
+</ul>
+<p>这些概念有意保持抽象。协议不应把 <code>workflow</code>、<code>code_review</code>、<code>toolbar</code>、<code>test</code>、<code>agent_task</code> 等领域对象变成核心协议类别。它们可以作为示例、operation、capability 或 executor target 出现，但不是固定协议边界。</p>
+<p>使用 <code>type</code> 表示对象分类，使用 <code>operation</code> 表示 Action 的语义意图。</p>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;action&quot;,
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;operation&quot;: &quot;review_code&quot;,
+  &quot;executor&quot;: {
+    &quot;type&quot;: &quot;agent&quot;,
+    &quot;target&quot;: &quot;auto&quot;,
+    &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;frontend&quot;]
+  }
+}
+</code></pre>
+<p>在这个例子中，<code>type: &quot;action&quot;</code> 表示对象类型，<code>operation: &quot;review_code&quot;</code> 表示要做什么，<code>executor.type: &quot;agent&quot;</code> 表示由哪类 executor 处理。</p>
+<h2>消息类型</h2>
+<p>协议应为不同方向定义不同格式。它们相关，但不完全相同。</p>
+<h3>Runtime 到模型：Request</h3>
+<p>Runtime request 告诉模型当前任务是什么、可用协议能力是什么、先前 Action 产生了什么 observation，以及本轮期望输出什么形态。</p>
+<p>在兼容载体下，Runtime 到模型的 request 使用上文定义的 Markdown transcript。这里不再定义另一套 XML 示例，避免同一方向存在两种互相竞争的格式。</p>
+<p>Runtime 内部仍可以使用 provider tool schema，但模型可见 request 应把 prior user request、assistant protocol request、具体 call、Runtime observation、协议能力和 output rule 组织成同一份可读 transcript。</p>
+<h3>模型到 Runtime：Declaration</h3>
+<p>模型 declaration 优化目标是程序解析和校验。推荐用 JSON fenced block 承载结构化 metadata 和 action graph，用 Markdown section 承载长文本。</p>
+<p>兼容载体可以通过 <code>AgentProtocolOutput</code> 提交扁平的 <code>{ kind, message, calls }</code> 形态。下面是它映射到的完整 DSL 形态。</p>
+<p>推荐完整 DSL：</p>
+<pre><code class="language-markdown">```json agent-protocol
+{
+  &quot;type&quot;: &quot;agent.protocol&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;intent&quot;: &quot;execute&quot;,
+  &quot;persist&quot;: false,
+  &quot;title&quot;: &quot;Toolbar Button Review&quot;,
+  &quot;payload&quot;: {
+    &quot;type&quot;: &quot;action_graph&quot;,
+    &quot;actions&quot;: [
+      {
+        &quot;type&quot;: &quot;action&quot;,
+        &quot;id&quot;: &quot;inspect_code&quot;,
+        &quot;title&quot;: &quot;Inspect Code&quot;,
+        &quot;description&quot;: &quot;Find toolbar components, editor integration, styles, and tests.&quot;,
+        &quot;reason&quot;: &quot;Review needs source locations before judging behavior.&quot;,
+        &quot;operation&quot;: &quot;inspect_sources&quot;,
+        &quot;executor&quot;: {
+          &quot;type&quot;: &quot;tool&quot;,
+          &quot;target&quot;: &quot;auto&quot;,
+          &quot;capabilities&quot;: [&quot;filesystem&quot;, &quot;search&quot;]
+        },
+        &quot;prompt_ref&quot;: &quot;md:inspect_code.prompt&quot;,
+        &quot;result_policy&quot;: {
+          &quot;return_to_model&quot;: &quot;summary&quot;,
+          &quot;store_full&quot;: true
+        }
+      },
+      {
+        &quot;type&quot;: &quot;action&quot;,
+        &quot;id&quot;: &quot;review_toolbar&quot;,
+        &quot;title&quot;: &quot;Review Toolbar&quot;,
+        &quot;description&quot;: &quot;Review toolbar button behavior, display layering, focus, undo/redo, and selection edge cases.&quot;,
+        &quot;reason&quot;: &quot;This is the main user-requested review.&quot;,
+        &quot;operation&quot;: &quot;review_code&quot;,
+        &quot;executor&quot;: {
+          &quot;type&quot;: &quot;agent&quot;,
+          &quot;target&quot;: &quot;auto&quot;,
+          &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;frontend&quot;]
+        },
+        &quot;depends_on&quot;: [&quot;inspect_code&quot;],
+        &quot;context_refs&quot;: [&quot;action:inspect_code.summary&quot;],
+        &quot;prompt_ref&quot;: &quot;md:review_toolbar.prompt&quot;,
+        &quot;result_policy&quot;: {
+          &quot;return_to_model&quot;: &quot;structured&quot;,
+          &quot;store_full&quot;: true
+        }
+      }
+    ]
+  }
+}
+```
+
+## inspect_code.prompt
+
+Locate toolbar-related components, composables, styles, editor integration, and tests.
+
+## review_toolbar.prompt
+
+Review each toolbar button. Check click handlers, selection behavior, focus behavior, undo/redo state, dropdown z-index, and test coverage. Return findings with severity and evidence.
+</code></pre>
+<h3>Runtime Observation：执行结果回放</h3>
+<p>Runtime observation 是执行结果的模型可见表示。它不是另一个独立通信方向，而是 Runtime 到模型 request transcript 中的一类内容块。</p>
+<p>Observation 通常包含语义 Action id、标题或描述、状态、摘要和 artifact refs。默认不包含每个原始工具调用或完整输出。</p>
+<p>兼容载体下，Runtime 使用 Markdown transcript 返回 observation，每个 call 紧跟对应 result。结构化记录保存在 Runtime storage 和 metadata 中，用于日志、UI 和恢复；模型可见文本则以理解为目标。</p>
+<p>模型可见 observation 示例：</p>
+<pre><code class="language-markdown">&lt;turn index=&quot;2&quot;&gt;
+## Assistant protocol request and runtime observations
+
+run_id: `run_123`
+Purpose: Toolbar Button Review
+Status: completed
+
+### Call inspect_code
+
+Executor: `tool:auto`
+Operation: `inspect_sources`
+
+### Result for inspect_code
+
+Status: completed
+Artifacts: artifact://run_123/inspect_code
+
+```md
+Found Toolbar.vue, ToolbarButton.vue, toolbarConfig.ts, useToolbar.ts, useEditor.ts, and related tests.
+```
+
+### Call review_toolbar
+
+Executor: `agent:auto`
+Operation: `review_code`
+Depends: `inspect_code`
+
+### Result for review_toolbar
+
+Status: completed
+Artifacts: artifact://run_123/review_toolbar
+
+```md
+Found two issues: undo/redo state is not wired through, and the table dropdown can be hidden by a higher layer.
+```
+&lt;/turn&gt;
+</code></pre>
+<p>Runtime 也可以为日志、UI、trace export、恢复或程序化处理保存机器可读 JSON 记录。这个 JSON 记录不是默认的模型可见 transcript：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;agent.protocol.result&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;run_id&quot;: &quot;run_123&quot;,
+  &quot;status&quot;: &quot;completed&quot;,
+  &quot;actions&quot;: [
+    {
+      &quot;id&quot;: &quot;inspect_code&quot;,
+      &quot;title&quot;: &quot;Inspect Code&quot;,
+      &quot;description&quot;: &quot;Find toolbar components, editor integration, styles, and tests.&quot;,
+      &quot;status&quot;: &quot;completed&quot;,
+      &quot;summary&quot;: &quot;Found Toolbar.vue, ToolbarButton.vue, toolbarConfig.ts, useToolbar.ts, useEditor.ts, and related tests.&quot;
+    },
+    {
+      &quot;id&quot;: &quot;review_toolbar&quot;,
+      &quot;title&quot;: &quot;Review Toolbar&quot;,
+      &quot;description&quot;: &quot;Review toolbar button behavior, display layering, focus, undo/redo, and edge cases.&quot;,
+      &quot;status&quot;: &quot;completed&quot;,
+      &quot;summary&quot;: &quot;Found two issues: undo/redo state is not wired through, and the table dropdown can be hidden by a higher layer.&quot;
+    }
+  ],
+  &quot;next&quot;: &quot;final_answer&quot;
+}
+</code></pre>
+<h3>模型到用户：Final Answer</h3>
+<p>最终用户响应是普通 assistant text。它应把 Runtime observation 综合成用户需要的答案。</p>
+<p>除非用户要求，否则最终回答不暴露原始协议细节。</p>
+<h3>模型到用户：Visible Note</h3>
+<p>当模型输出可执行协议时，也可以输出一段短的用户可见说明，用来解释它准备做什么。</p>
+<p>这段说明不参与执行。它用于用户信任、进度可见性和 UI 展示。</p>
+<p>推荐规则：</p>
+<ul>
+<li>对简单或快速的协议声明，可以省略 visible note。</li>
+<li>对长任务、多 Agent、durable、风险较高或用户需要观察进度的执行，应包含 visible note。</li>
+<li>保持简短，不重复完整 DSL。</li>
+<li>不包含只对 Runtime 有用的实现细节。</li>
+</ul>
+<p>示例：</p>
+<pre><code class="language-markdown">```json agent-protocol
+{
+  &quot;type&quot;: &quot;agent.protocol&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;intent&quot;: &quot;execute&quot;,
+  &quot;persist&quot;: true,
+  &quot;title&quot;: &quot;Toolbar Button Review&quot;,
+  &quot;payload&quot;: {
+    &quot;type&quot;: &quot;action_graph&quot;,
+    &quot;actions&quot;: []
+  }
+}
+```
+
+## user.visible
+
+I will inspect the toolbar implementation, review each button&#39;s behavior, and then return a concise issue report with evidence.
+</code></pre>
+<p>Runtime 可以在协议执行期间立即展示 <code>user.visible</code>。如果 UI 已经能清楚展示解析后的 action graph，这一段可以省略。</p>
+<h2>Envelope</h2>
+<p>Envelope 标识一个协议声明，并告诉 Runtime 如何路由它。</p>
+<p>Envelope 字段位于 JSON block 顶层：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;agent.protocol&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;intent&quot;: &quot;execute&quot;,
+  &quot;persist&quot;: false,
+  &quot;title&quot;: &quot;Toolbar Button Review&quot;,
+  &quot;payload&quot;: {}
+}
+</code></pre>
+<p>推荐字段：</p>
+<ul>
+<li><code>type</code>：必填，必须是 <code>agent.protocol</code>。</li>
+<li><code>version</code>：必填，协议版本字符串。</li>
+<li><code>intent</code>：必填。示例：<code>execute</code>、<code>plan</code>、<code>expand_ref</code>、<code>cancel</code>、<code>revise</code>、<code>decide</code>。</li>
+<li><code>persist</code>：可选布尔值。表示 Runtime 是否应在执行前持久化状态。</li>
+<li><code>title</code>：可选，人类可读标题。</li>
+<li><code>response_policy</code>：可选，模型可见响应偏好。</li>
+<li><code>payload</code>：必填，带类型的声明主体。</li>
+</ul>
+<p>Envelope 在逻辑上独立于 plan/action 层，但物理上可以是同一个 JSON object。放在同一 JSON block 中能简化解析和校验。</p>
+<h2>Payload 类型</h2>
+<p>第一批支持的 payload type 应保持有限：</p>
+<ul>
+<li><code>action_graph</code>：短生命周期或 durable 的语义 Action 图。</li>
+<li><code>expand_ref</code>：请求展开已存储 Runtime reference。</li>
+<li><code>decision</code>：模型对 blocked 或 failed run 的决策。</li>
+<li><code>final_report_spec</code>：最终报告的结构化说明。</li>
+</ul>
+<p>避免把协议做成通用编程语言。第一版不支持任意表达式或无边界循环。</p>
+<p>Durable workflow 行为应表示为 <code>action_graph</code> 上的 execution policy，而不是另一种顶层 DSL 类型：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;agent.protocol&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;intent&quot;: &quot;execute&quot;,
+  &quot;persist&quot;: true,
+  &quot;execution&quot;: {
+    &quot;mode&quot;: &quot;durable&quot;,
+    &quot;strategy&quot;: &quot;dag&quot;
+  },
+  &quot;payload&quot;: {
+    &quot;type&quot;: &quot;action_graph&quot;,
+    &quot;actions&quot;: []
+  }
+}
+</code></pre>
+<p>这让协议保持通用，同时允许 Runtime 对长任务图进行调度、持久化、恢复和展示。</p>
+<h2>Action 字段</h2>
+<p>推荐 Action 字段：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;action&quot;,
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;title&quot;: &quot;Review Toolbar&quot;,
+  &quot;description&quot;: &quot;Review toolbar button behavior and edge cases.&quot;,
+  &quot;reason&quot;: &quot;The user asked for per-button review.&quot;,
+  &quot;operation&quot;: &quot;review_code&quot;,
+  &quot;executor&quot;: {
+    &quot;type&quot;: &quot;agent&quot;,
+    &quot;target&quot;: &quot;auto&quot;,
+    &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;frontend&quot;]
+  },
+  &quot;depends_on&quot;: [&quot;inspect_code&quot;],
+  &quot;context_refs&quot;: [&quot;action:inspect_code.summary&quot;],
+  &quot;prompt_ref&quot;: &quot;md:review_toolbar.prompt&quot;,
+  &quot;result_policy&quot;: {
+    &quot;return_to_model&quot;: &quot;structured&quot;,
+    &quot;store_full&quot;: true
+  }
+}
+</code></pre>
+<p>字段说明：</p>
+<ul>
+<li><code>id</code>：必填。稳定语义 id。它类似 <code>tool_call_id</code>，但粒度是语义 Action，而不是单次工具调用。</li>
+<li><code>type</code>：必填，必须是 <code>action</code>。</li>
+<li><code>title</code>：推荐，短展示名称。</li>
+<li><code>description</code>：推荐，说明 Action 做什么。Runtime 应在模型可见结果中包含它。</li>
+<li><code>reason</code>：推荐，说明这个 Action 为什么存在。结果稍后返回时有助于模型理解。</li>
+<li><code>operation</code>：推荐，领域级动词，例如 <code>search</code>、<code>review_code</code>、<code>run_tests</code>、<code>summarize</code>、<code>ask_user</code>、<code>edit</code>。</li>
+<li><code>executor</code>：可选，请求 executor class、target 和 capability hint。省略时由 Runtime 选择。</li>
+<li><code>depends_on</code>：可选，必须先完成的 Action id。</li>
+<li><code>context_refs</code>：可选，指向上下文材料。</li>
+<li><code>prompt_ref</code>：可选，指向长任务说明的 Markdown payload。</li>
+<li><code>result_policy</code>：可选，模型可见结果返回策略。</li>
+<li><code>persist</code>：可选，Action 级 durable 覆盖。</li>
+<li><code>failure_policy</code>：可选，retry、abort、continue 或 ask-model 策略。</li>
+</ul>
+<h2>Markdown 引用</h2>
+<p>长文本不应作为转义 JSON 字符串嵌入，除非文本很短。</p>
+<p>使用 <code>md:</code> reference 从 JSON 指向同一模型输出中的 Markdown section。</p>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;prompt_ref&quot;: &quot;md:review_toolbar.prompt&quot;,
+  &quot;context_refs&quot;: [&quot;md:shared.context&quot;]
+}
+</code></pre>
+<p>对应 Markdown：</p>
+<pre><code class="language-markdown">## shared.context
+
+Project context and constraints.
+
+## review_toolbar.prompt
+
+Detailed task instructions.
+</code></pre>
+<p>引用规则：</p>
+<ul>
+<li><code>md:&lt;section_id&gt;</code> 解析为 normalized heading text 等于 <code>&lt;section_id&gt;</code> 的 Markdown heading。</li>
+<li>使用稳定语义 section id，不使用数字 id。</li>
+<li>Runtime 在执行前解析 <code>md:</code> reference。</li>
+<li>执行 Agent 应接收展开后的文本，而不是 unresolved <code>md:</code> reference。</li>
+<li>Runtime 应存储原始 DSL、解析后的 Markdown section、prompt hash 和内部 parsed representation。</li>
+</ul>
+<h2>Context 与 Prompt</h2>
+<p><code>context</code> 和 <code>prompt</code> 作用不同。</p>
+<ul>
+<li><code>prompt</code>：当前 Action 必须做什么。</li>
+<li><code>context</code>：背景、约束、先前发现或支撑信息。</li>
+<li><code>input</code>：结构化值。</li>
+<li><code>result</code>：执行输出。</li>
+</ul>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;context_refs&quot;: [&quot;md:shared.context&quot;, &quot;action:inspect_code.summary&quot;],
+  &quot;prompt_ref&quot;: &quot;md:review_toolbar.prompt&quot;
+}
+</code></pre>
+<p>Runtime 应将其展开为类似下面的 node request：</p>
+<pre><code class="language-xml">&lt;node-request run_id=&quot;run_123&quot; action_id=&quot;review_toolbar&quot;&gt;
+  &lt;context&gt;
+    Expanded shared context.
+    Expanded inspect_code summary.
+  &lt;/context&gt;
+  &lt;task&gt;
+    Expanded review_toolbar prompt.
+  &lt;/task&gt;
+&lt;/node-request&gt;
+</code></pre>
+<h2>Reference 类型</h2>
+<p>推荐 reference 类型：</p>
+<ul>
+<li><code>md:&lt;section_id&gt;</code>：当前 Markdown payload 中的 section。</li>
+<li><code>action:&lt;action_id&gt;.summary</code>：当前 run 中先前 Action 的摘要。</li>
+<li><code>action:&lt;action_id&gt;.output</code>：当前 run 中先前 Action 的输出。</li>
+<li><code>input:user.goal</code>：原始用户目标。</li>
+<li><code>runtime://...</code>：持久化 Runtime artifact 或 record。</li>
+<li><code>artifact:&lt;name&gt;</code>：当前 run 产生的命名 artifact。</li>
+</ul>
+<p>模型不需要传统工具来读取 <code>md:</code> reference。Runtime 直接解析它们。对于 <code>runtime://</code> reference，Runtime 可以自动展开，或允许模型声明 <code>expand_ref</code> intent。</p>
+<h2>Result Policy</h2>
+<p>Result policy 控制执行后返回给模型什么。</p>
+<p><code>return_to_model</code> 推荐取值：</p>
+<ul>
+<li><code>none</code>：不返回内容，只返回状态。</li>
+<li><code>summary</code>：返回简洁摘要。</li>
+<li><code>structured</code>：返回结构化字段。</li>
+<li><code>excerpt</code>：返回选定摘录。</li>
+<li><code>full</code>：请求完整返回；Runtime 仍可截断或拒绝。</li>
+<li><code>on_failure</code>：仅失败时返回细节。</li>
+<li><code>on_demand</code>：返回 ref 和摘要；模型请求时再展开。</li>
+<li><code>adaptive</code>：模型声明优先级，Runtime 在预算内选择。</li>
+</ul>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;result_policy&quot;: {
+    &quot;return_to_model&quot;: &quot;adaptive&quot;,
+    &quot;priority&quot;: [&quot;errors&quot;, &quot;matching_lines&quot;, &quot;file_paths&quot;, &quot;diff&quot;],
+    &quot;max_tokens&quot;: 6000,
+    &quot;store_full&quot;: true,
+    &quot;if_truncated&quot;: &quot;provide_ref_and_summary&quot;
+  }
+}
+</code></pre>
+<p>模型可以声明偏好，但 Runtime 拥有最终控制权。Runtime 必须强制执行上下文预算、安全、权限和隐私约束。</p>
+<h2>完整 DSL 与上下文回放</h2>
+<p>模型没有当前请求之外的记忆。除非 Runtime 把之前的 assistant output 放入下一次请求，否则模型无法记住之前输出过什么。</p>
+<p>因此，observation 回放有三种有效模式。</p>
+<p>Replay 不是一个单独的 XML 协议对象，而是 Runtime 到模型 request transcript 内部的分组规则。Runtime 应把模型 declaration、declaration summary 或 reference、Action id、Runtime observation、Artifact refs 和下一步指令放在同一组里，让模型知道哪个 observation 属于哪个 declaration。</p>
+<h3>Full Replay</h3>
+<p>Runtime 包含先前模型声明，包括 JSON 和 Markdown payload，然后追加 Runtime observation。</p>
+<p>在这种模式下，observation 不需要重复完整 prompt，但仍应包含 Action id 和摘要。</p>
+<h3>Compressed Replay</h3>
+<p>Runtime 不包含完整先前声明，而是包含 declaration summary 和 observation。</p>
+<p>这种模式下，observation 必须包含足够的任务描述，让模型理解每个 Action 的含义。</p>
+<h3>Hybrid Replay</h3>
+<p>Runtime 在声明短且新时包含精确声明。对于长声明或陈旧声明，Runtime 用摘要加 <code>runtime://</code> reference 替代。</p>
+<p>这是长期默认策略。</p>
+<h2>Observation Grouping</h2>
+<p>使用 observation group 将模型 declaration 和 Runtime observation 逻辑分组。</p>
+<p>这种分组帮助模型理解某个 observation 属于哪个 declaration。当周围会话包含多个 run 时尤其有用。</p>
+<p>推荐分组字段：</p>
+<ul>
+<li><code>run_id</code></li>
+<li>declaration summary 或 declaration ref</li>
+<li>Action id 和 Action title</li>
+<li>Action status</li>
+<li>result summary</li>
+<li>artifact refs</li>
+<li>failure 或 block reason</li>
+<li>next instruction</li>
+</ul>
+<p>在模型可见 transcript 中，这些字段以 Markdown heading 和短结构化行的形式出现在 Runtime observation turn 内。</p>
+<h2>Streaming</h2>
+<p>模型输出可能逐 token streaming。Runtime 不应执行不完整 JSON block。</p>
+<p>第一版规则：</p>
+<ul>
+<li>收集完整 assistant message。</li>
+<li>对兼容载体，优先使用一个完整的原生 <code>AgentProtocolOutput</code> call。</li>
+<li>message 完成后再解析并校验原生 tool arguments。</li>
+<li>只把完整 <code>agent-protocol</code> fenced block 作为替代 carrier 恢复。</li>
+<li>只执行已通过校验的 declaration。</li>
+</ul>
+<p>未来可以在完整 fenced block 出现后、assistant message 结束前提前解析和执行，但这是可选优化，风险更高。</p>
+<p>Runtime 执行也可以 streaming progress。默认不要把每个进度片段回填给模型。进度属于 UI 和日志。只在决策点返回模型可见 observation：</p>
+<ul>
+<li>completed</li>
+<li>failed</li>
+<li>blocked</li>
+<li>permission needed</li>
+<li>user input needed</li>
+<li>model decision needed</li>
+</ul>
+<p>不把模型私有推理作为 Runtime observation 回放。Reasoning trace 在允许时可用于调试和 UI，但它不是未来模型 turn 的可靠 source of truth。未来 turn 应接收用户可见 assistant message、显式协议 declaration 和 Runtime 生成的 observation。</p>
+<h2>XML、JSON 与 Markdown</h2>
+<p>根据方向和目的选择格式。</p>
+<h3>XML-like Section</h3>
+<p>适合模型可读输入和分组上下文：</p>
+<ul>
+<li>边界清晰</li>
+<li>长文本不需要 JSON string escaping</li>
+<li>适合嵌套上下文 section</li>
+<li>对 LLM attention 友好</li>
+</ul>
+<p>XML-like 文本可以解析，但 schema 和数据类型不如 JSON 明确。XML 也存在多种等价形态：attribute、child element、text node、CDATA、namespace 和 whitespace rule。</p>
+<h3>JSON</h3>
+<p>适合模型输出且程序必须解析的内容：</p>
+<ul>
+<li>直接 schema validation</li>
+<li>明确 array 和 object</li>
+<li>原始类型清楚</li>
+<li>JSON Schema 和 Zod 等工具成熟</li>
+<li>符合常见 tool/function calling 训练模式</li>
+</ul>
+<p>JSON 不适合承载很长的自然语言 payload，因为长字符串需要 escaping。</p>
+<h3>Markdown</h3>
+<p>适合长的人类/模型可读 payload：</p>
+<ul>
+<li>任务说明</li>
+<li>上下文段落</li>
+<li>报告模板</li>
+<li>示例</li>
+</ul>
+<p>推荐约定：</p>
+<ul>
+<li>Runtime 到模型 request：使用 Markdown transcript。</li>
+<li>模型到 Runtime declaration：兼容载体使用原生 <code>AgentProtocolOutput</code> tool call；未来完整 DSL 使用 JSON fenced block 加 Markdown payload。</li>
+<li>Runtime observation：模型可见回放使用 Markdown transcript；日志、UI、trace export、恢复或程序化处理使用 JSON record。</li>
+<li>模型到用户 final answer：普通 Markdown。</li>
+</ul>
+<h2>Persistence</h2>
+<p>并非每个协议声明都应该 durable。</p>
+<p>对能在当前 turn 内完成的短生命周期 Action 编排，使用 <code>persist: false</code>。</p>
+<p>以下情况使用 <code>persist: true</code>：</p>
+<ul>
+<li>执行必须跨重启存活</li>
+<li>run 跨 turn 或 session 持续</li>
+<li>涉及多个 Agent</li>
+<li>UI 需要展示进度</li>
+<li>审计或恢复重要</li>
+<li>用户明确请求 workflow、plan 或 long-running execution</li>
+</ul>
+<p>Durable workflow-like 行为应被表示为 <code>persist: true</code> 加 execution policy，而不是另一个协议族。短工具编排可以是 <code>persist: false</code>。</p>
+<h2>Executor Registry</h2>
+<p>协议把可执行对象视为 Runtime 注册的 executor。</p>
+<p>Tool 和 Agent 是重要 executor type，但不是唯一类型。从模型视角看，下列能力都可以通过同一种声明式 Action grammar 表达：</p>
+<ul>
+<li>调用普通工具</li>
+<li>把任务分配给 Agent</li>
+<li>请求 Runtime 执行内部控制 Action</li>
+<li>请求 human decision 或 approval</li>
+<li>调用预定义 pipeline 或 external service</li>
+</ul>
+<p>这不意味着每类 executor 内部完全相同，而是表示模型可以使用统一 Action grammar，由 Runtime 选择具体执行路径。</p>
+<p>推荐 executor type：</p>
+<ul>
+<li><code>tool</code>：确定性或有边界的系统函数。</li>
+<li><code>agent</code>：由 LLM 驱动、具备推理和局部自主性的执行者。</li>
+<li><code>runtime</code>：Runtime 拥有的控制操作，例如 wait、merge、checkpoint、summarize、expand references。</li>
+<li><code>human</code>：用户或人类 operator 的 decision。</li>
+<li><code>pipeline</code>：预定义多步骤确定性流程。</li>
+<li><code>service</code>：外部服务或集成。</li>
+</ul>
+<p>暴露给启用协议的 Agent 的 registry 信息示例：</p>
+<pre><code class="language-json">{
+  &quot;executors&quot;: [
+    {
+      &quot;name&quot;: &quot;read_file&quot;,
+      &quot;type&quot;: &quot;tool&quot;,
+      &quot;description&quot;: &quot;Read a file from the current workspace.&quot;,
+      &quot;capabilities&quot;: [&quot;filesystem&quot;, &quot;read&quot;]
+    },
+    {
+      &quot;name&quot;: &quot;code-reviewer&quot;,
+      &quot;type&quot;: &quot;agent&quot;,
+      &quot;description&quot;: &quot;Reviews code changes and reports correctness, regression, and test risks.&quot;,
+      &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;testing&quot;, &quot;risk_analysis&quot;],
+      &quot;can_execute&quot;: true
+    },
+    {
+      &quot;name&quot;: &quot;ask_user&quot;,
+      &quot;type&quot;: &quot;human&quot;,
+      &quot;description&quot;: &quot;Request clarification, approval, or a decision from the user.&quot;,
+      &quot;capabilities&quot;: [&quot;clarification&quot;, &quot;approval&quot;]
+    }
+  ]
+}
+</code></pre>
+<p>Action selection rule：</p>
+<ul>
+<li>如果 <code>executor.target</code> 指定具体 executor，Runtime 校验后可以使用它。</li>
+<li>如果 <code>executor.target</code> 是 <code>auto</code> 或省略，Runtime 根据 <code>executor.type</code>、capability、任务描述、可用性、policy 和成本选择。</li>
+<li><code>executor.type</code> 表示 executor 类别，不应是 <code>auto</code>。</li>
+<li>Runtime 有最终权力拒绝或覆盖不安全、不可用的选择。</li>
+<li>模型应描述所需 capability，而不是硬编码实现假设。</li>
+</ul>
+<p>示例：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;action&quot;,
+  &quot;id&quot;: &quot;review_toolbar&quot;,
+  &quot;title&quot;: &quot;Review Toolbar Buttons&quot;,
+  &quot;operation&quot;: &quot;review_code&quot;,
+  &quot;executor&quot;: {
+    &quot;type&quot;: &quot;agent&quot;,
+    &quot;target&quot;: &quot;auto&quot;,
+    &quot;capabilities&quot;: [&quot;code_review&quot;, &quot;frontend&quot;, &quot;ui_action&quot;]
+  },
+  &quot;description&quot;: &quot;Review every toolbar button implementation and report issues.&quot;,
+  &quot;reason&quot;: &quot;The task requires source inspection and judgment across multiple UI behaviors.&quot;,
+  &quot;prompt_ref&quot;: &quot;md:review_toolbar.prompt&quot;
+}
+</code></pre>
+<h2>Summary</h2>
+<p>Summary 可以来自多个层级：</p>
+<ol>
+<li>Tool 原生结构化摘要，例如匹配数量、文件列表、退出码或受影响文件路径。</li>
+<li>Runtime 机械摘要，例如状态计数、artifact reference、截断标记和 error。</li>
+<li>Executor final output，当 Action 由 agent、tool、human、pipeline、runtime operation 或 service 处理时。</li>
+<li>专用 summarizer model 或 summary agent，用于压缩长原始输出。</li>
+</ol>
+<p>Runtime 应单独存储完整输出，并默认返回 summary 加 reference，除非 policy 要求更多。</p>
+<h2>Expansion</h2>
+<p>当模型需要更多细节时，可以输出 expansion declaration：</p>
+<pre><code class="language-json">{
+  &quot;type&quot;: &quot;agent.protocol&quot;,
+  &quot;version&quot;: &quot;1&quot;,
+  &quot;intent&quot;: &quot;expand_ref&quot;,
+  &quot;payload&quot;: {
+    &quot;refs&quot;: [
+      {
+        &quot;ref&quot;: &quot;runtime://run_123/actions/review_toolbar/output&quot;,
+        &quot;reason&quot;: &quot;Need exact evidence for the undo/redo finding.&quot;,
+        &quot;range&quot;: {
+          &quot;around_matches&quot;: true,
+          &quot;context_lines&quot;: 20
+        }
+      }
+    ]
+  }
+}
+</code></pre>
+<p>Runtime 决定展开多少，并返回另一个 protocol result。</p>
+<h2>安全与校验</h2>
+<p>Runtime 必须强制执行：</p>
+<ul>
+<li>只有启用协议的 Agent 可以输出可执行协议声明。</li>
+<li>第一版只解析完整 assistant message。</li>
+<li>只识别带 <code>type: &quot;agent.protocol&quot;</code> 的显式 fenced block。</li>
+<li>执行前进行 schema validation。</li>
+<li>工具或文件操作前进行 permission check。</li>
+<li>强制上下文预算限制。</li>
+<li>Durable execution 前进行持久化。</li>
+<li>Result policy 不能覆盖安全或隐私约束。</li>
+<li>DSL 不包含任意脚本语言。</li>
+</ul>
+<h2>用户体验契约</h2>
+<p>协议不只是模型-Runtime contract。它也影响用户能否理解、信任、中断和检查系统行为。</p>
+<p>Runtime 应为可执行 declaration 提供用户可见 projection：</p>
+<ul>
+<li><code>title</code>：短 run label。</li>
+<li><code>user.visible</code>：执行前或执行中展示的可选说明。</li>
+<li><code>actions[].title</code>：每个 Action 的展示标签。</li>
+<li><code>actions[].description</code>：每个 Action 的简要说明。</li>
+<li><code>status</code>：pending、running、completed、failed、canceled、blocked 或 waiting。</li>
+<li><code>progress</code>：可选计数或阶段说明。</li>
+<li><code>result_summary</code>：完成后的用户可见结果。</li>
+<li><code>details_ref</code>：可选 reference，指向原始协议、日志、artifact 或执行细节。</li>
+</ul>
+<p>用户不应该为了理解系统行为而阅读 JSON。UI 可以为检查、调试和高级使用暴露 raw DSL，但普通展示应来自 title、description、status 和 summary。</p>
+<h2>后续版本需要明确的设计空间</h2>
+<p>第一版应保持小，但协议需要为这些主题预留明确设计空间：</p>
+<ul>
+<li><code>permission_policy</code>：哪些 Action 执行前需要用户 approval。</li>
+<li><code>budget_policy</code>：token、时间、成本、retry 和并行度限制。</li>
+<li><code>cancellation_policy</code>：用户取消或 Runtime abort 如何影响正在运行的 Action。</li>
+<li><code>idempotency</code>：Action 是否可以安全 retry 或 resume。</li>
+<li><code>side_effects</code>：Action 是 read、write、send、delete、purchase、publish，还是改变外部状态。</li>
+<li><code>data_visibility</code>：结果对模型、用户、日志、未来 run 可见，还是仅 Runtime 可见。</li>
+<li><code>privacy</code>：哪些 artifact 或输出不得回放进模型上下文。</li>
+<li><code>conflict_resolution</code>：两个 Action 请求不兼容写入时如何处理。</li>
+<li><code>schema_evolution</code>：版本化 declaration 如何在 schema 演进后继续解析。</li>
+<li><code>partial_results</code>：图执行到一半失败时 Runtime 返回什么。</li>
+<li><code>approval_gates</code>：模型如何在高风险或不可逆 Action 前请求用户。</li>
+<li><code>result_granularity</code>：如何选择 summary、structured field、excerpt 和 full artifact。</li>
+<li><code>ui_projection</code>：哪些协议字段足够稳定，可以支撑前端展示。</li>
+</ul>
+<p>这些应是 policy 或 projection，而不是领域特定 Action type。</p>
+<h2>最小协议边界</h2>
+<p>第一版协议边界可以包含：</p>
+<ul>
+<li>每个 assistant response 只允许一个 <code>agent-protocol</code> JSON block。</li>
+<li>支持由 <code>md:</code> 引用的 Markdown payload section。</li>
+<li>支持 <code>action_graph</code> payload。</li>
+<li>支持 Action 字段：<code>type</code>、<code>id</code>、<code>title</code>、<code>description</code>、<code>reason</code>、<code>operation</code>、<code>executor</code>、<code>depends_on</code>、<code>context_refs</code>、<code>prompt_ref</code>、<code>result_policy</code>。</li>
+<li>支持 result policy：<code>summary</code>、<code>structured</code>、<code>full</code>、<code>on_failure</code>、<code>on_demand</code>、<code>adaptive</code>。</li>
+<li>支持 protocol exchange result wrapper。</li>
+<li>对短且新的 declaration 使用 full replay。</li>
+<li>对长或陈旧 declaration 使用 compressed replay。</li>
+<li>支持 <code>persist: false</code> 的 ephemeral run。</li>
+<li>支持 <code>persist: true</code> 的 durable action graph run。</li>
+<li>暴露 executor registry。</li>
+<li>使用 <code>executor.type</code>、<code>executor.target</code> 和 <code>executor.capabilities</code> 进行 Action 选择。</li>
+<li>支持可选 <code>user.visible</code> Markdown section，用于用户可见进度说明。</li>
+</ul>
+<p>暂不纳入核心边界：</p>
+<ul>
+<li>assistant message 完成前的 streaming partial execution。</li>
+<li>任意嵌套表达式。</li>
+<li>无边界循环。</li>
+<li>用户自定义脚本。</li>
+<li>同一 response 中多个 protocol block。</li>
+<li>未启用协议的 Agent 自动执行协议文本。</li>
+</ul>
+<h2>与 Workflow Adapter 的关系</h2>
+<p>Workflow 是 Harness durable orchestration adapter，不是本协议边界。</p>
+<p>模型-Runtime 协议与 Workflow Adapter 共享治理对象，但保持独立执行契约。Workflow state、recovery 和 UI projection 行为可以反哺协议设计，但不让 workflow execution 变成隐式协议行为。</p>
+<p>二者关系如下：</p>
+<pre><code class="language-txt">Workflow adapter:
+  - 专用 durable orchestration 实现
+  - 拥有 workflow DAG、node state、artifact 和 recovery decision
+  - 通过显式 adapter boundary 暴露 durable run 行为
+
+Agent Protocol DSL:
+  - 通用模型-Runtime 协议目标
+  - 支持 tool action 和 agent action
+  - 使用 action_graph 加 execution policy
+  - 可以通过 durable action_graph policy 表达 workflow adapter run
+</code></pre>
+<p>如果 Workflow Adapter 通过 Agent Protocol DSL 表示，它应映射为带 <code>persist: true</code> 和 <code>execution.strategy: &quot;dag&quot;</code> 的 <code>action_graph</code>。这个映射是显式 adapter contract。</p>
+
+      </article>
+    </main>
+  </body>
+</html>

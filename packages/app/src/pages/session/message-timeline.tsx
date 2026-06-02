@@ -43,6 +43,19 @@ const emptyMessages: MessageType[] = []
 const idle = { type: "idle" as const }
 
 const completeLabel = "本轮执行完毕"
+const delegationLabel = "等待子会话执行任务中"
+
+const record = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input)
+
+const pendingDelegation = (input: unknown, messageID: string) => {
+  if (!record(input)) return false
+  const protocol = input.protocol
+  if (!record(protocol)) return false
+  const pending = protocol.pending_delegations
+  if (!record(pending)) return false
+  return Object.values(pending).some((item) => record(item) && item.parent_message_id === messageID)
+}
 
 const done = (messages: MessageType[], id: string) => {
   const idx = messages.findIndex((item) => item.id === id)
@@ -998,6 +1011,7 @@ export function MessageTimeline(props: {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
                   })
                   const commentCount = createMemo(() => comments().length)
+                  const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID))
                   const completed = createMemo(() => sessionStatus().type === "idle" && done(sessionMessages(), messageID))
                   return (
                     <div
@@ -1007,7 +1021,6 @@ export function MessageTimeline(props: {
                         "min-w-0 w-full max-w-full": true,
                         "md:max-w-200 2xl:max-w-[1000px]": props.centered,
                       }}
-                      style={{ "content-visibility": "auto", "contain-intrinsic-size": "auto 500px" }}
                     >
                       <Show when={commentCount() > 0}>
                         <div class="w-full px-4 md:px-5 pb-2">
@@ -1068,7 +1081,15 @@ export function MessageTimeline(props: {
                         <div class="px-4 md:px-5 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
                             <div class="h-px flex-1 bg-border-weaker-base" />
-                            <span class="shrink-0">{completeLabel}</span>
+                            <span class="shrink-0 inline-flex items-center gap-1.5">
+                              <Show
+                                when={delegated()}
+                                fallback={<Icon name="circle-check" size="small" class="text-icon-success-base" />}
+                              >
+                                <Spinner class="size-3 text-text-interactive-base" />
+                              </Show>
+                              <span>{delegated() ? delegationLabel : completeLabel}</span>
+                            </span>
                             <div class="h-px flex-1 bg-border-weaker-base" />
                           </div>
                         </div>

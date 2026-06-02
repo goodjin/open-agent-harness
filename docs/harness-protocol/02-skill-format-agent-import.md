@@ -1,44 +1,54 @@
-# Skill 格式 Agent 导入
+# SKILL.md 到 Agent 导入
 
-Open Agent Harness 可以将 `SKILL.md` 文件导入为虚拟 Agent。Runtime 会把可复用 instruction package 归一化到与手写 Agent 相同的 registry、选择、delegation、permission 和管理界面中。
+Open Agent Harness 可以将 `SKILL.md` 文件导入为虚拟 Agent。Runtime 会把轻量 instruction package 归一化到与手写 Agent 相同的 registry、选择、delegation、permission 和管理界面中。
+
+本文定义 `SKILL.md` 如何升级为 Agent。导入完成后，Harness 协议中的可调用对象是 Agent，执行实例是 Agent Session。
 
 ## 设计理念
 
-Skill 和 Agent 描述的是同一种产品对象的不同编写深度：用于完成特定工作的可复用指令。
+`SKILL.md` 是一种低摩擦编写格式，通常用于描述某一类工作应该怎么做：适用场景、执行步骤、判断规则、输入要求、输出格式、质量检查和注意事项。
 
-Skill 通常从重复 prompt 的快捷方式开始。随着它成熟，会逐渐变成一个可复用 workflow：采用什么身份、遵循什么步骤、遵守什么规则、处理什么异常、产出什么结果。Agent team 从相反方向描述同一结构：把较大的工作拆给专业 Agent，让每个专业 Agent 拥有聚焦 workflow，并由系统委托给合适的 Agent。
+这类内容和 Agent 的定位有重合。Agent 也表达“专业做某一件事”的可复用能力，但 Agent 是 Runtime 可以治理的执行模板。Agent 模板除了 prompt 材料，还包含入口规则、能力元数据、权限策略、模型偏好和运行策略。
 
-产品定位是：这类重叠最终应收敛到 Agent。
+把 `SKILL.md` 升级为 Agent，是为了让这类专业工作说明进入 Harness 的统一治理模型：
 
-Agent 是更强的 runtime 抽象，因为它为可复用 workflow 提供完整执行边界：
+- 稳定身份：每个导入结果拥有稳定 Agent id、name 和 description。
+- 调用入口：通过 Agent entry 控制它能否作为主会话、mention 对象或 delegation 候选。
+- 能力描述：通过 capability 表达它适合处理什么任务，供 routing 和 UI 使用。
+- 权限边界：通过 permission profile、assignment authority、用户审批和 gate 决定实际可执行范围。
+- 会话隔离：每次执行由 Runtime 创建 Agent Session，并为该 session 构造独立 Context Bundle。
+- 状态记录：执行过程进入 Action、Assignment、Event、Projection、Artifact 和 Trace。
+- 管理视图：UI 按 Agent record 展示、选择、过滤和审计。
 
-- 身份和行为是一等对象。
-- 上下文按任务隔离，而不是在同一长会话中累积多个无关 Skill。
-- 生命周期明确：为任务创建 Agent 实例，完成任务，然后丢弃该上下文。
-- 权限、工具、模型选择、成本和入口行为都可以按 Agent 治理。
-- 未来的 memory 或运行历史自然归属于 Agent，而不是无状态 prompt 片段。
+导入协议保留 `SKILL.md` 的编写便利性，但运行时只面对 Agent 模型。`SKILL.md` 是来源文件，虚拟 Agent 是协议对象，Agent Session 是运行实例。
 
-这对上下文工程很重要。在同一长会话中调用多个 Skill 会混合无关指令和历史，增加上下文长度、注意力漂移和任务之间的意外污染。把同一个 workflow 作为 subagent 运行，可以让每个工作单元保持聚焦：一个 Agent 实例、一个任务边界、一个干净上下文。
+## 导入原理
 
-Skill 仍然是低摩擦的编写格式。协议把它们视为一种紧凑的 Agent 定义方式，适用于不需要完整模板的情况。
+Runtime 使用同一个 Agent registry 管理手写 Agent 和由 `SKILL.md` 导入的虚拟 Agent。
 
-简言之：Skill 是可接受的编写输入；Agent 是执行模型。
+导入层负责把一个 `SKILL.md` package 转换为 Agent record。转换后的 record 具有：
 
-## 原理
+- 稳定 id
+- name
+- description
+- prompt material
+- entry flags
+- capability tags
+- permission profile
+- source reference
+- source format metadata
 
-核心产品方向是用 Agent 表示可复用行为。单独的 Skill 执行路径会重复 discovery、invocation rules、permissions 和 UI behavior。
-
-导入层保留 `SKILL.md` 的编写便利性，同时让执行保持在 Agent 模型内。导入后，系统会把一个 Skill package 视为带有 metadata、prompt text、entry flags、capability tags 和 permission policy 的 Agent。
+Runtime 后续只处理 Agent record。routing、delegation、permission、session creation、trace 和 UI 都使用 Agent 模型。
 
 ## 支持输入
 
-Runtime 扫描受支持 skill roots 中名为以下形式的文件：
+Runtime 扫描受支持 roots 中名为以下形式的文件：
 
 ```text
 */SKILL.md
 ```
 
-默认全局 skill root 是：
+默认全局 root 是：
 
 ```text
 ~/.claude/skills/
@@ -53,100 +63,131 @@ Runtime 扫描受支持 skill roots 中名为以下形式的文件：
 导入后的 Agent id 来自：
 
 1. frontmatter 中的 `name`，如果存在。
-2. 当 `name` 不存在时，使用 Skill 目录名。
+2. 当 `name` 不存在时，使用来源目录名。
 
-id 会被归一化为小写，可包含字母、数字、点、下划线和短横线。
+id 会按 Agent 命名规范归一化为 `lower_snake_case`，只包含小写字母、数字和下划线。
 
-导入后的 description 来自：
+导入后的 Agent description 来自：
 
 1. frontmatter 中的 `description`，如果存在。
 2. 生成的默认 description。
 
-导入后的 prompt 从 Skill body 构造：
+导入后的 prompt material 从 Markdown body 构造：
 
-- 如果存在来源 identity/persona 章节，则导入为 Agent `persona`。
-- 如果存在 `## Workflow` 和 `## Rules`，则成为 Agent rules。
-- 如果这些章节不存在，则使用完整 Skill body。
+- identity、persona、职责说明等章节导入为 Agent `persona`。
+- 步骤、规则、检查项、输出格式等章节导入为 Agent rules。
+- 其他正文作为补充 prompt material 保留。
 
 生成的 Agent metadata 使用：
 
 ```json
 {
-  "mode": "subagent",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
   "capability": {
-    "purpose": "skill_import",
-    "tags": ["skill", "<agent-id>"],
+    "purpose": "imported_instruction",
+    "tags": ["imported", "<agent-id>"],
     "cost": "medium",
     "writes": true
   },
-  "permission_mode": "lax"
+  "inherit_permissions": false,
+  "permission_mode": "lax",
+  "source": {
+    "format": "markdown_instruction",
+    "path": "<source-dir>/SKILL.md"
+  }
 }
 ```
 
-这些 Agent 是虚拟 Agent。Runtime 不会把生成的 `meta.json`、`identity.md` 或 `rules.md` 写回磁盘。
+生成的 `meta.json`、`identity.md` 或 `rules.md` 只存在于导入结果。磁盘事实来源保持为原始 `SKILL.md` 文件。
 
 ## 优先级
 
-显式 Agent 模板会覆盖相同 id 的导入 Skill。
+显式 Agent 模板会覆盖相同 id 的导入结果。
 
-这允许轻量 `SKILL.md` 逐步演进为完整 Agent 模板，并保持 invocation id 不变。
+这允许轻量 `SKILL.md` 逐步升级为完整 Agent 模板，并保持 invocation id 不变。
 
 ## Runtime 行为
 
-导入 Skill 会在 `/agent` 中表现为普通 Agent record，包含：
+由 `SKILL.md` 导入的对象在 `/agent` 中表现为普通 Agent record，包含：
 
 - `name`：导入后的 Agent id
-- `mode`：`subagent`
-- `capability.purpose`：`skill_import`
-- `capability.tags`：`["skill", id]`
+- `entry`：`{ "primary": false, "delegable": true, "mentionable": true, "default": false, "hidden": false }`
+- `capability.purpose`：`imported_instruction`
+- `capability.tags`：`["imported", id]`
+- `source.format`：`markdown_instruction`
 
-除非被 Agent metadata 或配置隐藏，否则它们会出现在 session Agent 选择中。
+当 Agent metadata 或配置没有隐藏该记录时，它们会出现在 session Agent 选择中。
 
-它们默认可 mention、可 delegation，因为生成的 entry metadata 遵循 subagent 语义。
+它们默认可 mention、可 delegation，因为生成的 entry metadata 将其定位为可委托 Agent。
+
+当 Runtime 选择该 Agent 执行工作时，运行链路与普通 Agent 一致：
+
+```txt
+Action
+  -> routing selects Agent
+  -> Runtime creates Agent Session
+  -> Runtime builds Context Bundle from assignment and imported prompt material
+  -> model produces protocol output
+  -> Runtime records Event, Artifact, Projection and Trace
+```
+
+Agent Session 的 session log 持久记录该 session 中被 Runtime 接受和引用的消息、协议输出、Action、observation、Artifact ref 和状态变化。
+
+Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment contract、导入的 prompt material、相关 Projection、Artifact、约束、环境信息和必要的语义解释。
 
 ## Agent 管理 UI
 
-管理 API 将导入 Skill 标记为：
-
-```json
-{
-  "kind": "skill",
-  "editable": false
-}
-```
-
-这将它们与手写 Agent 区分开：
+管理 API 按 Agent record 返回导入结果：
 
 ```json
 {
   "kind": "agent",
-  "editable": true
+  "editable": false,
+  "source": {
+    "format": "markdown_instruction"
+  }
 }
 ```
 
-设置 UI 可以按类型过滤：
+设置 UI 可以按来源过滤：
 
-- 全部
+- 全部 Agent
 - 手写 Agent
-- 导入 Skill
+- 由 `SKILL.md` 导入的 Agent
 
-导入 Skill 不能在 Agent Manager 中直接编辑，因为它们的事实来源是 `SKILL.md`。要定制某个 Skill，可以编辑来源 Skill 文件，或创建一个相同 id 的手写 Agent 模板。
+由 `SKILL.md` 导入的 Agent 在 Agent Manager 中以只读记录展示，因为它们的事实来源是原始 Markdown 文件。要定制某个导入结果，可以编辑来源文件，或创建一个相同 id 的手写 Agent 模板。
 
-## 执行边界
+## 协议边界
 
-这个导入层把 Skill 统一纳入 Agent runtime。
+`SKILL.md` 导入层把 Markdown 来源文件映射为 Agent runtime 可消费的模板记录。协议边界如下：
 
-具体规则：
-
-- 系统不提供独立 `skill` tool。
-- 顶层 `skills` 配置不作为执行入口。
-- `permission.skill` 配置不作为执行权限模型。
-- 导入 Skill 不通过 Skill 专用 dispatcher 执行。
+- 来源文件是 `SKILL.md`。
+- 导入结果是虚拟 Agent record。
+- 执行实例是 Agent Session。
+- 权限由导入 metadata、Agent permission profile、assignment authority、用户审批和 Runtime gate 共同决定。
+- 状态记录进入 Harness Event、Projection 和 Trace。
+- UI 以 Agent record 展示其可调用能力，并通过 `source.format` 标记来源。
 
 受支持的执行路径是 Agent runtime。
 
-## 已知边界
+## 升级边界
 
-导入 Skill 会保留主要 prompt 内容和 description，但不会推断丰富 Agent metadata，例如模型偏好、详细工具策略、超过默认值的成本信息或自定义 entry flags。
+导入层会保留主要 prompt 内容、description 和可识别的结构化章节，并生成基础 metadata。
 
-当 Skill 稳定后，生产级行为应使用手写 Agent 模板表达。
+需要精细治理时，应使用手写 Agent 模板表达更完整的字段，例如：
+
+- 明确的 `entry`
+- 细分的 `capability.purpose`
+- 更准确的 `capability.tags`
+- `model_preference`
+- `allowed_tools` / `denied_tools`
+- `permission_mode`
+- `orchestration_policy`
+
+`SKILL.md` 适合快速描述一项工作的步骤和规则；Agent 模板适合表达可治理、可路由、可观测、可授权的执行身份。

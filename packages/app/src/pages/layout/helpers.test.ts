@@ -18,6 +18,7 @@ import {
   hasProjectPermissions,
   latestRootSession,
   sessionLineage,
+  sessionWorking,
   visibleSessionTree,
   workspaceKey,
 } from "./helpers"
@@ -242,7 +243,7 @@ describe("layout workspace helpers", () => {
     ])
   })
 
-  test("sorts child sessions by creation time for stable numbering", () => {
+  test("sorts child sessions by newest creation time first", () => {
     const map = childMapByParent([
       session({ id: "root", directory: "/workspace", time: { created: 1, updated: 1 } }),
       session({ id: "third", directory: "/workspace", parentID: "root", time: { created: 30, updated: 30 } }),
@@ -250,7 +251,7 @@ describe("layout workspace helpers", () => {
       session({ id: "second", directory: "/workspace", parentID: "root", time: { created: 20, updated: 20 } }),
     ])
 
-    expect(map.get("root")).toEqual(["first", "second", "third"])
+    expect(map.get("root")).toEqual(["third", "second", "first"])
   })
 
   test("summarizes completed child sessions", () => {
@@ -272,6 +273,38 @@ describe("layout workspace helpers", () => {
         },
       ),
     ).toEqual({ completed: 1, total: 3 })
+  })
+
+  test("does not keep a session working from stale pending parts after idle", () => {
+    expect(
+      sessionWorking(
+        [
+          message({ id: "done-message", sessionID: "done", time: { created: 1, completed: 2 } }),
+          message({ id: "stale-message", sessionID: "done", time: { created: 3 } }),
+        ],
+        { type: "idle" },
+      ),
+    ).toBe(false)
+  })
+
+  test("ignores a stale running status when the latest turn is complete", () => {
+    expect(
+      sessionWorking(
+        [
+          {
+            id: "user-message",
+            sessionID: "done",
+            role: "user",
+            time: { created: 1 },
+            path: { cwd: "/tmp", root: "/tmp" },
+            model: { providerID: "provider", modelID: "model" },
+            agent: "build",
+          } as Message,
+          message({ id: "done-message", sessionID: "done", time: { created: 2, completed: 3 } }),
+        ],
+        { type: "running" },
+      ),
+    ).toBe(false)
   })
 
   test("keeps active grandchild ancestors expanded in nav order after collapse", () => {

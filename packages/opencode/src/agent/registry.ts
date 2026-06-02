@@ -234,8 +234,15 @@ export function getRegistry(): AgentRegistry {
   const dir = Instance.directory
   let registry = registryByDirectory.get(dir)
   if (!registry) {
+    const cfg = process.env.OPENCODE_AGENT_TEMPLATE_DIR
+    const pkg = path.join(path.dirname(process.execPath), "..", "config", "agents")
     registry = new AgentRegistry(
-      [path.join(Global.Path.config, "agents"), path.join(Instance.worktree, ".opencode", "agents")],
+      [
+        path.join(Global.Path.config, "agents"),
+        path.join(Instance.worktree, ".opencode", "agents"),
+        ...(cfg ? [cfg] : []),
+        pkg,
+      ],
       undefined,
       path.join(Global.Path.home, ".claude", "skills"),
     )

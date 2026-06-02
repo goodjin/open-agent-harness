@@ -1,32 +1,30 @@
-# UI 控制台与 Agent 管理
+# UI 控制台与 Agent 管理协议
 
 ## 目的
 
-Harness UI 的目标是让用户管理、观察和使用 Harness 系统。UI 不从自然语言 transcript 推断状态，而是读取 Runtime Projection，并把用户操作提交为 Command 或受控 Action。
+Harness UI 是用户管理、观察和使用 Harness 系统的操作面。UI 读取 Runtime Projection、Trace、Event、Artifact、Memory 和 Agent registry；用户操作通过 Command、受控 Action 或 Adapter operation 进入 Runtime。
 
-UI 由三个主要 surface 组成：
+UI 不从自然语言 transcript 推断系统状态。它展示 Runtime 已接受和投影出的结构化状态，并让用户在合适边界内创建 run、切换 Agent、进入不同 Agent Session、批准决策、恢复执行、审查证据和导出 trace。
 
-- **Harness Console**：管理 Run、Task、Assignment、Artifact、Gate、Decision、Event、Trace、Memory、Concept。
-- **Session Tree Workbench**：把 root session、child session、descendant session 展示成可导航树。
-- **Agent Manager**：管理 Agent 模板、entry、capability、permission、启用状态和 authoring 内容。
+## Surface
 
-## 设计边界
+UI 由五类 surface 组成：
 
-- 主聊天界面和 Harness Console 是两个独立 surface。
-- 前端不直接修改状态文件、数据库或 projection。
-- 所有状态变化都通过 Runtime Command、受控 Action 或 adapter API。
-- UI 以 Projection 为主要数据源，Event Log 和 raw trace 作为审计入口。
-- UI 视图、Artifact 摘要和 Trace export 使用稳定 id、状态、summary、refs、evidence、actor、time 和 visibility metadata，让人类和 Agent Session 都能读取和复用。
-- Project Memory 位于 project-local Harness store；Team/Global Memory 通过 Memory Service 引用。
-- Provider/model settings、worktree/sandbox settings 是独立配置 surface。
-- Working directory 是 runtime project boundary；UI 不引入面向用户的 `workspaceID`。
+- **Harness Console**：管理 Run、Task、Action、Assignment、Gate、Decision、Artifact、Event、Projection 和 Trace。
+- **Agent Session Workbench**：展示 root session、child session、descendant session，并允许用户进入不同 Agent Session 继续交互。
+- **Agent Manager**：管理 Agent 模板、entry、capability、permission、model preference、relationships、orchestration policy 和启用状态。
+- **Protocol / Workflow Panel**：观察模型 DSL、Action Graph、Workflow DAG、executor routing、adapter state 和恢复状态。
+- **Governance View**：观察 Memory、Concept、Authority、Gate、Trace export、redaction 和 audit evidence。
 
-## 核心对象
+## 数据读取模型
 
-Harness Console 必须能展示这些对象：
+UI 默认读取 Projection。Event Log、raw trace、executor logs 和 Artifact 原文作为证据入口存在，不作为常规状态源。
+
+UI 读取对象：
 
 - `Run`
 - `Task`
+- `Action`
 - `Assignment`
 - `Agent Session`
 - `Artifact`
@@ -36,67 +34,15 @@ Harness Console 必须能展示这些对象：
 - `Trace`
 - `Memory`
 - `Concept`
+- `Agent`
+- `Workflow Profile`
+- `Workflow Node`
 
-## 架构
+每个 UI record 都应包含稳定 id、status、summary、refs、evidence、actor、time、visibility 和 provenance，让人类和后续 Agent Session 都能读取和复用。
 
-```txt
-主聊天界面
-  -> session/message/tool API
+## Command 模型
 
-Harness Console
-  -> Harness API
-  -> Harness Runtime
-  -> Command/Event/Projection/Gate
-  -> run-scoped store + governance store
-
-Session Tree Workbench
-  -> session tree API
-  -> root/child/descendant session projection
-
-Agent Manager
-  -> agent management API
-  -> package/user/project agent templates
-
-共享底层
-  -> provider / tool / workspace / storage / permission
-```
-
-## Harness 控制台
-
-### 只读 Console
-
-目标：用户可以在不执行操作的情况下检查结构化 Harness 状态。
-
-后端：
-
-- 为 Run、Task、Assignment、Artifact、Decision、Event 和 Projection envelope 定义 read schema
-- 读取 `.opencode/harness/runs/<run>/...`
-- 当 Harness data 不存在时返回空列表
-- 暴露读取路由：
-  - `GET /harness/runs`
-  - `GET /harness/runs/:id`
-  - `GET /harness/runs/:id/tasks`
-  - `GET /harness/runs/:id/assignments`
-  - `GET /harness/runs/:id/artifacts`
-  - `GET /harness/runs/:id/decisions`
-  - `GET /harness/runs/:id/events`
-
-前端：
-
-- 增加独立 Harness Console 路由
-- 展示 Run list、Run detail、Task list、Artifact list、Decision list、Event list
-- 清晰展示 loading、empty 和 error states
-- 展示 Projection source 和 update time
-
-验收：
-
-- 用户可以看到 run status、blockers、evidence 和 pending decisions
-- UI 不解析聊天文本来推断状态
-- Harness store 缺失时展示合法 empty state
-
-### 可操作 Console
-
-目标：用户可以通过受控操作推进 Run。
+会改变系统状态的 UI 操作提交为 Command。Runtime 校验 schema、authority、gate、当前 Projection 和 redaction policy 后，追加 Event 并更新 Projection。
 
 Command 类型：
 
@@ -106,174 +52,172 @@ Command 类型：
 - `run.abort`
 - `task.retry`
 - `task.cancel`
+- `action.retry`
+- `assignment.cancel`
 - `decision.answer`
+- `permission.approve`
+- `permission.reject`
 - `verify.rerun`
+- `session.message.submit`
+- `session.focus`
+- `agent.enable`
+- `agent.disable`
+- `agent.update`
+- `concept.replace.request`
+- `projection.rebuild.request`
+- `trace.export.request`
 
-后端：
+Command result 返回更新后的 Projection summary、Event refs、Trace refs 和可见的 blocker / rejection reason。失败的 Command 不产生部分状态。
 
-- 定义 Command schema 和所需 authority
-- 校验 schema、authority、gate conditions 和 run mutability
-- 更新 Projection 前追加 Event
-- 返回更新后的 Projection summary
-- 暴露 command route，例如 `POST /harness/commands`
+## Harness Console
 
-前端：
+Harness Console 展示受治理 run 的当前状态和证据链。
 
-- 提供 create Run form
-- 提供 pause/resume/abort controls
-- 提供 task retry/cancel controls
-- 将 Decision Request 渲染为人类可读选项
-- 展示 Gate rejection reason，并且不在 accepted projection 之外乐观改变 client state
+核心视图：
 
-验收：
+- Run list：status、goal、owner、current phase、progress、blocked reason、pending decision、updated time。
+- Run detail：Goal Contract、Action Graph、Assignment list、Artifact Index、Gate state、Decision queue、Trace summary。
+- Task / Action detail：operation、executor、depends_on、criteria、failure、budget、visibility、status、result、artifacts、events。
+- Assignment detail：Agent Session、authority、Context Bundle summary、contract、result、unresolved、child trace。
+- Gate detail：gate 输入、判定结果、证据、阻塞原因、可用 Decision。
+- Event Explorer：按 sequence、type、actor、scope、refs 和 status 检查已接受事实。
+- Audit Export：按 visibility 和 redaction policy 导出 trace、event、artifact summary 和 decision evidence。
 
-- 所有 UI 操作都变成 Command 或受控 Action
-- completed run 不能任意 resume
-- non-pending decision 不能 answer
-- failed command 不产生 half state
+Console 中的 graph、timeline、progress、summary 和 comparison view 都是 Projection 或 Trace 的展示形态。
 
-### 治理 Console
+## 多 Agent Session 交互
 
-目标：用户可以检查 governance state、authority、memory 和 concept changes。
+用户可以与不同 Agent Session 交互，而不是只能停留在一个主会话里。
 
-能力：
+Session Workbench 展示：
 
-- 跨 `run`、`project`、`team` 和 `global` 的 Memory Query
-- Project/Team/Global Memory scope display
-- Concept Detail
-- Concept Replacement Request
-- Impact Scan
-- Authority View
-- Gate Detail
+- root session
+- child session
+- descendant session
+- workflow runner session
+- review / test / debug / research 等 specialist session
+- waiting_user、waiting_permission、blocked、partial、failed 等状态标记
 
-规则：
+用户可以：
 
-- 当前 Projection 覆盖 historical memory
-- Concept replacement 需要 `new_information`
-- replacement request 必须展示 impacted refs、evidence、owner 和 gate result
-- Authority View 必须区分 capability 和 granted authority
+- 打开任意 Agent Session 查看 session log、Context Bundle 摘要、Assignment、authority、Artifact refs 和 Trace。
+- 在某个 Agent Session 内提交补充输入，形成 `session.message.submit` Command。
+- 对 waiting_user / waiting_permission 的 session 提供回答、批准或拒绝。
+- 从 parent session 跳转到 child session，也可以从 child session 回到 parent run projection。
+- 查看某个 Agent Session 的上下文来源，包括 Projection、Memory、Artifact、Trace 和语义解释提示。
+- 将某个 session 的 Artifact、summary 或 unresolved issues 作为 Handoff 输入交给后续 Agent Session。
 
-验收：
+Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，是把输入提交给 Runtime；Runtime 再根据该 session 的 authority、Assignment、Context Bundle 和当前 Projection 构造下一次模型调用。
 
-- 用户可以看到 concept 为什么 active、superseded 或 historical
-- 用户可以看到 concept replacement 影响哪些 task 或 file
-- 当缺少必要 evidence 时，UI 阻塞 concept replacement
+## Agent Manager
 
-### 可视化与审计
+Agent Manager 把 Agent 作为受治理 runtime object 管理。
 
-目标：用户可以检查复杂 run 并导出 audit evidence。
+它展示：
 
-视图：
+- Agent id、name、description、persona
+- source：package、user、project
+- entry flags：primary、delegable、mentionable、default、hidden
+- capability：purpose、tags、cost、writes
+- permission：permission_mode、allowed_tools、denied_tools、inherit_permissions
+- model preference
+- relationships
+- orchestration_policy
+- enabled / disabled state
+- diagnostics
 
-- Task Graph
-- Concept Graph
-- Event Explorer
-- Projection Rebuild debug entry
-- Run Comparison
-- Audit Export
+用户可以创建、编辑、启用、禁用 user/project Agent 模板。Package / builtin 模板作为只读来源展示。Disabled Agent 仍在 Agent Manager 中可见，但不会进入普通 picker、mention suggestions 或 delegation candidate。
 
-规则：
+Agent Manager 需要区分 capability 和 authority：capability 说明 Agent 适合做什么，authority 由 Runtime 在具体 Assignment 中授予。
 
-- graph views 是 projection，不是 state source
-- raw JSON 可用于检查，但不是主要体验
-- audit export 遵守 redaction policy
-- projection rebuild 是 debug action，并需要适当 authority
+## Protocol 与 Workflow Panel
 
-验收：
+Protocol Panel 展示模型与 Runtime 的结构化交互。
 
-- 用户可以追踪 Command -> Event -> Projection
-- 用户可以按 duration、status、action count、tool calls 和 failure reasons 对比 run
-- 用户可以导出已应用 redaction 的 audit material
+它展示：
 
-## Session 树工作台
+- model declaration
+- recovered tool request
+- Action Graph
+- selected Action detail
+- executor routing
+- result
+- Runtime Observation
+- protocol error
+- recovery event
+- trace export
 
-目标：nested session 是一等交互对象。
+Workflow Panel 展示 Workflow Adapter 的 durable orchestration 状态。
 
-预期行为：
+它展示：
 
-- sidebar/session navigation 渲染 root sessions、child sessions 和更深 descendants
-- child session 一致展示 status、pending permission/question indicators、unread/error state 和 Agent tint
-- parent session view 清晰暴露 child sessions
-- 打开任意 child session 都路由到 `/:dir/session/:id`
-- 除非 Runtime 报告 blocking state，否则 child 和 descendant sessions 保持可交互
-- 删除或归档 parent 时，对 descendants 的处理可预测
+- Workflow Profile
+- DAG / node graph
+- node status
+- ready / running / blocked / partial / failed nodes
+- loop attempt
+- Decision queue
+- Handoff chain
+- Artifact Index
+- recovery / rehydration status
+- workflow trace
 
-实现任务：
+Protocol Panel 和 Workflow Panel 使用同一套字段、状态词、Artifact refs、Trace refs 和 visibility。
 
-- 在 directory guard 下增加 recursive session descendants/tree query
-- route shape 变化后重新生成 SDK
-- root session list 后加载 descendant sessions，并合并到 directory store
-- 为保留的 root 保存完整 descendant closure
-- 构建支持 active-lineage expansion 的 recursive session tree renderer
-- 调整 sidebar prefetch/nav order 到 flattened visible tree
-- 测试 child/grandchild rendering、navigation 和 prompt submission isolation
+## Governance View
 
-## Agent 管理器
+Governance View 面向权限、记忆、概念和审计。
 
-目标：用户可以把 Agent 作为受治理 runtime object 管理。
+它展示：
 
-预期行为：
+- Authority View：某个 Run、Action、Assignment 或 Agent Session 的生效 authority。
+- Memory View：run、project、team、global scope 下的 Memory refs、status、freshness、evidence 和 visibility。
+- Concept View：active、superseded、historical concept，以及 replacement request、impact refs 和 gate result。
+- Trace View：Command -> Event -> Projection -> Action -> Executor -> Artifact -> Observation 的证据链。
+- Redaction View：导出或回放前应用的脱敏规则和被隐藏字段。
 
-- Settings 包含 Agents tab
-- 列出 Agent 的 source、persona、entry flags、capability、permission mode、enabled state、diagnostics
-- 创建 user/project Agent 模板
-- 编辑 metadata、identity/rules content、model defaults、entry flags 和 custom permissions
-- disable 或 re-enable Agent，而不删除其 config
-- package/builtin templates 可见，但不能原地修改
-- disabled Agent 仍在 Agent Manager 中可见，并从普通 picker 和 `@agent` suggestions 中消失
+Concept replacement、projection rebuild、trace export 和高影响 redaction override 都通过 Command 进入 Runtime，并按决策边界升级。
 
-实现任务：
+## Agent 可读 UI 产物
 
-- 为 package/user/project sources、disabled state、diagnostics、identity 和 rules 定义 management schema
-- 增加 list/get endpoints，包含 disabled Agent
-- 为 user/project templates 增加 validate/create/update endpoints
-- 使用 config overlay 语义增加 enable/disable endpoint
-- route shape 变化后重新生成 SDK
-- 增加 WebUI API helpers/context，用于 Agent 管理
-- 为 `meta.json`、`identity.md`、`rules.md`、entry flags、model defaults 和 permissions 增加 create/edit form
-- 主 picker 切换为使用 `entry.primary`
-- `@agent` suggestions 切换为使用 `entry.mentionable`
-- 以确定性 replacement 处理禁用当前选中 Agent 的情况
+UI 产物需要同时服务人和 Agent Session。
 
-验收：
+因此，UI 中的摘要、表格、graph node、timeline entry、decision card、artifact card 和 trace export 都应提供：
 
-- `/agent` 风格 runtime selection 隐藏 disabled Agent
-- management list 包含 disabled Agent，并带 source 和 diagnostics
-- form validation 在写入前捕获无效 template metadata
-- picker 和 mention tests 覆盖 primary、mentionable、hidden 和 disabled 组合
+- 稳定 id
+- status
+- summary
+- refs
+- evidence
+- actor
+- time
+- visibility
+- source projection
+- unresolved issues
 
-## Protocol Run 面板
+后续 Agent Session 可以通过 Context Bundle 引用这些 UI 产物，而不是重新读取完整 transcript 或 raw logs。
 
-Protocol run 应可见，但默认不暴露 raw logs。
+## Visibility 与 Redaction
 
-要求：
+UI 遵守 `visibility` 字段。
 
-- 只有存在 protocol run metadata 或 protocol logs 时才展示 Protocol tab
-- 展示 run title、status、action graph list、selected action detail、executor、summary、artifacts 和 block/failure reason
-- 暴露完整 protocol trace JSON 的 view/copy/export
-- 当可用时展示 comparison metrics：direct toolCall count、protocol action count、internal tool calls、model-visible bytes、raw output bytes、duration
-- 保持 Protocol 与 Workflow、Logs、Review、file 和 context tabs 区分
+- `model` 控制是否进入后续模型上下文。
+- `user` 控制是否展示给用户。
+- `logs` 控制是否进入审计日志。
+- `trace` 控制是否进入 trace export。
+- `future_runs` 控制是否成为后续 run 可引用材料。
+- `runtime_only` 控制是否只用于 Runtime 内部决策。
 
-## 测试策略
+Trace export、Artifact preview、raw log view、Memory promotion 和 Agent Session context preview 都需要应用 redaction policy。包含 secret、credential、private key、personal data、敏感路径或未授权外部内容的材料，只能以摘要、引用或脱敏形式展示和复用。
 
-- Harness read/command routes 的 API contract tests
-- Command -> Event -> Projection chain tests
-- Decision Answer、Task Retry、pause/resume/abort tests
-- Harness Console loading、empty、error、list 和 detail states 的 component tests
-- recursive rendering 和 child interaction 的 session tree tests
-- list/get/create/update/disable/enable 的 Agent manager tests
-- action detail 和 export controls 的 protocol panel/log tests
-- 从受影响 package directory 运行 package-level typechecks
+## UI 协议能力
 
-## 验收摘要
+UI 管理协议覆盖以下能力：
 
-UI 被接受的条件：
-
-- 用户可以独立进入 Harness Console
-- 所有可见状态来自 Projection、Event 或 runtime trace APIs
-- 所有改变状态的 action 都通过 Runtime
-- 用户可以检查 run status、blockers、evidence、decisions、memory、concepts 和 authority
-- 用户可以导航 nested sessions，并在 child sessions 中继续工作
-- 用户可以管理 Agent，而不需要手动编辑文件
-- audit/export flows 遵守 visibility 和 redaction policy
-- Artifact、Trace 和 UI projection 对人类和后续 Agent Session 都保持结构化可读
+- 通过 Projection 观察 Harness 状态。
+- 通过 Command 推进 Run、Task、Action、Assignment、Decision、Agent 和 Concept。
+- 与 root、child、descendant Agent Session 分别交互。
+- 管理 Agent 模板和启用状态。
+- 观察模型 DSL、Action Graph、Workflow DAG、executor routing 和 Runtime Observation。
+- 检查 authority、gate、memory、concept、artifact、trace 和 audit evidence。
+- 将 UI 产物作为 agent-readable refs 供后续 Context Bundle 使用。

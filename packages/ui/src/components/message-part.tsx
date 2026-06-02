@@ -55,6 +55,7 @@ import { ToolStatusTitle } from "./tool-status-title"
 import { animate } from "motion"
 import { useLocation } from "@solidjs/router"
 import { attached, inline, kind } from "./message-file"
+import { partView, type PartView } from "./message-part-view"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -196,6 +197,7 @@ export interface MessagePartProps {
   actions?: UserActions
   hideDetails?: boolean
   defaultOpen?: boolean
+  view?: PartView
   showAssistantCopyPartID?: string | null
   turnDurationMs?: number
 }
@@ -405,8 +407,6 @@ function sessionLink(id: string | undefined, path: string, href?: (id: string) =
 }
 
 const CONTEXT_GROUP_TOOLS = new Set(["read", "glob", "grep", "list"])
-const HIDDEN_TOOLS = new Set(["todowrite", "todoread"])
-
 function list<T>(value: T[] | undefined | null, fallback: T[]) {
   if (Array.isArray(value)) return value
   return fallback
@@ -508,14 +508,10 @@ function index<T extends { id: string }>(items: readonly T[]) {
   return new Map(items.map((item) => [item.id, item] as const))
 }
 
-function renderable(part: PartType, showReasoningSummaries = true) {
-  if (part.type === "tool") {
-    if (HIDDEN_TOOLS.has(part.tool)) return false
-    if (part.tool === "question") return part.state.status !== "pending" && part.state.status !== "running"
-    return true
-  }
-  if (part.type === "text") return !part.ignored && !!part.text?.trim()
-  if (part.type === "reasoning") return showReasoningSummaries && !!part.text?.trim()
+function displayable(part: PartType, showReasoningSummaries = true) {
+  const view = partView(part, showReasoningSummaries)
+  if (view.kind === "hidden") return false
+  if (part.type === "text" || part.type === "reasoning" || part.type === "tool") return true
   return !!PART_MAPPING[part.type]
 }
 
@@ -555,7 +551,7 @@ export function AssistantParts(props: {
       groupParts(
         props.messages.flatMap((message) =>
           list(data.store.part?.[message.id], emptyParts)
-            .filter((part) => renderable(part, props.showReasoningSummaries ?? true))
+            .filter((part) => displayable(part, props.showReasoningSummaries ?? true))
             .map((part) => ({
               messageID: message.id,
               part,
@@ -617,6 +613,7 @@ export function AssistantParts(props: {
                         part={item()!}
                         message={message()!}
                         actions={props.actions}
+                        view={partView(item()!, props.showReasoningSummaries ?? true)}
                         showAssistantCopyPartID={props.showAssistantCopyPartID}
                         turnDurationMs={props.turnDurationMs}
                         defaultOpen={partDefaultOpen(item()!, props.shellToolDefaultOpen, props.editToolDefaultOpen)}
@@ -773,7 +770,7 @@ export function AssistantMessageDisplay(props: {
     () =>
       groupParts(
         props.parts
-          .filter((part) => renderable(part, props.showReasoningSummaries ?? true))
+          .filter((part) => displayable(part, props.showReasoningSummaries ?? true))
           .map((part) => ({
             messageID: props.message.id,
             part,
@@ -825,6 +822,7 @@ export function AssistantMessageDisplay(props: {
                       part={item()!}
                       message={props.message}
                       actions={props.actions}
+                      view={partView(item()!, props.showReasoningSummaries ?? true)}
                       showAssistantCopyPartID={props.showAssistantCopyPartID}
                     />
                   </Show>
@@ -1170,21 +1168,72 @@ function HighlightedText(props: { text: string; references: FilePart[]; agents: 
   return <For each={segments()}>{(segment) => <span data-highlight={segment.type}>{segment.text}</span>}</For>
 }
 
+function hiddenOutputText(part: PartType) {
+  if (part.type === "text") return part.text?.trim() ?? ""
+  if (part.type === "reasoning") return part.text?.trim() ?? ""
+  return ""
+}
+
+function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { kind: "collapsed" }> }) {
+  const i18n = useI18n()
+  const [open, setOpen] = createSignal(false)
+  const text = createMemo(() => hiddenOutputText(props.part))
+  const title = createMemo(() =>
+    props.view.reason === "reasoning"
+      ? i18n.t("ui.messagePart.collapsed.reasoning.title")
+      : i18n.t("ui.messagePart.collapsed.ignoredText.title"),
+  )
+  const detail = createMemo(() =>
+    props.view.reason === "reasoning"
+      ? i18n.t("ui.messagePart.collapsed.reasoning.description")
+      : i18n.t("ui.messagePart.collapsed.ignoredText.description"),
+  )
+
+  return (
+    <Show when={text()}>
+      <Collapsible open={open()} onOpenChange={setOpen} variant="ghost">
+        <Collapsible.Trigger>
+          <div data-component="collapsed-model-output-trigger">
+            <div data-slot="collapsed-model-output-main">
+              <span data-slot="collapsed-model-output-title">{title()}</span>
+              <span data-slot="collapsed-model-output-detail">{detail()}</span>
+            </div>
+            <Collapsible.Arrow />
+          </div>
+        </Collapsible.Trigger>
+        <Collapsible.Content>
+          <div data-component="collapsed-model-output">
+            <Markdown text={text()} cacheKey={props.part.id} />
+          </div>
+        </Collapsible.Content>
+      </Collapsible>
+    </Show>
+  )
+}
+
 export function Part(props: MessagePartProps) {
   const component = createMemo(() => PART_MAPPING[props.part.type])
+  const view = createMemo(() => props.view ?? partView(props.part))
   return (
-    <Show when={component()}>
-      <Dynamic
-        component={component()}
-        part={props.part}
-        message={props.message}
-        hideDetails={props.hideDetails}
-        defaultOpen={props.defaultOpen}
-        showAssistantCopyPartID={props.showAssistantCopyPartID}
-        turnDurationMs={props.turnDurationMs}
-        actions={props.actions}
-      />
-    </Show>
+    <Switch>
+      <Match when={view().kind === "collapsed"}>
+        <HiddenModelOutput part={props.part} view={view() as Extract<PartView, { kind: "collapsed" }>} />
+      </Match>
+      <Match when={view().kind === "visible"}>
+        <Show when={component()}>
+          <Dynamic
+            component={component()}
+            part={props.part}
+            message={props.message}
+            hideDetails={props.hideDetails}
+            defaultOpen={props.defaultOpen}
+            showAssistantCopyPartID={props.showAssistantCopyPartID}
+            turnDurationMs={props.turnDurationMs}
+            actions={props.actions}
+          />
+        </Show>
+      </Match>
+    </Switch>
   )
 }
 

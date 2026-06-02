@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { createEffect, createMemo, For, Show, type Accessor, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSortable } from "@thisbeyond/solid-dnd"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -16,7 +16,7 @@ import { type Session } from "@open-agent-harness/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
-import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
+import { type Filter, NewSessionItem, SessionFilterBar, SessionItem, SessionSkeleton } from "./sidebar-items"
 import {
   childMapByParent,
   effectiveSessionExpansion,
@@ -260,6 +260,7 @@ const WorkspaceSessionList = (props: {
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
   const lineage = createMemo(() => sessionLineage(props.all(), params.id))
   const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
+  const [filter, setFilter] = createSignal<Filter | undefined>()
   const nav = createMemo(() =>
     visibleSessionTree(props.sessions(), props.all(), props.children(), open()).map((item) => item.session),
   )
@@ -276,6 +277,7 @@ const WorkspaceSessionList = (props: {
           setHoverSession={props.ctx.setHoverSession}
         />
       </Show>
+      <SessionFilterBar filter={filter} setFilter={setFilter} />
       <Show when={props.loading()}>
         <SessionSkeleton />
       </Show>
@@ -290,6 +292,7 @@ const WorkspaceSessionList = (props: {
             popover={props.popover}
             expanded={() => expanded}
             lineage={lineage}
+            filter={filter}
             setExpanded={set}
             children={props.children()}
             sidebarExpanded={props.ctx.sidebarExpanded}

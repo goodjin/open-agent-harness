@@ -239,4 +239,150 @@ describe("SessionPrompt runner wiring", () => {
       else process.env.OPENAI_API_KEY = prev
     }
   })
+
+  test("session loop hides default from default protocol runner catalog", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-default-child-protocol"),
+            fn: async () => {
+              resetRegistry()
+              const seen: { prompt: string }[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push({ prompt: stream.runtimeTools?.prompt ?? "" })
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const parent = await Session.create({ title: "Parent default protocol agents test" })
+                const session = await Session.create({ parentID: parent.id, title: "Child default protocol agents test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "default",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "plan one layer",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(seen).toHaveLength(1)
+                expect(seen[0]?.prompt).toContain("Available Protocol Agents")
+                expect(seen[0]?.prompt).not.toContain("## default")
+                expect(seen[0]?.prompt).toContain("## frontend")
+                await Session.remove(session.id)
+                await Session.remove(parent.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop does not show unavailable read examples for planner agents", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-feature-planner-tools"),
+            fn: async () => {
+              resetRegistry()
+              const seen: { prompt: string }[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push({ prompt: stream.runtimeTools?.prompt ?? "" })
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Feature planner protocol tools test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "feature-planner",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "decompose one epic",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(seen).toHaveLength(1)
+                expect(seen[0]?.prompt).toContain("## question")
+                expect(seen[0]?.prompt).toContain("## explore")
+                expect(seen[0]?.prompt).toContain('"name": "question"')
+                expect(seen[0]?.prompt).not.toContain('"name": "read"')
+                expect(seen[0]?.prompt).toContain("If repository read, search, command, edit, validation, or review tools are not listed")
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
 })

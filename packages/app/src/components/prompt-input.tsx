@@ -543,6 +543,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const agents = createMemo(() => local.agent.list())
   const agentNames = createMemo(() => agents().map((agent) => agent.name))
   const desc = (name: string | undefined) => agents().find((agent) => agent.name === name)?.description
+  const [changingAgent, setChangingAgent] = createSignal(false)
+  const lockedAgent = createMemo(() => Boolean(params.id) && !changingAgent())
+
+  createEffect(
+    on(
+      () => params.id,
+      () => setChangingAgent(false),
+    ),
+  )
 
   const handleAtSelect = (option: AtOption | undefined) => {
     if (!option) return
@@ -1473,37 +1482,67 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               </div>
               <div class="flex items-center gap-1.5 min-w-0 flex-1">
                 <div data-component="prompt-agent-control">
-                  <TooltipKeybind
-                    placement="top"
-                    gutter={4}
-                    title={language.t("command.agent.cycle")}
-                    keybind={command.keybind("agent.cycle")}
+                  <Show
+                    when={!lockedAgent()}
+                    fallback={
+                      <Tooltip
+                        placement="top"
+                        gutter={4}
+                        value={desc(local.agent.current()?.name) ?? local.agent.current()?.name ?? "Change agent"}
+                      >
+                        <Button
+                          size="normal"
+                          variant="ghost"
+                          class="capitalize max-w-[180px] text-text-base"
+                          style={control()}
+                          data-action="prompt-agent-change"
+                          onClick={() => setChangingAgent(true)}
+                        >
+                          <span class="truncate text-13-regular text-text-base">
+                            Change agent: {local.agent.current()?.name ?? ""}
+                          </span>
+                          <Icon name="chevron-down" size="small" />
+                        </Button>
+                      </Tooltip>
+                    }
                   >
-                    <Select
-                      size="normal"
-                      options={agentNames()}
-                      current={local.agent.current()?.name ?? ""}
-                      onSelect={local.agent.set}
-                      class="capitalize max-w-[160px] text-text-base"
-                      valueClass="truncate text-13-regular text-text-base"
-                      triggerStyle={control()}
-                      triggerProps={{ "data-action": "prompt-agent" }}
-                      variant="ghost"
+                    <TooltipKeybind
+                      placement="top"
+                      gutter={4}
+                      title={language.t("command.agent.cycle")}
+                      keybind={command.keybind("agent.cycle")}
                     >
-                      {(name) => (
-                        <div class="flex min-w-0 items-center gap-2">
-                          <span class="text-13-regular text-text-strong whitespace-nowrap">{name}</span>
-                          <Show when={desc(name)}>
-                            {(text) => (
-                              <span class="text-12-regular text-text-weak truncate normal-case" title={text()}>
-                                {text()}
-                              </span>
-                            )}
-                          </Show>
-                        </div>
-                      )}
-                    </Select>
-                  </TooltipKeybind>
+                      <Select
+                        size="normal"
+                        options={agentNames()}
+                        current={local.agent.current()?.name ?? ""}
+                        onSelect={(name) => {
+                          local.agent.set(name, { force: true })
+                          setChangingAgent(false)
+                        }}
+                        onOpenChange={(open) => {
+                          if (!open && params.id) setChangingAgent(false)
+                        }}
+                        class="capitalize max-w-[160px] text-text-base"
+                        valueClass="truncate text-13-regular text-text-base"
+                        triggerStyle={control()}
+                        triggerProps={{ "data-action": "prompt-agent" }}
+                        variant="ghost"
+                      >
+                        {(name) => {
+                          const text = desc(name)
+                          return (
+                            <div class="flex min-w-0 items-center gap-2" title={text ?? name}>
+                              <span class="text-13-regular text-text-strong whitespace-nowrap">{name}</span>
+                              <Show when={text}>
+                                <span class="text-12-regular text-text-weak truncate normal-case">{text}</span>
+                              </Show>
+                            </div>
+                          )
+                        }}
+                      </Select>
+                    </TooltipKeybind>
+                  </Show>
                 </div>
                 <div data-component="prompt-model-control">
                   <Show

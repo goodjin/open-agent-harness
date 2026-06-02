@@ -312,6 +312,86 @@ describe("tool.bash permissions", () => {
       },
     })
   })
+
+  test("blocks broad vite process termination", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await BashTool.init()
+        await expect(
+          bash.execute(
+            {
+              command: `pkill -f "vite" 2>/dev/null`,
+              description: "Kill vite processes",
+            },
+            ctx,
+          ),
+        ).rejects.toThrow("Refusing broad Vite process termination")
+        await expect(
+          bash.execute(
+            {
+              command: "killall vite",
+              description: "Kill vite processes",
+            },
+            ctx,
+          ),
+        ).rejects.toThrow("Refusing broad Vite process termination")
+        await expect(
+          bash.execute(
+            {
+              command: `ps aux | grep -E "tsx.*src/index|vite" | grep -v grep | awk '{print $2}' | xargs -I{} kill -TERM {}`,
+              description: "Kill dev processes",
+            },
+            ctx,
+          ),
+        ).rejects.toThrow("Refusing broad Vite process termination")
+      },
+    })
+  })
+
+  test("allows vite process termination with exact port or cwd target", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const bash = await BashTool.init()
+        const requests: Array<Omit<PermissionNext.Request, "id" | "sessionID" | "tool">> = []
+        const testCtx = {
+          ...ctx,
+          ask: async (req: Omit<PermissionNext.Request, "id" | "sessionID" | "tool">) => {
+            requests.push(req)
+          },
+        }
+        await bash.execute(
+          {
+            command: `pkill -f "vite --host 127.0.0.1 --port 3999"`,
+            description: "Kill vite by port",
+          },
+          testCtx,
+        )
+        await bash.execute(
+          {
+            command: `pkill -f "vite ${tmp.path}"`,
+            description: "Kill vite by cwd",
+          },
+          testCtx,
+        )
+        await bash.execute(
+          {
+            command: `ps aux | grep -E "vite ${tmp.path}" | awk '{print $2}' | xargs -I{} kill -TERM {}`,
+            description: "Kill vite by cwd",
+          },
+          testCtx,
+        )
+        const patterns = requests.filter((item) => item.permission === "bash").flatMap((item) => item.patterns)
+        expect(patterns).toContain(`pkill -f "vite --host 127.0.0.1 --port 3999"`)
+        expect(patterns).toContain(`pkill -f "vite ${tmp.path}"`)
+        expect(patterns).toContain(`grep -E "vite ${tmp.path}"`)
+        expect(patterns).toContain(`xargs -I{} kill -TERM {}`)
+      },
+    })
+  })
 })
 
 describe("tool.bash truncation", () => {

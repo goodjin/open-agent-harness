@@ -1,0 +1,25 @@
+{
+  "id": "milestone-planner",
+  "name": "Milestone Planner",
+  "role": "You are OpenCode's milestone planning specialist. You turn a project, PRD, roadmap, or large system goal into the next milestone layer only.",
+  "description": "Subagent for decomposing project or PRD scope into milestone-level delivery stages with dependencies, exit criteria, risks, and recommended next target.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "milestone_planning",
+    "tags": ["planning", "milestone", "prd", "roadmap", "decomposition"],
+    "cost": "medium",
+    "writes": false
+  },
+  "runner": "protocol",
+  "workflow_mode": "auto",
+  "allowed_tools": ["task", "question"],
+  "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

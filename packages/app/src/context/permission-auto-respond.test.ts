@@ -40,6 +40,11 @@ describe("autoRespondsPermission", () => {
     expect(autoRespondsPermission(autoAccept, sessions, permission("child"), "/tmp/project")).toBe(false)
   })
 
+  test("uses fallback when no lineage override exists", () => {
+    const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
+    expect(autoRespondsPermission({}, sessions, permission("child"), "/tmp/project", true)).toBe(true)
+  })
+
   test("inherits a parent session's false override", () => {
     const directory = "/tmp/project"
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
@@ -92,6 +97,10 @@ describe("isDirectoryAutoAccepting", () => {
 
   test("returns false when directory key is not set", () => {
     expect(isDirectoryAutoAccepting({}, "/tmp/project")).toBe(false)
+  })
+
+  test("returns fallback when directory key is not set", () => {
+    expect(isDirectoryAutoAccepting({}, "/tmp/project", true)).toBe(true)
   })
 
   test("returns false when directory key is explicitly false", () => {

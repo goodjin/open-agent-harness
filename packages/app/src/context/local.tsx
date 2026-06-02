@@ -125,7 +125,22 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const scope = createMemo<State | undefined>(() => {
       const session = id()
       if (!session) return store.draft
-      return saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session))
+      const messages = sync.data.message[session] ?? []
+      const msg = messages.findLast((item) => item.role === "user")
+      const bound = msg
+        ? {
+            agent: msg.agent,
+            model: msg.model,
+            variant: msg.variant ?? null,
+          } satisfies State
+        : undefined
+      return saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
+    })
+
+    const started = createMemo(() => {
+      const session = id()
+      if (!session) return false
+      return (sync.data.message[session]?.length ?? 0) > 0
     })
 
     createEffect(() => {
@@ -180,7 +195,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       current() {
         return pickAgent(scope()?.agent ?? store.current)
       },
-      set(name: string | undefined) {
+      set(name: string | undefined, options?: { force?: boolean }) {
+        if (started() && !options?.force) return
         const item = pickAgent(name)
         if (!item) {
           setStore("current", undefined)

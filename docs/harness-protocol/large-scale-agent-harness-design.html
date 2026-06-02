@@ -1,0 +1,1252 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>大规模 Agent 系统的 Harness 该如何设计</title>
+    <meta
+      name="description"
+      content="一篇面向 AI Agent / agent runtime / workflow / tool calling 技术读者的中文文章，讨论大规模 Agent 系统中的 Harness 设计理念、Runtime 治理、Action、State、Trace、Context、Workflow 和 UI。"
+    />
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #eef2f5;
+        --paper: #ffffff;
+        --ink: #18222b;
+        --muted: #5b6773;
+        --line: #d8e0e7;
+        --soft: #f7f9fb;
+        --runtime: #0f766e;
+        --runtime-soft: #e6f5f2;
+        --model: #5b45b8;
+        --model-soft: #f0edff;
+        --state: #b45309;
+        --state-soft: #fff4df;
+        --exec: #0f5c9c;
+        --exec-soft: #e8f3fc;
+        --ui: #b91c1c;
+        --ui-soft: #fff1f1;
+        --event: #db2777;
+        --green: #15803d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.88), rgba(255,255,255,0.6)),
+          var(--bg);
+        color: var(--ink);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 17px;
+        line-height: 1.72;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        background: var(--paper);
+        min-height: 100vh;
+        padding: 58px clamp(22px, 6vw, 86px) 86px;
+        box-shadow: 0 20px 70px rgba(24, 34, 43, 0.12);
+      }
+
+      header {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 34px;
+        margin-bottom: 36px;
+      }
+
+      .eyebrow {
+        color: var(--runtime);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 16px;
+      }
+
+      h1 {
+        font-size: clamp(34px, 5.4vw, 58px);
+        line-height: 1.08;
+        letter-spacing: 0;
+        margin: 0 0 18px;
+      }
+
+      .subtitle {
+        max-width: 900px;
+        color: var(--muted);
+        font-size: 20px;
+        margin: 0;
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .pill {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fbfcfd;
+        color: var(--muted);
+        font-size: 13px;
+        padding: 4px 11px;
+      }
+
+      nav {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--soft);
+        padding: 16px 18px;
+        margin: 0 0 34px;
+      }
+
+      nav strong {
+        display: block;
+        margin-bottom: 8px;
+        font-size: 14px;
+      }
+
+      nav ol {
+        margin: 0;
+        padding-left: 22px;
+        columns: 2;
+      }
+
+      nav li {
+        break-inside: avoid;
+        margin: 2px 0;
+        color: var(--muted);
+      }
+
+      a {
+        color: var(--runtime);
+        text-decoration-thickness: 1px;
+        text-underline-offset: 3px;
+      }
+
+      article {
+        max-width: 980px;
+        margin: 0 auto;
+      }
+
+      section {
+        margin: 44px 0 54px;
+      }
+
+      h2 {
+        font-size: clamp(25px, 3vw, 34px);
+        line-height: 1.22;
+        letter-spacing: 0;
+        margin: 0 0 14px;
+      }
+
+      h3 {
+        font-size: 20px;
+        line-height: 1.35;
+        margin: 26px 0 10px;
+      }
+
+      p {
+        margin: 0 0 15px;
+      }
+
+      strong {
+        font-weight: 750;
+      }
+
+      code {
+        color: #111827;
+        background: #eef3f7;
+        border-radius: 5px;
+        padding: 1px 5px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        font-size: 0.92em;
+      }
+
+      .lead {
+        font-size: 19px;
+        color: #25313b;
+      }
+
+      .callout {
+        border-left: 4px solid var(--runtime);
+        background: var(--runtime-soft);
+        padding: 13px 17px;
+        margin: 20px 0;
+        color: #134e4a;
+      }
+
+      .grid-two {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+        margin: 20px 0;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        padding: 16px 18px;
+      }
+
+      .card strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      figure.diagram {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        margin: 24px 0 28px;
+        padding: 16px;
+        background:
+          linear-gradient(180deg, rgba(247,249,251,0.95), rgba(255,255,255,0.98));
+        overflow: hidden;
+      }
+
+      figure.diagram svg {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      figcaption {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.55;
+        margin-top: 12px;
+      }
+
+      .box {
+        fill: #fff;
+        stroke: var(--line);
+        stroke-width: 1.5;
+        rx: 10;
+      }
+
+      .box-runtime {
+        fill: var(--runtime-soft);
+        stroke: var(--runtime);
+      }
+
+      .box-model {
+        fill: var(--model-soft);
+        stroke: var(--model);
+      }
+
+      .box-state {
+        fill: var(--state-soft);
+        stroke: var(--state);
+      }
+
+      .box-exec {
+        fill: var(--exec-soft);
+        stroke: var(--exec);
+      }
+
+      .box-ui {
+        fill: var(--ui-soft);
+        stroke: var(--ui);
+      }
+
+      .box-event {
+        fill: #fdf2f8;
+        stroke: var(--event);
+      }
+
+      .label {
+        fill: var(--ink);
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .small {
+        fill: var(--muted);
+        font-size: 12px;
+      }
+
+      .tiny {
+        fill: var(--muted);
+        font-size: 10.5px;
+      }
+
+      .flow {
+        fill: none;
+        stroke: #6b7280;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        marker-end: url(#arrow);
+      }
+
+      .flow-runtime {
+        stroke: var(--runtime);
+      }
+
+      .flow-event {
+        stroke: var(--event);
+      }
+
+      .flow-state {
+        stroke: var(--state);
+      }
+
+      .flow-exec {
+        stroke: var(--exec);
+      }
+
+      .flow-dashed {
+        stroke-dasharray: 7 7;
+      }
+
+      .animated-flow {
+        stroke-dasharray: 10 8;
+        animation: dash 2.6s linear infinite;
+      }
+
+      .pulse {
+        transform-origin: center;
+        animation: pulse 1.8s ease-in-out infinite;
+      }
+
+      .event-dot {
+        fill: var(--event);
+        animation: eventPulse 1.5s ease-in-out infinite;
+      }
+
+      .particle {
+        fill: var(--runtime);
+        opacity: 0.92;
+      }
+
+      .particle-event {
+        fill: var(--event);
+      }
+
+      .particle-a {
+        animation: moveA 3.2s linear infinite;
+      }
+
+      .particle-b {
+        animation: moveB 3.6s linear infinite;
+      }
+
+      .particle-c {
+        animation: moveC 3s linear infinite;
+      }
+
+      .particle-loop {
+        animation: moveLoop 4s linear infinite;
+      }
+
+      @keyframes dash {
+        to { stroke-dashoffset: -36; }
+      }
+
+      @keyframes pulse {
+        0%, 100% { opacity: 0.78; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.06); }
+      }
+
+      @keyframes eventPulse {
+        0%, 100% { opacity: 0.55; r: 5; }
+        50% { opacity: 1; r: 8; }
+      }
+
+      @keyframes moveA {
+        0% { transform: translate(0, 0); opacity: 0; }
+        12% { opacity: 1; }
+        88% { opacity: 1; }
+        100% { transform: translate(222px, 0); opacity: 0; }
+      }
+
+      @keyframes moveB {
+        0% { transform: translate(0, 0); opacity: 0; }
+        12% { opacity: 1; }
+        88% { opacity: 1; }
+        100% { transform: translate(0, 156px); opacity: 0; }
+      }
+
+      @keyframes moveC {
+        0% { transform: translate(0, 0); opacity: 0; }
+        12% { opacity: 1; }
+        88% { opacity: 1; }
+        100% { transform: translate(168px, 86px); opacity: 0; }
+      }
+
+      @keyframes moveLoop {
+        0% { transform: translate(0, 0); opacity: 0; }
+        15% { opacity: 1; }
+        50% { transform: translate(94px, 0); opacity: 1; }
+        70% { transform: translate(94px, 56px); opacity: 1; }
+        100% { transform: translate(0, 56px); opacity: 0; }
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 20px 0 26px;
+        font-size: 15px;
+      }
+
+      th, td {
+        border: 1px solid var(--line);
+        padding: 10px 12px;
+        vertical-align: top;
+      }
+
+      th {
+        background: var(--soft);
+        text-align: left;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 14px;
+        margin-top: 52px;
+        padding-top: 22px;
+      }
+
+      @media (max-width: 820px) {
+        main {
+          width: 100%;
+          padding: 34px 18px 58px;
+        }
+
+        nav ol {
+          columns: 1;
+        }
+
+        .grid-two {
+          grid-template-columns: 1fr;
+        }
+
+        body {
+          font-size: 16px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        .animated-flow,
+        .pulse,
+        .event-dot,
+        .particle-a,
+        .particle-b,
+        .particle-c,
+        .particle-loop {
+          animation: none !important;
+        }
+      }
+
+      @media print {
+        body {
+          background: #fff;
+        }
+
+        main {
+          width: 100%;
+          box-shadow: none;
+          padding: 0;
+        }
+
+        nav {
+          break-after: avoid;
+        }
+
+        section,
+        figure.diagram {
+          break-inside: avoid;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article>
+        <header>
+          <div class="eyebrow">Open Agent Harness</div>
+          <h1>大规模 Agent 系统的 Harness 该如何设计</h1>
+          <p class="subtitle">
+            从 tool calling wrapper 到可治理的 agent operating environment。本文讨论 Agent 规模化之后，如何防止模型失控，并让 Runtime、Action、State、Trace、Context、Workflow、UI 和人形成可控协作。
+          </p>
+          <div class="meta" aria-label="文章元信息">
+            <span class="pill">面向 Agent Runtime 技术读者</span>
+            <span class="pill">关注治理、状态与恢复</span>
+            <span class="pill">基于 Open Agent Harness 协议设计</span>
+          </div>
+        </header>
+
+        <nav aria-label="文章目录">
+          <strong>目录</strong>
+          <ol>
+            <li><a href="#why-scale">规模化之后，如何防止模型失控</a></li>
+            <li><a href="#definition">Harness：可治理的 agent operating environment</a></li>
+            <li><a href="#runtime">Runtime：Agent 系统的治理中心</a></li>
+            <li><a href="#session">准确地说：Agent 是模板，Session 才执行任务</a></li>
+            <li><a href="#action">Action 表意，用声明式替代命令式 Tool Call</a></li>
+            <li><a href="#state">系统状态治理：Event Log、Projection、Trace</a></li>
+            <li><a href="#context">Context：不是简单 transcript 回放</a></li>
+            <li><a href="#collaboration">Agent Session 不直接通信</a></li>
+            <li><a href="#workflow">Workflow：协议支持直接生成，又不止于 Workflow</a></li>
+            <li><a href="#ui">人的位置：UI 治理操作面，人也是生产环境的一环</a></li>
+            <li><a href="#comparison">与常见 Harness 理念的不同之处</a></li>
+            <li><a href="#ending">大规模 Agent 协作的关键是可控</a></li>
+          </ol>
+        </nav>
+
+        <section id="why-scale">
+          <h2>1. 规模化之后，如何防止模型失控</h2>
+          <p class="lead">
+            模型失控不一定表现为“模型有了自己的意志”。在工程系统里，它更常见的样子是：模型连续行动，却没有稳定状态边界；工具调用不断发生，却没人能解释哪些动作被接受；多个会话都在推进任务，却没有统一的事实来源。
+          </p>
+          <p>
+            单个 Agent loop 里，这些问题容易被聊天记录掩盖。系统规模变大后，长任务、多会话、多工具、多 Agent、人工审批、Workflow 和 UI 操作会同时出现。此时要防止失控，不能只靠更长 prompt 或更严格的工具描述，而要回答一组运行时问题：谁能改变状态？哪些事实被系统接受？失败后从哪里恢复？后续 Session 应该读什么？UI 展示的是自然语言解释，还是系统当前状态？
+          </p>
+          <p>
+            Harness 的第一职责，就是把模型的行动冲动放进可治理边界。模型可以声明意图，可以提出下一步，可以请求工具、委派任务或生成 Workflow；但状态变更、权限校验、执行调度、事件记录和恢复路径要由 Runtime 接管。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 300" role="img" aria-labelledby="fig-scale-title fig-scale-desc">
+              <title id="fig-scale-title">从单 Agent 循环到大规模 Agent 系统</title>
+              <desc id="fig-scale-desc">左侧是单模型工具循环，右侧是多个会话、工具、状态、UI 和人工决策共同参与的运行环境。</desc>
+              <defs>
+                <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+
+              <rect class="box box-model" x="42" y="82" width="150" height="60"></rect>
+              <text class="label" x="117" y="107" text-anchor="middle">Model</text>
+              <text class="small" x="117" y="128" text-anchor="middle">plan / act</text>
+              <rect class="box box-exec" x="42" y="190" width="150" height="60"></rect>
+              <text class="label" x="117" y="216" text-anchor="middle">Tool</text>
+              <text class="small" x="117" y="236" text-anchor="middle">observation</text>
+              <path class="flow animated-flow" d="M117 142 L117 188"></path>
+              <path class="flow animated-flow" d="M64 190 C18 158 18 112 42 102"></path>
+              <circle class="particle particle-b" cx="117" cy="144" r="5"></circle>
+
+              <text class="small" x="116" y="42" text-anchor="middle">单 Agent loop</text>
+              <text class="tiny" x="116" y="66" text-anchor="middle">能跑，但状态边界很薄</text>
+
+              <g transform="translate(34 0)">
+                <rect class="box box-runtime pulse" x="392" y="102" width="160" height="76"></rect>
+                <text class="label" x="472" y="130" text-anchor="middle">Runtime</text>
+                <text class="small" x="472" y="152" text-anchor="middle">治理控制面</text>
+
+                <rect class="box box-model" x="280" y="26" width="130" height="54"></rect>
+                <text class="label" x="345" y="58" text-anchor="middle">Model</text>
+                <rect class="box box-exec" x="610" y="26" width="130" height="54"></rect>
+                <text class="label" x="675" y="58" text-anchor="middle">Tools</text>
+                <rect class="box box-state" x="705" y="122" width="140" height="54"></rect>
+                <text class="label" x="775" y="154" text-anchor="middle">State</text>
+                <rect class="box box-ui" x="610" y="218" width="130" height="54"></rect>
+                <text class="label" x="675" y="250" text-anchor="middle">UI</text>
+                <rect class="box" x="280" y="218" width="130" height="54"></rect>
+                <text class="label" x="345" y="250" text-anchor="middle">Human</text>
+                <rect class="box box-model" x="196" y="122" width="130" height="54"></rect>
+                <text class="label" x="261" y="154" text-anchor="middle">Sessions</text>
+
+                <path class="flow animated-flow flow-runtime" d="M410 58 L452 102"></path>
+                <path class="flow animated-flow flow-exec" d="M552 128 L612 72"></path>
+                <path class="flow animated-flow flow-state" d="M552 148 L705 148"></path>
+                <path class="flow animated-flow flow-runtime" d="M610 244 L530 178"></path>
+                <path class="flow animated-flow flow-runtime" d="M410 244 L430 178"></path>
+                <path class="flow animated-flow flow-runtime" d="M326 148 L392 148"></path>
+                <circle class="event-dot" cx="566" cy="148" r="6"></circle>
+                <circle class="particle particle-a" cx="394" cy="128" r="5"></circle>
+                <text class="small" x="520" y="42" text-anchor="middle">大规模 Agent 系统</text>
+                <text class="tiny" x="520" y="66" text-anchor="middle">重点从“会调用工具”变成“可治理运行”</text>
+              </g>
+            </svg>
+            <figcaption>规模化之后，失控来自多个执行主体、状态源、操作入口和恢复路径同时存在。Harness 先要把模型行动放进治理边界。</figcaption>
+          </figure>
+        </section>
+
+        <section id="definition">
+          <h2>2. Harness：可治理的 agent operating environment</h2>
+          <p>
+            常见资料会把 Harness 描述成模型外部的基础设施：orchestration loop、tools、memory、context management、state persistence、guardrails、verification loops、sandbox、observability。这些描述有用，但更像组件清单。
+          </p>
+          <p>
+            更适合大规模 Agent 系统的定义是：Harness 是一个可治理的 agent operating environment。它不是模型，不是 prompt 模板集合，也不是 tool calling wrapper。它提供的是一套运行环境，让模型会话、工具、工作流、人工决策、长期记忆和 UI 操作都能被同一套 Runtime 状态规则管理。
+          </p>
+          <p>
+            “可治理”意味着每个动作都有对象、权限、证据、状态和恢复位置。模型生成的内容不是事实，工具跑出的结果也不是事实；只有 Runtime 接受、记录并投影之后，它们才进入系统的操作视图。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 330" role="img" aria-labelledby="fig-env-title fig-env-desc">
+              <title id="fig-env-title">Harness 作为可治理运行环境</title>
+              <desc id="fig-env-desc">Harness 将模型交互、执行、状态、上下文、Adapter 和 UI 放在统一治理边界中。</desc>
+              <defs>
+                <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect x="56" y="36" width="808" height="248" rx="18" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.6"></rect>
+              <text class="label" x="460" y="66" text-anchor="middle">Harness Governance Boundary</text>
+
+              <rect class="box box-model" x="104" y="102" width="145" height="58"></rect>
+              <text class="label" x="176" y="127" text-anchor="middle">Model</text>
+              <text class="tiny" x="176" y="146" text-anchor="middle">声明意图</text>
+
+              <rect class="box box-runtime pulse" x="358" y="116" width="202" height="88"></rect>
+              <text class="label" x="459" y="148" text-anchor="middle">Runtime</text>
+              <text class="small" x="459" y="170" text-anchor="middle">state / policy / schedule</text>
+              <text class="tiny" x="459" y="188" text-anchor="middle">event / projection / recovery</text>
+
+              <rect class="box box-exec" x="668" y="102" width="145" height="58"></rect>
+              <text class="label" x="740" y="127" text-anchor="middle">Executor</text>
+              <text class="tiny" x="740" y="146" text-anchor="middle">执行动作</text>
+
+              <rect class="box box-state" x="104" y="206" width="145" height="58"></rect>
+              <text class="label" x="176" y="231" text-anchor="middle">State</text>
+              <text class="tiny" x="176" y="250" text-anchor="middle">事实与视图</text>
+
+              <rect class="box" x="358" y="236" width="202" height="58"></rect>
+              <text class="label" x="459" y="261" text-anchor="middle">Adapter</text>
+              <text class="tiny" x="459" y="280" text-anchor="middle">workflow / eval / monitor</text>
+
+              <rect class="box box-ui" x="668" y="206" width="145" height="58"></rect>
+              <text class="label" x="740" y="231" text-anchor="middle">UI</text>
+              <text class="tiny" x="740" y="250" text-anchor="middle">操作与观察</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow2)" d="M249 132 L356 150"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow2)" d="M560 150 L668 132"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow2)" d="M358 180 L249 222"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow2)" d="M459 204 L459 236"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow2)" d="M668 232 L560 188"></path>
+              <circle class="event-dot" cx="306" cy="202" r="6"></circle>
+              <circle class="particle particle-a" cx="254" cy="132" r="5"></circle>
+            </svg>
+            <figcaption>Harness 不是把所有外部组件堆在模型旁边，而是把这些组件放进 Runtime 可治理、可记录、可恢复、可投影的运行环境。</figcaption>
+          </figure>
+        </section>
+
+        <section id="runtime">
+          <h2>3. Runtime：Agent 系统的治理中心</h2>
+          <p>
+            Runtime 不应该只是把模型输出转成工具调用的胶水层。大规模 Agent 系统里，Runtime 是治理中心：它决定哪些请求可以被接受，哪些动作需要 Gate，哪些结果能进入状态，哪些失败需要恢复或升级给人。
+          </p>
+          <p>
+            具体来说，Runtime 接受结构化 Command、Action 或 adapter operation，完成 schema 校验、权限校验、Gate 判断、Executor 选择、Assignment 创建、Event 追加、Projection 更新、Trace 维护和恢复管理。模型可以提出行动，Runtime 才能让行动发生。
+          </p>
+          <p>
+            这个边界让系统的控制权保持清楚：模型负责判断、计划、解释和声明；Runtime 负责接受、校验、调度、记录和恢复。长任务和多主体协作能不能持续，主要取决于这条边界是否稳定。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 330" role="img" aria-labelledby="fig-runtime-title fig-runtime-desc">
+              <title id="fig-runtime-title">Runtime 控制状态变更</title>
+              <desc id="fig-runtime-desc">模型声明意图，Runtime 归一化为 Action，经过 Gate 和 Routing，执行后生成 Event 并更新 Projection。</desc>
+              <defs>
+                <marker id="arrow3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-model" x="40" y="72" width="120" height="58"></rect>
+              <text class="label" x="100" y="98" text-anchor="middle">Model</text>
+              <text class="tiny" x="100" y="116" text-anchor="middle">intent</text>
+
+              <rect class="box box-runtime" x="220" y="52" width="130" height="58"></rect>
+              <text class="label" x="285" y="78" text-anchor="middle">Normalize</text>
+              <text class="tiny" x="285" y="96" text-anchor="middle">to Action</text>
+              <rect class="box box-runtime" x="220" y="144" width="130" height="58"></rect>
+              <text class="label" x="285" y="170" text-anchor="middle">Validate</text>
+              <text class="tiny" x="285" y="188" text-anchor="middle">policy / gate</text>
+              <rect class="box box-runtime" x="410" y="98" width="130" height="58"></rect>
+              <text class="label" x="475" y="124" text-anchor="middle">Route</text>
+              <text class="tiny" x="475" y="142" text-anchor="middle">executor</text>
+
+              <rect class="box box-exec" x="600" y="98" width="130" height="58"></rect>
+              <text class="label" x="665" y="124" text-anchor="middle">Executor</text>
+              <text class="tiny" x="665" y="142" text-anchor="middle">tool / agent / human</text>
+
+              <rect class="box box-event pulse" x="410" y="224" width="130" height="58"></rect>
+              <text class="label" x="475" y="250" text-anchor="middle">Event</text>
+              <text class="tiny" x="475" y="268" text-anchor="middle">accepted fact</text>
+              <rect class="box box-state" x="600" y="224" width="130" height="58"></rect>
+              <text class="label" x="665" y="250" text-anchor="middle">Projection</text>
+              <text class="tiny" x="665" y="268" text-anchor="middle">operational view</text>
+              <rect class="box box-ui" x="770" y="224" width="110" height="58"></rect>
+              <text class="label" x="825" y="250" text-anchor="middle">UI</text>
+              <text class="tiny" x="825" y="268" text-anchor="middle">observe</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow3)" d="M160 101 L220 82"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow3)" d="M285 110 L285 144"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow3)" d="M350 173 C386 173 383 126 410 126"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow3)" d="M540 127 L600 127"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow3)" d="M665 156 C665 206 540 204 502 224"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow3)" d="M540 253 L600 253"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow3)" d="M730 253 L770 253"></path>
+              <circle class="event-dot" cx="475" cy="224" r="6"></circle>
+              <circle class="particle particle-a" cx="162" cy="101" r="5"></circle>
+              <circle class="particle particle-c particle-event" cx="665" cy="156" r="5"></circle>
+            </svg>
+            <figcaption>Runtime 是 Agent 系统的治理中心：模型声明意图，Runtime 校验和调度，执行后再生成 Event 并更新 Projection。</figcaption>
+          </figure>
+        </section>
+
+        <section id="session">
+          <h2>4. 准确地说：Agent 是模板，真正执行任务的是 Session</h2>
+          <p>
+            大规模 Agent 系统里，“Agent”这个词很容易被用得太宽。准确地说，Agent 是模板：它定义 persona、entry、capability、permission profile、模型偏好和运行策略。它描述一个可复用执行角色，但不直接执行任务。
+          </p>
+          <p>
+            真正执行任务的是 Session，也就是 Runtime 基于 Agent 模板创建出来的 Agent Session。Runtime 把 Assignment、authority、context refs、artifact refs 和 trace refs 绑定给这个 Session，让每次执行都有稳定 session id、session log、状态、权限边界和 trace。
+          </p>
+          <p>
+            这个区分能避免两类混乱：第一，把模板配置误认为执行权限；第二，把一个长对话当成所有任务共享的上下文容器。模板可以复用，Session 应该绑定具体任务边界。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 330" role="img" aria-labelledby="fig-session-title fig-session-desc">
+              <title id="fig-session-title">Agent 模板与 Agent Session</title>
+              <desc id="fig-session-desc">Runtime 从 Agent 模板创建多个 Agent Session，并给每个 Session 绑定 Assignment、Authority、Session Log 和 Trace。</desc>
+              <defs>
+                <marker id="arrow4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-model" x="62" y="88" width="170" height="110"></rect>
+              <text class="label" x="147" y="118" text-anchor="middle">Agent Template</text>
+              <text class="tiny" x="147" y="142" text-anchor="middle">persona / entry</text>
+              <text class="tiny" x="147" y="162" text-anchor="middle">capability / permission</text>
+              <text class="tiny" x="147" y="182" text-anchor="middle">model preference</text>
+
+              <rect class="box box-runtime pulse" x="344" y="112" width="150" height="72"></rect>
+              <text class="label" x="419" y="140" text-anchor="middle">Runtime</text>
+              <text class="small" x="419" y="162" text-anchor="middle">binds work</text>
+
+              <rect class="box" x="606" y="36" width="190" height="64"></rect>
+              <text class="label" x="701" y="62" text-anchor="middle">Session A</text>
+              <text class="tiny" x="701" y="82" text-anchor="middle">assignment / authority</text>
+              <rect class="box" x="606" y="132" width="190" height="64"></rect>
+              <text class="label" x="701" y="158" text-anchor="middle">Session B</text>
+              <text class="tiny" x="701" y="178" text-anchor="middle">session log / trace</text>
+              <rect class="box" x="606" y="228" width="190" height="64"></rect>
+              <text class="label" x="701" y="254" text-anchor="middle">Session C</text>
+              <text class="tiny" x="701" y="274" text-anchor="middle">status / artifact refs</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow4)" d="M232 143 L344 143"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow4)" d="M494 132 C544 92 548 68 606 68"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow4)" d="M494 148 L606 164"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow4)" d="M494 168 C546 196 548 260 606 260"></path>
+              <circle class="particle particle-a" cx="234" cy="143" r="5"></circle>
+              <circle class="event-dot" cx="556" cy="164" r="6"></circle>
+            </svg>
+            <figcaption>Agent 是可复用模板，Session 才是任务执行边界。权限、上下文、日志、状态和 trace 都应该绑定在 Session 上。</figcaption>
+          </figure>
+        </section>
+
+        <section id="action">
+          <h2>5. Action 表意，用声明式替代命令式 Tool Call</h2>
+          <p>
+            Tool Call 的默认语气是命令式的：调用哪个工具，传什么参数，马上执行。这个方式适合简单工具循环，但在大规模 Agent 系统里会把模型推到执行控制位上。模型一旦直接决定工具、参数、顺序和副作用，Runtime 就很难治理。
+          </p>
+          <p>
+            Action 的作用是表意。它描述“我要做什么语义工作”：读哪些资源、产生什么结果、有什么副作用、依赖什么、期望什么返回粒度、建议由哪类 Executor 处理。模型声明 Action，Runtime 再决定是否允许、如何执行、如何记录。
+          </p>
+          <p>
+            Tool Call 仍然可以作为 carrier，因为当前模型和 provider 都擅长这个机制。但它进入 Runtime 后要被归一化为 Action。这样一来，读文件、委派 review、请求用户批准、启动 workflow 都能走同一条治理链路，而不是散落成不同的命令通道。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 350" role="img" aria-labelledby="fig-action-title fig-action-desc">
+              <title id="fig-action-title">Action 用声明式表达模型意图</title>
+              <desc id="fig-action-desc">不同 carrier 进入 Runtime 后统一归一化为 Action，Action 表达语义意图，再路由到不同 Executor。</desc>
+              <defs>
+                <marker id="arrow5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-model" x="40" y="44" width="154" height="52"></rect>
+              <text class="label" x="117" y="76" text-anchor="middle">Harness DSL</text>
+              <rect class="box box-model" x="40" y="128" width="154" height="52"></rect>
+              <text class="label" x="117" y="160" text-anchor="middle">Tool Call</text>
+              <rect class="box box-model" x="40" y="212" width="154" height="52"></rect>
+              <text class="label" x="117" y="244" text-anchor="middle">Recovered Request</text>
+
+              <rect class="box box-runtime pulse" x="320" y="120" width="190" height="82"></rect>
+              <text class="label" x="415" y="150" text-anchor="middle">Normalized Action</text>
+              <text class="small" x="415" y="172" text-anchor="middle">operation / resource</text>
+              <text class="tiny" x="415" y="190" text-anchor="middle">side effects / result policy</text>
+
+              <rect class="box box-exec" x="660" y="24" width="148" height="48"></rect>
+              <text class="label" x="734" y="54" text-anchor="middle">Tool</text>
+              <rect class="box box-exec" x="660" y="91" width="148" height="48"></rect>
+              <text class="label" x="734" y="121" text-anchor="middle">Agent Session</text>
+              <rect class="box box-exec" x="660" y="158" width="148" height="48"></rect>
+              <text class="label" x="734" y="188" text-anchor="middle">Runtime Service</text>
+              <rect class="box box-exec" x="660" y="225" width="148" height="48"></rect>
+              <text class="label" x="734" y="255" text-anchor="middle">Human</text>
+              <rect class="box box-exec" x="660" y="292" width="148" height="48"></rect>
+              <text class="label" x="734" y="322" text-anchor="middle">Adapter</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow5)" d="M194 70 C260 70 264 144 320 144"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow5)" d="M194 154 L320 160"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow5)" d="M194 238 C260 238 264 178 320 178"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow5)" d="M510 150 C588 92 604 48 660 48"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow5)" d="M510 156 L660 115"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow5)" d="M510 164 L660 182"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow5)" d="M510 172 L660 249"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow5)" d="M510 178 C588 236 604 316 660 316"></path>
+              <circle class="event-dot" cx="415" cy="120" r="6"></circle>
+              <circle class="particle particle-a" cx="196" cy="154" r="5"></circle>
+            </svg>
+            <figcaption>Action 是表意层。Tool Call 可以继续作为 carrier，但不能以命令式方式绕过 Runtime 的策略、Gate、执行和记录链路。</figcaption>
+          </figure>
+        </section>
+
+        <section id="state">
+          <h2>6. 系统状态治理：Event Log、Projection、Trace</h2>
+          <p>
+            系统状态治理的第一步，是不要把所有状态混成一团。聊天记录像事实，数据库行像事实，UI 当前显示也像事实，工具输出也像事实。等系统失败时，团队会发现没人知道该相信哪一个。
+          </p>
+          <p>
+            协议需要把状态拆成不同角色。Event Log 是 Runtime 接受事实的追加式记录。Projection 是由 Event 和状态规则推导出的当前操作视图。Materialized State 是为了查询、展示、调度和恢复而保存的状态形态。Trace 是把 Event、Action、Assignment、executor invocation、Artifact、Gate、Decision 和 error 串起来的证据链。
+          </p>
+          <p>
+            Event Log 回答“系统接受了什么”。Projection 回答“现在应该怎么操作”。Trace 回答“为什么会走到这里，证据在哪里”。这三类问题都很具体，不能交给一个非结构化 transcript 来承担。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 360" role="img" aria-labelledby="fig-state-title fig-state-desc">
+              <title id="fig-state-title">Event Log、Projection 与 Trace</title>
+              <desc id="fig-state-desc">Command 通过 Runtime 验证后写入 Event Log，再推导 Projection，同时生成 Trace 证据链。</desc>
+              <defs>
+                <marker id="arrow6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-ui" x="38" y="142" width="126" height="58"></rect>
+              <text class="label" x="101" y="168" text-anchor="middle">Command</text>
+              <text class="tiny" x="101" y="186" text-anchor="middle">state request</text>
+
+              <rect class="box box-runtime" x="220" y="142" width="126" height="58"></rect>
+              <text class="label" x="283" y="168" text-anchor="middle">Validate</text>
+              <text class="tiny" x="283" y="186" text-anchor="middle">schema / authority</text>
+
+              <rect class="box box-event pulse" x="402" y="70" width="150" height="58"></rect>
+              <text class="label" x="477" y="96" text-anchor="middle">Event Log</text>
+              <text class="tiny" x="477" y="114" text-anchor="middle">accepted facts</text>
+
+              <rect class="box box-state" x="402" y="226" width="150" height="58"></rect>
+              <text class="label" x="477" y="252" text-anchor="middle">Projection</text>
+              <text class="tiny" x="477" y="270" text-anchor="middle">current view</text>
+
+              <rect class="box" x="642" y="70" width="190" height="58"></rect>
+              <text class="label" x="737" y="96" text-anchor="middle">Trace</text>
+              <text class="tiny" x="737" y="114" text-anchor="middle">evidence chain</text>
+
+              <rect class="box" x="642" y="226" width="190" height="58"></rect>
+              <text class="label" x="737" y="252" text-anchor="middle">Materialized State</text>
+              <text class="tiny" x="737" y="270" text-anchor="middle">fast query / recovery</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow6)" d="M164 171 L220 171"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow6)" d="M346 160 C384 150 378 100 402 100"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow6)" d="M477 128 L477 226"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow6)" d="M552 100 L642 100"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow6)" d="M552 255 L642 255"></path>
+              <path class="flow animated-flow flow-dashed" marker-end="url(#arrow6)" d="M552 110 C618 146 620 212 642 236"></path>
+              <circle class="event-dot" cx="477" cy="70" r="6"></circle>
+              <circle class="event-dot" cx="477" cy="168" r="5"></circle>
+              <circle class="particle particle-a particle-event" cx="348" cy="160" r="5"></circle>
+              <circle class="particle particle-b" cx="477" cy="130" r="5"></circle>
+            </svg>
+            <figcaption>系统状态治理要分清事实、视图和证据链。Event Log、Projection、Trace 分离后，审计、回放、调试、评测和恢复才有稳定基础。</figcaption>
+          </figure>
+        </section>
+
+        <section id="context">
+          <h2>7. Context：不是简单 transcript 回放</h2>
+          <p>
+            Context 不是把 transcript 原样回放给模型。很多 Agent 系统默认把历史消息、工具输出、失败尝试和旧计划塞回上下文。缓存可以降低成本，但不能消除语义噪声。陈旧 trace、长 stdout、被替代的 plan 和无关 child session 摘要仍然会影响模型注意力。
+          </p>
+          <p>
+            Context 应该由 Runtime 构造。Runtime 根据当前 Assignment 的目标、当前 Projection、Memory scope、Artifact refs、环境信息、约束和可见性策略，生成 Context Bundle。模型看到的是适合当前判断的输入，不是系统历史的堆叠。
+          </p>
+          <p>
+            Session Log 仍然重要，但它是持久记录，不等于下一次模型调用的输入。当前 Projection 应该优先于历史 Memory，完整输出应该以 Artifact 或 log 保存，模型默认读取摘要和引用。Context 的价值在于选择，而不是堆满。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 340" role="img" aria-labelledby="fig-context-title fig-context-desc">
+              <title id="fig-context-title">Runtime 构造 Context Bundle</title>
+              <desc id="fig-context-desc">Projection、Memory、Artifact refs、Session Log 和 Visibility Policy 进入 Runtime，生成模型可见的 Context Bundle。</desc>
+              <defs>
+                <marker id="arrow7" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-state" x="64" y="36" width="150" height="50"></rect>
+              <text class="label" x="139" y="66" text-anchor="middle">Projection</text>
+              <rect class="box" x="64" y="108" width="150" height="50"></rect>
+              <text class="label" x="139" y="138" text-anchor="middle">Memory</text>
+              <rect class="box" x="64" y="180" width="150" height="50"></rect>
+              <text class="label" x="139" y="210" text-anchor="middle">Artifacts</text>
+              <rect class="box" x="64" y="252" width="150" height="50"></rect>
+              <text class="label" x="139" y="282" text-anchor="middle">Session Log</text>
+
+              <rect class="box box-runtime pulse" x="360" y="104" width="190" height="110"></rect>
+              <text class="label" x="455" y="138" text-anchor="middle">Runtime</text>
+              <text class="small" x="455" y="160" text-anchor="middle">visibility policy</text>
+              <text class="small" x="455" y="182" text-anchor="middle">context shaping</text>
+
+              <rect class="box box-model" x="690" y="122" width="164" height="74"></rect>
+              <text class="label" x="772" y="150" text-anchor="middle">Context Bundle</text>
+              <text class="tiny" x="772" y="170" text-anchor="middle">goal / refs / summaries</text>
+              <text class="tiny" x="772" y="188" text-anchor="middle">constraints / evidence</text>
+
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow7)" d="M214 61 C284 61 290 122 360 130"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow7)" d="M214 133 L360 150"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow7)" d="M214 205 L360 174"></path>
+              <path class="flow animated-flow flow-dashed" marker-end="url(#arrow7)" d="M214 277 C286 260 294 200 360 192"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow7)" d="M550 160 L690 160"></path>
+              <circle class="event-dot" cx="455" cy="104" r="6"></circle>
+              <circle class="particle particle-a" cx="552" cy="160" r="5"></circle>
+            </svg>
+            <figcaption>Context 不是 transcript 回放。Runtime 根据当前任务选择 Projection、Memory、Artifact 和 Session Log 的可见部分，构造模型输入。</figcaption>
+          </figure>
+        </section>
+
+        <section id="collaboration">
+          <h2>8. Agent Session 之间不直接通信</h2>
+          <p>
+            多 Agent 的收益来自上下文隔离、并行探索、独立评估和明确交接。但多 Agent 也会带来成本、冲突和状态一致性问题。让 Agent Session 互相转发自然语言消息，看起来直接，实际会把系统带回不可审计的聊天网络。
+          </p>
+          <p>
+            更稳的方式是：Agent Session 之间不直接通信。Agent A 可以提交结果、Artifact、风险、未决问题或下一步 Action 建议。Runtime 接受这些内容后，生成 Event、更新 Projection、创建 Handoff 或 Assignment，再把结构化 Context Bundle 交给 Agent B。
+          </p>
+          <p>
+            这样每一次交接都有 contract、authority、evidence、budget、unresolved issues 和 trace continuity。协作不靠自由文本延续，而靠 Runtime 管理的任务边界和证据传递。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 330" role="img" aria-labelledby="fig-collab-title fig-collab-desc">
+              <title id="fig-collab-title">Agent Session 通过 Runtime 协作</title>
+              <desc id="fig-collab-desc">Agent Session A 不直接把消息发给 B，而是通过 Runtime 的 Event、Artifact、Projection、Handoff 和 Assignment 完成交接。</desc>
+              <defs>
+                <marker id="arrow8" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-model" x="50" y="92" width="174" height="82"></rect>
+              <text class="label" x="137" y="122" text-anchor="middle">Agent Session A</text>
+              <text class="tiny" x="137" y="146" text-anchor="middle">result / risk / artifact</text>
+              <rect class="box box-runtime pulse" x="365" y="76" width="190" height="114"></rect>
+              <text class="label" x="460" y="110" text-anchor="middle">Runtime</text>
+              <text class="small" x="460" y="134" text-anchor="middle">Event + Projection</text>
+              <text class="small" x="460" y="158" text-anchor="middle">Handoff + Assignment</text>
+              <rect class="box box-model" x="696" y="92" width="174" height="82"></rect>
+              <text class="label" x="783" y="122" text-anchor="middle">Agent Session B</text>
+              <text class="tiny" x="783" y="146" text-anchor="middle">new context bundle</text>
+
+              <rect class="box box-state" x="250" y="236" width="142" height="50"></rect>
+              <text class="label" x="321" y="266" text-anchor="middle">Artifact</text>
+              <rect class="box box-event" x="420" y="236" width="142" height="50"></rect>
+              <text class="label" x="491" y="266" text-anchor="middle">Trace</text>
+              <rect class="box box-state" x="590" y="236" width="142" height="50"></rect>
+              <text class="label" x="661" y="266" text-anchor="middle">Projection</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow8)" d="M224 133 L365 133"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow8)" d="M555 133 L696 133"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow8)" d="M450 190 L491 236"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow8)" d="M410 190 L321 236"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow8)" d="M510 190 L661 236"></path>
+              <path class="flow flow-dashed" d="M224 108 C376 8 540 8 696 108"></path>
+              <text class="tiny" x="460" y="38" text-anchor="middle">不直接通信</text>
+              <circle class="event-dot" cx="365" cy="133" r="6"></circle>
+              <circle class="particle particle-a" cx="226" cy="133" r="5"></circle>
+              <circle class="particle particle-c particle-event" cx="450" cy="190" r="5"></circle>
+            </svg>
+            <figcaption>多 Agent 协作的核心不是互相聊天，而是通过 Runtime 保留任务边界、证据和状态连续性。</figcaption>
+          </figure>
+        </section>
+
+        <section id="workflow">
+          <h2>9. Workflow：协议支持直接生成 Workflow，又不止于 Workflow</h2>
+          <p>
+            协议应该支持直接生成 Workflow。多阶段、并行、多 Agent、可恢复、需要进度和审计的任务，适合由 Workflow Runner 生成 durable DAG，并通过 Runtime-owned 的 `workflow.create`、`workflow.start`、`workflow.decide` 等入口运行。
+          </p>
+          <p>
+            但 Harness 不止于 Workflow。Workflow 是基于 Harness 基础 DSL 的 durable orchestration adapter，用来表达一类长任务编排。短生命周期的 action graph、普通 tool action、Agent delegation、human approval、release gate、evaluation loop，也应该落在同一套 Runtime 治理模型里。
+          </p>
+          <p>
+            这个边界很关键。Workflow 可以定义 DAG、node state、artifact、decision record 和 failure policy，但 Runtime 仍然拥有 validation、state transition、scheduling、permission、event、projection 和 gate。Workflow 描述编排状态，不应该变成绕过 Runtime 的脚本语言。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 360" role="img" aria-labelledby="fig-workflow-title fig-workflow-desc">
+              <title id="fig-workflow-title">Workflow 作为 Durable Orchestration Adapter</title>
+              <desc id="fig-workflow-desc">Workflow DAG 由 Runtime 调度，节点状态、Artifact 和 Decision 都投影回统一 Harness run state。</desc>
+              <defs>
+                <marker id="arrow9" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect x="40" y="36" width="840" height="284" rx="16" fill="#f8fafc" stroke="#cbd5e1"></rect>
+              <text class="label" x="460" y="66" text-anchor="middle">Workflow Adapter Store</text>
+
+              <rect class="box box-runtime pulse" x="364" y="92" width="190" height="72"></rect>
+              <text class="label" x="459" y="120" text-anchor="middle">Runtime Scheduler</text>
+              <text class="tiny" x="459" y="142" text-anchor="middle">validate / route / gate</text>
+
+              <rect class="box" x="98" y="206" width="126" height="50"></rect>
+              <text class="label" x="161" y="236" text-anchor="middle">Research</text>
+              <rect class="box" x="284" y="206" width="126" height="50"></rect>
+              <text class="label" x="347" y="236" text-anchor="middle">Implement</text>
+              <rect class="box" x="470" y="176" width="126" height="50"></rect>
+              <text class="label" x="533" y="206" text-anchor="middle">Test</text>
+              <rect class="box" x="470" y="254" width="126" height="50"></rect>
+              <text class="label" x="533" y="284" text-anchor="middle">Review</text>
+              <rect class="box box-event" x="684" y="206" width="126" height="50"></rect>
+              <text class="label" x="747" y="236" text-anchor="middle">Gate</text>
+
+              <path class="flow animated-flow" marker-end="url(#arrow9)" d="M224 231 L284 231"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow9)" d="M410 231 C446 231 438 201 470 201"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow9)" d="M410 231 C446 231 438 279 470 279"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow9)" d="M596 201 C638 201 640 231 684 231"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow9)" d="M596 279 C638 279 640 231 684 231"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow9)" d="M459 164 L459 198"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow9)" d="M747 206 C742 138 610 128 554 128"></path>
+              <circle class="event-dot" cx="747" cy="206" r="6"></circle>
+              <circle class="particle particle-loop" cx="224" cy="231" r="5"></circle>
+              <text class="tiny" x="459" y="336" text-anchor="middle">DAG 表达依赖，Runtime 决定实际调度、权限、状态迁移和恢复</text>
+            </svg>
+            <figcaption>协议支持直接生成 Workflow，但 Workflow 只是长任务编排 Adapter。短 action、delegation、approval、gate 和 evaluation 仍共享同一套治理对象。</figcaption>
+          </figure>
+        </section>
+
+        <section id="ui">
+          <h2>10. 人的位置：UI 治理操作面，人也是生产环境的一环</h2>
+          <p>
+            大规模 Agent 系统里，人不是站在系统外的观察者。人会批准、暂停、恢复、回答 Decision、处理异常、审查结果、设定偏好，也会承担 owner、reviewer、operator 等生产角色。人的动作同样需要进入治理链路。
+          </p>
+          <p>
+            UI 是人的治理操作面，而不是聊天记录渲染器。UI 应该读取 Projection、Event、Artifact、Trace、Memory 和 Concept。UI 中所有会改变系统状态的操作，都应该提交为 Runtime Command 或受控 Action。暂停、恢复、重试、取消、回答 Decision、重新验证，都不能只改前端状态。
+          </p>
+          <p>
+            更进一步，UI projection、Artifact summary 和 Trace export 都应该 agent-readable。它们既给人看，也给后续 Agent Session 读。稳定 id、状态、summary、refs、evidence、actor、time 和 visibility metadata，是把“人”纳入生产环境的基础。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 350" role="img" aria-labelledby="fig-ui-title fig-ui-desc">
+              <title id="fig-ui-title">UI 作为人的治理操作面</title>
+              <desc id="fig-ui-desc">人通过 UI 读取 Projection、Event、Trace 和 Artifact，并通过 Command 改变状态。</desc>
+              <defs>
+                <marker id="arrow10" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box box-ui pulse" x="78" y="110" width="164" height="96"></rect>
+              <text class="label" x="160" y="142" text-anchor="middle">Harness UI</text>
+              <text class="small" x="160" y="166" text-anchor="middle">observe + command</text>
+              <text class="tiny" x="160" y="186" text-anchor="middle">not transcript inference</text>
+
+              <rect class="box box-state" x="378" y="40" width="148" height="52"></rect>
+              <text class="label" x="452" y="72" text-anchor="middle">Projection</text>
+              <rect class="box box-event" x="378" y="114" width="148" height="52"></rect>
+              <text class="label" x="452" y="146" text-anchor="middle">Event Log</text>
+              <rect class="box" x="378" y="188" width="148" height="52"></rect>
+              <text class="label" x="452" y="220" text-anchor="middle">Trace</text>
+              <rect class="box" x="378" y="262" width="148" height="52"></rect>
+              <text class="label" x="452" y="294" text-anchor="middle">Artifact</text>
+
+              <rect class="box box-runtime" x="680" y="132" width="160" height="76"></rect>
+              <text class="label" x="760" y="160" text-anchor="middle">Runtime</text>
+              <text class="small" x="760" y="182" text-anchor="middle">Command API</text>
+
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow10)" d="M378 66 C314 66 304 126 242 140"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow10)" d="M378 140 L242 154"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow10)" d="M378 214 C314 210 304 178 242 174"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow10)" d="M378 288 C298 270 298 190 242 188"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow10)" d="M242 160 L680 160"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow10)" d="M760 208 C760 306 530 336 452 314"></path>
+              <circle class="event-dot" cx="760" cy="208" r="6"></circle>
+              <circle class="particle particle-a" cx="244" cy="160" r="5"></circle>
+              <text class="tiny" x="548" y="154" text-anchor="middle">pause / retry / approve / decide</text>
+            </svg>
+            <figcaption>人也是生产环境的一环。UI 的读路径来自 Projection、Event、Trace 和 Artifact；写路径回到 Runtime Command。</figcaption>
+          </figure>
+        </section>
+
+        <section id="comparison">
+          <h2>11. 与常见 Harness 理念的不同之处</h2>
+          <p>
+            常见 Harness 理念通常从“让模型能工作”出发：给模型工具、上下文、沙箱、记忆、评测、可观测性和工作流。这些能力都必要，但它们仍然偏向能力拼装。
+          </p>
+          <p>
+            OpenAI、Anthropic 和 Agent Harness Survey 的资料都指向一个趋势：Agent 可靠性不能只靠模型能力，模型外部的执行环境、上下文、状态、验证、可观测性和治理会显著影响结果。OpenAI 更强调 agent-first 工程组织、SDK primitives、sandbox、manifest、state externalization 和 durable execution。Anthropic 更强调 session / harness / sandbox 解耦、长任务 handoff、planner / generator / evaluator、多 Agent 成本和 trace-based eval。Survey 则把 Harness 分成 Execution、Tooling、Context、Lifecycle、Observability、Verification、Governance 等层。
+          </p>
+          <p>
+            Open Agent Harness 的不同之处在于，它不把 Harness 写成组件百科，也不把 Workflow 当成全部答案。它把能力收敛到 Runtime 可执行的协议对象：Model 声明，Runtime 治理，Action 表意，Executor 执行，Event 记录，Projection 操作，Trace 举证，Context 构造，Adapter 扩展，UI 操作。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 360" role="img" aria-labelledby="fig-compare-title fig-compare-desc">
+              <title id="fig-compare-title">常见理解与本协议取舍</title>
+              <desc id="fig-compare-desc">不同外部资料强调组件、工程实践和研究分类，Open Agent Harness 收敛到 Runtime 治理对象。</desc>
+              <defs>
+                <marker id="arrow11" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <rect class="box" x="52" y="42" width="190" height="74"></rect>
+              <text class="label" x="147" y="70" text-anchor="middle">组件清单</text>
+              <text class="tiny" x="147" y="92" text-anchor="middle">tools / memory / sandbox</text>
+
+              <rect class="box" x="52" y="142" width="190" height="74"></rect>
+              <text class="label" x="147" y="170" text-anchor="middle">工程实践</text>
+              <text class="tiny" x="147" y="192" text-anchor="middle">docs / repo / validation</text>
+
+              <rect class="box" x="52" y="242" width="190" height="74"></rect>
+              <text class="label" x="147" y="270" text-anchor="middle">研究分类</text>
+              <text class="tiny" x="147" y="292" text-anchor="middle">ETCLOVG layers</text>
+
+              <rect class="box box-runtime pulse" x="366" y="116" width="190" height="96"></rect>
+              <text class="label" x="461" y="148" text-anchor="middle">Runtime Governance</text>
+              <text class="small" x="461" y="172" text-anchor="middle">统一对象模型</text>
+              <text class="tiny" x="461" y="192" text-anchor="middle">Action / Event / Projection</text>
+
+              <rect class="box box-state" x="682" y="42" width="180" height="50"></rect>
+              <text class="label" x="772" y="72" text-anchor="middle">State</text>
+              <rect class="box box-exec" x="682" y="112" width="180" height="50"></rect>
+              <text class="label" x="772" y="142" text-anchor="middle">Executor</text>
+              <rect class="box box-model" x="682" y="182" width="180" height="50"></rect>
+              <text class="label" x="772" y="212" text-anchor="middle">Context</text>
+              <rect class="box box-ui" x="682" y="252" width="180" height="50"></rect>
+              <text class="label" x="772" y="282" text-anchor="middle">UI / Adapter</text>
+
+              <path class="flow animated-flow" marker-end="url(#arrow11)" d="M242 79 C300 80 318 138 366 146"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow11)" d="M242 179 L366 166"></path>
+              <path class="flow animated-flow" marker-end="url(#arrow11)" d="M242 279 C304 262 316 194 366 186"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow11)" d="M556 146 C616 100 626 67 682 67"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow11)" d="M556 156 L682 137"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow11)" d="M556 174 L682 207"></path>
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow11)" d="M556 190 C616 226 626 277 682 277"></path>
+              <circle class="event-dot" cx="461" cy="116" r="6"></circle>
+              <circle class="particle particle-a" cx="244" cy="179" r="5"></circle>
+            </svg>
+            <figcaption>常见理念更偏能力拼装；这里的取舍是用 Runtime 控制面把能力落成可执行、可审计、可恢复的协议对象。</figcaption>
+          </figure>
+
+          <table>
+            <thead>
+              <tr>
+                <th>常见理解</th>
+                <th>价值</th>
+                <th>本协议的取舍</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Tool calling wrapper</td>
+                <td>让模型能访问外部能力</td>
+                <td>Tool Call 是 carrier；Action 才是表意层和治理入口</td>
+              </tr>
+              <tr>
+                <td>Agent loop</td>
+                <td>实现 plan-act-observe 循环</td>
+                <td>loop 被拆成 Runtime 可治理的状态迁移</td>
+              </tr>
+              <tr>
+                <td>Workflow engine</td>
+                <td>支撑长任务、并行和恢复</td>
+                <td>协议支持生成 Workflow，但 Harness 不止于 Workflow</td>
+              </tr>
+              <tr>
+                <td>Observability stack</td>
+                <td>记录执行路径和失败原因</td>
+                <td>Trace 是治理证据层，连接 Event、Action、Artifact 和 Decision</td>
+              </tr>
+              <tr>
+                <td>UI console</td>
+                <td>让用户观察和操作系统</td>
+                <td>UI 读取 Projection / Event / Trace，并通过 Command 改变状态</td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="ending">
+          <h2>12. 结尾：大规模 Agent 协作的关键是可控</h2>
+          <p>
+            大规模 Agent 协作当然需要更强的模型、更好的工具、更长的上下文和更稳定的沙箱。但这些只能扩大能力半径，不能自动带来可控性。系统能不能持续运行，取决于它是否有稳定的治理协议。
+          </p>
+          <p>
+            可控不是限制模型思考，而是让模型的行动进入协议。模型声明意图，Runtime 判断和执行，Event 记录事实，Projection 提供当前视图，Trace 保留证据，Context 控制输入，Workflow 扩展长任务，UI 承载人的操作。
+          </p>
+          <p>
+            当 Agent 从一次性对话走向长期运行环境，Harness 就不再是外壳。它变成了 Agent 系统的操作环境，也变成了人、模型、工具和流程之间的治理边界。大规模 Agent 协作的关键，不是放大自主性，而是让自主性可控。
+          </p>
+
+          <figure class="diagram">
+            <svg viewBox="0 0 920 320" role="img" aria-labelledby="fig-end-title fig-end-desc">
+              <title id="fig-end-title">可治理自主性的闭环</title>
+              <desc id="fig-end-desc">模型声明意图，经 Runtime 治理后执行，产生 Event、Projection、Trace，并反馈给 Context 和 UI。</desc>
+              <defs>
+                <marker id="arrow12" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#6b7280"></path>
+                </marker>
+              </defs>
+              <circle cx="460" cy="160" r="118" fill="#f8fafc" stroke="#cbd5e1"></circle>
+              <rect class="box box-runtime pulse" x="378" y="124" width="164" height="72"></rect>
+              <text class="label" x="460" y="153" text-anchor="middle">Runtime</text>
+              <text class="small" x="460" y="176" text-anchor="middle">治理中心</text>
+
+              <rect class="box box-model" x="64" y="48" width="150" height="54"></rect>
+              <text class="label" x="139" y="80" text-anchor="middle">Model Intent</text>
+              <rect class="box box-exec" x="64" y="218" width="150" height="54"></rect>
+              <text class="label" x="139" y="250" text-anchor="middle">Executor</text>
+              <rect class="box box-event" x="706" y="48" width="150" height="54"></rect>
+              <text class="label" x="781" y="80" text-anchor="middle">Event</text>
+              <rect class="box box-state" x="706" y="218" width="150" height="54"></rect>
+              <text class="label" x="781" y="250" text-anchor="middle">Projection</text>
+              <rect class="box" x="385" y="20" width="150" height="54"></rect>
+              <text class="label" x="460" y="52" text-anchor="middle">Trace</text>
+              <rect class="box box-ui" x="385" y="246" width="150" height="54"></rect>
+              <text class="label" x="460" y="278" text-anchor="middle">UI / Context</text>
+
+              <path class="flow animated-flow flow-runtime" marker-end="url(#arrow12)" d="M214 75 C292 76 310 132 378 144"></path>
+              <path class="flow animated-flow flow-exec" marker-end="url(#arrow12)" d="M378 176 C298 198 286 244 214 245"></path>
+              <path class="flow animated-flow flow-event" marker-end="url(#arrow12)" d="M542 144 C620 122 632 75 706 75"></path>
+              <path class="flow animated-flow flow-state" marker-end="url(#arrow12)" d="M706 245 C620 242 610 190 542 176"></path>
+              <path class="flow animated-flow flow-dashed" marker-end="url(#arrow12)" d="M460 74 L460 124"></path>
+              <path class="flow animated-flow flow-dashed" marker-end="url(#arrow12)" d="M460 196 L460 246"></path>
+              <circle class="event-dot" cx="781" cy="48" r="6"></circle>
+              <circle class="particle particle-a" cx="216" cy="75" r="5"></circle>
+              <circle class="particle particle-c particle-event" cx="542" cy="144" r="5"></circle>
+            </svg>
+            <figcaption>大规模 Agent 协作的关键是可控：模型可以更主动，但每次行动都要进入可验证、可恢复、可审计的运行闭环。</figcaption>
+          </figure>
+        </section>
+
+        <footer>
+          <p>
+            本文基于 Open Agent Harness 的治理协议文档撰写，并参考 OpenAI、Anthropic 与 Agent Harness Engineering Survey 相关资料的工程背景。参考资料在本文中只作为背景，不作为综述结构。
+          </p>
+        </footer>
+      </article>
+    </main>
+  </body>
+</html>

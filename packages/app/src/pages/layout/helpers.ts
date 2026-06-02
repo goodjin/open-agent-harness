@@ -56,7 +56,7 @@ export const childMapByParent = (sessions: Session[]) => {
     ids.sort((a, b) => {
       const left = by.get(a)
       const right = by.get(b)
-      const diff = (left?.time.created ?? 0) - (right?.time.created ?? 0)
+      const diff = (right?.time.created ?? 0) - (left?.time.created ?? 0)
       if (diff !== 0) return diff
       return a < b ? -1 : a > b ? 1 : 0
     })
@@ -115,11 +115,20 @@ type Status = {
 }
 
 export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {
-  const pending = (messages ?? []).findLast(
-    (message) =>
-      message.role === "assistant" && typeof (message as { time?: { completed?: unknown } }).time?.completed !== "number",
-  )
-  return pending !== undefined || status?.type === "retry" || (status !== undefined && status.type !== "idle")
+  if (!status || status.type === "idle") return false
+  if (status.type !== "running") return true
+
+  const user = (messages ?? []).findLast((message) => message.role === "user")
+  const assistant = (messages ?? []).findLast((message) => message.role === "assistant")
+  const done = typeof (assistant as { time?: { completed?: unknown } } | undefined)?.time?.completed === "number"
+  const stale =
+    done &&
+    !!user &&
+    typeof assistant?.time?.created === "number" &&
+    typeof user.time?.created === "number" &&
+    assistant.time.created > user.time.created
+
+  return !stale
 }
 
 export const sessionCompleted = (session: Session, messages: Message[] | undefined, status: Status | undefined) => {

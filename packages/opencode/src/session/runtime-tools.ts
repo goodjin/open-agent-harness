@@ -216,7 +216,7 @@ export namespace RuntimeTools {
     return {
       tools,
       catalog: visible,
-      prompt: prompt(visible, await agents()),
+      prompt: prompt(visible, await agents(agent)),
       async execute(id: string, args: unknown, options: ToolCallOptions) {
         const found = tools[id]
         if (!found) throw new Error(`Tool '${id}' is not available.`)
@@ -231,9 +231,10 @@ export namespace RuntimeTools {
     return id !== "task"
   }
 
-  async function agents() {
+  async function agents(agent: Agent.Info) {
     return (await Agent.list())
       .filter((item) => AgentEntry.delegable(item))
+      .filter((item) => !(agent.name === "default" && item.name === "default"))
       .map((item) => ({
         id: item.name,
         purpose: item.capability.purpose,
@@ -310,14 +311,12 @@ export namespace RuntimeTools {
       "- Use `depends` for simple dependencies and `result` for result policy.",
       "- Do not invent parameters outside the tool's input schema.",
       "- Do not use `name: \"auto\"` for tool calls.",
+      "- If a tool id is not listed below, it is unavailable for this agent.",
+      "- If repository read, search, command, edit, validation, or review tools are not listed, delegate that work to a suitable agent instead of naming an unavailable tool.",
       "- Do not call listed tool ids directly as native/provider tools.",
       "- For delegation, do not use a tool call. Use `calls[].type: \"agent\"` with `name: \"auto\"` or a concrete agent id.",
       "",
-      "Example:",
-      "```json",
-      '{ "kind": "act", "message": "I will read package.json.", "calls": [{ "id": "read_package", "type": "tool", "name": "read", "args": { "filePath": "package.json" } }] }',
-      "```",
-      "",
+      example(catalog),
       tools,
       "",
       "# Available Protocol Agents",
@@ -335,5 +334,29 @@ export namespace RuntimeTools {
           ].filter((line) => line.length > 0).join("\n")).join("\n\n")
         : "No delegable agents are currently available.",
     ].join("\n")
+  }
+
+  function example(catalog: { id: string }[]) {
+    const read = catalog.find((item) => item.id === "read")
+    if (read) {
+      return [
+        "Example:",
+        "```json",
+        '{ "kind": "act", "message": "I will read package.json.", "calls": [{ "id": "read_package", "type": "tool", "name": "read", "args": { "filePath": "package.json" } }] }',
+        "```",
+        "",
+      ].join("\n")
+    }
+    const question = catalog.find((item) => item.id === "question")
+    if (question) {
+      return [
+        "Example:",
+        "```json",
+        '{ "kind": "act", "message": "I need one clarification.", "calls": [{ "id": "ask_scope", "type": "tool", "name": "question", "args": { "questions": [{ "question": "Which scope should be planned first?", "header": "Scope", "options": [{ "label": "Current slice", "description": "Plan only the delegated slice." }, { "label": "Broader scope", "description": "Include adjacent work in the plan." }] }] } }] }',
+        "```",
+        "",
+      ].join("\n")
+    }
+    return ""
   }
 }

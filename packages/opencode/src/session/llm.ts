@@ -97,11 +97,12 @@ export namespace LLM {
     "- Use the Available Protocol Tools catalog below for tool ids, descriptions, and input schemas.",
     "- Choose concrete tool ids and arguments from the catalog; encode them only inside `calls`.",
     "- Do not invent tool names or parameters outside the listed schemas.",
+    "- If a needed repository tool is not listed, it is unavailable for this agent; delegate that work to a suitable agent instead.",
     "",
     "Planning rules:",
     "- Do not create vague tool calls with `name: auto`; name the concrete tool and provide its `args`.",
     "- Use `calls` for every runtime action, even when there is only one call.",
-    "- If you do not know exact files yet, call a discovery tool such as `glob` or `grep` with valid schema arguments.",
+    "- If you do not know exact files yet, use a listed discovery tool such as `glob` or `grep`; if no such tool is listed, delegate focused context gathering to an agent such as `explore`.",
     "- The runtime executes exactly what you declare. It will not infer project type, framework, file names, or search patterns from natural language.",
     "",
     "The model-visible contract is the native `AgentProtocolOutput` tool schema.",
@@ -210,7 +211,7 @@ export namespace LLM {
       ? {
           [PROTOCOL_OUTPUT_TOOL]: tool({
             description: "Submit exactly one Agent Protocol package to the runtime. This is the only allowed tool for protocol-runner.",
-            inputSchema: jsonSchema(ProviderTransform.schema(input.model, z.toJSONSchema(AgentProtocol.Structured)) as never),
+            inputSchema: jsonSchema(ProviderTransform.schema(input.model, AgentProtocol.OutputSchema as never) as never),
             execute: async () => ({
               output: "Agent Protocol package received.",
               title: "Agent Protocol Output",

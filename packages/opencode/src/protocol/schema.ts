@@ -150,6 +150,66 @@ export namespace AgentProtocol {
     .strict()
 
   export const Structured = z.discriminatedUnion("kind", [FlatAct, FlatAnswer, FlatDone])
+  export const OutputSchema = {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        enum: ["act", "answer", "done"],
+      },
+      message: {
+        type: "string",
+        default: "",
+      },
+      calls: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              minLength: 1,
+            },
+            type: {
+              type: "string",
+              enum: ["tool", "agent"],
+            },
+            title: {
+              type: "string",
+              minLength: 1,
+            },
+            name: {
+              type: "string",
+              minLength: 1,
+            },
+            args: {
+              type: "object",
+              additionalProperties: true,
+              default: {},
+            },
+            depends: {
+              type: "array",
+              items: {
+                type: "string",
+                minLength: 1,
+              },
+              default: [],
+            },
+            result: {
+              type: "string",
+              enum: ["summary", "structured", "full", "on_failure", "on_demand", "adaptive"],
+              default: "summary",
+            },
+          },
+          required: ["id", "type", "name"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["kind"],
+    additionalProperties: false,
+  } as const
 
   const LegacyAct = z
     .object({
@@ -279,14 +339,43 @@ export namespace AgentProtocol {
     try {
       return JSON.parse(input)
     } catch {
-      return undefined
+      try {
+        return JSON.parse(escape(input))
+      } catch {
+        return undefined
+      }
     }
+  }
+
+  function escape(input: string) {
+    let quoted = false
+    let slash = false
+    return [...input].map((char) => {
+      if (slash) {
+        slash = false
+        return char
+      }
+      if (char === "\\") {
+        slash = true
+        return char
+      }
+      if (char === '"') {
+        quoted = !quoted
+        return char
+      }
+      if (!quoted) return char
+      if (char === "\n") return "\\n"
+      if (char === "\r") return "\\r"
+      if (char === "\t") return "\\t"
+      return char
+    }).join("")
   }
 
   function between(input: string) {
     return input
       .replace(/(?<!\})\}(\s*,\s*)(?=\{"type"\s*:\s*"action")/g, "}}$1")
       .replace(/(?<!\})\}(\s*,\s*)(?=\{"id"\s*:)/g, "}}$1")
+      .replace(/(?<!\})\}(\s*,\s*)(?=\{"depends"\s*:)/g, "}}$1")
       .replace(/("result_policy"\s*:\s*"[^"]+")(\s*,\s*)(?=\{"type"\s*:\s*"action")/g, "$1}$2")
   }
 

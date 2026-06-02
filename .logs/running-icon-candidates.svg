@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="520" viewBox="0 0 1320 520">
+  <defs>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif; }
+      .bg { fill: #0f1115; }
+      .panel { fill: #171a21; stroke: #2a2f3a; stroke-width: 1; }
+      .title { fill: #f4f6fb; font-size: 28px; font-weight: 650; }
+      .sub { fill: #9aa3b2; font-size: 15px; }
+      .label { fill: #f2f5fa; font-size: 17px; font-weight: 600; }
+      .note { fill: #a7b0bf; font-size: 13px; }
+      .blue { stroke: #58a6ff; fill: none; }
+      .blue-fill { fill: #58a6ff; }
+      .green { stroke: #53d18a; fill: none; }
+      .muted { stroke: #718096; fill: none; }
+      .card { fill: #1d222b; stroke: #303744; stroke-width: 1; }
+      .chip { fill: #111827; stroke: #324052; }
+    </style>
+  </defs>
+  <rect class="bg" width="1320" height="520"/>
+  <text x="44" y="58" class="title">进行中状态图标候选</text>
+  <text x="44" y="86" class="sub">静态预览：实际 UI 中 Spinner / pulse / spin 会动；这里主要看形状识别度、密度和语义。</text>
+
+  <g transform="translate(44 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)">
+      <circle r="34" stroke="#58a6ff" stroke-width="1.5" opacity=".25"/>
+      <circle r="23" fill="#58a6ff" opacity=".08"/>
+      <g fill="#58a6ff">
+        <rect x="-13" y="-13" width="7" height="7" rx="2" opacity=".35"/>
+        <rect x="-3.5" y="-13" width="7" height="7" rx="2" opacity=".75"/>
+        <rect x="6" y="-13" width="7" height="7" rx="2" opacity=".45"/>
+        <rect x="-13" y="-3.5" width="7" height="7" rx="2" opacity=".85"/>
+        <rect x="-3.5" y="-3.5" width="7" height="7" rx="2" opacity=".55"/>
+        <rect x="6" y="-3.5" width="7" height="7" rx="2" opacity=".95"/>
+        <rect x="-13" y="6" width="7" height="7" rx="2" opacity=".45"/>
+        <rect x="-3.5" y="6" width="7" height="7" rx="2" opacity=".8"/>
+        <rect x="6" y="6" width="7" height="7" rx="2" opacity=".35"/>
+      </g>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">Spinner + pulse</text>
+    <text x="95" y="184" text-anchor="middle" class="note">最现代，状态感强</text>
+    <text x="95" y="208" text-anchor="middle" class="note">适合侧边栏运行中</text>
+    <rect x="42" y="232" width="106" height="28" rx="14" class="chip"/>
+    <text x="95" y="251" text-anchor="middle" class="note">推荐</text>
+  </g>
+
+  <g transform="translate(252 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)" fill="#58a6ff">
+      <rect x="-18" y="-18" width="8" height="8" rx="2" opacity=".25"/>
+      <rect x="-4" y="-18" width="8" height="8" rx="2" opacity=".55"/>
+      <rect x="10" y="-18" width="8" height="8" rx="2" opacity=".85"/>
+      <rect x="-18" y="-4" width="8" height="8" rx="2" opacity=".45"/>
+      <rect x="-4" y="-4" width="8" height="8" rx="2" opacity=".95"/>
+      <rect x="10" y="-4" width="8" height="8" rx="2" opacity=".55"/>
+      <rect x="-18" y="10" width="8" height="8" rx="2" opacity=".75"/>
+      <rect x="-4" y="10" width="8" height="8" rx="2" opacity=".35"/>
+      <rect x="10" y="10" width="8" height="8" rx="2" opacity=".65"/>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">纯 Spinner</text>
+    <text x="95" y="184" text-anchor="middle" class="note">干净、不抢视线</text>
+    <text x="95" y="208" text-anchor="middle" class="note">适合文字分隔线内</text>
+  </g>
+
+  <g transform="translate(460 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)">
+      <path d="M-26 -20 L-42 -4 L-26 12" class="blue" stroke-width="3" stroke-linecap="square"/>
+      <path d="M-38 -4 H38 V34 H-6" class="blue" stroke-width="3" stroke-linecap="square"/>
+      <path d="M26 -20 A42 42 0 0 1 36 19" class="blue" stroke-width="2" opacity=".35"/>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">Reset spin</text>
+    <text x="95" y="184" text-anchor="middle" class="note">循环/重试语义强</text>
+    <text x="95" y="208" text-anchor="middle" class="note">可能像“重新执行”</text>
+  </g>
+
+  <g transform="translate(668 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)">
+      <path d="M0 -44 C0 -14 14 0 44 0 C14 0 0 14 0 44 C0 14 -14 0 -44 0 C-14 0 0 -14 0 -44Z" class="blue" stroke-width="2.5"/>
+      <circle r="11" fill="#58a6ff" opacity=".18"/>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">Models pulse</text>
+    <text x="95" y="184" text-anchor="middle" class="note">AI 思考感更强</text>
+    <text x="95" y="208" text-anchor="middle" class="note">适合“思考中”</text>
+  </g>
+
+  <g transform="translate(876 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)">
+      <rect x="-35" y="-35" width="70" height="70" rx="6" class="blue" stroke-width="2.5"/>
+      <circle r="17" class="blue" stroke-width="2.5"/>
+      <path d="M-18 -51 V-38 M0 -51 V-38 M18 -51 V-38 M-18 38 V51 M0 38 V51 M18 38 V51 M-51 -18 H-38 M-51 0 H-38 M-51 18 H-38 M38 -18 H51 M38 0 H51 M38 18 H51" class="blue" stroke-width="2.5" stroke-linecap="square"/>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">Providers pulse</text>
+    <text x="95" y="184" text-anchor="middle" class="note">计算/运行语义强</text>
+    <text x="95" y="208" text-anchor="middle" class="note">小尺寸略密</text>
+  </g>
+
+  <g transform="translate(1084 124)">
+    <rect class="card" rx="10" width="190" height="290"/>
+    <g transform="translate(95 72)" fill="#58a6ff">
+      <circle cx="-28" cy="0" r="9" opacity=".35"/>
+      <circle cx="0" cy="0" r="9" opacity=".75"/>
+      <circle cx="28" cy="0" r="9" opacity="1"/>
+    </g>
+    <text x="95" y="155" text-anchor="middle" class="label">三点动效</text>
+    <text x="95" y="184" text-anchor="middle" class="note">聊天等待感明显</text>
+    <text x="95" y="208" text-anchor="middle" class="note">不太适合侧栏</text>
+  </g>
+
+  <g transform="translate(44 448)">
+    <path d="M0 0 H1232" stroke="#2a2f3a"/>
+    <text x="0" y="34" class="sub">建议：侧边栏用 Spinner + pulse；“等待子会话执行任务中”这一行用纯 Spinner + 文案；如果以后区分“思考中/执行中”，思考中可用 Models pulse。</text>
+  </g>
+</svg>

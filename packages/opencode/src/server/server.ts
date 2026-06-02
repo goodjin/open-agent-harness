@@ -50,6 +50,10 @@ import { lazy } from "@/util/lazy"
 import { Event, EventGateway } from "./event"
 import { AgentRoutes } from "./routes/agent"
 import { HarnessRoutes } from "./routes/harness"
+import { lookup } from "mime-types"
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 
 // @ts-ignore This global is needed to prevent ai-sdk from logging warnings to stdout https://github.com/vercel/ai/blob/2dc67e0ef538307f21368db32d5a12345d98831b/packages/ai/src/logger/log-warnings.ts#L85
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -58,6 +62,25 @@ export namespace Server {
   const log = Log.create({ service: "server" })
 
   export const Default = lazy(() => createApp({}))
+
+  const app = lazy(() => {
+    const dirs = [
+      process.env.OPENCODE_APP_DIST,
+      path.resolve(path.dirname(process.execPath), "..", "app"),
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../app/dist"),
+    ].filter((dir): dir is string => !!dir)
+    return dirs.find((dir) => fs.existsSync(path.join(dir, "index.html")))
+  })
+
+  function asset(route: string) {
+    const dir = app()
+    if (!dir) return
+    const rel = decodeURIComponent(route).replace(/^\/+/, "")
+    const file = path.resolve(dir, rel || "index.html")
+    if (!file.startsWith(path.resolve(dir))) return
+    if (fs.existsSync(file) && fs.statSync(file).isFile()) return file
+    return path.join(dir, "index.html")
+  }
 
   export const createApp = (opts: { cors?: string[] }): Hono => {
     const root = Filesystem.resolve(process.cwd())
@@ -577,6 +600,17 @@ export namespace Server {
         },
       )
       .all("/*", async (c) => {
+        const file = asset(c.req.path)
+        if (file) {
+          const type = lookup(file) || (file.endsWith(".html") ? "text/html" : "application/octet-stream")
+          return new Response(Bun.file(file), {
+            headers: {
+              "Content-Type": String(type),
+              "Cache-Control": file.endsWith("index.html") ? "max-age=0,no-cache,no-store,must-revalidate" : "public, max-age=31536000, immutable",
+            },
+          })
+        }
+
         const path = c.req.path
 
         const response = await proxy(`https://app.opencode.ai${path}`, {

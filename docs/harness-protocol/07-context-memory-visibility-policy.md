@@ -29,7 +29,7 @@ Assignment context bundle 应包含：
     "superseded memory records"
   ],
   "summary": "The protocol supports toolCall carriers and runtime recovery.",
-  "memory_refs": ["mem_protocol_v1_policy"],
+  "memory_refs": ["mem_protocol_policy"],
   "projection_refs": ["runtime://runs/run_123/projections/task-state"]
 }
 ```
@@ -54,6 +54,7 @@ Scope precedence 必须明确。当前 Projection 覆盖 historical memory。Pro
 | `model` | 回放到未来模型上下文。 |
 | `user` | 展示在 UI 或最终回答中。 |
 | `logs` | 为 audit/export 存储。 |
+| `trace` | 进入 Trace summary 或 trace export。 |
 | `future_runs` | 作为 memory/reference 可供后续 run 使用。 |
 | `runtime_only` | 用于控制决策，默认不暴露。 |
 
@@ -96,12 +97,12 @@ Redaction policy 必须一致应用于 tool output、protocol logs、workflow ar
 
 如果用户明确把 shell output 加入上下文，Runtime 应创建普通 context record，并附带 source refs 和 visibility metadata。
 
-## 第一版边界
+## 协议能力
 
-第一版应实现：
+Context、Memory 与 Visibility 策略覆盖以下能力：
 
-- context bundle refs，而不是完整 transcript replay
-- 简洁 protocol result replay
-- 完整 output 作为 artifacts/logs 存储
-- 为非模型可见 UI record 提供显式 `ignored` 或等价 metadata
-- 带有 scope、namespace、status 和 evidence refs 的 memory query results
+- 使用 Context Bundle refs 构造模型输入。
+- 将 protocol result 以简洁 Observation 形式回放给模型。
+- 将完整 output 存储为 Artifact 或 log，并通过 refs 进入上下文。
+- 为非模型可见 UI record 提供显式 visibility metadata。
+- Memory query result 携带 scope、namespace、status、source、visibility 和 evidence refs。

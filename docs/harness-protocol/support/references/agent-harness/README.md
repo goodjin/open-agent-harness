@@ -6,6 +6,9 @@
 
 - `wechat-agent-harness-anatomy.md`：微信文章《深度“解剖”AI Agent Harness》的参考笔记。
 - `wechat-harness-engineering-six-components.md`：微信文章《大白话讲透驾驭工程(Harness Engineering)六大组件》的参考笔记。
+- `wechat-agent-harness-engineering-survey.md`：微信文章《刚刚，一篇最全Agent Harness综述来了！》的参考笔记。
+- `agent-harness-engineering-survey.md`：论文《Agent Harness Engineering: A Survey》的参考笔记。
+- `agent-harness-anatomy-original.md`：前述《The Anatomy of an Agent Harness》英文原文定位说明。
 - `openai-harness-engineering.md`：OpenAI《Harness engineering: leveraging Codex in an agent-first world》的参考笔记。
 - `openai-agents-sdk-model-native-harness.md`：OpenAI《The next evolution of the Agents SDK》的参考笔记。
 - `anthropic-harness-articles.md`：Anthropic 官网相关 harness / managed agents / multi-agent / evals 文章索引。

@@ -198,6 +198,11 @@ function useDirectorySearch(args: {
         .catch(() => [])
 
     if (!isPath) {
+      if (!query) {
+        const results = await dirs(scopedInput.directory)
+        if (!active()) return []
+        return results.map((item) => item.absolute).slice(0, 50)
+      }
       const results = await find()
       if (!active()) return []
       return results.map((rel) => joinPath(scopedInput.directory, rel)).slice(0, 50)

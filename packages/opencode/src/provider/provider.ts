@@ -928,7 +928,7 @@ export namespace Provider {
               write: model?.cost?.cache_write ?? existingModel?.cost?.cache.write ?? 0,
             },
           },
-          options: mergeDeep(existingModel?.options ?? {}, model.options ?? {}),
+          options: mergeDeep(mergeDeep(existingModel?.options ?? {}, model.options ?? {}), { configured: true }),
           limit: {
             context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
             output: model.limit?.output ?? existingModel?.limit?.output ?? 0,

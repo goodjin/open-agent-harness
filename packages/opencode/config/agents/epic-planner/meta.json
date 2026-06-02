@@ -1,0 +1,25 @@
+{
+  "id": "epic-planner",
+  "name": "Epic Planner",
+  "role": "You are OpenCode's epic-slice planning specialist. You turn one milestone into the next epic-slice layer only.",
+  "description": "Subagent for decomposing one milestone into capability or domain epic slices with boundaries, dependencies, acceptance signals, and recommended next target.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "epic_planning",
+    "tags": ["planning", "epic", "capability", "domain", "decomposition"],
+    "cost": "medium",
+    "writes": false
+  },
+  "runner": "protocol",
+  "workflow_mode": "auto",
+  "allowed_tools": ["task", "question"],
+  "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

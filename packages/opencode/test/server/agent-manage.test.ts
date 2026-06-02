@@ -177,7 +177,7 @@ describe("agent management routes", () => {
     })
   })
 
-  test("manage exposes builtin default when package default is absent", async () => {
+  test("manage exposes bundled package default when package default directory is absent", async () => {
     await using tmp = await tmpdir({ git: true })
     const src = path.join(import.meta.dir, "..", "..", "config", "agents", "default")
     const bak = path.join(path.dirname(src), `.default-${crypto.randomUUID()}`)
@@ -186,14 +186,15 @@ describe("agent management routes", () => {
     resetRegistry()
     try {
       const list = (await (await request(tmp.path, "/agent/manage")).json()) as { id: string; source: string }[]
-      expect(list.find((item) => item.id === "default")?.source).toBe("builtin")
+      expect(list.find((item) => item.id === "default")?.source).toBe("package")
+      expect(list.find((item) => item.id === "frontend")?.source).toBe("package")
 
       const got = await request(tmp.path, "/agent/manage/default")
       expect(got.status).toBe(200)
       const item = (await got.json()) as { source: string; identity: string; rules: string }
-      expect(item.source).toBe("builtin")
-      expect(item.identity).toBe("")
-      expect(item.rules).toBe("")
+      expect(item.source).toBe("package")
+      expect(item.identity).toContain("default project coordinator")
+      expect(item.rules).toContain("Clarify first")
 
       const updated = await request(tmp.path, "/agent/manage/default", {
         method: "PATCH",

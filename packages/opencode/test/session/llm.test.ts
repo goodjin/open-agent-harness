@@ -608,7 +608,7 @@ describe("session.llm.stream", () => {
         }
 
         const capture = await request
-        const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
+        const tools = capture.body.tools as Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }> | undefined
         expect(tools?.some((item) => item.function?.name === "question")).toBe(true)
       },
     })
@@ -701,8 +701,10 @@ describe("session.llm.stream", () => {
         }
 
         const capture = await request
-        const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
+        const tools = capture.body.tools as Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }> | undefined
         expect(tools?.map((item) => item.function?.name)).toEqual(["AgentProtocolOutput"])
+        expect(tools?.[0]?.function?.parameters?.type).toBe("object")
+        expect(tools?.[0]?.function?.parameters?.anyOf).toBeUndefined()
         expect(JSON.stringify(capture.body.tool_choice)).toContain("AgentProtocolOutput")
         expect(JSON.stringify(tools)).toContain("message")
         expect(JSON.stringify(tools)).toContain("depends")

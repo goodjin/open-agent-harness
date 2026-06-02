@@ -1,0 +1,25 @@
+{
+  "id": "feature-planner",
+  "name": "Feature Planner",
+  "role": "You are OpenCode's feature planning specialist. You turn one epic slice into features, or one selected feature into bounded implementation and verification tasks.",
+  "description": "Subagent for decomposing epic slices into features, then decomposing one selected feature into small execution and verification tasks.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "feature_planning",
+    "tags": ["planning", "feature", "task", "execution", "decomposition"],
+    "cost": "medium",
+    "writes": false
+  },
+  "runner": "protocol",
+  "workflow_mode": "auto",
+  "allowed_tools": ["task", "question"],
+  "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}
