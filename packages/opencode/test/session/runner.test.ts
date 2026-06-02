@@ -1189,6 +1189,188 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("default protocol runner falls back when model self-delegates to default", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      kind: "act",
+      message: "Delegate planning.",
+      calls: [
+        {
+          id: "plan_protocol_tasks",
+          type: "agent",
+          name: "default",
+          args: { prompt: "Plan protocol parser tasks without editing files." },
+          result: "structured",
+        },
+      ],
+    }
+    let done = 0
+    const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
+      fullStream: (async function* () {
+        yield { type: "start" }
+        yield { type: "start-step" }
+        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+        yield {
+          type: "tool-call",
+          toolCallId: "call_protocol",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: data,
+        }
+        yield {
+          type: "tool-result",
+          toolCallId: "call_protocol",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: data,
+          output: {
+            output: "Agent Protocol package received.",
+            title: "Agent Protocol Output",
+            metadata: { protocol: true },
+          },
+        }
+        yield {
+          type: "finish-step",
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        }
+        yield { type: "finish" }
+      })(),
+    }) as never)
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      inputs.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: `agent:${input.agent} completed`,
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      done++
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "default",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "default",
+                agent: "default",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "default",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "plan protocol parser tasks" }],
+                tools: {},
+              })
+              const children = await Session.children(session.id)
+              const after = await Session.get(session.id)
+              const protocol = after.dsl_context?.protocol as {
+                runs?: { actions: { output?: string }[] }[]
+              } | undefined
+
+              expect(result).toBe("stop")
+              expect(children).toHaveLength(1)
+              expect(children[0]?.title).toContain("@general")
+              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("Delegated to general.")
+              for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
+              expect(done).toBeGreaterThanOrEqual(2)
+              expect(inputs[0]?.agent).toBe("general")
+              expect(inputs[1]?.agent).toBe("default")
+              const text = inputs[0]?.parts?.map((part) => part.type === "text" ? part.text : "").join("\n")
+              expect(text).not.toContain("@default")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
   test("protocol runner completes parent assignment after nested child final", async () => {
     await using tmp = await tmpdir()
     const model = {

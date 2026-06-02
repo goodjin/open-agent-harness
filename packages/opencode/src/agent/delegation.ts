@@ -70,11 +70,7 @@ export namespace AgentDelegation {
   const chain = new Set(Object.keys(deny))
 
   export function visible(item: Item, agent: string) {
-    if (chain.has(agent)) {
-      if (!AgentEntry.subtask(item)) return false
-    } else if (!AgentEntry.delegable(item)) {
-      return false
-    }
+    if (!AgentEntry.delegable(item)) return false
     return !new Set([agent, ...(deny[agent] ?? [])]).has(item.name)
   }
 

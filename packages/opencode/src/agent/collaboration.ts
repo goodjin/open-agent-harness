@@ -234,7 +234,7 @@ export namespace AgentCollaboration {
     if (!val || !kinds.has(val as EdgeKind)) return undefined
     return {
       kind: val as EdgeKind,
-      target: text(input.target) ?? "",
+      target: text(input.target) ?? text(input.to) ?? "",
       trigger: input.trigger ?? input.on,
       required: input.required === true,
       limits: rec(input.limits) as Limits | undefined,

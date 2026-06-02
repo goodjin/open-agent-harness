@@ -1623,11 +1623,12 @@ export namespace SessionRunner {
   ): Promise<{ ok: true; agent: Agent.Info } | { ok: false; error: string; metadata?: ReturnType<typeof AgentDelegation.runtime> }> {
     const selected = await agent(action, parent)
     const meta = gate ? undefined : await AgentDelegation.meta(action.executor.target).catch(() => undefined)
+    const trig = action.executor.type === "agent" && action.executor.target === parent ? "no_specialist_match" : trigger
     const plan = gate?.collaboration ?? (selected.ok ? undefined : AgentDelegation.runtime({
       agent: action.executor.target,
       meta,
       action,
-      trigger,
+      trigger: trig,
     }).collaboration)
     for (const item of (plan?.items ?? []).filter((item) => item.edge_kind === "fallback")) {
       const next = await agent({

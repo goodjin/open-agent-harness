@@ -108,6 +108,18 @@ describe("AgentCollaboration", () => {
     expect(AgentCollaboration.plan({ ...ctx, trigger: "unavailable" }).items.map((item) => item.edge_kind)).toEqual(["fallback"])
   })
 
+  test("accepts to as a metadata edge target alias", () => {
+    expect(AgentCollaboration.plan({
+      meta: {
+        collaboration: {
+          edges: [{ kind: "fallback", trigger: "no_specialist_match", to: "general" }],
+        },
+      },
+      trigger: "no_specialist_match",
+      source: { agent: "default" },
+    }).items[0]?.target).toBe("general")
+  })
+
   test("dedupes by explicit and derived keys", () => {
     const edges = AgentCollaboration.matchEdges({
       meta: {

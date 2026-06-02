@@ -28,8 +28,10 @@ function names(agent: string) {
 }
 
 describe("agent delegation visibility", () => {
-  test("default only sees downward subtask agents", () => {
+  test("default sees primary delegable agents and subtask agents", () => {
     expect(names("default")).toEqual([
+      "build",
+      "plan",
       "milestone-planner",
       "epic-planner",
       "feature-planner",
@@ -38,8 +40,10 @@ describe("agent delegation visibility", () => {
     ])
   })
 
-  test("milestone planner hides itself, upstream agents, and primary entries", () => {
+  test("milestone planner sees delegable agents except itself and upstream agents", () => {
     expect(names("milestone-planner")).toEqual([
+      "build",
+      "plan",
       "epic-planner",
       "feature-planner",
       "backend",
@@ -47,16 +51,18 @@ describe("agent delegation visibility", () => {
     ])
   })
 
-  test("epic planner hides itself, upstream planners, and primary entries", () => {
+  test("epic planner sees delegable agents except itself and upstream agents", () => {
     expect(names("epic-planner")).toEqual([
+      "build",
+      "plan",
       "feature-planner",
       "backend",
       "frontend",
     ])
   })
 
-  test("feature planner only sees concrete downstream specialists", () => {
-    expect(names("feature-planner")).toEqual(["backend", "frontend"])
+  test("feature planner sees delegable agents except itself and upstream agents", () => {
+    expect(names("feature-planner")).toEqual(["build", "plan", "backend", "frontend"])
   })
 
   test("runtime metadata gates delegated assignment before launch", () => {
