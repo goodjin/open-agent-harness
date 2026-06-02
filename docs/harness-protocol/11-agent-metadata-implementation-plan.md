@@ -325,6 +325,327 @@ Agent Manager UI：
 - `cd packages/app && bun test --preload ./happydom.ts ./src/utils/agent.test.ts`
 - `cd packages/app && bun typecheck`
 
+## UI 改造方案
+
+Phase 2 不能只增加几个字段。Agent metadata 变成控制面以后，Agent Manager 需要从“配置表单”升级成“Agent 控制面编辑器”。
+
+### 信息架构
+
+Agent Manager 分成三层：
+
+- Agent list：用于浏览、筛选、选择和启用/禁用 Agent。
+- Agent detail：用于查看一个 Agent 的 metadata、diagnostics、runtime summary 和引用状态。
+- Agent editor：用于编辑 user/project Agent；package/builtin Agent 只读。
+
+推荐 detail/editor tabs：
+
+- Overview：身份、logo、版本、source、entry、capability、deprecated/replacement。
+- Instructions：legacy identity/rules、`instructions.files`、event model messages。
+- Contracts：input contracts、output contracts、artifact expectations。
+- Collaboration：collaboration edges、trigger、target、required、limits。
+- Runtime Boundary：resource classes、actions、network/data/approval/rate limits。
+- Completion：criteria、required artifacts、evidence、gates、partial policy。
+- Observability：trace level、log level、metrics、redaction profile。
+- Advanced JSON：完整 metadata JSON，支持 schema diagnostics。
+
+### Agent List
+
+列表需要从普通名称列表升级成可扫描的 Agent catalog。
+
+每个 row/card 显示：
+
+- logo 或 fallback initials。
+- name、id、source、kind。
+- enabled/disabled、deprecated、hidden badges。
+- entry summary：primary、delegable、mentionable、default。
+- capability purpose、tags、cost、writes。
+- schema version、agent version。
+- diagnostics count。
+
+筛选项：
+
+- source：builtin、package、user、project。
+- kind：agent、skill。
+- enabled state。
+- entry flags。
+- capability purpose/tags。
+- cost/writes。
+- deprecated/hidden。
+- diagnostics only。
+
+交互：
+
+- 点击进入 detail。
+- 启用/禁用仍通过现有 Command/API。
+- package/builtin Agent 展示 lock/read-only state。
+
+### Overview Tab
+
+Overview 是默认首屏，用于回答“这个 Agent 是谁、能不能被用、怎么被 Runtime 看见”。
+
+字段区域：
+
+- Identity：logo、name、id、description、persona/role。
+- Version：schema_version、agent_version、snapshot status、deprecated/replacement。
+- Entry：primary、delegable、mentionable、default、hidden。
+- Capability：purpose、tags、cost、writes。
+- Runtime：runner、workflow_mode/execution_mode、model_preference。
+- Permission summary：permission_mode、inherit_permissions、allowed/denied tools。
+
+UI 规则：
+
+- logo 用 `img` 加 fallback，不让坏路径撑坏布局。
+- id 不允许在 update 中修改。
+- deprecated Agent 显示 replacement 链接。
+- hidden 和 disabled 分开显示：hidden 是入口可见性，disabled 是 Runtime 可用性。
+
+### Instructions Tab
+
+该 tab 负责 rules/prompt 注入相关配置。
+
+区域：
+
+- Legacy material：`identity.md`、`rules.md`，保持现有编辑能力。
+- Instruction files：表格编辑 `path`、`role`、`required`、可选 `max_bytes`。
+- Path variable helper：展示可用变量 `${agent.dir}`、`${project.root}`、`${workspace.root}`、`${global.rules}`、`${user.home}`、`${run.dir}`。
+- Event model messages：表格编辑 `on`、`position`、`content`、priority。
+
+交互：
+
+- required file 缺失显示 warning/error。
+- 未知变量在保存前标红。
+- event trigger 使用 select，不让用户手写未知 trigger。
+- content 使用多行编辑器。
+
+### Contracts Tab
+
+Contracts tab 负责输入、输出和 artifact expectation。
+
+Input contracts 表格：
+
+- name
+- required
+- source
+- content_type
+- artifact_type
+- schema_ref
+- constraints
+- visibility requirements
+
+Output contracts 表格：
+
+- name
+- required
+- artifact_type
+- content_type
+- schema_ref
+- required evidence
+- completion_role
+- downstream consumers
+- visibility
+
+交互：
+
+- 支持添加/删除 contract。
+- schema_ref 暂时自由输入，但显示 registry recognition status。
+- required output 自动出现在 Completion tab 的建议项里。
+- artifact_type 用已有类型 suggestions，避免随意拼写。
+
+### Collaboration Tab
+
+Collaboration tab 展示 event-conditioned coordination，不只展示前置/后置。
+
+视图：
+
+- Edge table：id、kind、trigger、target、required、order、when、limits。
+- Graph preview：source Agent -> edge -> target capability/Agent。
+- Limit summary：max_depth、max_parallel、dedupe_key。
+
+Edge kind select：
+
+- prerequisite
+- verifier
+- reviewer
+- arbiter
+- fallback
+- recovery
+- monitor
+- splitter
+- aggregator
+- escalation
+- peer
+- blocker
+
+Trigger select：
+
+- before_assignment_start
+- after_artifact_created
+- on_failed
+- on_conflict
+- on_target_unavailable
+- budget_near_limit
+- risk_detected
+- completion_rejected
+
+交互：
+
+- target 可以选择具体 Agent，也可以选择 capability。
+- required edge 显示会影响 completion 的提示。
+- blocker/fallback/recovery 使用不同 badges。
+- graph preview 第一版可以是只读列表，不必立即做复杂 canvas。
+
+### Runtime Boundary Tab
+
+Runtime Boundary tab 面向非编程 Agent 的运行边界。
+
+区域：
+
+- Resource classes：filesystem、network、browser、email、calendar、database、cloud、payment、crm、messaging、human_contact、secret、personal_data。
+- Actions matrix：read、write、execute、communicate、publish、spend、delete、approve。
+- Network policy：allow/deny domains or categories。
+- Data policy：max_classification、redact fields。
+- Approval policy：required_for。
+- Rate limits：requests_per_minute、max_cost_usd。
+
+交互：
+
+- actions matrix 用 checkbox/table，不要求用户写 JSON。
+- 高风险动作 publish/spend/delete/communicate 默认显示 approval warning。
+- 第一版可以用 Advanced JSON 编辑详细规则，但 Overview 必须展示 summary。
+
+### Completion Tab
+
+Completion tab 用来解释“Runtime 怎么判断任务完成”。
+
+区域：
+
+- mode：runtime_verified、model_declared、human_approved、external_callback。
+- criteria list。
+- required artifacts。
+- required evidence。
+- gates。
+- allow_partial。
+
+Completion preview：
+
+- 根据 output contracts 自动生成 missing checklist。
+- 显示 completed/partial/blocked/failed/waiting_user 的判定规则摘要。
+- required collaboration edge 也显示为 completion dependency。
+
+交互：
+
+- 从 Output contracts 一键添加 required artifact。
+- 从 Collaboration required edges 一键添加 dependency。
+- gate 类型用 select：schema、evidence、verification、review、approval、privacy、budget。
+
+### Observability Tab
+
+区域：
+
+- trace_level：minimal、standard、detailed。
+- log_level：minimal、standard、debug。
+- metrics list。
+- capture_context_summary。
+- capture_artifact_summary。
+- redaction_profile。
+
+交互：
+
+- detailed trace 显示隐私成本提示。
+- debug log 对 secret/personal_data boundary 显示 redaction warning。
+
+### Advanced JSON
+
+Advanced JSON 是第一版落地的关键，避免一次性做完所有复杂控件。
+
+要求：
+
+- 展示 normalized metadata。
+- 支持编辑 user/project Agent 的 raw metadata。
+- 保存前调用 validate API。
+- diagnostics 按 path 高亮。
+- JSON 格式化和恢复上一次有效版本。
+- 不允许 package/builtin Agent 编辑。
+
+### Diagnostics Panel
+
+所有 tab 共用 diagnostics panel。
+
+显示：
+
+- severity：error、warning、info。
+- category：schema、path、instruction、contract、collaboration、boundary、completion、lifecycle。
+- field path。
+- message。
+- suggested fix。
+
+规则：
+
+- error 阻止保存。
+- warning 允许保存但保存后仍显示。
+- info 作为 migration suggestion。
+
+### 文件落点
+
+现有可复用文件：
+
+- `packages/app/src/components/settings-agents-helpers.ts`
+- `packages/app/src/components/settings-agents-helpers.test.ts`
+
+建议新增或拆分：
+
+- `packages/app/src/components/settings-agents-editor.tsx`
+- `packages/app/src/components/settings-agent-overview.tsx`
+- `packages/app/src/components/settings-agent-instructions.tsx`
+- `packages/app/src/components/settings-agent-contracts.tsx`
+- `packages/app/src/components/settings-agent-collaboration.tsx`
+- `packages/app/src/components/settings-agent-boundary.tsx`
+- `packages/app/src/components/settings-agent-completion.tsx`
+- `packages/app/src/components/settings-agent-diagnostics.tsx`
+- `packages/app/src/components/settings-agent-json.tsx`
+
+如果当前 settings 页面不适合拆这么多文件，可以先保留一个文件实现，但 helper/test 要按 tab 逻辑拆函数。
+
+### UI 分阶段
+
+第一版：
+
+- Agent list 增加 logo、version、diagnostics、metadata summary。
+- Detail 使用 Overview + Advanced JSON + Diagnostics。
+- 新字段通过 Advanced JSON 编辑。
+- 保证 round-trip 不丢字段。
+
+第二版：
+
+- 增加 Instructions、Contracts、Completion 三个结构化 tab。
+- 支持 path variable helper 和 completion preview。
+
+第三版：
+
+- 增加 Collaboration graph、Runtime Boundary matrix、Observability tab。
+- 支持 edge preview 和 boundary risk warnings。
+
+### UI 验收标准
+
+- 新 metadata 字段在 UI 中可见。
+- user/project Agent 可以编辑并保存 RFC metadata。
+- package/builtin Agent 只读。
+- Advanced JSON 保存前有 schema validation。
+- diagnostics 能定位到具体 tab 和字段。
+- logo fallback 正常。
+- output contracts、completion、collaboration 的摘要能在 Overview 中看见。
+- 表单 round-trip 不丢 unknown-but-supported metadata。
+
+### UI 测试
+
+- `settings-agents-helpers.test.ts` 覆盖 metadata form round-trip。
+- Advanced JSON parse failure。
+- Diagnostics path mapping。
+- logo fallback。
+- read-only package/builtin behavior。
+- completion summary generation。
+- collaboration edge summary generation。
+
 ## Phase 3: Instruction Files
 
 目标：`instructions.files` 不只是 metadata，Runtime 能把它们解析成 Context Bundle 的受控材料。
