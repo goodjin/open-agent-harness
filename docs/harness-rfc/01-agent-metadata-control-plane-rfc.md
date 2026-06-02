@@ -583,14 +583,14 @@ To submit this as an RFC, the proposal should include:
 - completion contract and state transition rules
 - versioning and snapshot rules
 - three examples: coding, research and non-programming business Agent
-- migration path from current `01-agent-model-and-authoring.md`
+- migration path from current `../harness-protocol/01-agent-model-and-authoring.md`
 - tests required for schema, loader, Agent Manager, routing and completion
 - scope boundaries
 
 ## Scope Boundaries
 
-- Workflow Profile 和 Action Graph 语言由 `03-model-runtime-protocol.md` 与 `08-workflow-profile-action-graph-assets.md` 定义；本 RFC 定义 Agent metadata 如何为 Runtime 编排提供默认策略、能力和边界。
-- UI 管理协议由 `09-ui-console-and-agent-management.md` 定义；本 RFC 提供 UI 需要读取和编辑的 Agent metadata 字段。
+- Workflow Profile 和 Action Graph 语言由 `../harness-protocol/02-model-runtime-protocol.md` 与 `../harness-protocol/08-workflow-profile-action-graph-assets.md` 定义；本 RFC 定义 Agent metadata 如何为 Runtime 编排提供默认策略、能力和边界。
+- UI 管理协议由 `../harness-protocol/09-ui-console-and-agent-management.md` 定义；本 RFC 提供 UI 需要读取和编辑的 Agent metadata 字段。
 - Agent Session 协作由 Runtime 通过 Action、Assignment、Handoff、Event、Projection 和 Trace 协调；metadata 提供 Runtime 可读取的协作声明。
 - Agent metadata 字段可以按场景逐步补齐；Runtime 根据 schema 默认值、profile policy 和 Assignment Contract 归一化。
 - Prompt text、metadata 和 Runtime validation 共同参与治理；最终状态变更由 Runtime 校验和记录。
@@ -599,9 +599,9 @@ To submit this as an RFC, the proposal should include:
 
 The repository has no visible formal RFC process. A practical process would be:
 
-1. Keep this file under `docs/harness-protocol/`.
-2. Update `00-harness-governance-protocol.md` document map to reference the RFC.
-3. Update `01-agent-model-and-authoring.md` only after the RFC direction is accepted.
+1. Keep this file under `docs/harness-rfc/`.
+2. Keep `../harness-protocol/00-harness-governance-protocol.md` focused on accepted protocol documents.
+3. Update `../harness-protocol/01-agent-model-and-authoring.md` only after the RFC direction is accepted.
 4. Add JSON examples under agent fixtures if implementation starts.
 5. Open a PR against `dev` with title `[RFC] Agent metadata control plane`.
 6. In the PR description, list decisions requested from reviewers:

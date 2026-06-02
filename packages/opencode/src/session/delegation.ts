@@ -177,6 +177,14 @@ export namespace SessionDelegation {
 
       const body = completed(item, status, output, input.metadata ?? item.result_metadata)
       const fresh = statusof(item) !== status || text(item.output) !== output
+      const active = await pending(item)
+      const done = await delivered(item)
+      if (!active && done) {
+        if (fresh) await store(input.sessionID, item, body, input.messageID)
+        const next = assignment(await Session.get(input.sessionID))
+        if (next && typeof next.notified_at !== "number") await notified(input.sessionID, next)
+        return false
+      }
       if (fresh) {
         await logdone(body)
         await logmeta(body)
@@ -339,8 +347,6 @@ export namespace SessionDelegation {
     const parent = await Session.get(SessionID.make(item.parent_session_id as string))
     const ctx = object(parent.dsl_context)
     const prev = object(ctx.protocol)
-    const pending = { ...object(prev.pending_delegations) }
-    delete pending[sessionID]
     const done = Array.isArray(prev.completed_delegations) ? prev.completed_delegations : []
     await Session.setDslContext({
       sessionID: parent.id,
@@ -348,7 +354,6 @@ export namespace SessionDelegation {
         ...ctx,
         protocol: {
           ...prev,
-          pending_delegations: pending,
           completed_delegations: [
             ...done.filter((entry) => !object(entry) || entry.child_session_id !== sessionID),
             body,
@@ -402,10 +407,23 @@ export namespace SessionDelegation {
     })
   }
 
+  async function pending(item: Item) {
+    const parent = await Session.get(SessionID.make(item.parent_session_id))
+    const prev = object(object(parent.dsl_context).protocol)
+    return object(prev.pending_delegations)[item.child_session_id] !== undefined
+  }
+
+  async function delivered(item: Item) {
+    const parent = await Session.get(SessionID.make(item.parent_session_id))
+    const prev = object(object(parent.dsl_context).protocol)
+    return Array.isArray(prev.completed_delegations) && prev.completed_delegations.some((entry) => object(entry).child_session_id === item.child_session_id)
+  }
+
   async function notified(sessionID: SessionID, item: Item) {
     const child = await Session.get(sessionID)
     const ctx = object(child.dsl_context)
     const prev = object(ctx.protocol)
+    const time = Date.now()
     await Session.setDslContext({
       sessionID,
       dsl_context: {
@@ -414,8 +432,33 @@ export namespace SessionDelegation {
           ...prev,
           delegation: {
             ...item,
-            notified_at: Date.now(),
+            notified_at: time,
           },
+        },
+      },
+    })
+
+    const parent = await Session.get(SessionID.make(item.parent_session_id))
+    const pctx = object(parent.dsl_context)
+    const pprev = object(pctx.protocol)
+    const pend = { ...object(pprev.pending_delegations) }
+    delete pend[sessionID]
+    const done = Array.isArray(pprev.completed_delegations) ? pprev.completed_delegations : []
+    await Session.setDslContext({
+      sessionID: parent.id,
+      dsl_context: {
+        ...pctx,
+        protocol: {
+          ...pprev,
+          pending_delegations: pend,
+          completed_delegations: done.map((entry) => {
+            const data = object(entry)
+            if (data.child_session_id !== sessionID) return entry
+            return {
+              ...data,
+              notified_at: time,
+            }
+          }),
         },
       },
     })

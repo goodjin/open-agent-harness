@@ -6,8 +6,8 @@
 
 相关文档：
 
-- `03-model-runtime-protocol.md`
-- `05-routing-and-delegation-policy.md`
+- `02-model-runtime-protocol.md`
+- `04-routing-and-delegation-policy.md`
 - `06-state-event-projection-model.md`
 - `07-context-memory-visibility-policy.md`
 - `09-ui-console-and-agent-management.md`
@@ -32,23 +32,37 @@ Handoff 协议定义一个 Agent Session 如何把可继续使用的工作状态
 ```txt
 source Agent Session 执行任务
   -> Runtime 保存 raw records 和 structured trace
-  -> source Agent 可以生成 self-report
+  -> Runtime 判断是否到达 handoff boundary
+  -> Runtime 在需要时请求 source Agent 生成轻量 self-report
   -> Runtime 构造 Handoff Source Bundle
   -> handoff_writer 将 source bundle 压缩为 handoff draft
   -> Runtime 归一化、校验并保存 canonical Handoff record
   -> 目标 Context Bundle 收到由 Handoff record 渲染出的 Markdown
 ```
 
-Runtime 在状态边界触发 handoff：
+handoff 的触发权在 Runtime。source Agent 可以提出 handoff intent，但 intent 只是输入，不等于正式交接。Runtime 需要根据 run state、assignment state、policy、用户操作和上下文预算决定是否创建 handoff。
 
-- Assignment `completed`
-- Assignment `partial`
-- Assignment `blocked`
-- Assignment `failed`
-- 用户要求从另一个 Agent Session 继续
-- workflow fan-in 需要聚合多个 child session
-- context budget 需要 continuation compaction
-- final answer 之后需要留下 future-run continuation
+Runtime 在这些场景计划 handoff：
+
+- **Assignment 终态**：Assignment `completed`、`partial`、`blocked`、`failed`，或执行被取消但已有可用现场。
+- **下游依赖存在**：当前 Assignment 有 `next`、review、test、merge、follow-up、fan-in 聚合或其他 depends。
+- **模型提出 intent**：source Agent 在协议输出里声明需要交给 reviewer、tester、human owner 或另一个 capability。
+- **Orchestration Policy 命中**：例如 implementation 结束后进入 code review，review 结束后进入 test audit。
+- **用户或 UI 手动触发**：用户指定“交给下一个 Agent”、“让 human 看一下”或从 Console 创建 continuation。
+- **Runtime 限制触发**：context budget 接近耗尽、预算不足、权限不足、工具不可用或当前 executor 无法继续。
+- **final continuation**：final answer 后需要为 future run 留下可恢复的工作状态。
+
+Runtime 的计划结果应包含：
+
+```json
+{
+  "type": "handoff.plan",
+  "trigger": true,
+  "reasons": ["assignment_terminal", "downstream_next"],
+  "request_self_report": true,
+  "status": "completed"
+}
+```
 
 source Agent 可以在协议输出里提出 handoff 意图。Runtime 决定是否接受、补全、降级或用已保存证据重新生成。
 
@@ -57,33 +71,55 @@ source Agent 可以在协议输出里提出 handoff 意图。Runtime 决定是�
 1. Handoff 以 Runtime record 保存；普通聊天消息只作为 raw evidence。
 2. raw records 与 handoff summary 分开保存。
 3. structured trace 只负责索引 raw records，不替代 raw records。
-4. source Agent self-report 是语义线索，不能直接当作事实。
-5. handoff_writer 读取 Source Bundle，并在需要时展开 raw refs。
-6. 目标 Agent 默认接收 Markdown，不直接接收 canonical JSON。
-7. 关键 claim 应尽量带 trace、artifact 或 raw ref。
-8. Runtime 在交给目标 Agent 前执行 visibility、redaction、authority 和 budget 检查。
+4. source Agent self-report 由 Runtime 在边界处请求；它是语义线索，不能直接当作事实。
+5. 普通 Agent prompt 不承担完整 Handoff schema；复杂格式由 Runtime 和 handoff_writer 处理。
+6. handoff_writer 读取 Source Bundle，并在需要时展开 raw refs。
+7. 目标 Agent 默认接收 Markdown，不直接接收 canonical JSON。
+8. 关键 claim 应尽量带 trace、artifact 或 raw ref。
+9. Runtime 在交给目标 Agent 前执行 visibility、redaction、authority 和 budget 检查。
 
 ## 角色分工
 
 ### Source Agent
 
-source Agent 执行任务。它在 terminal state 或 handoff boundary 可以留下一个短 self-report。
+source Agent 执行任务。它在 terminal state 或 handoff boundary 收到 Runtime 的轻量提示后，留下一个短 self-report。
 
 self-report 应保持扁平：
 
-```json
-{
-  "status": "partial",
-  "summary": "Implemented timeout handling, but only focused tests were run.",
-  "done": ["Added timeout error path", "Updated focused tests"],
-  "artifacts": ["artifact://patch/current", "artifact://test/auth-timeout"],
-  "unresolved": ["Broader auth test suite still needs to run"],
-  "risks": ["Only focused tests were run"],
-  "next": ["Run broader auth tests", "Review timeout behavior in refresh retry path"]
-}
+```txt
+Status: partial
+Goal: Fix auth timeout handling.
+
+Done:
+- Added timeout error path.
+- Updated focused tests.
+
+Artifacts:
+- artifact://patch/current
+- artifact://test/auth-timeout
+
+Unresolved:
+- Broader auth test suite still needs to run.
+
+Risks:
+- Only focused tests were run.
+
+Next:
+- Run broader auth tests.
+- Review timeout behavior in refresh retry path.
 ```
 
 self-report 的价值在于暴露 source Agent 认为重要的信息，例如取舍、风险、未验证项和推荐下一步。canonical handoff 由 Runtime 另行生成。
+
+Runtime 不应每轮都要求 self-report。它只在边界处请求：
+
+- Assignment 即将结束。
+- source Agent 声明 blocked、partial 或 failed。
+- Runtime 准备创建下游 session。
+- 用户要求交接。
+- context 或预算即将中断，需要保留现场。
+
+如果 source Agent 未生成 self-report，Runtime 仍然继续 handoff 流程，用 structured trace 和 raw refs 生成 minimal handoff，并标记证据不完整。
 
 ### Runtime
 
@@ -93,11 +129,13 @@ Runtime 维护执行边界：
 - 追加 Event records。
 - 维护 structured trace。
 - 索引 Artifact records。
+- 判断是否触发 handoff plan。
+- 在边界处请求 source Agent 生成轻量 self-report。
 - 构造 Handoff Source Bundle。
 - 在需要时调用 handoff_writer。
 - 归一化并校验 Handoff records。
 - 将 Handoff record 渲染为目标 Markdown。
-- 写入 `handoff.created`、`handoff.updated` 或 `handoff.rejected` events。
+- 写入 `handoff.self_report_requested`、`handoff.created`、`handoff.updated` 或 `handoff.rejected` events。
 
 Runtime 不需要理解每一句领域语义。它需要保存足够材料和引用，让后续 reducer、Agent 或 human owner 可以复查。
 
@@ -521,6 +559,7 @@ Handoff 使用现有 Event 和 Trace 基础设施。
 
 推荐事件类型：
 
+- `handoff.self_report_requested`
 - `handoff.source_built`
 - `handoff.writer_started`
 - `handoff.writer_completed`
@@ -564,6 +603,11 @@ Handoff 使用现有 Event 和 Trace 基础设施。
 
 Model-Runtime Protocol 可以通过 `calls[].handoff` 表达 handoff intent，也可以通过 Runtime call，例如 `handoff.create`，显式创建 handoff。
 
+Runtime 可以提供两个边界调用：
+
+- `handoff.plan`：根据 Assignment 状态、下游依赖、policy、用户触发和预算状态判断是否触发 handoff。
+- `handoff.self_report.request`：在 handoff boundary 主动向 source Agent 请求轻量 self-report，并写入事件。
+
 Routing and Delegation Policy 负责 target selection 和 Assignment creation。
 
 State, Event and Projection Model 负责存储 handoff events、handoff chain、trace refs 和 artifact index。
@@ -578,19 +622,21 @@ UI Console 展示 handoff chain，并允许用户从 session summary、artifact 
 
 1. 为当前执行边界补充 Runtime trace entries 和 raw refs。
 2. 保存 full source session raw ref。
-3. terminal Assignment flow 创建 Handoff Source Bundle。
-4. 调用 hidden `handoff_writer`。
-5. 用扁平 schema 校验 writer output。
-6. 保存 canonical Handoff record。
-7. 将 Handoff record 渲染成 Markdown，放入 target Context Bundle。
+3. terminal Assignment flow 或 Runtime policy 调用 `handoff.plan`。
+4. 如果 plan 要求 self-report，调用 `handoff.self_report.request`，向 source Agent 发轻量 plain-text prompt。
+5. Runtime 收集 self-report、events、artifacts 和 raw refs，创建 Handoff Source Bundle。
+6. 调用 hidden `handoff_writer`。
+7. 用扁平 schema 校验 writer output。
+8. 保存 canonical Handoff record。
+9. 将 Handoff record 渲染成 Markdown，放入 target Context Bundle。
 
 source Agent prompt 可以加入一条轻量规则：
 
 ```txt
-When finishing or handing off work, include concise notes about completed work,
-key artifacts, evidence, risks, unresolved questions and suggested next steps.
-These notes help Runtime build a handoff, but Runtime will validate and rewrite
-the final handoff record.
+When Runtime asks for a handoff self-report, write concise plain-text notes
+about completed work, key artifacts, evidence, risks, unresolved questions and
+suggested next steps. These notes help Runtime build a handoff, but Runtime
+will validate and rewrite the final handoff record.
 ```
 
 这条规则降低格式压力，同时保留 source Agent 的现场判断。

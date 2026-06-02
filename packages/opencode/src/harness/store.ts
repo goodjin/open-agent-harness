@@ -101,6 +101,14 @@ export namespace HarnessStore {
     await write(path.join(runDir(item.run_id), "artifacts", `${item.id}.json`), item)
   }
 
+  export async function handoffs(id: string) {
+    return list(path.join(runDir(id), "handoffs"), Harness.Handoff)
+  }
+
+  export async function putHandoff(item: Harness.Handoff) {
+    await write(path.join(runDir(item.source.run_id), "handoffs", `${item.id}.json`), item)
+  }
+
   export async function decisions(id: string) {
     return list(path.join(runDir(id), "decisions"), Harness.Decision)
   }
@@ -183,6 +191,7 @@ export namespace HarnessStore {
       tasks: await tasks(id),
       assignments: await assignments(id),
       artifacts: await artifacts(id),
+      handoffs: await handoffs(id),
       decisions: await decisions(id),
       events: await events(id),
     }

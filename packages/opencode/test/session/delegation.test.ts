@@ -284,7 +284,100 @@ describe("SessionDelegation", () => {
             expect(result.output).toContain("verified")
             expect(result.output).not.toContain("verified output")
           },
-        }),
+      }),
     })
+  })
+
+  test("recovery does not resubmit historical completed delegations", async () => {
+    await using tmp = await tmpdir()
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      throw new Error("historical delegation should not prompt parent")
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({})
+              const child = await Session.create({ parentID: parent.id })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_old",
+                action_id: "old_task",
+                action_title: "Old task",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "default",
+                child_session_id: child.id,
+                agent: "frontend",
+                result_policy: "summary",
+                created_at: 1,
+              }
+              const done = {
+                type: "agent.delegation.result",
+                version: "1",
+                status: "completed",
+                run_id: "apr_old",
+                action_id: "old_task",
+                action_title: "Old task",
+                parent_session_id: parent.id,
+                parent_message_id: item.parent_message_id,
+                parent_agent: "default",
+                child_session_id: child.id,
+                agent: "frontend",
+                result_policy: "summary",
+                completed_at: 2,
+                summary: "already delivered",
+                output: "already delivered",
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: {
+                  protocol: {
+                    pending_delegations: {},
+                    completed_delegations: [done],
+                  },
+                },
+              })
+              await Session.setDslContext({
+                sessionID: child.id,
+                dsl_context: {
+                  protocol: {
+                    delegation: {
+                      ...item,
+                      status: "completed",
+                      completed_at: 2,
+                      summary: "already delivered",
+                      output: "already delivered",
+                    },
+                  },
+                },
+              })
+
+              await SessionDelegation.recover()
+              await SessionDelegation.recover()
+
+              const cctx = (await Session.get(child.id)).dsl_context?.protocol as {
+                delegation?: { notified_at?: number }
+              }
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { notified_at?: number }[]
+                pending_delegations?: Record<string, unknown>
+              }
+
+              expect(prompt).toHaveBeenCalledTimes(0)
+              expect(typeof cctx.delegation?.notified_at).toBe("number")
+              expect(typeof pctx.completed_delegations?.[0]?.notified_at).toBe("number")
+              expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
   })
 })

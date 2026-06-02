@@ -2,7 +2,7 @@
 
 本文档是 Open Agent Harness 的治理协议总纲。它按顺序说明协议目标、设计原则、协议架构、控制流、决策边界、Workflow/UI 定位、共享字段、状态词、对象定义、待讨论问题和文档地图。
 
-`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent、Skill 导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、状态、上下文、Workflow Profile 和 UI 管理。总纲聚焦稳定抽象和关系边界。
+`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent 定义与 Skill 来源导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、Handoff、状态、上下文、Workflow Profile 和 UI 管理。总纲聚焦稳定抽象和关系边界。
 
 ## 协议目标
 
@@ -87,7 +87,7 @@ Artifact、Trace、Projection 和 UI 视图都需要提供稳定 id、结构化�
 
 ### 协议构件
 
-Harness 协议由六类协议构件协同工作：
+Harness 协议由七类协议构件协同工作：
 
 - **Model**：负责判断、规划、解释和产生产物，通过模型-Runtime 协议声明意图。
 - **Runtime**：负责状态、权限、调度、执行、门禁、持久化、审计和恢复。
@@ -139,7 +139,7 @@ Adapter and product access plane
 
 #### 模型交互平面
 
-模型与 Runtime 的交互由 `03-model-runtime-protocol.md` 定义。
+模型与 Runtime 的交互由 `02-model-runtime-protocol.md` 定义。
 
 该协议定义了：
 
@@ -150,12 +150,13 @@ Adapter and product access plane
 
 #### 执行平面
 
-执行平面由 `04-action-executor-contract.md` 和 `05-routing-and-delegation-policy.md` 定义。
+执行平面由 `03-action-executor-contract.md`、`04-routing-and-delegation-policy.md` 和 `05-handoff-protocol.md` 定义。
 
 - **Action**：Runtime 接受后的可执行语义单元，描述要执行什么操作、携带什么参数、涉及哪些资源、具有什么 side effect、期望什么结果返回策略，以及建议由哪类 executor 执行。所有模型请求、toolCall、delegation request、runtime operation 或 human approval 在执行前都归一化为 Action。
 - **Executor**：执行 Action 的统一抽象，表示由哪类执行者完成这个 Action。具体目标可以是 tool、Agent Session、runtime service、human、pipeline 或 external service。Executor 的执行环境契约覆盖 Sandbox、Workspace、Manifest、Snapshot 和 Rehydration。
 - **Routing**：Runtime 把 Action 绑定到具体 executor 的选择过程。Routing 根据 operation、executor hint、资源范围、side effect、权限、可用性、成本、agent entry/capability 和当前 run state 做选择，并记录选择结果。
 - **Delegation**：Routing 选择 Agent Session 作为 executor 时形成的执行形态。Runtime 基于 Agent 模板创建会话，生成 Assignment，并记录 child session trace；Assignment 是 Action 绑定给 Agent Session 后形成的执行边界。
+- **Handoff**：Assignment 或 Agent Session 到达交接边界时，Runtime 把来源会话的结果、证据、风险、未决项和 raw refs 归一化为 Handoff record，并渲染为目标 Context Bundle。
 
 #### 状态控制平面
 
@@ -512,7 +513,7 @@ Command 经过 schema、authority、gate 和 projection 校验后，才能产生
 
 Runtime 接受后的可执行语义工作单元。
 
-Action 可以映射到 tool、Agent Session、runtime service、human approval、pipeline、Workflow Command 或 service invocation。Action 契约由 `04-action-executor-contract.md` 定义。
+Action 可以映射到 tool、Agent Session、runtime service、human approval、pipeline、Workflow Command 或 service invocation。Action 契约由 `03-action-executor-contract.md` 定义。
 
 示例：
 
@@ -623,7 +624,7 @@ Handoff 包含目标、约束、依赖、证据、Artifact refs、预算、风�
 
 Handoff 可以来自模型声明的 next Action，也可以来自 Agent 模板上的 Orchestration Policy。无论来源如何，Runtime 都将其转换为受治理的 Action / Assignment。
 
-`13-handoff-protocol.md` 进一步定义 Handoff 的生成流程：Runtime 保存 raw records 和 structured trace，source Agent 可以留下 self-report，handoff writer 做压缩整理，Runtime 最后校验并渲染给目标 Context Bundle。
+`05-handoff-protocol.md` 进一步定义 Handoff 的生成流程：Runtime 保存 raw records 和 structured trace，在边界处请求 source Agent 生成 self-report，handoff writer 做压缩整理，Runtime 最后校验并渲染给目标 Context Bundle。
 
 示例：
 
@@ -902,18 +903,22 @@ Run 的目标边界。Goal Contract 记录目标、non-goal、约束和成功标
 | 编号 | 文档 | 责任 |
 |---|---|---|
 | 00 | `00-harness-governance-protocol.md` | 总纲：目标、原则、协议架构、对象定义和边界。 |
-| 01 | `01-agent-model-and-authoring.md` | Agent 模板、metadata、entry、capability、permission、relationships、authoring contract。 |
-| 02 | `02-skill-format-agent-import.md` | 将 `SKILL.md` authoring format 导入为 virtual agent。 |
-| 03 | `03-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
-| 04 | `04-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
-| 05 | `05-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace、handoff。 |
+| 01 | `01-agent-model-and-authoring.md` | Agent 模板、Skill 来源导入、metadata、entry、capability、permission、relationships、authoring contract。 |
+| 02 | `02-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
+| 03 | `03-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
+| 04 | `04-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace 和 executor selection。 |
+| 05 | `05-handoff-protocol.md` | Handoff 触发、self-report、source bundle、handoff writer、canonical record 和目标 Context Bundle 渲染。 |
 | 06 | `06-state-event-projection-model.md` | Event source、Projection、Trace / Observability、状态映射、事务边界、replay。 |
 | 07 | `07-context-memory-visibility-policy.md` | Context Bundle、Memory Scope、visibility、privacy、replay policy。 |
 | 08 | `08-workflow-profile-action-graph-assets.md` | Workflow Profile、Workflow asset 与统一 Action Graph 执行语义。 |
 | 09 | `09-ui-console-and-agent-management.md` | UI 如何管理、观察和使用 Harness 系统。 |
-| 10 | `10-agent-metadata-rfc.md` | Agent metadata RFC：instruction、contract、collaboration、completion、boundary 和 lifecycle。 |
-| 11 | `11-agent-metadata-implementation-plan.md` | Agent metadata RFC 的实现计划、测试边界和 UI/API 落点。 |
-| 12 | `12-agent-metadata-execution-orchestration.md` | Agent metadata 实施编排：phase、并行窗口、PR 边界和 worker handoff。 |
-| 13 | `13-handoff-protocol.md` | Handoff 生成、structured trace、source bundle、handoff writer、canonical record 和目标 Context Bundle 渲染。 |
 
 支持性研究、评测材料和参考资料放在 `docs/harness-protocol/support/`，作为协议设计依据和评测背景。
+
+RFC、实现计划和阶段性执行编排不放在协议目录中。它们归入 `docs/harness-rfc/`：
+
+| 文档 | 责任 |
+|---|---|
+| `../harness-rfc/01-agent-metadata-control-plane-rfc.md` | Agent metadata control plane RFC。 |
+| `../harness-rfc/02-agent-metadata-implementation-plan.md` | Agent metadata RFC 的实现计划、测试边界和 UI/API 落点。 |
+| `../harness-rfc/03-agent-metadata-execution-orchestration.md` | Agent metadata 实施编排：phase、并行窗口、PR 边界和 worker handoff。 |

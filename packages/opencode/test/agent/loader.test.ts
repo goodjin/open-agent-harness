@@ -301,6 +301,9 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.source).toBe("user")
         expect(agent?.meta.description).toBe("Use when planning work from Claude skills.")
         expect(agent?.meta.capability.purpose).toBe("legacy_skill")
+        expect(agent?.identity).toBe("You are the Claude Planner agent converted from a legacy skill.")
+        expect(agent?.rules).toContain("Plan the work.")
+        expect(agent?.identity).not.toBe(agent?.rules)
       } finally {
         await fs.rm(tmp, { recursive: true })
       }

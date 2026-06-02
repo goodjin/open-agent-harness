@@ -428,7 +428,7 @@ export class AgentTemplateLoader {
           typeof parsed.data.description === "string" && parsed.data.description.trim()
             ? parsed.data.description.trim()
             : `Use this agent for tasks from the legacy ${raw} skill.`
-        const role = this.section(parsed.content, "Role") ?? parsed.content.trim()
+        const role = this.section(parsed.content, "Role") ?? `You are the ${this.title(id)} agent converted from a legacy skill.`
         const rules = [this.section(parsed.content, "Workflow"), this.section(parsed.content, "Rules")]
           .filter((item): item is string => !!item)
           .join("\n\n")

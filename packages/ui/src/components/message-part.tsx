@@ -56,6 +56,7 @@ import { animate } from "motion"
 import { useLocation } from "@solidjs/router"
 import { attached, inline, kind } from "./message-file"
 import { partView, type PartView } from "./message-part-view"
+import { protocolMeta, protocolText } from "./message-part-protocol"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -1183,11 +1184,6 @@ function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { ki
       ? i18n.t("ui.messagePart.collapsed.reasoning.title")
       : i18n.t("ui.messagePart.collapsed.ignoredText.title"),
   )
-  const detail = createMemo(() =>
-    props.view.reason === "reasoning"
-      ? i18n.t("ui.messagePart.collapsed.reasoning.description")
-      : i18n.t("ui.messagePart.collapsed.ignoredText.description"),
-  )
 
   return (
     <Show when={text()}>
@@ -1196,7 +1192,6 @@ function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { ki
           <div data-component="collapsed-model-output-trigger">
             <div data-slot="collapsed-model-output-main">
               <span data-slot="collapsed-model-output-title">{title()}</span>
-              <span data-slot="collapsed-model-output-detail">{detail()}</span>
             </div>
             <Collapsible.Arrow />
           </div>
@@ -2014,18 +2009,18 @@ ToolRegistry.register({
   name: "AgentProtocolOutput",
   render(props) {
     const i18n = useI18n()
-    const text = createMemo(() => pretty(props.input))
-    const kind = createMemo(() => {
-      const val = unwrap(props.input)
-      if (!val || typeof val !== "object" || Array.isArray(val)) return
-      const type = (val as Record<string, unknown>).kind
-      if (typeof type === "string" && type) return type
-    })
-    const calls = createMemo(() => {
-      const val = unwrap(props.input)
-      if (!val || typeof val !== "object" || Array.isArray(val)) return
-      const list = (val as Record<string, unknown>).calls
-      if (Array.isArray(list)) return String(list.length)
+    const text = createMemo(() =>
+      protocolText({
+        input: props.input,
+        output: props.output,
+        metadata: props.metadata,
+        title: props.part?.state && "title" in props.part.state ? props.part.state.title : undefined,
+      }),
+    )
+    const meta = createMemo(() => {
+      const primary = protocolMeta(props.input)
+      if (primary.kind || primary.calls) return primary
+      return protocolMeta(props.metadata?.raw ?? props.metadata?.protocol)
     })
     const [copied, setCopied] = createSignal(false)
 
@@ -2039,11 +2034,11 @@ ToolRegistry.register({
       <BasicTool
         {...props}
         icon="code"
-        defaultOpen={props.defaultOpen ?? true}
+        defaultOpen={props.defaultOpen ?? (props.status === "pending" || props.status === "running")}
         trigger={{
           title: "Agent Protocol Output",
-          subtitle: kind() ? `kind=${kind()}` : undefined,
-          args: calls() ? [`calls=${calls()}`] : [],
+          subtitle: meta().kind ? `kind=${meta().kind}` : undefined,
+          args: meta().calls ? [`calls=${meta().calls}`] : [],
           action: (
             <Tooltip
               value={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}

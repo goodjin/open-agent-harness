@@ -71,6 +71,9 @@ export const HarnessRoutes = lazy(() =>
     .get("/runs/:runID/artifacts", validator("param", RunParam), async (c) =>
       c.json(await HarnessStore.artifacts(c.req.valid("param").runID)),
     )
+    .get("/runs/:runID/handoffs", validator("param", RunParam), async (c) =>
+      c.json(await HarnessStore.handoffs(c.req.valid("param").runID)),
+    )
     .get("/runs/:runID/decisions", validator("param", RunParam), async (c) =>
       c.json(await HarnessStore.decisions(c.req.valid("param").runID)),
     )

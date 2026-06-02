@@ -6,8 +6,8 @@ Date: 2026-06-02
 
 Related:
 
-- `10-agent-metadata-rfc.md`
-- `11-agent-metadata-implementation-plan.md`
+- `01-agent-metadata-control-plane-rfc.md`
+- `02-agent-metadata-implementation-plan.md`
 
 ## Goal
 

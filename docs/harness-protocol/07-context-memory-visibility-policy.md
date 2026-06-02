@@ -21,7 +21,7 @@ Assignment context bundle 应包含：
   "id": "ctx_123",
   "goal": "Review the changed protocol schema.",
   "included": [
-    "file:docs/harness-protocol/03-model-runtime-protocol.md",
+    "file:docs/harness-protocol/02-model-runtime-protocol.md",
     "artifact:protocol_diff"
   ],
   "excluded": [

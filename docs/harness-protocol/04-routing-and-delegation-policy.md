@@ -145,7 +145,7 @@ Handoff 字段：
 
 Runtime 使用该结构创建下一个 Assignment、构造目标 Context Bundle，并保持 session 之间的 trace continuity。
 
-`13-handoff-protocol.md` 定义 Handoff 的生成细节：source Agent self-report、raw records、structured trace、Handoff Source Bundle、handoff writer、canonical record 和目标 Markdown Context Bundle。本文只定义 routing 和 delegation 如何消费 Handoff Contract。
+`05-handoff-protocol.md` 定义 Handoff 的生成细节：source Agent self-report、raw records、structured trace、Handoff Source Bundle、handoff writer、canonical record 和目标 Markdown Context Bundle。本文只定义 routing 和 delegation 如何消费 Handoff Contract。
 
 ## Runtime Orchestration Policy 展开
 

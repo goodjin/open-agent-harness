@@ -6,7 +6,7 @@ import { TextField } from "@open-agent-harness/ui/text-field"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import type { AgentManageDiagnostic, AgentManageInfo } from "@open-agent-harness/sdk/v2"
-import { createResource, For, Show, type Component, type JSX } from "solid-js"
+import { createEffect, createResource, For, Show, type Component, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useLanguage } from "@/context/language"
@@ -125,7 +125,7 @@ const source = (item: AgentManageInfo) => {
   return `Source: ${item.source}`
 }
 
-export const SettingsAgents: Component = () => {
+export const SettingsAgents: Component<{ selected?: string }> = (props) => {
   const language = useLanguage()
   const globalSDK = useGlobalSDK()
   const [view, setView] = createStore<{
@@ -136,6 +136,7 @@ export const SettingsAgents: Component = () => {
     state: string
     tab: Tab
     diagnostics: AgentManageDiagnostic[]
+    opened: boolean
   }>({
     page: "list",
     mode: "edit",
@@ -144,6 +145,7 @@ export const SettingsAgents: Component = () => {
     state: "",
     tab: "all",
     diagnostics: [],
+    opened: false,
   })
   const [form, setForm] = createStore<Form>(blank())
 
@@ -158,6 +160,16 @@ export const SettingsAgents: Component = () => {
     setView("diagnostics", item.diagnostics)
     setForm(fill(item))
   }
+
+  createEffect(() => {
+    if (view.opened) return
+    const id = props.selected
+    if (!id) return
+    const item = agents()?.find((entry) => entry.id === id || entry.name === id)
+    if (!item) return
+    setView("opened", true)
+    select(item)
+  })
 
   const create = () => {
     setView("page", "form")

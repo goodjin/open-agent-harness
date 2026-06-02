@@ -125,9 +125,9 @@ Anthropic 的资料与本协议关系最直接，尤其是 Managed Agents 中的
 
 ## 对后续协议的补充建议
 
-1. 在 `03-model-runtime-protocol.md` 中明确 prompt / context assembly 的优先级、toolCall carrier、structured output fallback、observation policy 和 recovery normalization。
-2. 在 `04-action-executor-contract.md` 中细化 tool / runtime service / agent session / human / pipeline / external service 的 executor contract。
-3. 在 `05-routing-and-delegation-policy.md` 中补充并行 delegation、成本、冲突、锁、scope 和 assignment lifecycle。
+1. 在 `02-model-runtime-protocol.md` 中明确 prompt / context assembly 的优先级、toolCall carrier、structured output fallback、observation policy 和 recovery normalization。
+2. 在 `03-action-executor-contract.md` 中细化 tool / runtime service / agent session / human / pipeline / external service 的 executor contract。
+3. 在 `04-routing-and-delegation-policy.md` 中补充并行 delegation、成本、冲突、锁、scope 和 assignment lifecycle。
 4. 在 `06-state-event-projection-model.md` 中补充 trace、tool I/O、runtime footprint、eval evidence、snapshot、rehydration 和 export schema。
 5. 在 `07-context-memory-visibility-policy.md` 中补充 compaction、observation masking、just-in-time retrieval、memory verification 和 semantic interpretation。
 6. 在 `08-workflow-profile-action-graph-assets.md` 中明确 workflow、evaluation loop、release gate、long-running monitor 如何基于 Harness 基础 DSL 表达。

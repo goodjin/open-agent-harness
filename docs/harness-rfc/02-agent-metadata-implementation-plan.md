@@ -4,11 +4,11 @@ Status: Draft
 
 Date: 2026-06-02
 
-Source RFC: `10-agent-metadata-rfc.md`
+Source RFC: `01-agent-metadata-control-plane-rfc.md`
 
 ## 目标
 
-本方案说明 `10-agent-metadata-rfc.md` 中每类 metadata 如何落地到当前代码库、Runtime 行为、API/UI、测试和迁移路径。
+本方案说明 `01-agent-metadata-control-plane-rfc.md` 中每类 metadata 如何落地到当前代码库、Runtime 行为、API/UI、测试和迁移路径。
 
 实现可以分阶段，但规划必须覆盖 RFC 全部内容：
 
