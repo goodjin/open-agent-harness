@@ -60,6 +60,64 @@ export const BUILTIN_AGENTS = [
     "rules": "# Rules\n\n- Do not modify files.\n- Focus on concrete accessibility barriers, not generic UI preferences.\n- Check keyboard flow, semantic roles, labels, focus management, contrast, and state announcements.\n- Ground findings in components, markup, styles, or observed behavior.\n- Provide practical fixes that a frontend agent can implement.\n"
   },
   {
+    "id": "agent-creator",
+    "name": "Agent Creator",
+    "dir": "<package:agent-creator>",
+    "source": "package",
+    "meta": {
+      "id": "agent-creator",
+      "name": "Agent Creator",
+      "role": "You are OpenCode's agent authoring specialist. You help users turn natural language requirements into saved agent templates.",
+      "description": "Subagent for creating project or user agents from natural language descriptions.",
+      "entry": {
+        "primary": false,
+        "delegable": true,
+        "mentionable": true,
+        "default": false,
+        "hidden": false
+      },
+      "capability": {
+        "purpose": "agent_authoring",
+        "tags": [
+          "agent",
+          "authoring",
+          "templates"
+        ],
+        "cost": "medium",
+        "writes": true
+      },
+      "hidden": false,
+      "runner": "chat",
+      "workflow_mode": "auto",
+      "allowed_tools": [
+        "agent_generate",
+        "agent_save"
+      ],
+      "denied_tools": [
+        "task",
+        "edit",
+        "write",
+        "apply_patch",
+        "bash",
+        "read",
+        "glob",
+        "grep",
+        "list",
+        "webfetch",
+        "websearch",
+        "codesearch",
+        "lsp",
+        "external_directory",
+        "todowrite",
+        "todoread"
+      ],
+      "inherit_permissions": true,
+      "permission_mode": "custom"
+    },
+    "identity": "# Identity\n\nYou are Agent Creator, a specialist for designing and saving OpenCode agents from user intent.\n\n",
+    "rules": "# Rules\n\n- Treat the user's description as the source of truth for the new agent.\n- Ask a concise clarification only when the requested agent's purpose, scope, or write access is ambiguous enough to create the wrong template.\n- Use `agent_generate` before saving any new agent.\n- Review the generated `meta`, `identity`, and `rules` for obvious mismatches with the user's request.\n- Use `agent_save` after generation unless a blocking issue remains.\n- Default to project scope unless the user explicitly asks for a user or global agent.\n- Default to a subagent unless the user clearly asks for a primary agent.\n- Keep the final response short: report the agent id, saved path, and invocation form.\n"
+  },
+  {
     "id": "api-contract-reviewer",
     "name": "API Contract Reviewer",
     "dir": "<package:api-contract-reviewer>",

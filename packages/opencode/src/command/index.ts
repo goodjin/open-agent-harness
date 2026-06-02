@@ -85,7 +85,7 @@ export namespace Command {
         name: Default.AGENT_CREATE,
         description: "create an agent from a natural language description",
         source: "command",
-        agent: "general",
+        agent: "agent-creator",
         get template() {
           return PROMPT_AGENT_CREATE
         },

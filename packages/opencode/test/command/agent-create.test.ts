@@ -13,7 +13,7 @@ describe("agent-create command", () => {
         const cmd = await Command.get("agent-create")
         expect(cmd?.description).toContain("agent")
         expect(cmd?.subtask).toBe(true)
-        expect(cmd?.agent).toBe("general")
+        expect(cmd?.agent).toBe("agent-creator")
         expect(await cmd?.template).toContain("agent_generate")
         expect(await cmd?.template).toContain("agent_save")
       },
