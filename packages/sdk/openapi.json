@@ -18204,6 +18204,9 @@
           },
           "field": {
             "type": "string"
+          },
+          "category": {
+            "type": "string"
           }
         },
         "required": [
@@ -18248,6 +18251,290 @@
           "meta": {
             "type": "object",
             "properties": {
+              "schema_version": {
+                "description": "Agent metadata schema version",
+                "type": "string",
+                "minLength": 1
+              },
+              "agent_version": {
+                "description": "Agent behavior or configuration version",
+                "type": "string",
+                "minLength": 1
+              },
+              "logo": {
+                "description": "Agent display logo",
+                "type": "object",
+                "properties": {
+                  "uri": {
+                    "description": "Logo URI",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "alt": {
+                    "description": "Accessible logo label",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "theme": {
+                    "description": "Logo theme",
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "dark",
+                      "auto"
+                    ]
+                  },
+                  "hash": {
+                    "description": "Logo integrity hash",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "uri"
+                ],
+                "additionalProperties": false
+              },
+              "instructions": {
+                "description": "Runtime instruction inputs",
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "description": "Instruction file path",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "description": "Instruction message role",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "required": {
+                          "description": "Whether the file is required",
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "model_messages": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "on": {
+                          "description": "Runtime event name",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "description": "Message insertion position",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "content": {
+                          "description": "Message content",
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "on",
+                        "position",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "contracts": {
+                "description": "Input and output contracts",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "output": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "collaboration": {
+                "description": "Agent collaboration policy",
+                "type": "object",
+                "properties": {
+                  "edges": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "runtime_boundary": {
+                "description": "Runtime boundary declaration",
+                "type": "object",
+                "properties": {
+                  "resource_classes": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "actions": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "network": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "approval": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "rate_limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "completion": {
+                "description": "Completion contract",
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "criteria": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_artifacts": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_evidence": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "gates": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "allow_partial": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observability": {
+                "description": "Observability policy",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "lifecycle": {
+                "description": "Lifecycle metadata",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
               "id": {
                 "description": "Unique identifier for the agent",
                 "type": "string",
@@ -18470,6 +18757,290 @@
           "meta": {
             "type": "object",
             "properties": {
+              "schema_version": {
+                "description": "Agent metadata schema version",
+                "type": "string",
+                "minLength": 1
+              },
+              "agent_version": {
+                "description": "Agent behavior or configuration version",
+                "type": "string",
+                "minLength": 1
+              },
+              "logo": {
+                "description": "Agent display logo",
+                "type": "object",
+                "properties": {
+                  "uri": {
+                    "description": "Logo URI",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "alt": {
+                    "description": "Accessible logo label",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "theme": {
+                    "description": "Logo theme",
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "dark",
+                      "auto"
+                    ]
+                  },
+                  "hash": {
+                    "description": "Logo integrity hash",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "uri"
+                ],
+                "additionalProperties": false
+              },
+              "instructions": {
+                "description": "Runtime instruction inputs",
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "description": "Instruction file path",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "description": "Instruction message role",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "required": {
+                          "description": "Whether the file is required",
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "model_messages": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "on": {
+                          "description": "Runtime event name",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "description": "Message insertion position",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "content": {
+                          "description": "Message content",
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "on",
+                        "position",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "contracts": {
+                "description": "Input and output contracts",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "output": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "collaboration": {
+                "description": "Agent collaboration policy",
+                "type": "object",
+                "properties": {
+                  "edges": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "runtime_boundary": {
+                "description": "Runtime boundary declaration",
+                "type": "object",
+                "properties": {
+                  "resource_classes": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "actions": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "network": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "approval": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "rate_limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "completion": {
+                "description": "Completion contract",
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "criteria": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_artifacts": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_evidence": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "gates": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "allow_partial": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observability": {
+                "description": "Observability policy",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "lifecycle": {
+                "description": "Lifecycle metadata",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
               "id": {
                 "description": "Unique identifier for the agent",
                 "type": "string",
@@ -18710,6 +19281,290 @@
           "meta": {
             "type": "object",
             "properties": {
+              "schema_version": {
+                "description": "Agent metadata schema version",
+                "type": "string",
+                "minLength": 1
+              },
+              "agent_version": {
+                "description": "Agent behavior or configuration version",
+                "type": "string",
+                "minLength": 1
+              },
+              "logo": {
+                "description": "Agent display logo",
+                "type": "object",
+                "properties": {
+                  "uri": {
+                    "description": "Logo URI",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "alt": {
+                    "description": "Accessible logo label",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "theme": {
+                    "description": "Logo theme",
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "dark",
+                      "auto"
+                    ]
+                  },
+                  "hash": {
+                    "description": "Logo integrity hash",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "uri"
+                ],
+                "additionalProperties": false
+              },
+              "instructions": {
+                "description": "Runtime instruction inputs",
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "description": "Instruction file path",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "description": "Instruction message role",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "required": {
+                          "description": "Whether the file is required",
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "model_messages": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "on": {
+                          "description": "Runtime event name",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "description": "Message insertion position",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "content": {
+                          "description": "Message content",
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "on",
+                        "position",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "contracts": {
+                "description": "Input and output contracts",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "output": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "collaboration": {
+                "description": "Agent collaboration policy",
+                "type": "object",
+                "properties": {
+                  "edges": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "runtime_boundary": {
+                "description": "Runtime boundary declaration",
+                "type": "object",
+                "properties": {
+                  "resource_classes": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "actions": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "network": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "approval": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "rate_limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "completion": {
+                "description": "Completion contract",
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "criteria": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_artifacts": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_evidence": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "gates": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "allow_partial": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observability": {
+                "description": "Observability policy",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "lifecycle": {
+                "description": "Lifecycle metadata",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
               "id": {
                 "description": "Unique identifier for the agent",
                 "type": "string",
@@ -18920,6 +19775,290 @@
           "meta": {
             "type": "object",
             "properties": {
+              "schema_version": {
+                "description": "Agent metadata schema version",
+                "type": "string",
+                "minLength": 1
+              },
+              "agent_version": {
+                "description": "Agent behavior or configuration version",
+                "type": "string",
+                "minLength": 1
+              },
+              "logo": {
+                "description": "Agent display logo",
+                "type": "object",
+                "properties": {
+                  "uri": {
+                    "description": "Logo URI",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "alt": {
+                    "description": "Accessible logo label",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "theme": {
+                    "description": "Logo theme",
+                    "type": "string",
+                    "enum": [
+                      "light",
+                      "dark",
+                      "auto"
+                    ]
+                  },
+                  "hash": {
+                    "description": "Logo integrity hash",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "uri"
+                ],
+                "additionalProperties": false
+              },
+              "instructions": {
+                "description": "Runtime instruction inputs",
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "description": "Instruction file path",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "role": {
+                          "description": "Instruction message role",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "required": {
+                          "description": "Whether the file is required",
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "model_messages": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "on": {
+                          "description": "Runtime event name",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "description": "Message insertion position",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "content": {
+                          "description": "Message content",
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "on",
+                        "position",
+                        "content"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "contracts": {
+                "description": "Input and output contracts",
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "output": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "collaboration": {
+                "description": "Agent collaboration policy",
+                "type": "object",
+                "properties": {
+                  "edges": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "runtime_boundary": {
+                "description": "Runtime boundary declaration",
+                "type": "object",
+                "properties": {
+                  "resource_classes": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "actions": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "network": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "approval": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "rate_limits": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "additionalProperties": false
+              },
+              "completion": {
+                "description": "Completion contract",
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "criteria": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_artifacts": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required_evidence": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "gates": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "allow_partial": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "observability": {
+                "description": "Observability policy",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "lifecycle": {
+                "description": "Lifecycle metadata",
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
               "id": {
                 "description": "Unique identifier for the agent",
                 "type": "string",

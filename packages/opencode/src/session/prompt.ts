@@ -9,6 +9,7 @@ import { Log } from "../util/log"
 import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
+import { getRegistry } from "../agent/registry"
 import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
@@ -49,6 +50,8 @@ import { Shell } from "@/shell/shell"
 import { decodeDataUrl } from "@/util/data-url"
 import { Trace } from "@/observability/trace"
 import { AgentEntry } from "@/agent/entry"
+import { resolveInstructions } from "@/agent/instructions"
+import { Global } from "@/global"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -637,6 +640,20 @@ export namespace SessionPrompt {
         break
       }
 
+      let instructions: string[] = []
+      try {
+        instructions = await agentInstructions(agent)
+      } catch (error) {
+        await failSetup({
+          sessionID,
+          assistant: processor.message,
+          providerID: model.providerID,
+          error,
+          stage: "resolve_instructions",
+        })
+        break
+      }
+
       if (step === 1) {
         SessionSummary.summarize({
           sessionID: sessionID,
@@ -667,6 +684,7 @@ export namespace SessionPrompt {
       const system = [
         ...(await SystemPrompt.environment(model)),
         ...(await InstructionPrompt.system()),
+        ...instructions,
       ]
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
@@ -797,6 +815,51 @@ export namespace SessionPrompt {
   }): Promise<RuntimeTools.Info> {
     using _ = log.time("resolveTools")
     return RuntimeTools.build(input)
+  }
+
+  async function agentInstructions(agent: Agent.Info) {
+    const registry = getRegistry()
+    const template = await registry.get(agent.name)
+    if (!template?.meta.instructions?.files?.length) return []
+
+    const status = (await registry.templates()).find((item) => item.valid && item.id === template.id)
+    if (!status) throw new Error(`Agent instruction template directory not found: ${template.id}`)
+
+    const result = await resolveInstructions({
+      meta: template.meta,
+      agentDir: status.dir,
+      projectRoot: Instance.worktree,
+      workspaceRoot: Instance.directory,
+      globalRulesPath: path.join(Global.Path.config, "AGENTS.md"),
+      userHome: Global.Path.home,
+      runDir: Instance.directory,
+    })
+    if (result.blocking) {
+      throw new Error(
+        [
+          `Agent instruction resolution failed for ${template.id}`,
+          ...result.diagnostics
+            .filter((item) => item.blocking)
+            .map((item) => `${item.code}: ${item.message}`),
+        ].join("\n"),
+      )
+    }
+
+    return result.records
+      .filter((item) => item.content !== undefined)
+      .map((item) =>
+        [
+          "<agent-instruction>",
+          `Source: ${item.path}`,
+          item.resolved ? `Resolved path: ${item.resolved}` : undefined,
+          item.role ? `Role: ${item.role}` : undefined,
+          "",
+          item.content?.trimEnd(),
+          "</agent-instruction>",
+        ]
+          .filter((line) => line !== undefined)
+          .join("\n"),
+      )
   }
 
   async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {

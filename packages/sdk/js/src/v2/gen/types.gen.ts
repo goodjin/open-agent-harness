@@ -2384,6 +2384,7 @@ export type AgentManageDiagnostic = {
   source?: "builtin" | "package" | "user" | "project"
   dir?: string
   field?: string
+  category?: string
 }
 
 export type AgentManageInfo = {
@@ -2395,6 +2396,136 @@ export type AgentManageInfo = {
   editable: boolean
   dir?: string
   meta: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */
@@ -2485,6 +2616,136 @@ export type AgentManageInfo = {
 export type AgentManageValidateOutput = {
   valid: boolean
   meta?: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */
@@ -2581,6 +2842,136 @@ export type AgentManageSaveInput = {
   scope?: "user" | "project"
   meta: {
     /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
+    /**
      * Unique identifier for the agent
      */
     id: string
@@ -2668,6 +3059,136 @@ export type AgentManageSaveInput = {
 export type AgentManagePatchInput = {
   scope?: "user" | "project"
   meta?: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */

@@ -1966,16 +1966,17 @@ function Task(props: ToolProps<typeof TaskTool>) {
   const { navigate } = useRoute()
   const local = useLocal()
   const sync = useSync()
+  const session = createMemo(() => (typeof props.metadata.sessionId === "string" ? props.metadata.sessionId : undefined))
 
   onMount(() => {
-    if (props.metadata.sessionId && !sync.data.message[props.metadata.sessionId]?.length)
-      sync.session.sync(props.metadata.sessionId)
+    const id = session()
+    if (id && !sync.data.message[id]?.length) sync.session.sync(id)
   })
 
-  const messages = createMemo(() => sync.data.message[props.metadata.sessionId ?? ""] ?? [])
+  const messages = createMemo(() => sync.data.message[session() ?? ""] ?? [])
 
   const tools = createMemo(() => {
-    return messages().flatMap((msg) =>
+    return messages().flatMap((msg: ReturnType<typeof messages>[number]) =>
       (sync.data.part[msg.id] ?? [])
         .filter((part): part is ToolPart => part.type === "tool")
         .map((part) => ({ tool: part.tool, state: part.state })),
@@ -1987,8 +1988,8 @@ function Task(props: ToolProps<typeof TaskTool>) {
   const isRunning = createMemo(() => props.part.state.status === "running")
 
   const duration = createMemo(() => {
-    const first = messages().find((x) => x.role === "user")?.time.created
-    const assistant = messages().findLast((x) => x.role === "assistant")?.time.completed
+    const first = messages().find((x: ReturnType<typeof messages>[number]) => x.role === "user")?.time.created
+    const assistant = messages().findLast((x: ReturnType<typeof messages>[number]) => x.role === "assistant")?.time.completed
     if (!first || !assistant) return 0
     return assistant - first
   })
@@ -2018,8 +2019,9 @@ function Task(props: ToolProps<typeof TaskTool>) {
       pending="Delegating..."
       part={props.part}
       onClick={() => {
-        if (props.metadata.sessionId) {
-          navigate({ type: "session", sessionID: props.metadata.sessionId })
+        const id = session()
+        if (id) {
+          navigate({ type: "session", sessionID: id })
         }
       }}
     >

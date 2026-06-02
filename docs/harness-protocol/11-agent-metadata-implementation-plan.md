@@ -218,7 +218,7 @@ Agent Manager 展示这些 diagnostics；Runtime 对 required 项按严重度决
 | Artifact Contract | Phase 6、Artifact Record Implementation、测试矩阵 | covered |
 | Completion Contract | Phase 7、Completion UI、端到端场景 | covered |
 | Versioning and old-run preservation | Phase 11 Lifecycle 与 Version Snapshot | covered |
-| Non-goals: no full workflow language, no direct Agent messaging | 设计约束、Phase 8 expansion 规则、风险处理 | covered |
+| Scope boundaries: Workflow Profile / Action Graph 由对应协议定义，Agent Session 协作由 Runtime 协调 | 设计约束、Phase 8 expansion 规则、风险处理 | covered |
 | Submission / PR plan | 推荐 PR 拆分 | covered |
 | Tests required for schema, loader, Agent Manager, routing and completion | 测试总矩阵、各 Phase 测试 | covered |
 

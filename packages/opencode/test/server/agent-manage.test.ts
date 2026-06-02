@@ -134,6 +134,121 @@ describe("agent management routes", () => {
     expect(next.rules).toBe("Updated rules")
   })
 
+  test("round-trips RFC metadata through manage endpoints", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const completion = {
+      mode: "all",
+      criteria: ["summary"],
+      required_artifacts: ["report.md"],
+      required_evidence: ["test output"],
+      gates: [{ name: "typecheck" }],
+      allow_partial: false,
+    }
+    const data = meta("metadata-agent", {
+      schema_version: "agent.metadata.v1",
+      agent_version: "2026.6.2",
+      logo: {
+        uri: "logo.svg",
+        alt: "Metadata agent logo",
+        theme: "auto",
+        hash: "sha256-demo",
+      },
+      instructions: {
+        files: [
+          {
+            path: "guide.md",
+            role: "system",
+            required: false,
+          },
+        ],
+        model_messages: [
+          {
+            on: "start",
+            position: "append",
+            content: "Use the guide.",
+          },
+        ],
+      },
+      contracts: {
+        input: [{ schema_ref: "schemas/input.json" }],
+        output: [{ schema_ref: "schemas/output.json" }],
+      },
+      collaboration: {
+        edges: [{ target: "reviewer", mode: "handoff" }],
+        limits: { max_depth: 2 },
+      },
+      runtime_boundary: {
+        resource_classes: ["filesystem"],
+        actions: { read: ["workspace"] },
+        network: { mode: "none" },
+        data: { retention: "session" },
+        approval: { required: true },
+        rate_limits: { calls: 8 },
+      },
+      completion,
+      observability: {
+        traces: true,
+        sample_rate: 1,
+      },
+      lifecycle: {
+        owner: "agent-platform",
+        deprecated: false,
+      },
+    })
+
+    const created = await request(tmp.path, "/agent/manage", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: "project",
+        meta: data,
+      }),
+    })
+
+    expect(created.status).toBe(200)
+    const item = (await created.json()) as { meta: Record<string, unknown> }
+    expect(item.meta).toMatchObject(data)
+
+    const root = path.join(tmp.path, ".opencode", "agents", "metadata-agent")
+    expect(JSON.parse(await Bun.file(path.join(root, "meta.json")).text())).toMatchObject(data)
+
+    const list = (await (await request(tmp.path, "/agent/manage")).json()) as {
+      id: string
+      meta: Record<string, unknown>
+    }[]
+    expect(list.find((item) => item.id === "metadata-agent")?.meta).toMatchObject(data)
+
+    const got = (await (await request(tmp.path, "/agent/manage/metadata-agent")).json()) as {
+      meta: Record<string, unknown>
+    }
+    expect(got.meta).toMatchObject(data)
+
+    const updated = await request(tmp.path, "/agent/manage/metadata-agent", {
+      method: "PATCH",
+      body: JSON.stringify({
+        scope: "project",
+        meta: {
+          ...data,
+          agent_version: "2026.6.3",
+          completion: {
+            ...completion,
+            allow_partial: true,
+          },
+        },
+      }),
+    })
+
+    expect(updated.status).toBe(200)
+    const next = (await updated.json()) as {
+      meta: {
+        agent_version: string
+        completion: { allow_partial: boolean }
+      }
+    }
+    expect(next.meta.agent_version).toBe("2026.6.3")
+    expect(next.meta.completion.allow_partial).toBe(true)
+    expect(JSON.parse(await Bun.file(path.join(root, "meta.json")).text()).completion.allow_partial).toBe(true)
+  })
+
   test("validate returns diagnostics instead of throwing", async () => {
     await using tmp = await tmpdir({ git: true })
     const response = await request(tmp.path, "/agent/manage/validate", {
@@ -151,6 +266,36 @@ describe("agent management routes", () => {
     }
     expect(result.valid).toBe(false)
     expect(result.diagnostics.some((item) => item.field === "id")).toBe(true)
+  })
+
+  test("validate keeps nested RFC metadata diagnostic fields and categories", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const response = await request(tmp.path, "/agent/manage/validate", {
+      method: "POST",
+      body: JSON.stringify({
+        scope: "project",
+        meta: meta("bad-metadata", {
+          schema_version: "agent.metadata.v1",
+          instructions: {
+            files: [
+              {
+                path: 1,
+              },
+            ],
+          },
+        }),
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const result = (await response.json()) as {
+      valid: boolean
+      diagnostics: { field?: string; category?: string }[]
+    }
+    expect(result.valid).toBe(false)
+    expect(result.diagnostics.find((item) => item.field === "instructions.files.0.path")?.category).toBe(
+      "metadata.instructions",
+    )
   })
 
   test("validate reports create id collisions", async () => {
@@ -194,7 +339,7 @@ describe("agent management routes", () => {
       const item = (await got.json()) as { source: string; identity: string; rules: string }
       expect(item.source).toBe("package")
       expect(item.identity).toContain("default project coordinator")
-      expect(item.rules).toContain("Clarify first")
+      expect(item.rules).toContain("## Clarification")
 
       const updated = await request(tmp.path, "/agent/manage/default", {
         method: "PATCH",

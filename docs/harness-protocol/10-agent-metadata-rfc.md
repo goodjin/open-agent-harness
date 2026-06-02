@@ -485,7 +485,7 @@ Recommended rules:
 
 - Running sessions stay pinned to the Agent snapshot they started with.
 - Historical runs keep `agent_snapshot_ref` for audit, replay and evaluation.
-- New sessions use the active version unless a workflow explicitly pins another version.
+- New sessions use the active version unless a Workflow Profile explicitly pins another version.
 - Patch/minor updates may replace the active version.
 - Major behavior changes should keep the previous version available until active runs finish or migrate.
 - Deprecated Agents can remain hidden from normal routing while still available for replay.
@@ -585,15 +585,15 @@ To submit this as an RFC, the proposal should include:
 - three examples: coding, research and non-programming business Agent
 - migration path from current `01-agent-model-and-authoring.md`
 - tests required for schema, loader, Agent Manager, routing and completion
-- explicit non-goals
+- scope boundaries
 
-## Non-Goals
+## Scope Boundaries
 
-- This RFC does not define a full workflow language.
-- This RFC does not bind metadata to a specific UI layout.
-- This RFC does not let Agent Sessions directly message each other.
-- This RFC does not require every Agent to fill every field.
-- This RFC does not make prompt text a substitute for Runtime validation.
+- Workflow Profile 和 Action Graph 语言由 `03-model-runtime-protocol.md` 与 `08-workflow-profile-action-graph-assets.md` 定义；本 RFC 定义 Agent metadata 如何为 Runtime 编排提供默认策略、能力和边界。
+- UI 管理协议由 `09-ui-console-and-agent-management.md` 定义；本 RFC 提供 UI 需要读取和编辑的 Agent metadata 字段。
+- Agent Session 协作由 Runtime 通过 Action、Assignment、Handoff、Event、Projection 和 Trace 协调；metadata 提供 Runtime 可读取的协作声明。
+- Agent metadata 字段可以按场景逐步补齐；Runtime 根据 schema 默认值、profile policy 和 Assignment Contract 归一化。
+- Prompt text、metadata 和 Runtime validation 共同参与治理；最终状态变更由 Runtime 校验和记录。
 
 ## Submission Plan
 

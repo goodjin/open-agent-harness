@@ -244,8 +244,8 @@ Current `mode: primary | subagent | all` mixes independent concepts: main conver
 
 ## Module MOD-13: Workflow DSL
 
-Design reference: `docs/harness-protocol/08-workflow-durable-orchestration-adapter.md`.
-Implementation plan and agent design are consolidated into `docs/harness-protocol/08-workflow-durable-orchestration-adapter.md`.
+Design reference: `docs/harness-protocol/08-workflow-profile-action-graph-assets.md`.
+Implementation plan and agent design are consolidated into `docs/harness-protocol/08-workflow-profile-action-graph-assets.md`.
 
 | Task | Delivery | Scope | Verification |
 |---|---|---|---|

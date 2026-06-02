@@ -78,7 +78,7 @@ The fork adds workflow definitions and server routes for workflow execution. Use
 
 Workflow definitions should live in the fork workflow config directories and be invoked through the workflow API or UI. Keep command prompts for single prompt actions; use workflows when state, progress, or multiple steps matter.
 
-The workflow design is described in `docs/harness-protocol/08-workflow-durable-orchestration-adapter.md`. The target model treats workflow files as durable DAG run records: Planner / Orchestrator agents may generate them for complex tasks, static definitions may be authored by humans, Workers update only their assigned node state files, and actual concurrency is controlled by the runtime rather than the DSL.
+The workflow design is described in `docs/harness-protocol/08-workflow-profile-action-graph-assets.md`. The target model treats workflow files as durable DAG run records: Planner / Orchestrator agents may generate them for complex tasks, static definitions may be authored by humans, Workers update only their assigned node state files, and actual concurrency is controlled by the runtime rather than the DSL.
 
 ## Memory
 

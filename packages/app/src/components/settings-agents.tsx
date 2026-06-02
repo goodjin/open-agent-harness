@@ -15,9 +15,11 @@ import {
   blank,
   costs,
   fill,
+  json,
   load,
   message,
   modes,
+  overview,
   perms,
   runners,
   save as saveAgent,
@@ -26,6 +28,7 @@ import {
   tabs,
   toggle as toggleAgent,
   typed,
+  versions,
   type Cost,
   type Form,
   type Mode,
@@ -96,6 +99,25 @@ const Section: Component<{ title: string; children: JSX.Element }> = (props) => 
     <h3 class="text-14-medium text-text-strong">{props.title}</h3>
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">{props.children}</div>
   </div>
+)
+
+const Logo: Component<{ name: string; uri?: string; alt?: string }> = (props) => (
+  <Show
+    when={props.uri}
+    fallback={
+      <div class="flex size-9 shrink-0 items-center justify-center rounded-md border border-border-weak-base bg-surface-strong text-13-medium text-text-weak">
+        {(props.name.trim()[0] ?? "?").toUpperCase()}
+      </div>
+    }
+  >
+    {(uri) => (
+      <img
+        src={uri()}
+        alt={props.alt ?? props.name}
+        class="size-9 shrink-0 rounded-md border border-border-weak-base bg-surface-strong object-cover"
+      />
+    )}
+  </Show>
 )
 
 const source = (item: AgentManageInfo) => {
@@ -240,21 +262,33 @@ export const SettingsAgents: Component = () => {
                     <For each={typed(agents(), view.tab)}>
                       {(item) => (
                         <div class="flex flex-wrap items-center justify-between gap-4 border-b border-border-weak-base py-4 last:border-none">
-                          <div class="flex min-w-0 flex-1 flex-col gap-2">
-                            <div class="flex min-w-0 items-center gap-2">
-                              <span class="truncate text-14-medium text-text-strong">{item.name}</span>
-                              <Tag>{source(item)}</Tag>
-                              <Show when={item.kind === "skill"}>
-                                <Tag>Legacy skill</Tag>
-                              </Show>
-                              <Show when={item.disabled}>
-                                <Tag>Disabled</Tag>
+                          <div class="flex min-w-0 flex-1 items-start gap-3">
+                            <Logo name={item.name} uri={item.meta.logo?.uri} alt={item.meta.logo?.alt} />
+                            <div class="flex min-w-0 flex-1 flex-col gap-2">
+                              <div class="flex min-w-0 flex-wrap items-center gap-2">
+                                <span class="truncate text-14-medium text-text-strong">{item.name}</span>
+                                <Tag>{source(item)}</Tag>
+                                <For each={versions(item.meta)}>{(part) => <Tag>{part}</Tag>}</For>
+                                <Show when={item.kind === "skill"}>
+                                  <Tag>Legacy skill</Tag>
+                                </Show>
+                                <Show when={item.disabled}>
+                                  <Tag>Disabled</Tag>
+                                </Show>
+                                <Show when={item.diagnostics.length > 0}>
+                                  <Tag>{item.diagnostics.length} diagnostics</Tag>
+                                </Show>
+                              </div>
+                              <span class="line-clamp-2 text-12-regular text-text-weak">
+                                {item.effective.description}
+                              </span>
+                              <span class="text-11-regular text-text-weaker">{summary(item)}</span>
+                              <Show when={overview(item.meta).length > 0}>
+                                <span class="line-clamp-2 text-11-regular text-text-weaker">
+                                  {overview(item.meta).join(" / ")}
+                                </span>
                               </Show>
                             </div>
-                            <span class="line-clamp-2 text-12-regular text-text-weak">
-                              {item.effective.description}
-                            </span>
-                            <span class="text-11-regular text-text-weaker">{summary(item)}</span>
                           </div>
                           <div class="flex shrink-0 items-center gap-2">
                             <Button
@@ -333,6 +367,32 @@ export const SettingsAgents: Component = () => {
         <div class="flex max-w-[960px] min-w-0 flex-col gap-5">
           <SettingsList>
             <div class="flex flex-col gap-5 py-4">
+              <div class="flex flex-col gap-3">
+                <h3 class="text-14-medium text-text-strong">Metadata</h3>
+                <div class="flex min-w-0 items-start gap-3">
+                  <Logo name={form.name || form.id || "Agent"} uri={form.raw?.logo?.uri} alt={form.raw?.logo?.alt} />
+                  <div class="flex min-w-0 flex-1 flex-col gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <For each={versions(form.raw)}>{(part) => <Tag>{part}</Tag>}</For>
+                      <Show when={view.diagnostics.length > 0}>
+                        <Tag>{view.diagnostics.length} diagnostics</Tag>
+                      </Show>
+                      <Show when={versions(form.raw).length === 0 && view.diagnostics.length === 0}>
+                        <span class="text-12-regular text-text-weak">No RFC metadata versions</span>
+                      </Show>
+                    </div>
+                    <Show
+                      when={overview(form.raw).length > 0}
+                      fallback={<span class="text-12-regular text-text-weak">No RFC metadata summary fields</span>}
+                    >
+                      <div class="flex flex-wrap gap-2">
+                        <For each={overview(form.raw)}>{(part) => <Tag>{part}</Tag>}</For>
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              </div>
+
               <Section title="Profile">
                 <Field
                   label="ID"
@@ -434,16 +494,28 @@ export const SettingsAgents: Component = () => {
                 />
               </Section>
 
+              <Section title="Advanced JSON">
+                <div class="flex flex-col gap-2 sm:col-span-2">
+                  <span class="text-12-medium text-text-weak">Raw RFC metadata</span>
+                  <pre class="max-h-80 overflow-auto rounded-md border border-border-weak-base bg-surface-base px-3 py-3 text-12-regular text-text-strong">
+                    {json(form)}
+                  </pre>
+                </div>
+              </Section>
+
               <Show when={view.diagnostics.length > 0}>
                 <div class="flex flex-col gap-2 rounded-md border border-border-base bg-surface-strong px-3 py-3">
                   <For each={view.diagnostics}>
                     {(item) => (
-                      <div class="flex gap-2 text-12-regular">
+                      <div class="flex flex-wrap gap-2 text-12-regular">
                         <Tag>{item.level}</Tag>
-                        <span class="text-text-strong">{item.message}</span>
-                        <Show when={item.field}>
-                          <span class="text-text-weak">{item.field}</span>
+                        <Show when={item.category}>
+                          <Tag>{item.category}</Tag>
                         </Show>
+                        <Show when={item.field}>
+                          <Tag>{item.field}</Tag>
+                        </Show>
+                        <span class="text-text-strong">{item.message}</span>
                       </div>
                     )}
                   </For>

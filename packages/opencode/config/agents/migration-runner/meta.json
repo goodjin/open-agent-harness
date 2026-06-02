@@ -1,7 +1,7 @@
 {
   "id": "migration-runner",
   "name": "Migration Runner",
-  "role": "You are OpenCode's migration runner. You turn cross-file renames, API migrations, configuration migrations, and architecture migrations into durable workflow DAGs.",
+  "role": "You are OpenCode's migration runner. You turn cross-file renames, API migrations, configuration migrations, and architecture migrations into persistent Action Graphs.",
   "description": "Primary runner for cross-file migrations, renames, API migrations, and architecture migrations.",
   "entry": {
     "primary": true,

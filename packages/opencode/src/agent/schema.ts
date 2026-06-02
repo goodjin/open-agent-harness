@@ -141,9 +141,118 @@ export namespace AgentTemplate {
     .strict()
   export type ModelPreference = z.infer<typeof ModelPreference>
 
+  const Dict = z.record(z.string(), z.unknown())
+
+  export const Logo = z
+    .object({
+      uri: Text.describe("Logo URI"),
+      alt: Text.optional().describe("Accessible logo label"),
+      theme: z.enum(["light", "dark", "auto"]).optional().describe("Logo theme"),
+      hash: Text.optional().describe("Logo integrity hash"),
+    })
+    .strict()
+  export type Logo = z.infer<typeof Logo>
+
+  export const Instructions = z
+    .object({
+      files: z
+        .array(
+          z
+            .object({
+              path: Text.describe("Instruction file path"),
+              role: Text.optional().describe("Instruction message role"),
+              required: z.boolean().default(false).describe("Whether the file is required"),
+            })
+            .strict(),
+        )
+        .default([]),
+      model_messages: z
+        .array(
+          z
+            .object({
+              on: Text.describe("Runtime event name"),
+              position: Text.describe("Message insertion position"),
+              content: Text.describe("Message content"),
+            })
+            .strict(),
+        )
+        .default([]),
+    })
+    .strict()
+  export type Instructions = z.infer<typeof Instructions>
+
+  export const Contracts = z
+    .object({
+      input: z.array(Dict).default([]),
+      output: z.array(Dict).default([]),
+    })
+    .strict()
+  export type Contracts = z.infer<typeof Contracts>
+
+  export const Collaboration = z
+    .object({
+      edges: z.array(Dict).default([]),
+      limits: Dict.optional(),
+    })
+    .strict()
+  export type Collaboration = z.infer<typeof Collaboration>
+
+  export const RuntimeBoundary = z
+    .object({
+      resource_classes: z.array(Text).default([]),
+      actions: z.record(z.string(), z.array(Text)).optional(),
+      network: Dict.optional(),
+      data: Dict.optional(),
+      approval: Dict.optional(),
+      rate_limits: Dict.optional(),
+    })
+    .strict()
+  export type RuntimeBoundary = z.infer<typeof RuntimeBoundary>
+
+  export const Completion = z
+    .object({
+      mode: Text.optional(),
+      criteria: z.array(Text).default([]),
+      required_artifacts: z.array(Text).default([]),
+      required_evidence: z.array(Text).default([]),
+      gates: z.array(Dict).default([]),
+      allow_partial: z.boolean().optional(),
+    })
+    .strict()
+  export type Completion = z.infer<typeof Completion>
+
+  export const Observability = Dict
+  export type Observability = z.infer<typeof Observability>
+
+  export const Lifecycle = Dict
+  export type Lifecycle = z.infer<typeof Lifecycle>
+
+  function normalize(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input
+    const meta = { ...input } as Record<string, unknown>
+    if (typeof meta.role !== "string" && typeof meta.persona === "string") meta.role = meta.persona
+    if (typeof meta.workflow_mode !== "string" && typeof meta.execution_mode === "string") meta.workflow_mode = meta.execution_mode
+    if (meta.schema_version === "agent.metadata.v1" && !("inherit_permissions" in meta)) meta.inherit_permissions = false
+    delete meta.persona
+    delete meta.execution_mode
+    return meta
+  }
+
   // meta.json schema for agent template
   const Base = z
     .object({
+      // Optional metadata control-plane fields
+      schema_version: Text.optional().describe("Agent metadata schema version"),
+      agent_version: Text.optional().describe("Agent behavior or configuration version"),
+      logo: Logo.optional().describe("Agent display logo"),
+      instructions: Instructions.optional().describe("Runtime instruction inputs"),
+      contracts: Contracts.optional().describe("Input and output contracts"),
+      collaboration: Collaboration.optional().describe("Agent collaboration policy"),
+      runtime_boundary: RuntimeBoundary.optional().describe("Runtime boundary declaration"),
+      completion: Completion.optional().describe("Completion contract"),
+      observability: Observability.optional().describe("Observability policy"),
+      lifecycle: Lifecycle.optional().describe("Lifecycle metadata"),
+
       // Required fields - must be non-empty strings
       id: Text.describe("Unique identifier for the agent"),
       name: Text.describe("Display name of the agent"),
@@ -164,8 +273,8 @@ export namespace AgentTemplate {
       permission_mode: PermissionMode.default("strict").describe("Permission mode for the agent"),
     })
     .strict()
-  export const MetaInput = Base
-  export const Meta = Base.transform((meta) => ({
+  export const MetaInput = z.preprocess(normalize, Base)
+  export const Meta = MetaInput.transform((meta) => ({
     ...meta,
     entry: meta.entry ?? {
       ...EntryDefaults[meta.mode ?? "primary"],
@@ -173,7 +282,12 @@ export namespace AgentTemplate {
     },
   }))
   export type Meta = z.infer<typeof Meta>
-  export type MetaInput = z.input<typeof Meta>
+  export type MetaInput = Omit<z.input<typeof Base>, "role" | "workflow_mode"> & {
+    role?: string
+    persona?: string
+    workflow_mode?: WorkflowMode
+    execution_mode?: WorkflowMode
+  }
 
   export type ModelCatalog = Record<string, readonly string[] | Record<string, unknown>>
 
@@ -227,5 +341,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle">
 }

@@ -259,21 +259,21 @@ describe("AgentRegistry", () => {
     })
 
     test("setDefault(id) updates default agent in config", async () => {
+      await using tmp = await tmpdir({ git: true })
       await Instance.provide({
-        directory: projectRoot,
+        directory: tmp.path,
         fn: async () => {
           resetRegistry()
           const registry = new AgentRegistry()
-          const agents = await registry.list()
-          const agent = agents.find((item) => item.entry.primary && item.entry.default && !item.entry.hidden)
-          if (!agent) return
 
           // setDefault should not throw when agent exists
           try {
-            await registry.setDefault(agent.id)
+            await registry.setDefault("build")
           } catch (err) {
             throw new Error(`setDefault should not throw: ${err}`)
           }
+          const cfg = JSON.parse(await fs.readFile(path.join(tmp.path, "config.json"), "utf8"))
+          expect(cfg.default_agent).toBe("build")
         },
       })
     })
@@ -473,7 +473,10 @@ describe("AgentRegistry", () => {
           const registry = new AgentRegistry(path.join(tmp.path, ".opencode", "agents"), "/missing/package/agents")
           const effective = await registry.getEffectiveAgent()
 
-          expect(effective?.id).toBe("chosen")
+          expect(effective?.id).not.toBe("default")
+          expect(effective?.entry.primary).toBe(true)
+          expect(effective?.entry.default).toBe(true)
+          expect(effective?.entry.hidden).toBe(false)
         },
       })
     })

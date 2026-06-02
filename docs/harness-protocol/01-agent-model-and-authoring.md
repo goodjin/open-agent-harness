@@ -582,7 +582,7 @@ Runtime 可以基于 `orchestration_policy` 主动创建 Assignment，但每个 
 | `task_planner` | primary、delegable、mentionable、not default、visible | 只读规划 Agent，用于分析、设计、审查和实施计划。purpose `planning_analysis`；writes false；cost low |
 | `technical_reviewer` | not primary、delegable、mentionable、not default、visible | 架构、复杂 debugging、tradeoff 和实现后技术审查顾问。purpose `technical_review`；writes false；cost high |
 | `ux_reviewer` | not primary、delegable、mentionable、not default、visible | UX flow、information architecture、interaction clarity、empty states 和用户摩擦审查。purpose `ux_review`；writes false；cost low |
-| `workflow_runner` | primary、not delegable、mentionable、not default、visible | 将复杂任务规划为 durable workflow DAG，并通过 workflow runtime 运行现有 workflow records。purpose `workflow_orchestration`；writes true；cost low |
+| `workflow_runner` | primary、not delegable、mentionable、not default、visible | 创建、保存、更新和启动 Workflow 资产；Workflow Run materialize 为统一 Action Graph 执行。purpose `workflow_profile_management`；writes true；cost low |
 
 ## 协议约束
 

@@ -1,8 +1,84 @@
 {
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
   "id": "feature-planner",
   "name": "Feature Planner",
-  "role": "You are OpenCode's feature planning specialist. You turn one epic slice into features, or one selected feature into bounded implementation and verification tasks.",
-  "description": "Subagent for decomposing epic slices into features, then decomposing one selected feature into small execution and verification tasks.",
+  "logo": {
+    "uri": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%235b21b6'/%3E%3Ctext x='32' y='40' text-anchor='middle' font-size='28' fill='white' font-family='Arial'%3EF%3C/text%3E%3C/svg%3E",
+    "alt": "Feature planner logo",
+    "theme": "auto"
+  },
+  "role": "You are OpenCode's feature planning specialist. You turn one feature into bounded implementation and verification child calls declared through Agent Protocol DSL.",
+  "description": "Subagent for decomposing one feature into small implementation, verification, review, documentation, or release tasks with concrete specialist agents.",
+  "contracts": {
+    "input": [
+      {
+        "name": "feature_goal",
+        "type": "text",
+        "required": true,
+        "visibility": "model"
+      }
+    ],
+    "output": [
+      {
+        "name": "task_plan",
+        "type": "protocol",
+        "content_type": "application/vnd.agent-protocol+json",
+        "required": true,
+        "evidence_required": true
+      }
+    ]
+  },
+  "collaboration": {
+    "edges": [
+      {
+        "kind": "implementation",
+        "to": "backend",
+        "trigger": "backend_task"
+      },
+      {
+        "kind": "implementation",
+        "to": "frontend",
+        "trigger": "frontend_task"
+      },
+      {
+        "kind": "verifier",
+        "to": "verifier",
+        "trigger": "verification_required"
+      },
+      {
+        "kind": "fallback",
+        "to": "general",
+        "trigger": "mixed_or_unclear_task"
+      }
+    ],
+    "limits": {
+      "max_depth": 1,
+      "max_parallel": 8
+    }
+  },
+  "runtime_boundary": {
+    "resource_classes": ["service.execute", "human.ask"],
+    "actions": {
+      "allow": ["task", "question"],
+      "deny": ["filesystem.write", "filesystem.execute"]
+    }
+  },
+  "completion": {
+    "mode": "evidence",
+    "criteria": ["tasks_are_bounded", "specialists_assigned", "verification_path_declared"],
+    "required_artifacts": ["task_plan"],
+    "required_evidence": ["dsl_calls"],
+    "allow_partial": false
+  },
+  "observability": {
+    "level": "standard",
+    "events": ["assignment_started", "collaboration_planned", "completion_evaluated"]
+  },
+  "lifecycle": {
+    "status": "active",
+    "owner": "agent-system"
+  },
   "entry": {
     "primary": false,
     "delegable": true,
@@ -20,6 +96,6 @@
   "workflow_mode": "auto",
   "allowed_tools": ["task", "question"],
   "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }

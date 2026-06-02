@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test"
+import fs from "fs/promises"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
@@ -9,14 +10,217 @@ import { MessageID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRunner } from "../../src/session/runner"
-import type { LLM } from "../../src/session/llm"
+import { LLM } from "../../src/session/llm"
 import { resetRegistry } from "../../src/agent/registry"
 import { Log } from "../../src/util/log"
+import { tmpdir } from "../fixture/fixture"
+import { SessionLog } from "../../src/session/log"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
 
 describe("SessionPrompt runner wiring", () => {
+  async function agent(dir: string, id: string, extra: Record<string, unknown>) {
+    const root = path.join(dir, ".opencode", "agents", id)
+    await fs.mkdir(root, { recursive: true })
+    await Bun.write(
+      path.join(root, "meta.json"),
+      JSON.stringify({
+        id,
+        name: id,
+        role: `${id} role`,
+        description: `${id} agent`,
+        model_preference: {
+          providerID: "openai",
+          modelID: "gpt-5.2",
+        },
+        runner: "chat",
+        ...extra,
+      }),
+    )
+    await Bun.write(path.join(root, "identity.md"), `# Identity\n\n${id} identity`)
+    await Bun.write(path.join(root, "rules.md"), `# Rules\n\n${id} rules`)
+  }
+
+  test("session loop injects resolved agent instructions after legacy prompt", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "coder", {
+            instructions: {
+              files: [
+                { path: "guide.md", required: true },
+                { path: "missing.md", required: false },
+              ],
+            },
+          })
+          await Bun.write(path.join(dir, ".opencode", "agents", "coder", "guide.md"), "agent guide")
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-agent-instructions"),
+            fn: async () => {
+              resetRegistry()
+              const seen: string[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push(LLM.compose({ ...stream, isCodex: false })[0] ?? "")
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Agent instruction prompt test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "coder",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                  system: "assignment constraint",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "write code",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(seen).toHaveLength(1)
+                expect(seen[0]).toContain("<agent-instruction>")
+                expect(seen[0]).toContain("Source: guide.md")
+                expect(seen[0]).toContain("Resolved path:")
+                expect(seen[0]).toContain(path.join(tmp.path, ".opencode", "agents", "coder", "guide.md"))
+                expect(seen[0]).toContain("agent guide")
+                expect(seen[0]).not.toContain("missing.md")
+                expect(seen[0].indexOf("# Rules")).toBeLessThan(seen[0].indexOf("<agent-instruction>"))
+                expect(seen[0].indexOf("<agent-instruction>")).toBeLessThan(seen[0].indexOf("assignment constraint"))
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop fails setup when required agent instruction is missing", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "coder", {
+            instructions: {
+              files: [{ path: "missing.md", required: true }],
+            },
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-agent-required-instruction"),
+            fn: async () => {
+              resetRegistry()
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    throw new Error("runner should not start")
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Required instruction setup failure test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "coder",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "write code",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(hook).toHaveBeenCalledTimes(1)
+                expect(msg.info.role).toBe("assistant")
+                if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+                expect(msg.info.error?.data.message).toContain("Required instruction file is missing")
+                const logs = await SessionLog.list({ sessionID: session.id })
+                expect(logs).toContainEqual(
+                  expect.objectContaining({
+                    type: "llm.error",
+                    data: expect.objectContaining({
+                      stage: "resolve_instructions",
+                      error: expect.stringContaining("Required instruction file is missing"),
+                    }),
+                  }),
+                )
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
   test("session loop routes workflow-runner through SessionRunner", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"

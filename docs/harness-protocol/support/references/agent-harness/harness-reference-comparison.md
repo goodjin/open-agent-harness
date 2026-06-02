@@ -130,5 +130,5 @@ Anthropic 的资料与本协议关系最直接，尤其是 Managed Agents 中的
 3. 在 `05-routing-and-delegation-policy.md` 中补充并行 delegation、成本、冲突、锁、scope 和 assignment lifecycle。
 4. 在 `06-state-event-projection-model.md` 中补充 trace、tool I/O、runtime footprint、eval evidence、snapshot、rehydration 和 export schema。
 5. 在 `07-context-memory-visibility-policy.md` 中补充 compaction、observation masking、just-in-time retrieval、memory verification 和 semantic interpretation。
-6. 在 `08-workflow-durable-orchestration-adapter.md` 中明确 workflow、evaluation loop、release gate、long-running monitor 如何基于 Harness 基础 DSL 表达。
+6. 在 `08-workflow-profile-action-graph-assets.md` 中明确 workflow、evaluation loop、release gate、long-running monitor 如何基于 Harness 基础 DSL 表达。
 7. 在 `09-ui-console-and-agent-management.md` 中强化 agent legibility：UI、logs、trace、artifact、memory、decision 和 projection 都应能被人和 Agent Session 读取。

@@ -50,8 +50,11 @@ Runtime decides:
 - `kind`
 - `message`
 - `calls`
+- 图级治理字段
 
 Action Graph 通过 `calls[]` 表达 node，通过 `depends_on` 表达 dependency edge。Runtime 可以在内部把扁平 carrier 归一化为更丰富的 Action、dependency、policy、projection 和 trace records。
+
+图级治理字段是可选字段，用于描述整个 Action Graph 的目标、约束和执行策略，例如 `title`、`goal`、`criteria`、`failure`、`budget`、`gate`、`loop`、`visibility`、`artifacts`、`handoff` 和 `context`。这些字段保持在顶层，不再包多层 envelope。
 
 ### 3. Tool Call 作为稳定承载方式
 
@@ -163,6 +166,17 @@ type ProtocolOutput =
 - `kind`：必填。取值为 `act`、`answer` 或 `done`。
 - `message`：可选。用户可见 Markdown、进度说明或最终回答。`answer` 应提供 `message`。
 - `calls`：`act` 必填。`answer` 和 `done` 省略。
+- `title`：可选。Action Graph 的短标题，用于 Run、UI graph 和 Trace。
+- `goal`：可选。Run 或 Action Graph 的目标摘要、约束和完成标准。
+- `criteria`：可选 string array。整个 Action Graph 的完成标准。
+- `failure`：可选 object。整个 Action Graph 的失败处理偏好，例如 retry、block、ask_user、handoff 或 abort。
+- `budget`：可选 object。整个 Action Graph 的成本、时间、token、attempt、parallelism、缓存或外部资源约束。
+- `gate`：可选 object。整个 Action Graph 的 approval、verification、review、privacy 或 release gate。
+- `loop`：可选 object。有边界的重复执行语义。Runtime 根据 `max_attempts`、`until`、预算和状态证据控制执行边界。
+- `visibility`：可选 object。Action Graph 结果进入 model、user、logs、trace、future_runs 的可见性偏好。
+- `artifacts`：可选 array 或 object。整个 Action Graph 期望产生、读取或更新的 Artifact。
+- `handoff`：可选 object。Action Graph 终态或下游交接目标、约束、依赖、证据、风险和未决问题。
+- `context`：可选 object。整个 Action Graph 需要 Runtime 展开的 context refs、memory refs、artifact refs 或 projection refs。
 
 ### Call 字段
 
@@ -188,6 +202,7 @@ type ProtocolOutput =
 
 - 每个 `calls[]` item 是一个 graph node。
 - `depends_on` 定义 node 之间的 dependency edge。
+- Runtime 接受 `act` declaration 后会创建或更新持久化 Run 和 Action Graph record。
 - 没有 `depends_on` 的 call 可以在 declaration 被接受后进入 ready 状态。
 - 多个互不依赖的 ready call 可以并行调度。
 - 具体调度受 Runtime policy、executor availability、budget、resource lock 和 permission 约束。
@@ -214,7 +229,9 @@ type ProtocolOutput =
 }
 ```
 
-Action Graph 的执行基础是 DAG。重试、修订、恢复和用户决策由 Runtime policy、failure handling 和后续 declaration 表达，模型不声明无边界循环。
+Action Graph 的调度基础是依赖图。Retry、loop、gate、decision、handoff、pause、resume 和恢复都归属于 Action Graph / Runtime 执行能力。
+
+Loop 必须有边界，例如 `max_attempts`、预算、时间限制、人工 Decision 或明确 `until` 条件。Retry、loop、verification、handoff 和 post-action review 可以由模型在 Action Graph 中声明，也可以由 Agent metadata 的 Orchestration Policy 或 Runtime policy 补齐。Runtime 在执行前将这些来源归一化为统一 Action、Assignment、Gate、Event 和 Projection。
 
 ## 通用 Action 语义
 
@@ -283,6 +300,7 @@ Action Graph 的执行基础是 DAG。重试、修订、恢复和用户决策由
 Runtime 将模型侧协议对象归一化为内部执行表示：
 
 - `kind: "act"` 映射到 execute declaration。
+- 顶层 `title`、`goal`、`criteria`、`failure`、`budget`、`gate`、`loop`、`visibility`、`artifacts`、`handoff` 和 `context` 映射到 Action Graph policy、Run Contract 和 Projection。
 - `calls[]` 映射到内部 Action Graph records。
 - 每个 call 映射到 internal action。
 - `calls[].type` 映射到 executor type。
@@ -301,7 +319,7 @@ Runtime 将模型侧协议对象归一化为内部执行表示：
 - `kind: "answer"` 映射到 response message。
 - `kind: "done"` 映射到 stopped turn。
 
-Runtime 归一化后再执行 schema validation、permission check、routing、executor invocation、event append、projection update 和 trace recording。
+Runtime 归一化后再执行 schema validation、permission check、持久化、routing、executor invocation、event append、projection update 和 trace recording。
 
 ## 直接请求恢复
 
@@ -698,9 +716,9 @@ Runtime logs、UI projection、trace export、recovery 和程序化处理可以�
 
 ## 持久化
 
-Runtime 根据任务规模、用户要求、adapter policy、审计要求和恢复要求决定是否持久化。
+Runtime 接受 `kind: "act"` declaration 后，都会创建或更新持久化 Run 和 Action Graph。
 
-Runtime 可以把短生命周期 orchestration 作为 ephemeral run 处理，也可以把需要跨 turn、跨 session、可恢复或可审计的执行升级为 durable run。
+短任务可以很快完成，但仍然通过同一套 Run、Action Graph、Action、Assignment、Event、Projection、Trace、Artifact Index、Manifest 和 Snapshot 记录执行过程。系统重启后，Runtime 根据这些记录判断哪些 Action 已完成、哪些仍在运行、哪些需要恢复、哪些应转为 `blocked`、`waiting_user` 或 `waiting_permission`。
 
 ## Safety 与 Validation
 
@@ -745,10 +763,10 @@ UI 的常规展示从 message、titles、statuses 和 summaries 派生。Raw pro
 - 模型可请求 reference expansion；Runtime 决定展开范围。
 - Harness 状态变更通过 Runtime 接受的 Action、Event 和 Projection 发生。
 
-## 与 Workflow Adapter 的关系
+## 与 Workflow 的关系
 
 Agent Protocol DSL 支持模型用 `calls[]` 和 `depends_on` 声明 DAG，并用 criteria、failure、budget、artifacts、handoff、gate 和 visibility 表达通用治理语义。
 
-Workflow Adapter 使用更适合长任务编排的场景化 Profile 表达同一类语义。Runtime 接受 Workflow Profile 后，将 workflow run、nodes、dependencies、verification、loop、decision 和 artifacts 展开为 Harness Action Graph、Action、Assignment、Event、Projection、Trace 和 Artifact。
+Workflow 是用户创建、保存或命名后的 Action Graph Profile。任务执行时模型生成的 `calls[]` 进入持久化 Action Graph；用户把这份图保存为 Workflow，或用户主动创建 Workflow 后，它成为可管理、可复用的 Workflow 资产。
 
-模型与 Runtime 的交互入口仍然是本协议定义的声明式意图和 Runtime toolCall carrier。Workflow 是这套协议上的 durable orchestration profile。
+Workflow Profile 可以使用更适合 UI 和用户编辑的 `nodes[]`、输入 schema、版本和可见性字段。Runtime 接受 Workflow Profile 后，会 materialize 出新的 Action Graph，并使用与模型 `act` declaration 相同的 Action、Assignment、Event、Projection、Trace、Artifact、Gate 和恢复模型执行。
