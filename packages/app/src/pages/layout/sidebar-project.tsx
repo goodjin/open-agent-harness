@@ -6,6 +6,7 @@ import { ContextMenu } from "@open-agent-harness/ui/context-menu"
 import { HoverCard } from "@open-agent-harness/ui/hover-card"
 import { Icon } from "@open-agent-harness/ui/icon"
 import { createSortable } from "@thisbeyond/solid-dnd"
+import type { Session } from "@open-agent-harness/sdk/v2/client"
 import { useLayout, type LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
@@ -188,8 +189,10 @@ const ProjectPreviewPanel = (props: {
   workspaces: Accessor<string[]>
   label: (directory: string) => string
   projectSessions: Accessor<ReturnType<typeof sortedRootSessions>>
+  projectAll: Accessor<Session[]>
   projectChildren: Accessor<Map<string, string[]>>
   workspaceSessions: (directory: string) => ReturnType<typeof sortedRootSessions>
+  workspaceAll: (directory: string) => Session[]
   workspaceChildren: (directory: string) => Map<string, string[]>
   setOpen: (value: boolean) => void
   ctx: ProjectSidebarContext
@@ -209,7 +212,7 @@ const ProjectPreviewPanel = (props: {
               <SessionItem
                 {...props.ctx.sessionProps}
                 session={session}
-                list={props.projectSessions()}
+                list={props.projectAll()}
                 slug={base64Encode(props.project.worktree)}
                 dense
                 mobile={props.mobile}
@@ -223,6 +226,7 @@ const ProjectPreviewPanel = (props: {
         <For each={props.workspaces()}>
           {(directory) => {
             const sessions = createMemo(() => props.workspaceSessions(directory))
+            const all = createMemo(() => props.workspaceAll(directory))
             const children = createMemo(() => props.workspaceChildren(directory))
             return (
               <div class="flex flex-col gap-1">
@@ -237,7 +241,7 @@ const ProjectPreviewPanel = (props: {
                     <SessionItem
                       {...props.ctx.sessionProps}
                       session={session}
-                      list={sessions()}
+                      list={all()}
                       slug={base64Encode(directory)}
                       dense
                       mobile={props.mobile}
@@ -320,10 +324,15 @@ export const SortableProject = (props: {
 
   const projectStore = createMemo(() => globalSync.child(props.project.worktree, { bootstrap: false })[0])
   const projectSessions = createMemo(() => sortedRootSessions(projectStore(), props.sortNow()))
+  const projectAll = createMemo(() => projectStore().session)
   const projectChildren = createMemo(() => childMapByParent(projectStore().session))
   const workspaceSessions = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
     return sortedRootSessions(data, props.sortNow())
+  }
+  const workspaceAll = (directory: string) => {
+    const [data] = globalSync.child(directory, { bootstrap: false })
+    return data.session
   }
   const workspaceChildren = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
@@ -381,8 +390,10 @@ export const SortableProject = (props: {
             workspaces={workspaces}
             label={label}
             projectSessions={projectSessions}
+            projectAll={projectAll}
             projectChildren={projectChildren}
             workspaceSessions={workspaceSessions}
+            workspaceAll={workspaceAll}
             workspaceChildren={workspaceChildren}
             setOpen={(value) => setState("open", value)}
             ctx={props.ctx}
