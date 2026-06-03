@@ -8,6 +8,7 @@ import { Session } from "."
 import { MessageV2 } from "./message-v2"
 import { SessionLog } from "./log"
 import { MessageID, SessionID } from "./schema"
+import { Storage } from "@/storage/storage"
 
 export namespace SessionDelegation {
   const log = Log.create({ service: "session.delegation" })
@@ -25,6 +26,21 @@ export namespace SessionDelegation {
 
   type Status = "completed" | "partial" | "blocked" | "failed" | "waiting_user"
   export type QueryStatus = "pending" | Status
+  type Row = {
+    status: QueryStatus
+    run_id: string | undefined
+    action_id: string | undefined
+    action_title: string | undefined
+    parent_agent: string | undefined
+    child_session_id: string
+    agent: string | undefined
+    result_policy: string | undefined
+    created_at: number | undefined
+    completed_at: number | undefined
+    notified_at: number | undefined
+    summary: string | undefined
+    output?: string
+  }
   type Item = {
     type: "agent.delegation.assignment"
     version: "1"
@@ -44,6 +60,7 @@ export namespace SessionDelegation {
     completed_message_id?: MessageID
     notified_at?: number
     output?: string
+    output_ref?: string
     result_metadata?: ReturnType<typeof AgentDelegation.complete>
     summary?: string
   }
@@ -215,12 +232,12 @@ export namespace SessionDelegation {
   }) {
     const session = await Session.get(input.sessionID)
     const prev = object(object(session.dsl_context).protocol)
-    const pending = Object.entries(object(prev.pending_delegations))
-      .map(([id, item]) => row(item, "pending", input.output === true, id))
+    const pending = (await Promise.all(Object.entries(object(prev.pending_delegations))
+      .map(([id, item]) => row(item, "pending", input.output === true, id))))
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
-    const done = (Array.isArray(prev.completed_delegations) ? prev.completed_delegations : [])
-      .map((item) => row(item, "completed", input.output === true))
+    const done = (await Promise.all((Array.isArray(prev.completed_delegations) ? prev.completed_delegations : [])
+      .map((item) => row(item, "completed", input.output === true))))
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
     return {
@@ -344,6 +361,9 @@ export namespace SessionDelegation {
   }
 
   async function store(sessionID: SessionID, item: Item, body: ReturnType<typeof completed>, messageID?: MessageID) {
+    const ref = ["session_delegation_result", body.parent_session_id, sessionID].join("/")
+    await Storage.write(["session_delegation_result", body.parent_session_id, sessionID], body)
+    const brief = slim(body, ref)
     const parent = await Session.get(SessionID.make(item.parent_session_id as string))
     const ctx = object(parent.dsl_context)
     const prev = object(ctx.protocol)
@@ -356,7 +376,7 @@ export namespace SessionDelegation {
           ...prev,
           completed_delegations: [
             ...done.filter((entry) => !object(entry) || entry.child_session_id !== sessionID),
-            body,
+            brief,
           ],
         },
       },
@@ -376,13 +396,20 @@ export namespace SessionDelegation {
             status: body.status,
             completed_at: body.completed_at,
             completed_message_id: messageID,
-            output: body.output,
+            output_ref: ref,
             result_metadata: body.metadata,
             summary: body.summary,
           },
         },
       },
     })
+  }
+
+  function slim(body: ReturnType<typeof completed>, ref: string) {
+    return {
+      ...Object.fromEntries(Object.entries(body).filter((item) => item[0] !== "output")),
+      output_ref: ref,
+    }
   }
 
   async function notify(body: ReturnType<typeof completed>) {
@@ -512,11 +539,11 @@ export namespace SessionDelegation {
     })
   }
 
-  function row(input: unknown, fallback: QueryStatus, output: boolean, childID?: string) {
+  async function row(input: unknown, fallback: QueryStatus, output: boolean, childID?: string): Promise<Row | undefined> {
     const item = object(input)
     const child = text(item.child_session_id) ?? childID
     if (!child) return
-    const out = text(item.output)
+    const out = text(item.output) ?? (output ? await full(item) : undefined)
     return {
       status: statusof(item) ?? fallback,
       run_id: text(item.run_id),
@@ -534,7 +561,14 @@ export namespace SessionDelegation {
     }
   }
 
-  function match(item: NonNullable<ReturnType<typeof row>>, input: {
+  async function full(item: Record<string, unknown>) {
+    const ref = text(item.output_ref)
+    if (!ref) return
+    const data = await Storage.read<{ output?: string }>(ref.split("/")).catch(() => undefined)
+    return data?.output
+  }
+
+  function match(item: Row, input: {
     childID?: string
     status?: QueryStatus
   }) {

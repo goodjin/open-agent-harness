@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { graphRuns } from "./session-graph"
+import { graphLayout, graphRuns } from "./session-graph"
 
 describe("graphRuns", () => {
   test("normalizes workflow runs into graph runs", () => {
@@ -80,6 +80,7 @@ describe("graphRuns", () => {
                 operation: "delegate",
                 status: "completed",
                 executor: { type: "agent", target: "verifier" },
+                sessionID: "ses_verify",
                 time: { started: 3, completed: 4 },
               },
             ],
@@ -99,7 +100,79 @@ describe("graphRuns", () => {
     })
     expect(runs[0]?.nodes).toEqual([
       expect.objectContaining({ id: "inspect", title: "Inspect code", executor: "agent:explore" }),
-      expect.objectContaining({ id: "verify", title: "Verify patch", executor: "agent:verifier" }),
+      expect.objectContaining({
+        id: "verify",
+        title: "Verify patch",
+        executor: "agent:verifier",
+        sessionID: "ses_verify",
+      }),
+    ])
+  })
+
+  test("lays out nodes by dependency rank", () => {
+    const layout = graphLayout({
+      id: "run",
+      title: "Run",
+      source: "workflow",
+      status: "running",
+      total: 4,
+      completed: 0,
+      nodes: [
+        {
+          id: "root",
+          title: "Root",
+          type: "task",
+          status: "completed",
+          deps: [],
+          after: ["api", "impl"],
+          executor: "auto",
+        },
+        {
+          id: "api",
+          title: "API review",
+          type: "review",
+          status: "completed",
+          deps: ["root"],
+          after: ["verify"],
+          executor: "reviewer",
+        },
+        {
+          id: "impl",
+          title: "Implement",
+          type: "task",
+          status: "completed",
+          deps: ["root"],
+          after: ["verify"],
+          executor: "developer",
+        },
+        {
+          id: "verify",
+          title: "Verify",
+          type: "test",
+          status: "running",
+          deps: ["api", "impl"],
+          after: [],
+          executor: "tester",
+        },
+      ],
+    })
+
+    const root = layout.nodes.find((node) => node.id === "root")
+    const api = layout.nodes.find((node) => node.id === "api")
+    const impl = layout.nodes.find((node) => node.id === "impl")
+    const verify = layout.nodes.find((node) => node.id === "verify")
+
+    expect(root?.rank).toBe(0)
+    expect(api?.rank).toBe(1)
+    expect(impl?.rank).toBe(1)
+    expect(verify?.rank).toBe(2)
+    expect(api?.y).toBe(impl?.y)
+    expect(verify?.y).toBeGreaterThan(api?.y ?? 0)
+    expect(layout.edges.map((edge) => `${edge.from}->${edge.to}`).sort()).toEqual([
+      "api->verify",
+      "impl->verify",
+      "root->api",
+      "root->impl",
     ])
   })
 })

@@ -127,6 +127,7 @@ export const SessionFilterBar = (props: {
 
 const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 40
 const row = (dense?: boolean) => (dense ? "24px" : "28px")
+const line = { "background-color": "var(--border-base)" }
 const trunk = (first?: boolean, last?: boolean) => {
   if (first && last) return { top: "1rem", height: "0px" }
   if (last) return { top: "0", height: "1rem" }
@@ -541,24 +542,30 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
 
   return (
     <Show when={visible(props.session)}>
-      <div class="relative">
+      <div
+        class="relative"
+        classList={{
+          "border-t border-border-weaker-base mt-1 pt-1": !props.session.parentID && props.first === false,
+        }}
+      >
         <Show when={expanded() && filteredChildren().length > 0}>
           <div
-            class="pointer-events-none absolute top-4 z-10 w-px bg-border-weak-base"
+            class="pointer-events-none absolute top-4 z-10 w-px"
             style={{
               left: `${treeX((props.depth ?? 0) + 1)}px`,
               height: row(props.dense),
+              ...line,
             }}
           />
         </Show>
         <Show when={props.session.parentID}>
           <div
-            class="pointer-events-none absolute w-px bg-border-weak-base"
-            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.first, props.last) }}
+            class="pointer-events-none absolute w-px"
+            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.first, props.last), ...line }}
           />
           <div
-            class="pointer-events-none absolute top-4 h-px bg-border-weak-base"
-            style={{ left: `${treeX(props.depth) - 17}px`, width: "17px" }}
+            class="pointer-events-none absolute top-4 h-px"
+            style={{ left: `${treeX(props.depth) - 17}px`, width: "17px", ...line }}
           />
         </Show>
         <div

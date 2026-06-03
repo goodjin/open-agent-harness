@@ -15,6 +15,7 @@ import { resetRegistry } from "../../src/agent/registry"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { SessionLog } from "../../src/session/log"
+import { Storage } from "../../src/storage/storage"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -208,6 +209,127 @@ describe("SessionPrompt runner wiring", () => {
                     }),
                   }),
                 )
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop stops after repeated automatic overflow compactions", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "coder", { runner: "chat" })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-compact-limit"),
+            fn: async () => {
+              resetRegistry()
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    return "compact"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Compact limit test" })
+                for (const _ of [1, 2]) {
+                  const msg = MessageID.ascending()
+                  await Session.updateMessage({
+                    id: msg,
+                    sessionID: session.id,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: "coder",
+                    model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  } as MessageV2.User)
+                  await Session.updatePart({
+                    id: PartID.ascending(),
+                    messageID: msg,
+                    sessionID: session.id,
+                    type: "compaction",
+                    auto: true,
+                    overflow: true,
+                  })
+                  await Session.updateMessage({
+                    id: MessageID.ascending(),
+                    parentID: msg,
+                    sessionID: session.id,
+                    role: "assistant",
+                    mode: "compaction",
+                    agent: "compaction",
+                    finish: "stop",
+                    cost: 0,
+                    tokens: {
+                      input: 0,
+                      output: 0,
+                      reasoning: 0,
+                      cache: { read: 0, write: 0 },
+                    },
+                    modelID: ModelID.make("gpt-5.2"),
+                    providerID: ProviderID.make("openai"),
+                    path: { cwd: tmp.path, root: tmp.path },
+                    time: { created: Date.now(), completed: Date.now() },
+                  } as MessageV2.Assistant)
+                }
+
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "coder",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "continue",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(hook).toHaveBeenCalledTimes(1)
+                expect(msg.info.role).toBe("assistant")
+                if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+                expect(msg.info.error?.name).toBe("ContextOverflowError")
+                expect(msg.info.error?.data.message).toContain("Start a new session")
+                const all = await MessageV2.filterCompacted(MessageV2.stream(session.id))
+                const count = all
+                  .flatMap((item) => item.parts)
+                  .filter((part) => part.type === "compaction" && part.auto && part.overflow).length
+                expect(count).toBe(2)
+                const logs = await SessionLog.list({ sessionID: session.id })
+                expect(logs).toContainEqual(expect.objectContaining({ type: "llm.compact_limit" }))
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()
@@ -436,6 +558,97 @@ describe("SessionPrompt runner wiring", () => {
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop stores stable protocol prompt outside dsl context", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-protocol-runtime-context"),
+            fn: async () => {
+              resetRegistry()
+              const seen: string[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push(stream.runtimeTools?.prompt ?? "")
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              const session = await Session.create({ title: "Protocol runtime context test" })
+              try {
+                await Session.setDslContext({
+                  sessionID: session.id,
+                  dsl_context: {
+                    protocol: {
+                      tools: {
+                        prompt: "legacy stable protocol prompt",
+                        catalog: ["read"],
+                      },
+                      pending_delegations: {},
+                    },
+                  },
+                })
+                for (const text of ["analyze project", "continue"]) {
+                  const user = MessageID.ascending()
+                  await Session.updateMessage({
+                    id: user,
+                    sessionID: session.id,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: "protocol-runner",
+                    model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                    tools: { read: true },
+                    mode: "",
+                  } as MessageV2.User)
+                  await Session.updatePart({
+                    id: PartID.ascending(),
+                    messageID: user,
+                    sessionID: session.id,
+                    type: "text",
+                    text,
+                  })
+                  await SessionPrompt.loop({ sessionID: session.id })
+                }
+
+                const ctx = (await Session.get(session.id)).dsl_context as {
+                  protocol?: { tools?: unknown; pending_delegations?: unknown }
+                } | undefined
+                const saved = await Storage.read<{ protocol?: { prompt?: string; catalog?: string[] } }>(["session_runtime_context", session.id])
+
+                expect(seen).toEqual(["legacy stable protocol prompt", "legacy stable protocol prompt"])
+                expect(ctx?.protocol?.tools).toBeUndefined()
+                expect(ctx?.protocol?.pending_delegations).toEqual({})
+                expect(saved.protocol?.prompt).toBe("legacy stable protocol prompt")
+                expect(saved.protocol?.catalog).toContain("read")
+              } finally {
+                hook.mockRestore()
+                await Storage.remove(["session_runtime_context", session.id])
+                await Session.remove(session.id)
               }
             },
           }),

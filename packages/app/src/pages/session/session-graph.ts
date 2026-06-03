@@ -1,6 +1,6 @@
 type Status = "ready" | "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled"
 
-type Node = {
+export type GraphNode = {
   id: string
   title: string
   type: string
@@ -20,6 +20,31 @@ type Node = {
   raw?: unknown
 }
 
+export type GraphNodeLayout = GraphNode & {
+  rank: number
+  row: number
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type GraphEdgeLayout = {
+  from: string
+  to: string
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+export type GraphLayout = {
+  nodes: GraphNodeLayout[]
+  edges: GraphEdgeLayout[]
+  width: number
+  height: number
+}
+
 export type GraphRun = {
   id: string
   title: string
@@ -27,7 +52,7 @@ export type GraphRun = {
   status: Status | "blocked"
   total: number
   completed: number
-  nodes: Node[]
+  nodes: GraphNode[]
   error?: string
   pause?: {
     type: string
@@ -108,7 +133,7 @@ function status(input: unknown): Status {
   return out === "blocked" ? "failed" : out
 }
 
-function step(input: Record<string, unknown>, runs: Record<string, unknown>): Node {
+function step(input: Record<string, unknown>, runs: Record<string, unknown>): GraphNode {
   const id = str(input.id)
   const run = dict(runs[id])
   const deps = unique([...list(input.depends_on), ...list(run.depends_on)])
@@ -124,7 +149,7 @@ function step(input: Record<string, unknown>, runs: Record<string, unknown>): No
     attempt: typeof run.attempt === "number" ? run.attempt : undefined,
     output: str(run.output) || undefined,
     error: str(run.error) || undefined,
-    time: dict(run.time) as Node["time"],
+    time: dict(run.time) as GraphNode["time"],
     raw: input,
   }
 }
@@ -174,7 +199,7 @@ function protocols(input: unknown) {
   return runs.filter(record).filter((run) => str(run.runID) && str(run.title) && Array.isArray(run.actions))
 }
 
-function action(input: Record<string, unknown>): Node {
+function action(input: Record<string, unknown>): GraphNode {
   const exec = dict(input.executor)
   return {
     id: str(input.id),
@@ -184,9 +209,10 @@ function action(input: Record<string, unknown>): Node {
     deps: list(input.depends_on),
     after: [],
     executor: `${str(exec.type, "runtime")}:${str(exec.target, "auto")}`,
+    sessionID: str(input.sessionID) || undefined,
     output: str(input.summary) || undefined,
     error: str(input.error) || undefined,
-    time: record(input.time) ? (input.time as Node["time"]) : undefined,
+    time: record(input.time) ? (input.time as GraphNode["time"]) : undefined,
     raw: input,
   }
 }
@@ -215,4 +241,63 @@ export function graphRuns(input: unknown): GraphRun[] {
     if (left !== right) return left - right
     return a.id.localeCompare(b.id)
   })
+}
+
+export function graphLayout(run: GraphRun): GraphLayout {
+  const width = 184
+  const height = 82
+  const gapx = 32
+  const gapy = 52
+  const pad = 24
+  const ids = new Set(run.nodes.map((node) => node.id))
+  const by = new Map(run.nodes.map((node) => [node.id, node]))
+  const memo = new Map<string, number>()
+  const rank = (id: string, seen = new Set<string>()): number => {
+    const cached = memo.get(id)
+    if (cached !== undefined) return cached
+    if (seen.has(id)) return 0
+    const node = by.get(id)
+    if (!node) return 0
+    const deps = node.deps.filter((dep) => ids.has(dep))
+    const value = deps.length === 0 ? 0 : Math.max(...deps.map((dep) => rank(dep, new Set([...seen, id])))) + 1
+    memo.set(id, value)
+    return value
+  }
+  const nodes = run.nodes.map((node) => ({ ...node, rank: rank(node.id) }))
+  const ranks = [...new Set(nodes.map((node) => node.rank))].sort((a, b) => a - b)
+  const rows = new Map(
+    ranks.flatMap((item) =>
+      nodes
+        .filter((node) => node.rank === item)
+        .map((node, index) => [`${node.id}`, index] as const),
+    ),
+  )
+  const laid = nodes.map((node) => ({
+    ...node,
+    row: rows.get(node.id) ?? 0,
+    x: pad + (rows.get(node.id) ?? 0) * (width + gapx),
+    y: pad + node.rank * (height + gapy),
+    width,
+    height,
+  }))
+  const placed = new Map(laid.map((node) => [node.id, node]))
+  const edges = laid.flatMap((node) =>
+    node.deps
+      .map((dep) => placed.get(dep))
+      .filter((dep): dep is GraphNodeLayout => !!dep)
+      .map((dep) => ({
+        from: dep.id,
+        to: node.id,
+        x1: dep.x + dep.width / 2,
+        y1: dep.y + dep.height,
+        x2: node.x + node.width / 2,
+        y2: node.y,
+      })),
+  )
+  return {
+    nodes: laid,
+    edges,
+    width: Math.max(1, ...laid.map((node) => node.x + node.width + pad)),
+    height: Math.max(1, ...laid.map((node) => node.y + node.height + pad)),
+  }
 }

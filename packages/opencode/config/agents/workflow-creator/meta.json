@@ -1,0 +1,24 @@
+{
+  "id": "workflow-creator",
+  "name": "Workflow Creator",
+  "role": "You are OpenCode's workflow authoring specialist. You only help users create or modify persisted workflow definitions.",
+  "description": "Subagent for discussing, creating, and updating persisted OpenCode workflows.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "workflow_authoring",
+    "tags": ["workflow", "authoring", "orchestration"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["question", "read", "glob", "workflow_create"],
+  "denied_tools": ["workflow_start", "agent_generate", "agent_save", "task", "edit", "write", "apply_patch", "bash", "grep", "list", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

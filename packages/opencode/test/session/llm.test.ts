@@ -168,6 +168,101 @@ describe("session.llm.hasToolCalls", () => {
     expect(messages[1]?.content).not.toContain("<turn")
   })
 
+  test("slims protocol output turns to keep actions and omit displayed answers", () => {
+    const messages = LLM.prepareMessages({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+      } satisfies Agent.Info,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "answer",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: {
+                kind: "answer",
+                message: "Large user-visible answer ".repeat(200),
+              },
+            },
+          ],
+        } as ModelMessage,
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "act",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: {
+                kind: "act",
+                message: "Progress text that does not drive execution",
+                calls: [
+                  {
+                    id: "inspect",
+                    type: "tool",
+                    name: "grep",
+                    args: { pattern: "AgentProtocolOutput" },
+                  },
+                ],
+              },
+            },
+          ],
+        } as ModelMessage,
+      ],
+    })
+    const text = messages.map((item) => String(item.content)).join("\n")
+
+    expect(text).toContain("Protocol output: kind=answer")
+    expect(text).not.toContain("Large user-visible answer")
+    expect(text).not.toContain("Progress text that does not drive execution")
+    expect(text).toContain('"kind":"act"')
+    expect(text).toContain('"id":"inspect"')
+    expect(text).toContain('"name":"grep"')
+  })
+
+  test("keeps stored protocol reasoning and omits displayed answers from assistant turns", () => {
+    const messages = LLM.prepareMessages({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+      } satisfies Agent.Info,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "reasoning",
+              text: "Internal protocol reasoning ".repeat(200),
+            },
+            {
+              type: "text",
+              text: "Large user-visible answer ".repeat(200),
+            },
+          ],
+        } as ModelMessage,
+      ],
+    })
+    const text = messages.map((item) => String(item.content)).join("\n")
+
+    expect(text).toContain("Assistant reasoning:")
+    expect(text).toContain("Internal protocol reasoning")
+    expect(text).not.toContain("Large user-visible answer")
+    expect(text).not.toContain("providerOptions")
+  })
+
   test("returns false for empty messages array", () => {
     expect(LLM.hasToolCalls([])).toBe(false)
   })

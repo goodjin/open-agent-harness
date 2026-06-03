@@ -464,7 +464,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             const sessionReq =
               hasSession && !opts?.force
                 ? Promise.resolve()
-                : retry(() => client.session.get({ sessionID })).then((session) => {
+                : retry(() => client.session.get({ directory, sessionID })).then((session) => {
                     if (!tracked(directory, sessionID)) return
                     const data = session.data
                     if (!data) return

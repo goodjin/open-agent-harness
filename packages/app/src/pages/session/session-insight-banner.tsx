@@ -1,5 +1,6 @@
 import type { Message } from "@open-agent-harness/sdk/v2/client"
 import { Icon } from "@open-agent-harness/ui/icon"
+import { IconButton } from "@open-agent-harness/ui/icon-button"
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { useNavigate } from "@solidjs/router"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
@@ -89,18 +90,7 @@ export function SessionInsightBanner() {
     <Show when={info()}>
       {(session) => (
         <div class="border-b border-border-weak-base bg-background-stronger px-3 py-2 md:px-4">
-          <div
-            role="button"
-            tabIndex={0}
-            class="flex w-full flex-col gap-2 text-left"
-            aria-expanded={open()}
-            onClick={() => setOpen((value) => !value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return
-              event.preventDefault()
-              setOpen((value) => !value)
-            }}
-          >
+          <div class="flex w-full flex-col gap-2 text-left">
             <div class="flex min-w-0 flex-wrap items-center gap-2">
               <span class="min-w-0 truncate text-12-medium text-text-strong">{session().title || short(session().id)}</span>
               <button type="button" class={chip} onClick={stop(openAgent)} title="Open agent details">
@@ -117,7 +107,16 @@ export function SessionInsightBanner() {
                   <span class="truncate">{parentLabel(session(), parent())}</span>
                 </button>
               </Show>
-              <span class="ml-auto text-11-regular text-text-weaker">updated {timeAgo(session().time.updated)}</span>
+              <span class="text-11-regular text-text-weaker">updated {timeAgo(session().time.updated)}</span>
+              <IconButton
+                icon="chevron-down"
+                variant="ghost"
+                class="ml-auto size-6 rotate-0 transition-transform"
+                classList={{ "rotate-180": open() }}
+                onClick={stop(() => setOpen((value) => !value))}
+                aria-label={open() ? language.t("session.todo.collapse") : language.t("session.todo.expand")}
+                aria-expanded={open()}
+              />
             </div>
             <Show when={open()}>
               <div class="grid w-full grid-cols-2 gap-2 pt-1 sm:grid-cols-3 xl:grid-cols-6">

@@ -24,6 +24,7 @@ import { messageAgentColor } from "@/utils/agent"
 import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
 import { StatusPopover } from "../status-popover"
+import { SessionInsightBanner } from "@/pages/session/session-insight-banner"
 
 const OPEN_APPS = [
   "vscode",
@@ -268,6 +269,7 @@ export function SessionHeader() {
 
   return (
     <>
+      <SessionInsightBanner />
       <Show when={centerMount()}>
         {(mount) => (
           <Portal mount={mount()}>

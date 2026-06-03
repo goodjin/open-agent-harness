@@ -106,6 +106,48 @@ describe("server event gateway", () => {
     expect(schema.safeParse({ sequence: event.sequence, time: event.time }).success).toBe(false)
   })
 
+  test("record slims large payload fields before entering the global stream", () => {
+    const session = EventGateway.record(
+      {
+        directory: "/tmp/opencode-events",
+        payload: {
+          type: "session.updated",
+          properties: {
+            info: {
+              id: "ses_event_slim",
+              sessionID: "ses_event_slim",
+              dsl_context: { protocol: { prompt: "x".repeat(10_000) } },
+            },
+          },
+        },
+      },
+      { store: false },
+    )
+    const step = EventGateway.record(
+      {
+        directory: "/tmp/opencode-events",
+        payload: {
+          type: "message.part.updated",
+          properties: {
+            part: {
+              id: "prt_event_slim",
+              sessionID: "ses_event_slim",
+              messageID: "msg_event_slim",
+              type: "step-start",
+              snapshot: "abc",
+              dsl_context: { protocol: { prompt: "x".repeat(10_000) } },
+            },
+          },
+        },
+      },
+      { store: false },
+    )
+
+    expect(JSON.stringify(session)).not.toContain("dsl_context")
+    expect(JSON.stringify(step)).not.toContain("dsl_context")
+    expect(JSON.stringify(step)).toContain("abc")
+  })
+
   test("replays missed events after a sequence id in order", async () => {
     await using tmp = await tmpdir({ git: true })
     const sid = SessionID.make("ses_event_replay")
@@ -526,6 +568,46 @@ describe("server event gateway", () => {
     expect(seen.some((event) => hash(event) === "global-replay-directory")).toBe(false)
     expect(seen.some((event) => hash(event) === "global-live-session")).toBe(false)
     expect(seen.some((event) => hash(event) === "global-live-legacy-workspace")).toBe(true)
+  })
+
+  test("global route skips history replay when sequence is omitted", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    const sid = SessionID.make("ses_global_no_replay")
+
+    await audit(tmp.path, "global-no-replay-old", sid)
+
+    const stop = new AbortController()
+    const seen: EventGateway.Envelope[] = []
+    try {
+      const res = await app.request(`/global/event?directory=${encodeURIComponent(tmp.path)}&sessionID=${sid}`, {
+        signal: stop.signal,
+      })
+
+      expect(res.status).toBe(200)
+      const done = new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timed out waiting for global live event")), 3000)
+        void envelopes(res.body!, stop.signal, (event) => {
+          seen.push(event)
+          if (event.payload.type === "server.connected") {
+            void audit(tmp.path, "global-no-replay-live", sid)
+          }
+          if (hash(event) !== "global-no-replay-live") return
+          clearTimeout(timeout)
+          resolve()
+        }).catch((err) => {
+          clearTimeout(timeout)
+          reject(err)
+        })
+      })
+
+      await done
+    } finally {
+      stop.abort()
+    }
+
+    expect(seen.some((event) => hash(event) === "global-no-replay-old")).toBe(false)
+    expect(seen.some((event) => hash(event) === "global-no-replay-live")).toBe(true)
   })
 
   test("saved openapi documents event envelopes and replay filters", async () => {

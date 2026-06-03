@@ -136,6 +136,92 @@ describe("session messages endpoint", () => {
     })
   })
 
+  test("returns slim message parts for chat views", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const id = MessageID.ascending()
+            await Session.updateMessage({
+              id,
+              sessionID: session.id,
+              role: "assistant",
+              time: { created: Date.now() },
+              parentID: MessageID.ascending(),
+              mode: "",
+              agent: "test",
+              path: { cwd: root, root },
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: "test",
+              providerID: "test",
+              summary: true,
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              sessionID: session.id,
+              messageID: id,
+              type: "step-start",
+              snapshot: "abc",
+              dsl_context: { protocol: { prompt: "x".repeat(10_000) } },
+            })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              sessionID: session.id,
+              messageID: id,
+              type: "text",
+              text: "p".repeat(4_000),
+              ignored: true,
+              metadata: { kind: "protocol_context" },
+            })
+            await Session.updatePart({
+              id: PartID.ascending(),
+              sessionID: session.id,
+              messageID: id,
+              type: "tool",
+              callID: "call_test",
+              tool: "bash",
+              state: {
+                status: "completed",
+                input: { command: "echo hi" },
+                output: "o".repeat(30_000),
+                title: "bash",
+                metadata: { raw: "m".repeat(30_000) },
+                time: { start: Date.now(), end: Date.now() },
+              },
+            })
+
+            const app = Server.Default()
+            const res = await app.request(`/session/${session.id}/message?limit=1`)
+            expect(res.status).toBe(200)
+            const body = (await res.json()) as MessageV2.WithParts[]
+            const parts = body[0]!.parts
+            const step = parts.find((item) => item.type === "step-start") as MessageV2.StepStartPart
+            const text = parts.find((item) => item.type === "text") as MessageV2.TextPart
+            const tool = parts.find((item) => item.type === "tool") as MessageV2.ToolPart
+            expect(step.snapshot).toBe("abc")
+            expect(step.dsl_context).toBeUndefined()
+            expect(text.text.length).toBeLessThan(2_100)
+            expect(tool.state.status).toBe("completed")
+            if (tool.state.status === "completed") {
+              expect(tool.state.output.length).toBeLessThan(20_100)
+              expect(tool.state.metadata.raw).toEqual({ omitted: true, bytes: 30_002 })
+            }
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("returns exported protocol trace", async () => {
     await Instance.provide({
       directory: root,

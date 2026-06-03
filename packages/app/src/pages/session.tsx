@@ -45,7 +45,6 @@ import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
-import { SessionInsightBanner } from "@/pages/session/session-insight-banner"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
@@ -1038,7 +1037,6 @@ export default function Page() {
 
   const sessionPanel = () => (
     <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
-      <SessionInsightBanner />
       <div class="flex-1 min-h-0 overflow-hidden">
         <Switch>
           <Match when={params.id}>

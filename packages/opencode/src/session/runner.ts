@@ -22,6 +22,7 @@ import { PermissionNext } from "@/permission/next"
 import { SessionPrompt } from "./prompt"
 import { defer } from "@/util/defer"
 import { SessionDelegation } from "./delegation"
+import { Storage } from "@/storage/storage"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -558,15 +559,18 @@ export namespace SessionRunner {
     const done = AgentDelegation.complete({
       agent: input.agent,
       meta,
-      results: input.run.actions.flatMap((item) =>
-        item.output
-          ? [
-              {
-                content: item.output,
-                source: item.executor.target,
-              },
-            ]
-          : []),
+      results: [
+        proof(input.run),
+        ...input.run.actions.flatMap((item) =>
+          item.output
+            ? [
+                {
+                  content: item.output,
+                  source: item.executor.target,
+                },
+              ]
+            : []),
+      ],
       status: input.run.status === "failed" ? "failed" : "completed",
     })
     await completionLog({
@@ -1191,6 +1195,30 @@ export namespace SessionRunner {
       .join("\n")
   }
 
+  export function proof(run: AgentProtocol.Result) {
+    return {
+      content: report(run),
+      source: "protocol",
+      metadata: {
+        evidence: [
+          {
+            kind: "protocol_run_state_or_direct_answer",
+            id: run.run_id,
+            title: "protocol_run_state_or_direct_answer",
+            status: run.status,
+          },
+        ],
+        artifact: {
+          name: "agent_protocol_plan",
+          type: "protocol",
+          content_type: "application/vnd.agent-protocol+json",
+          content: run,
+          source: "protocol",
+        },
+      },
+    }
+  }
+
   function clip(input: string) {
     if (input.length <= 8000) return input
     return `${input.slice(0, 8000)}\n\n[Output truncated: ${input.length - 8000} more characters]`
@@ -1304,7 +1332,8 @@ export namespace SessionRunner {
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
       const value = parsed as Record<string, unknown>
       const name = value.toolName ?? value.name
-      if (value.type !== "tool-call" || typeof name !== "string") continue
+      if (value.type !== undefined && value.type !== "tool-call") continue
+      if (typeof name !== "string") continue
       if (name.toLowerCase() !== LLM.PROTOCOL_OUTPUT_TOOL.toLowerCase()) continue
       const input = value.input
       if (!input || typeof input !== "object" || Array.isArray(input)) continue
@@ -1485,7 +1514,7 @@ export namespace SessionRunner {
   }
 
   function pseudo(text: string) {
-    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|\btool\s*=>/i.test(text)
+    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(text)
   }
 
   async function delegate(input: {
@@ -2097,6 +2126,7 @@ export namespace SessionRunner {
   }
 
   async function project(sessionID: SessionID, run: AgentProtocol.Result) {
+    await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
     const session = await Session.get(sessionID)
     const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
     const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
@@ -2116,7 +2146,19 @@ export namespace SessionRunner {
               status: run.status,
               total: run.actions.length,
               completed: run.actions.filter((item) => item.status === "completed").length,
-              actions: run.actions,
+              actions: run.actions.map((item) => ({
+                id: item.id,
+                title: item.title,
+                operation: item.operation,
+                executor: item.executor,
+                status: item.status,
+                summary: item.summary.slice(0, 4000),
+                error: item.error?.slice(0, 4000),
+                tool_call_ids: item.tool_call_ids,
+                duration_ms: item.duration_ms,
+                time: item.time,
+              })),
+              result_ref: ["session_protocol_run", sessionID, run.run_id].join("/"),
               time: run.time,
               metrics: run.metrics,
             },

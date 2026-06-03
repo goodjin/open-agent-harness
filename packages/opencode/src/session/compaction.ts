@@ -29,6 +29,12 @@ export namespace SessionCompaction {
   }
 
   const COMPACTION_BUFFER = 20_000
+  const MINIMAX_PROMPT_BYTES = 1_500_000
+
+  function usable(input: { model: Provider.Model }, reserved: number) {
+    const context = input.model.limit.context
+    return input.model.limit.input ? input.model.limit.input - reserved : context - ProviderTransform.maxOutputTokens(input.model)
+  }
 
   export async function isOverflow(input: { tokens: MessageV2.Assistant["tokens"]; model: Provider.Model }) {
     const config = await Config.get()
@@ -40,12 +46,22 @@ export namespace SessionCompaction {
       input.tokens.total ||
       input.tokens.input + input.tokens.output + input.tokens.cache.read + input.tokens.cache.write
 
-    const reserved =
-      config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
-    const usable = input.model.limit.input
-      ? input.model.limit.input - reserved
-      : context - ProviderTransform.maxOutputTokens(input.model)
-    return count >= usable
+    const reserved = config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
+    return count >= usable(input, reserved)
+  }
+
+  export async function isPromptOverflow(input: { system: string[]; messages: unknown[]; model: Provider.Model }) {
+    const config = await Config.get()
+    if (config.compaction?.auto === false) return false
+    if (input.model.limit.context === 0) return false
+
+    const json = JSON.stringify(input.messages)
+    const bytes = input.system.join("\n").length + json.length
+    if (input.model.providerID.toLowerCase().includes("minimax") && bytes >= MINIMAX_PROMPT_BYTES) return true
+
+    const count = Token.estimate(input.system.join("\n")) + Token.estimate(json)
+    const reserved = config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
+    return count >= usable(input, reserved)
   }
 
   export const PRUNE_MINIMUM = 20_000

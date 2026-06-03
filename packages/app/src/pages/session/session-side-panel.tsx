@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
+import { useNavigate } from "@solidjs/router"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import { IconButton } from "@open-agent-harness/ui/icon-button"
 import { TooltipKeybind } from "@open-agent-harness/ui/tooltip"
@@ -24,7 +25,7 @@ import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
-import { graphRuns, type GraphRun } from "@/pages/session/session-graph"
+import { graphLayout, graphRuns, type GraphRun } from "@/pages/session/session-graph"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import type { SessionStatus } from "@open-agent-harness/sdk/v2/client"
 
@@ -73,6 +74,7 @@ function GraphPanel(props: {
   run: GraphRun
   runs: GraphRun[]
   select: (runID: string) => void
+  open: (sessionID: string) => void
   status: (sessionID: string | undefined) => SessionStatus | undefined
 }) {
   const active = (input: GraphRun["status"] | WorkflowStatus | undefined) => input === "running"
@@ -100,16 +102,24 @@ function GraphPanel(props: {
     if (active) return active === "failed" ? "failed" : "running"
     return status(node.status) ?? "pending"
   }
-  const groups = createMemo(() =>
-    (["running", "ready", "pending", "completed", "failed", "skipped", "cancelled"] as const)
-      .map((id) => ({
-        id,
-        items: props.run.nodes.filter((node) => state(node) === id),
-      }))
-      .filter((item) => item.items.length > 0),
-  )
-  const count = (id: WorkflowStatus) => groups().find((item) => item.id === id)?.items.length ?? 0
+  const count = (id: WorkflowStatus) => props.run.nodes.filter((node) => state(node) === id).length
   const total = createMemo(() => Math.max(props.run.total, props.run.nodes.length))
+  const layout = createMemo(() => graphLayout(props.run))
+  const marker = createMemo(() => `arrow-${props.run.id.replace(/[^A-Za-z0-9_-]/g, "-")}`)
+  const [focus, setFocus] = createSignal<string>()
+  createEffect(() => {
+    const ids = new Set(layout().nodes.map((node) => node.id))
+    const current = focus()
+    if (current && ids.has(current)) return
+    setFocus(layout().nodes.find((node) => state(node) === "running")?.id ?? layout().nodes[0]?.id)
+  })
+  const node = createMemo(() => layout().nodes.find((item) => item.id === focus()))
+  const choose = (id: string) => {
+    const item = layout().nodes.find((node) => node.id === id)
+    if (!item) return
+    setFocus(id)
+    if (item.sessionID) props.open(item.sessionID)
+  }
 
   return (
     <div class="h-full overflow-auto bg-background-stronger px-4 py-4">
@@ -124,31 +134,21 @@ function GraphPanel(props: {
         </div>
 
         <Show when={props.runs.length > 1}>
-          <div class="flex flex-col gap-1.5">
-            <div class="text-11-medium uppercase text-text-weak">Runs</div>
-            <div class="flex flex-col gap-1">
+          <div class="flex items-center gap-2">
+            <div class="shrink-0 text-11-medium uppercase text-text-weak">Run</div>
+            <select
+              class="min-w-0 flex-1 border border-border-weaker-base bg-background-base px-2 py-1.5 text-12-regular text-text-base outline-none"
+              value={props.run.id}
+              onChange={(event) => props.select(event.currentTarget.value)}
+            >
               <For each={[...props.runs].reverse()}>
                 {(run) => (
-                  <button
-                    type="button"
-                    class="w-full border px-3 py-2 text-left"
-                    classList={{
-                      "border-border-strong bg-background-base": run.id === props.run.id,
-                      "border-border-weaker-base bg-background-stronger": run.id !== props.run.id,
-                    }}
-                    onClick={() => props.select(run.id)}
-                  >
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="min-w-0">
-                        <div class="truncate text-12-medium text-text-base">{run.title}</div>
-                        <div class="mt-0.5 truncate text-11-regular text-text-weak">{run.source}</div>
-                      </div>
-                      <div class={`shrink-0 text-11-medium ${tone(stateFor(run))}`}>{badge(stateFor(run))}</div>
-                    </div>
-                  </button>
+                  <option value={run.id}>
+                    {run.title} · {run.source} · {label(stateFor(run))}
+                  </option>
                 )}
               </For>
-            </div>
+            </select>
           </div>
         </Show>
 
@@ -179,73 +179,138 @@ function GraphPanel(props: {
         </Show>
 
         <div class="flex flex-col gap-2">
-          <div class="text-11-medium uppercase text-text-weak">Nodes</div>
-          <For each={groups()}>
-            {(group) => (
-              <div class="flex flex-col gap-1.5">
-                <div class={`text-11-medium uppercase ${tone(group.id)}`}>
-                  {label(group.id)} · {group.items.length}
-                </div>
-                <For each={group.items}>
-                  {(node) => {
-                    const deps = createMemo(() => node.deps)
-                    const after = createMemo(() => node.after)
-                    const phase = createMemo(() => state(node))
-                    const index = createMemo(() => props.run.nodes.findIndex((item) => item.id === node.id) + 1)
+          <div class="flex items-center justify-between">
+            <div class="text-11-medium uppercase text-text-weak">DAG</div>
+            <Show when={node()}>
+              {(item) => <div class={`text-11-medium ${tone(state(item()))}`}>{badge(state(item()))}</div>}
+            </Show>
+          </div>
+          <div class="h-[360px] overflow-auto border border-border-weaker-base bg-background-base">
+            <div
+              class="relative"
+              style={{
+                width: `${layout().width}px`,
+                height: `${layout().height}px`,
+              }}
+            >
+              <svg
+                class="absolute inset-0 pointer-events-none"
+                width={layout().width}
+                height={layout().height}
+                aria-hidden="true"
+              >
+                <defs>
+                  <marker
+                    id={marker()}
+                    viewBox="0 0 10 10"
+                    refX="9"
+                    refY="5"
+                    markerWidth="5"
+                    markerHeight="5"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z" class="fill-border-strong" />
+                  </marker>
+                </defs>
+                <For each={layout().edges}>
+                  {(edge) => {
+                    const mid = (edge.y1 + edge.y2) / 2
                     return (
-                      <details class="group border border-border-weaker-base bg-background-base">
-                        <summary class="cursor-pointer list-none px-3 py-2">
-                          <div class="flex items-center gap-3">
-                            <div class={`w-6 shrink-0 text-11-medium ${tone(phase())}`}>{index()}</div>
-                            <div class="min-w-0 flex-1">
-                              <div class="flex min-w-0 items-center gap-2">
-                                <div class="truncate text-12-medium text-text-base">{node.title}</div>
-                                <div class="shrink-0 text-11-regular text-text-weak">{node.type}</div>
-                              </div>
-                              <div class="mt-0.5 truncate text-11-regular text-text-weak">
-                                {node.executor} · attempts {node.attempt ?? 0}
-                              </div>
-                            </div>
-                            <div class={`shrink-0 text-11-medium ${tone(phase())}`}>{badge(phase())}</div>
-                          </div>
-                        </summary>
-                        <div class="border-t border-border-weaker-base px-3 py-3 text-12-regular text-text-muted">
-                          <div class="grid grid-cols-[88px_1fr] gap-x-3 gap-y-1">
-                            <div class="text-text-weak">Executor</div>
-                            <div class="min-w-0 break-all">{node.executor}</div>
-                            <Show when={deps().length > 0}>
-                              <div class="text-text-weak">Depends on</div>
-                              <div class="min-w-0 break-words">{deps().join(", ")}</div>
-                            </Show>
-                            <Show when={after().length > 0}>
-                              <div class="text-text-weak">Downstream</div>
-                              <div class="min-w-0 break-words">{after().join(", ")}</div>
-                            </Show>
-                            <Show when={node.sessionID}>
-                              {(id) => (
-                                <>
-                                  <div class="text-text-weak">Session</div>
-                                  <div class="min-w-0 break-all">{id()}</div>
-                                </>
-                              )}
-                            </Show>
-                          </div>
-                          <Show when={node.output || node.error}>
-                            <div class="mt-3">
-                              <div class="mb-1 text-11-medium text-text-weak">{node.error ? "Error" : "Output"}</div>
-                              <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
-                                {node.error ?? node.output}
-                              </pre>
-                            </div>
-                          </Show>
-                        </div>
-                      </details>
+                      <path
+                        d={`M ${edge.x1} ${edge.y1} C ${edge.x1} ${mid}, ${edge.x2} ${mid}, ${edge.x2} ${edge.y2}`}
+                        class="fill-none stroke-border-strong"
+                        stroke-width="1.5"
+                        marker-end={`url(#${marker()})`}
+                      />
                     )
                   }}
                 </For>
+              </svg>
+              <For each={layout().nodes}>
+                {(item) => {
+                  const phase = createMemo(() => state(item))
+                  const active = createMemo(() => focus() === item.id)
+                  return (
+                    <button
+                      type="button"
+                      class="absolute rounded-sm border bg-background-stronger px-3 py-2 text-left shadow-sm transition-colors"
+                      classList={{
+                        "border-border-strong ring-1 ring-border-strong": active(),
+                        "border-border-weaker-base hover:border-border-strong": !active(),
+                      }}
+                      style={{
+                        left: `${item.x}px`,
+                        top: `${item.y}px`,
+                        width: `${item.width}px`,
+                        height: `${item.height}px`,
+                      }}
+                      onClick={() => choose(item.id)}
+                    >
+                      <div class="flex min-w-0 items-center justify-between gap-2">
+                        <div class={`text-11-medium ${tone(phase())}`}>{label(phase())}</div>
+                        <Show when={item.sessionID}>
+                          <div class="text-11-regular text-text-interactive-base">Session</div>
+                        </Show>
+                      </div>
+                      <div class="mt-1 truncate text-12-medium text-text-base">{item.title}</div>
+                      <div class="mt-0.5 truncate text-11-regular text-text-weak">{item.executor}</div>
+                    </button>
+                  )
+                }}
+              </For>
+            </div>
+          </div>
+          <Show when={node()}>
+            {(item) => (
+              <div class="border border-border-weaker-base bg-background-base px-3 py-3 text-12-regular text-text-muted">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <div class="truncate text-13-medium text-text-base">{item().title}</div>
+                    <div class="mt-0.5 truncate text-11-regular text-text-weak">{item().id}</div>
+                  </div>
+                  <Show when={item().sessionID}>
+                    {(id) => (
+                      <button
+                        type="button"
+                        class="shrink-0 text-11-medium text-text-interactive-base hover:underline"
+                        onClick={() => props.open(id())}
+                      >
+                        Open session
+                      </button>
+                    )}
+                  </Show>
+                </div>
+                <div class="mt-3 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1">
+                  <div class="text-text-weak">Executor</div>
+                  <div class="min-w-0 break-all">{item().executor}</div>
+                  <Show when={item().deps.length > 0}>
+                    <div class="text-text-weak">Depends on</div>
+                    <div class="min-w-0 break-words">{item().deps.join(", ")}</div>
+                  </Show>
+                  <Show when={item().after.length > 0}>
+                    <div class="text-text-weak">Downstream</div>
+                    <div class="min-w-0 break-words">{item().after.join(", ")}</div>
+                  </Show>
+                  <Show when={item().sessionID}>
+                    {(id) => (
+                      <>
+                        <div class="text-text-weak">Session</div>
+                        <div class="min-w-0 break-all">{id()}</div>
+                      </>
+                    )}
+                  </Show>
+                </div>
+                <Show when={item().output || item().error}>
+                  <div class="mt-3">
+                    <div class="mb-1 text-11-medium text-text-weak">{item().error ? "Error" : "Output"}</div>
+                    <pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+                      {item().error ?? item().output}
+                    </pre>
+                  </div>
+                </Show>
               </div>
             )}
-          </For>
+          </Show>
         </div>
 
         <details class="border border-border-weaker-base bg-background-base">
@@ -272,6 +337,7 @@ export function SessionSidePanel(props: {
   const local = useLocal()
   const command = useCommand()
   const dialog = useDialog()
+  const navigate = useNavigate()
   const { params, sessionKey, tabs, view } = useSessionLayout()
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
@@ -615,6 +681,7 @@ export function SessionSidePanel(props: {
                               run={item()}
                               runs={runs()}
                               select={setSelected}
+                              open={(sessionID) => navigate(`/${params.dir}/session/${sessionID}`)}
                               status={(sessionID) => (sessionID ? sync.data.session_status[sessionID] : undefined)}
                             />
                           )}

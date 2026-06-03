@@ -22,8 +22,99 @@ import { ModelID, ProviderID } from "@/provider/schema"
 import { ForbiddenError, NotFoundError } from "@/storage/db"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
+import { Instance } from "@/project/instance"
+import { InstanceBootstrap } from "@/project/bootstrap"
+import { WorkspaceContext } from "@/control-plane/workspace-context"
 
 const log = Log.create({ service: "server" })
+const max = {
+  ignored: 2_000,
+  output: 20_000,
+  metadata: 20_000,
+}
+
+function trim(value: string, limit: number) {
+  if (value.length <= limit) return value
+  return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`
+}
+
+function size(value: unknown) {
+  return JSON.stringify(value).length
+}
+
+function meta(value: Record<string, unknown> | undefined) {
+  if (!value) return value
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => {
+      if (size(item) <= max.metadata) return [key, item]
+      return [key, { omitted: true, bytes: size(item) }]
+    }),
+  )
+}
+
+function part(part: MessageV2.Part): MessageV2.Part {
+  if (part.type === "step-start") {
+    return {
+      id: part.id,
+      sessionID: part.sessionID,
+      messageID: part.messageID,
+      type: part.type,
+      snapshot: part.snapshot,
+    }
+  }
+
+  if (part.type === "text" && part.ignored) {
+    return {
+      ...part,
+      text: trim(part.text, max.ignored),
+      metadata: meta(part.metadata),
+    }
+  }
+
+  if (part.type === "reasoning") {
+    return {
+      ...part,
+      metadata: meta(part.metadata),
+    }
+  }
+
+  if (part.type === "tool") {
+    const state =
+      part.state.status === "completed"
+        ? {
+            ...part.state,
+            output: trim(part.state.output, max.output),
+            metadata: meta(part.state.metadata) ?? {},
+          }
+        : part.state.status === "running"
+          ? {
+              ...part.state,
+              metadata: meta(part.state.metadata),
+            }
+          : part.state
+    return {
+      ...part,
+      state,
+      metadata: meta(part.metadata),
+    }
+  }
+
+  return part
+}
+
+function slim(session: Session.Info): Session.Info {
+  return {
+    ...session,
+    dsl_context: undefined,
+  }
+}
+
+function view(message: MessageV2.WithParts): MessageV2.WithParts {
+  return {
+    info: message.info,
+    parts: message.parts.map(part),
+  }
+}
 
 export const SessionRoutes = lazy(() =>
   new Hono()
@@ -67,7 +158,7 @@ export const SessionRoutes = lazy(() =>
           search: query.search,
           limit: query.limit,
         })) {
-          sessions.push(session)
+          sessions.push(slim(session))
         }
         return c.json(sessions)
       },
@@ -114,11 +205,24 @@ export const SessionRoutes = lazy(() =>
           ...errors(400, 403, 404),
         },
       }),
-      validator("json", Session.descendantsBatch.schema),
+      validator("json", z.object({
+        directory: z.string().optional(),
+        ids: SessionID.zod.array().min(1),
+      })),
       async (c) => {
         const body = c.req.valid("json")
-        const session = await Session.descendantsBatch(body)
-        return c.json(session)
+        const sessions = await (body.directory
+          ? WorkspaceContext.provide({
+              workspaceID: undefined,
+              fn: () =>
+                Instance.provide({
+                  directory: body.directory!,
+                  init: InstanceBootstrap,
+                  fn: () => Session.descendantsBatch({ ids: body.ids }),
+                }),
+            })
+          : Session.descendantsBatch({ ids: body.ids }))
+        return c.json(sessions.map(slim))
       },
     )
     .get(
@@ -283,7 +387,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const session = await Session.children(sessionID)
-        return c.json(session)
+        return c.json(session.map(slim))
       },
     )
     .get(
@@ -314,7 +418,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         const session = await Session.descendants(sessionID)
-        return c.json(session)
+        return c.json(session.map(slim))
       },
     )
     .get(
@@ -800,7 +904,7 @@ export const SessionRoutes = lazy(() =>
         if (query.limit === undefined) {
           await Session.get(sessionID)
           const messages = await Session.messages({ sessionID })
-          return c.json(messages)
+          return c.json(messages.map(view))
         }
 
         if (query.limit === 0) {
@@ -822,7 +926,7 @@ export const SessionRoutes = lazy(() =>
           c.header("Link", `<${url.toString()}>; rel=\"next\"`)
           c.header("X-Next-Cursor", page.cursor)
         }
-        return c.json(page.items)
+        return c.json(page.items.map(view))
       },
     )
     .get(
@@ -861,7 +965,7 @@ export const SessionRoutes = lazy(() =>
           sessionID: params.sessionID,
           messageID: params.messageID,
         })
-        return c.json(message)
+        return c.json(view(message))
       },
     )
     .delete(

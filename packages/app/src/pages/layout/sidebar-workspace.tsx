@@ -282,7 +282,7 @@ const WorkspaceSessionList = (props: {
         <SessionSkeleton />
       </Show>
       <For each={props.sessions()}>
-        {(session) => (
+        {(session, index) => (
           <SessionItem
             session={session}
             list={props.all()}
@@ -303,6 +303,7 @@ const WorkspaceSessionList = (props: {
             clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
             prefetchSession={props.ctx.prefetchSession}
             archiveSession={props.ctx.archiveSession}
+            first={index() === 0}
           />
         )}
       </For>

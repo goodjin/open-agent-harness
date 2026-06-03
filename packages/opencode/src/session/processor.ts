@@ -20,6 +20,7 @@ import { MemoryStore } from "@/memory"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
+  const PREFLIGHT_COMPACT_THRESHOLD = 3
   const log = Log.create({ service: "session.processor" })
 
   export type Info = Awaited<ReturnType<typeof create>>
@@ -58,18 +59,23 @@ export namespace SessionProcessor {
           if (input.agent.prompt || input.agent.runner === "protocol") return LLM.compose({ ...input, isCodex: false })
           return input.system
         }
-        const prompt = (input: LLM.StreamInput) => ({
-          system: system(input),
-          systemInput: input.system,
-          messages: LLM.prepareMessages(input),
-          user: input.user,
-          agent: {
-            name: input.agent.name,
-            runner: input.agent.runner,
-          },
-          toolChoice: input.toolChoice,
-          tools: input.agent.runner === "protocol" ? [LLM.PROTOCOL_OUTPUT_TOOL] : Object.keys(input.tools),
-        })
+        const prompt = (input: LLM.StreamInput) => {
+          const systemText = system(input)
+          const messages = LLM.prepareMessages(input)
+          return {
+            systemBytes: systemText.length,
+            systemInputCount: input.system.length,
+            messageCount: messages.length,
+            messageBytes: JSON.stringify(messages).length,
+            user: input.user.id,
+            agent: {
+              name: input.agent.name,
+              runner: input.agent.runner,
+            },
+            toolChoice: input.toolChoice,
+            tools: input.agent.runner === "protocol" ? [LLM.PROTOCOL_OUTPUT_TOOL] : Object.keys(input.tools),
+          }
+        }
         needsCompaction = false
         const shouldBreak = (await Config.get()).experimental?.continue_loop_on_deny !== true
         while (true) {
@@ -77,6 +83,7 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
+            const req = prompt(streamInput)
             await record("info", "llm.start", {
               providerID: input.model.providerID,
               modelID: input.model.id,
@@ -85,8 +92,31 @@ export namespace SessionProcessor {
               attempt,
               messages: streamInput.messages.length,
               tools: streamInput.agent.runner === "protocol" ? 1 : Object.keys(streamInput.tools).length,
-              request: prompt(streamInput),
+              request: req,
             })
+            if (
+              await SessionCompaction.isPromptOverflow({
+                system: system(streamInput),
+                messages: LLM.prepareMessages(streamInput),
+                model: input.model,
+              })
+            ) {
+              await record("warn", "llm.preflight_compact", req)
+              if (await shouldStopCompact(input.sessionID, streamInput.user.id)) {
+                const text = [
+                  "Automatic compaction was attempted multiple times, but the request is still too large for the provider.",
+                  "",
+                  "Start a new session for this task, or remove/truncate older messages, large tool outputs, and attachments before retrying.",
+                ].join("\n")
+                input.assistantMessage.error = new MessageV2.ContextOverflowError({ message: text }).toObject()
+                input.assistantMessage.finish = "error"
+                SessionStatus.set(input.sessionID, { type: "error", message: text })
+                await record("error", "llm.compact_limit", { limit: PREFLIGHT_COMPACT_THRESHOLD, error: text })
+                break
+              }
+              needsCompaction = true
+              break
+            }
             const stream = await LLM.stream(streamInput)
 
             for await (const value of stream.fullStream) {
@@ -523,5 +553,21 @@ export namespace SessionProcessor {
       },
     }
     return result
+  }
+
+  export async function shouldStopCompact(sessionID: SessionID, messageID: MessageID) {
+    const logs = (await SessionLog.list({ sessionID, limit: 5000 })).filter(
+      (item) => item.type === "llm.preflight_compact" && item.data.user === messageID,
+    ).length
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    const empty = msgs.filter(
+      (item) =>
+        item.info.role === "assistant" &&
+        item.info.parentID === messageID &&
+        !item.info.finish &&
+        !item.info.error &&
+        item.parts.length === 0,
+    ).length
+    return Math.max(logs, empty) >= PREFLIGHT_COMPACT_THRESHOLD
   }
 }

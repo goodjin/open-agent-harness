@@ -208,7 +208,7 @@ const ProjectPreviewPanel = (props: {
         when={props.workspaceEnabled()}
         fallback={
           <For each={props.projectSessions().slice(0, 2)}>
-            {(session) => (
+            {(session, index) => (
               <SessionItem
                 {...props.ctx.sessionProps}
                 session={session}
@@ -218,6 +218,7 @@ const ProjectPreviewPanel = (props: {
                 mobile={props.mobile}
                 popover={false}
                 children={props.projectChildren()}
+                first={index() === 0}
               />
             )}
           </For>
@@ -237,7 +238,7 @@ const ProjectPreviewPanel = (props: {
                   <span class="truncate text-14-medium text-text-base">{props.label(directory)}</span>
                 </div>
                 <For each={sessions().slice(0, 2)}>
-                  {(session) => (
+                  {(session, index) => (
                     <SessionItem
                       {...props.ctx.sessionProps}
                       session={session}
@@ -247,6 +248,7 @@ const ProjectPreviewPanel = (props: {
                       mobile={props.mobile}
                       popover={false}
                       children={children()}
+                      first={index() === 0}
                     />
                   )}
                 </For>

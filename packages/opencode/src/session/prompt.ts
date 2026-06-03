@@ -52,6 +52,7 @@ import { Trace } from "@/observability/trace"
 import { AgentEntry } from "@/agent/entry"
 import { resolveInstructions } from "@/agent/instructions"
 import { Global } from "@/global"
+import { Storage } from "@/storage/storage"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -68,6 +69,7 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+  const MAX_AUTO_OVERFLOW_COMPACTIONS = 2
 
   const state = Instance.state(
     () => {
@@ -741,12 +743,17 @@ export namespace SessionPrompt {
 
       if (result === "stop") break
       if (result === "compact") {
+        const overflow = !processor.message.finish
+        if (shouldStopCompact({ messages: msgs, overflow })) {
+          await stopCompact({ sessionID, assistant: processor.message })
+          break
+        }
         await SessionCompaction.create({
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
           auto: true,
-          overflow: !processor.message.finish,
+          overflow,
         })
       }
       continue
@@ -761,6 +768,34 @@ export namespace SessionPrompt {
       return item
     }
     throw new Error("Impossible")
+  }
+
+  export function shouldStopCompact(input: { messages: MessageV2.WithParts[]; overflow: boolean }) {
+    if (!input.overflow) return false
+    const count = input.messages
+      .flatMap((item) => item.parts)
+      .filter((part) => part.type === "compaction" && part.auto && part.overflow === true).length
+    return count >= MAX_AUTO_OVERFLOW_COMPACTIONS
+  }
+
+  async function stopCompact(input: { sessionID: SessionID; assistant: MessageV2.Assistant }) {
+    const text = [
+      "Automatic compaction was attempted multiple times, but the request is still too large for the provider.",
+      "",
+      "Start a new session for this task, or remove/truncate older messages, large tool outputs, and attachments before retrying.",
+    ].join("\n")
+    input.assistant.error = new MessageV2.ContextOverflowError({ message: text }).toObject()
+    input.assistant.finish = "error"
+    input.assistant.time.completed = Date.now()
+    await Session.updateMessage(input.assistant)
+    SessionStatus.set(input.sessionID, { type: "error", message: text })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.assistant.id,
+      level: "error",
+      type: "llm.compact_limit",
+      data: { limit: MAX_AUTO_OVERFLOW_COMPACTIONS, error: text },
+    })
   }
 
   /** @internal Exported for testing */
@@ -862,27 +897,45 @@ export namespace SessionPrompt {
       )
   }
 
-  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
-    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
-    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
-    const tools = prev.tools && typeof prev.tools === "object" && !Array.isArray(prev.tools) ? prev.tools as Record<string, unknown> : {}
-    if (typeof tools.prompt === "string") {
-      return { ...runtime, prompt: tools.prompt }
+  type RuntimeContext = {
+    protocol?: {
+      prompt?: string
+      catalog?: string[]
     }
-    await Session.setDslContext({
-      sessionID,
-      dsl_context: {
-        ...ctx,
-        protocol: {
-          ...prev,
-          tools: {
-            prompt: runtime.prompt,
-            catalog: runtime.catalog.map((item) => item.id),
-          },
-        },
+  }
+
+  function obj(input: unknown) {
+    return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {}
+  }
+
+  async function cache(sessionID: SessionID) {
+    return Storage.read<RuntimeContext>(["session_runtime_context", sessionID]).catch(() => undefined)
+  }
+
+  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
+    const saved = await cache(sessionID)
+    if (saved?.protocol?.prompt) return { ...runtime, prompt: saved.protocol.prompt }
+
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = obj(ctx.protocol)
+    const tools = obj(prev.tools)
+    const prompt = typeof tools.prompt === "string" ? tools.prompt : runtime.prompt
+    await Storage.write(["session_runtime_context", sessionID], {
+      protocol: {
+        prompt,
+        catalog: runtime.catalog.map((item) => item.id),
       },
-    })
-    return runtime
+    } satisfies RuntimeContext)
+    if (typeof tools.prompt === "string" || prev.tools !== undefined) {
+      await Session.setDslContext({
+        sessionID,
+        dsl_context: {
+          ...ctx,
+          protocol: Object.fromEntries(Object.entries(prev).filter((item) => item[0] !== "tools")),
+        },
+      })
+    }
+    return { ...runtime, prompt }
   }
 
   /** @internal Exported for testing */

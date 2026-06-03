@@ -9,7 +9,7 @@ import { getRegistry, resetRegistry } from "../../src/agent/registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionLog } from "../../src/session/log"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID } from "../../src/session/schema"
+import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
@@ -40,6 +40,35 @@ async function agent(dir: string, id: string, cfg: Record<string, unknown> = {})
 }
 
 describe("session.prompt missing file", () => {
+  test("stops automatic overflow compaction after repeated attempts", () => {
+    const item = (auto: boolean, overflow: boolean | undefined): MessageV2.WithParts =>
+      ({
+        info: {
+          id: MessageID.ascending(),
+          sessionID: "ses_test",
+          role: "user",
+          time: { created: Date.now() },
+          agent: "build",
+          model: { providerID: "test", modelID: "test" },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: MessageID.ascending(),
+            sessionID: "ses_test",
+            type: "compaction",
+            auto,
+            overflow,
+          },
+        ],
+      }) as MessageV2.WithParts
+
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(true, true)] })).toBe(false)
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(false, true), item(true, true)] })).toBe(false)
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(true, true), item(true, true)] })).toBe(true)
+    expect(SessionPrompt.shouldStopCompact({ overflow: false, messages: [item(true, true), item(true, true)] })).toBe(false)
+  })
+
   test("records setup failures in the assistant message and session log", async () => {
     await using tmp = await tmpdir({ git: true })
 

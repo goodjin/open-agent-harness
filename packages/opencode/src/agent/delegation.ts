@@ -94,7 +94,8 @@ export namespace AgentDelegation {
   }
 
   export function runtime(input: RuntimeInput) {
-    const vals = input.inputs ?? values(input.action.input)
+    const args = normalizeInput(input.action.input, input.meta?.contracts?.input)
+    const vals = input.inputs ?? values(args)
     const check = validateInput({
       meta: {
         ...input.meta,
@@ -255,6 +256,22 @@ export namespace AgentDelegation {
         visibility: text(rec.visibility) ?? "model",
       }
     })
+  }
+
+  function normalizeInput(input: Rec | undefined, contracts: readonly unknown[] | undefined) {
+    const out = { ...input }
+    const prompt = typeof out.prompt === "string" ? out.prompt.trim() : ""
+    if (!prompt) return out
+    for (const item of contracts ?? []) {
+      const rec = item as Rec
+      const name = typeof rec.name === "string" ? rec.name : ""
+      if (!name || name in out) continue
+      const required = rec.required ?? true
+      if (required === false) continue
+      if (!/_goal$/.test(name)) continue
+      out[name] = prompt
+    }
+    return out
   }
 
   function text(input: unknown) {

@@ -277,6 +277,51 @@ describe("Session.list", () => {
     })
   })
 
+  test("loads batch descendants in the directory from request body", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const dir = path.join(projectRoot, "..", "__session_tree_batch_body_dir")
+            const root = await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => {
+                    const root = await Session.create({ title: "body-dir-root" })
+                    await Session.create({ title: "body-dir-child", parentID: root.id })
+                    return root
+                  },
+                }),
+            })
+            const app = Server.Default()
+
+            const response = await app.request("/session/descendants", {
+              method: "POST",
+              body: JSON.stringify({ directory: dir, ids: [root.id] }),
+              headers: { "content-type": "application/json" },
+            })
+
+            expect(response.status).toBe(200)
+            const body = await response.json()
+            expect(body.map((item: { title: string }) => item.title)).toEqual(["body-dir-child"])
+
+            await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => Session.remove(root.id),
+                }),
+            })
+          },
+        }),
+    })
+  })
+
   test("dismisses error status without abort route", async () => {
     await Instance.provide({
       directory: projectRoot,

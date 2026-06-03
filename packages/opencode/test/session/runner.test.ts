@@ -95,6 +95,46 @@ describe("SessionRunner", () => {
     expect(seen).toEqual(["protocol"])
   })
 
+  test("protocol completion result satisfies default metadata evidence", async () => {
+    const done = AgentDelegation.complete({
+      agent: "default",
+      meta: {
+        completion: {
+          criteria: [],
+          required_artifacts: [],
+          required_evidence: ["protocol_run_state_or_direct_answer"],
+          gates: [],
+          allow_partial: true,
+        },
+      },
+      result: SessionRunner.proof({
+        type: "agent.protocol.result",
+        version: "1",
+        run_id: "apr_done",
+        status: "completed",
+        title: "backend",
+        actions: [],
+        summary: "backend completed",
+        time: {
+          started: Date.now(),
+          completed: Date.now(),
+        },
+        metrics: {
+          actions: 0,
+          internal_tool_calls: 0,
+          direct_model_tool_calls: 0,
+          model_visible_bytes: 0,
+          raw_output_bytes: 0,
+          duration_ms: 0,
+        },
+      }),
+      status: "completed",
+    })
+
+    expect(done.status).toBe("completed")
+    expect(done.completion.missing_evidence).toEqual([])
+  })
+
   test("workflow runner executes a workflow run instead of chat processing", async () => {
     await using tmp = await tmpdir()
     await fs.mkdir(path.join(tmp.path, ".opencode", "workflows"), { recursive: true })
@@ -3017,9 +3057,7 @@ describe("SessionRunner", () => {
             text: [
               "T-CMD-001 completed. Dispatch the next task.",
               JSON.stringify({
-                type: "tool-call",
-                toolCallId: "call_textual_json",
-                toolName: "AgentProtocolOutput",
+                name: "AgentProtocolOutput",
                 input: {
                   kind: "act",
                   message: "Dispatch database work.",

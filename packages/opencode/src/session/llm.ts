@@ -417,7 +417,7 @@ export namespace LLM {
     }
     return messages.map((item, idx): ModelMessage => ({
       role: "user",
-      content: `<turn index="${idx + 1}">\n## ${heading(item.role)}\n\n${content(item.content)}\n</turn>`,
+      content: `<turn index="${idx + 1}">\n## ${heading(item.role)}\n\n${body(item)}\n</turn>`,
     })).concat({ role: "user", content: PROTOCOL_TURN_REMINDER } satisfies ModelMessage)
   }
 
@@ -428,15 +428,75 @@ export namespace LLM {
     return "System context"
   }
 
+  function body(input: ModelMessage) {
+    if (input.role !== "assistant") return content(input.content)
+    const out = outputs(input.content)
+    const thought = reasoning(input.content)
+    if (out) return [thought, out].filter((item): item is string => Boolean(item)).join("\n")
+    if (thought) return thought
+    return "Assistant user-visible answer omitted from protocol context."
+  }
+
   function content(input: ModelMessage["content"]) {
     if (typeof input === "string") return input
     if (!Array.isArray(input)) return JSON.stringify(input)
     return input
       .map((item) => {
         if ("type" in item && item.type === "text") return item.text
+        const slimmed = slim(item)
+        if (slimmed) return slimmed
         return JSON.stringify(item)
       })
       .join("\n")
+  }
+
+  function outputs(input: ModelMessage["content"]) {
+    if (!Array.isArray(input)) return
+    const out = input
+      .map((item) => slim(item))
+      .filter((item): item is string => Boolean(item))
+      .join("\n")
+    if (out) return out
+  }
+
+  function reasoning(input: ModelMessage["content"]) {
+    if (!Array.isArray(input)) return
+    const out = input
+      .filter((item) => object(item).type === "reasoning")
+      .flatMap((item) => {
+        const data = object(item)
+        return [
+          typeof data.text === "string" ? data.text : undefined,
+          ...texts(data.summary),
+          ...texts(data.content),
+        ]
+      })
+      .filter((item): item is string => Boolean(item))
+      .join("\n")
+    if (out) return `Assistant reasoning:\n${out}`
+  }
+
+  function texts(input: unknown) {
+    if (!Array.isArray(input)) return []
+    return input
+      .map((item) => object(item).text)
+      .filter((item): item is string => typeof item === "string" && item.length > 0)
+  }
+
+  function slim(input: unknown) {
+    const item = object(input)
+    const type = typeof item.type === "string" ? item.type : ""
+    const tool = typeof item.toolName === "string" ? item.toolName : type.startsWith("tool-") ? type.slice(5) : ""
+    if (tool.toLowerCase() !== PROTOCOL_OUTPUT_TOOL.toLowerCase()) return
+    const data = object(item.input)
+    const kind = typeof data.kind === "string" ? data.kind : "unknown"
+    if (kind === "act") {
+      return `Protocol output: ${JSON.stringify({
+        kind,
+        calls: Array.isArray(data.calls) ? data.calls : [],
+      })}`
+    }
+    return `Protocol output: kind=${kind} (message omitted; already shown to user).`
   }
 
   // Check if messages contain any tool-call content
