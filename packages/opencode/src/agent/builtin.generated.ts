@@ -789,7 +789,7 @@ export const BUILTIN_AGENTS = [
       "contracts": {
         "input": [
           {
-            "name": "epic_slice",
+            "name": "epic_goal",
             "type": "text",
             "required": true,
             "visibility": "model"

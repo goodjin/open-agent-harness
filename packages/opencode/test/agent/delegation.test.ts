@@ -207,4 +207,64 @@ describe("agent delegation visibility", () => {
       },
     ])
   })
+
+  test("runtime maps legacy prompt input to required goal field", () => {
+    const got = AgentDelegation.runtime({
+      agent: "milestone-planner",
+      meta: {
+        contracts: {
+          input: [{ name: "milestone_goal", type: "text", required: true }],
+          output: [],
+        },
+        observability: {
+          level: "minimal",
+        },
+      },
+      action: {
+        id: "act_m1",
+        title: "M1 Foundation",
+        operation: "agent",
+        executor: { type: "agent", target: "milestone-planner", capabilities: [] },
+        input: { prompt: "Build shared type contracts" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      },
+      trigger: "missing_input",
+    })
+
+    expect(got.status).toBe("ready")
+    expect(got.input.status).toBe("ready")
+    expect(got.input.missing_inputs).toEqual([])
+  })
+
+  test("epic planner maps legacy prompt input to required epic goal", () => {
+    const got = AgentDelegation.runtime({
+      agent: "epic-planner",
+      meta: {
+        contracts: {
+          input: [{ name: "epic_goal", type: "text", required: true }],
+          output: [],
+        },
+        observability: {
+          level: "minimal",
+        },
+      },
+      action: {
+        id: "act_e1",
+        title: "Epic Planner",
+        operation: "agent",
+        executor: { type: "agent", target: "epic-planner", capabilities: [] },
+        input: { prompt: "Build shared protocols" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      },
+      trigger: "missing_input",
+    })
+
+    expect(got.status).toBe("ready")
+    expect(got.input.status).toBe("ready")
+    expect(got.input.missing_inputs).toEqual([])
+  })
 })
