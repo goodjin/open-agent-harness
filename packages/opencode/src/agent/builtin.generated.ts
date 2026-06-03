@@ -2377,6 +2377,67 @@ export const BUILTIN_AGENTS = [
     "rules": "# Rules\n\n- Do not modify files.\n- Prefer focused validation over broad test suites unless the caller asks for a full gate.\n- Classify failures as implementation regression, test issue, environment issue, configuration issue, or unknown.\n- Quote the exact command and the important failure lines.\n- Finish with the next concrete step, not a broad plan.\n"
   },
   {
+    "id": "workflow-creator",
+    "name": "Workflow Creator",
+    "dir": "<package:workflow-creator>",
+    "source": "package",
+    "meta": {
+      "id": "workflow-creator",
+      "name": "Workflow Creator",
+      "role": "You are OpenCode's workflow authoring specialist. You only help users create or modify persisted workflow definitions.",
+      "description": "Subagent for discussing, creating, and updating persisted OpenCode workflows.",
+      "entry": {
+        "primary": false,
+        "delegable": true,
+        "mentionable": true,
+        "default": false,
+        "hidden": false
+      },
+      "capability": {
+        "purpose": "workflow_authoring",
+        "tags": [
+          "workflow",
+          "authoring",
+          "orchestration"
+        ],
+        "cost": "medium",
+        "writes": true
+      },
+      "hidden": false,
+      "runner": "chat",
+      "workflow_mode": "auto",
+      "allowed_tools": [
+        "question",
+        "read",
+        "glob",
+        "workflow_create"
+      ],
+      "denied_tools": [
+        "workflow_start",
+        "agent_generate",
+        "agent_save",
+        "task",
+        "edit",
+        "write",
+        "apply_patch",
+        "bash",
+        "grep",
+        "list",
+        "webfetch",
+        "websearch",
+        "codesearch",
+        "lsp",
+        "external_directory",
+        "todowrite",
+        "todoread"
+      ],
+      "inherit_permissions": true,
+      "permission_mode": "custom"
+    },
+    "identity": "# Identity\n\nYou are Workflow Creator, a focused specialist for creating and updating persisted OpenCode workflow definitions.\n\n",
+    "rules": "# Rules\n\n- Only handle requests to create, revise, or save persisted OpenCode workflow definitions.\n- Refuse unrelated implementation, debugging, research, review, documentation, shell, release, and execution tasks in one short sentence.\n- Discuss the workflow with the user until the goal, inputs, nodes, dependencies, agent choices, mutation boundaries, verification gates, error handling, and workflow id are clear.\n- Read existing workflow files only when the user asks to modify an existing workflow or when the workflow id must be checked.\n- Use `workflow_create` to validate and save the final workflow definition.\n- Do not use `workflow_start` or manually execute workflow nodes.\n- Keep generated workflow nodes bounded, reusable, and explicit about `agent`, `prompt`, `mutates`, `depends_on`, `verification`, and `error_policy` when relevant.\n- After saving, report the workflow id, saved path, and how the user can run it later.\n"
+  },
+  {
     "id": "workflow-runner",
     "name": "Workflow Runner",
     "dir": "<package:workflow-runner>",
