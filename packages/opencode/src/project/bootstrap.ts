@@ -13,6 +13,7 @@ import { Snapshot } from "../snapshot"
 import { Truncate } from "../tool/truncation"
 import { runPromiseInstance } from "@/effect/runtime"
 import { SessionDelegation } from "@/session/delegation"
+import { SessionRecovery } from "@/session/recovery"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -25,6 +26,11 @@ export async function InstanceBootstrap() {
   Snapshot.init()
   Truncate.init()
   SessionDelegation.init()
+  SessionRecovery.mark().catch((err) => {
+    Log.Default.warn("session recovery scan failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  })
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {
