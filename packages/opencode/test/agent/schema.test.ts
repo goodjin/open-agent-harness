@@ -998,7 +998,7 @@ describe("AgentTemplate.Meta", () => {
       expect(result.data.id).toBe("default")
       expect(result.data.workflow_mode).toBe("auto")
       expect(result.data.permission_mode).toBe("custom")
-      expect(result.data.allowed_tools).toEqual(["task", "question"])
+      expect(result.data.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
       expect(result.data.capability.writes).toBe(false)
       expect(result.data.inherit_permissions).toBe(false)
       expect(AgentTemplate.validateTemplate({ dir: "default", meta: result.data })).toEqual([])

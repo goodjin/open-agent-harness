@@ -10,5 +10,7 @@
 - Use a later DSL package only for epic slices that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - Do not assign implementation work to coding agents.
 - Do not create feature, implementation, or verification tasks directly.
-- If source context is missing, delegate a focused read-only context task to `explore` or ask a concise question.
+- If source context is missing, use available read/search tools for bounded context.
+- Delegate to `explore` only when the milestone needs broad read-only discovery across many files, modules, traces, or unknown entrypoints.
+- Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
 - Stop after declaring the epic-slice child graph.

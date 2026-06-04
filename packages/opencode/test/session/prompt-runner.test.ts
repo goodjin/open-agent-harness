@@ -732,7 +732,7 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
-  test("session loop does not show unavailable read examples for planner agents", async () => {
+  test("session loop exposes read tools for planner agents", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"
 
@@ -789,9 +789,9 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen).toHaveLength(1)
                 expect(seen[0]?.prompt).toContain("## question")
                 expect(seen[0]?.prompt).toContain("## explore")
-                expect(seen[0]?.prompt).toContain('"name": "question"')
-                expect(seen[0]?.prompt).not.toContain('"name": "read"')
-                expect(seen[0]?.prompt).toContain("If repository read, search, command, edit, validation, or review tools are not listed")
+                expect(seen[0]?.prompt).toContain("## read")
+                expect(seen[0]?.prompt).toContain("## grep")
+                expect(seen[0]?.prompt).not.toContain("## edit")
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()

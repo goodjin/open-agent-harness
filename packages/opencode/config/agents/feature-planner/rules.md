@@ -10,5 +10,7 @@
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
 - Do not assign large feature work directly to implementation agents. Split it into smaller task calls first.
-- If source context is missing, delegate a focused read-only context task to `explore` or ask a concise question.
+- If source context is missing, use available read/search tools for bounded context.
+- Delegate to `explore` only when the feature needs broad read-only discovery across many files, modules, traces, or unknown entrypoints.
+- Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
 - Stop after declaring the execution and verification child graph.

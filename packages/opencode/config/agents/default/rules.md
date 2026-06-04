@@ -53,6 +53,8 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 - For the selected layer, declare all currently identifiable child units in one `kind: "act"` package.
 - Put every current-layer child unit in `calls[]`.
 - A decomposition is complete only when each required child unit has an agent target, bounded prompt, dependency policy, and result policy.
+- Use available read/search tools to understand bounded repository context before declaring a graph when the user's request depends on existing code or files.
+- Delegate to `explore` only when broad context discovery is large enough to be its own read-only task.
 - Use `depends` to express ordering.
 - Omit `depends` for independent calls so the Runtime can run them in parallel.
 - Include implementation, verification, review, documentation, migration, release, or operations calls in the same package when they are already required and their scope is known.

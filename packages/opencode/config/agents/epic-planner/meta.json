@@ -50,7 +50,7 @@
   "runtime_boundary": {
     "resource_classes": ["service.execute", "human.ask"],
     "actions": {
-      "allow": ["task", "question"],
+      "allow": ["task", "question", "filesystem.read", "code.search"],
       "deny": ["filesystem.write", "filesystem.execute"]
     }
   },
@@ -84,8 +84,8 @@
   },
   "runner": "protocol",
   "workflow_mode": "auto",
-  "allowed_tools": ["task", "question"],
-  "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
+  "allowed_tools": ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "bash", "todowrite"],
   "inherit_permissions": false,
   "permission_mode": "custom"
 }

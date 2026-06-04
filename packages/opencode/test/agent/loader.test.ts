@@ -53,11 +53,11 @@ describe("AgentTemplateLoader", () => {
       expect(agents.find((item) => item.id === "default")?.meta.runner).toBe("protocol")
     })
 
-    test("built-in default fallback keeps custom allowed tool policy", async () => {
+    test("built-in default fallback keeps custom planner tool policy", async () => {
       const registry = new AgentRegistry("/nonexistent/path", "/also/nonexistent")
       const agent = await registry.get("default")
       expect(agent?.meta.permission_mode).toBe("custom")
-      expect(agent?.meta.allowed_tools).toEqual(["task", "question"])
+      expect(agent?.meta.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
       expect(agent?.meta.inherit_permissions).toBe(false)
       expect(agent?.policy.rules).toContainEqual(
         expect.objectContaining({
@@ -83,7 +83,7 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.policy.rules).toContainEqual(
         expect.objectContaining({
           permission: "read",
-          action: "deny",
+          action: "allow",
           source: "agent",
         }),
       )
