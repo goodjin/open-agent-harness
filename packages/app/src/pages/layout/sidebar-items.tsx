@@ -18,7 +18,12 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { childSessionSummary, displaySessionTitle, hasProjectPermissions, sessionCompleted, sessionWorking } from "./helpers"
+import {
+  displaySessionTitle,
+  hasProjectPermissions,
+  sessionCompleted,
+  sessionWorking,
+} from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -46,36 +51,77 @@ const duration = (session: Session, messages: Message[] | undefined, working: bo
 
 const StatusBadge = (props: {
   label: Accessor<string>
+  status: Accessor<string | undefined>
+  isWaitingChild: Accessor<boolean>
   isWorking: Accessor<boolean>
   isPaused: Accessor<boolean>
   isDone: Accessor<boolean>
   hasError: Accessor<boolean>
   hasPermissions: Accessor<boolean>
   unseenCount: Accessor<number>
-}): JSX.Element => (
-  <div
-    class="relative shrink-0 size-5 rounded-full flex items-center justify-center border bg-background-base"
-    classList={{
-      "border-icon-info-active text-text-interactive-base": props.isWorking(),
-      "border-icon-warning-base text-icon-warning-base": props.isPaused() || props.hasPermissions(),
-      "border-icon-critical-base text-icon-critical-base": props.hasError(),
-      "border-text-diff-add-base text-text-diff-add-base": props.isDone(),
-      "border-border-weak-base text-text-weak": !props.isWorking() && !props.isPaused() && !props.hasPermissions() && !props.hasError() && !props.isDone(),
-    }}
-  >
-    <Show when={props.isWorking()}>
-      <span class="absolute inset-0 rounded-full border border-icon-info-active opacity-25 animate-ping motion-reduce:animate-none" />
-      <Spinner class="absolute size-4 opacity-30" />
-    </Show>
-    <span class="relative z-10 max-w-[18px] overflow-hidden text-center text-[7px] leading-none font-medium tabular-nums">
-      {props.label()}
-    </span>
-    <Show when={props.unseenCount() > 0 && !props.isWorking() && !props.isPaused() && !props.hasError() && !props.isDone()}>
-      <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-text-interactive-base" />
-    </Show>
-  </div>
-)
-
+}): JSX.Element => {
+  const queued = createMemo(() => props.status() === "rate_limited")
+  const retry = createMemo(() => props.status() === "retry")
+  const blocked = createMemo(() => props.hasPermissions() || props.status() === "blocked" || props.status() === "waiting_permission")
+  const waiting = createMemo(() => props.status() === "waiting_user")
+  const tip = createMemo(() => (props.isWaitingChild() ? "等待子会话完成" : props.label()))
+  return (
+    <Tooltip value={tip()} placement="top">
+      <div
+        class="relative shrink-0 size-5 rounded-full flex items-center justify-center border bg-background-base"
+        classList={{
+          "border-icon-info-active text-text-interactive-base": props.isWorking(),
+          "border-icon-warning-base text-icon-warning-base": props.isPaused() || queued() || retry() || props.isWaitingChild(),
+          "border-icon-critical-base text-icon-critical-base": props.hasError() || blocked(),
+          "border-text-diff-add-base text-text-diff-add-base": props.isDone(),
+          "border-border-weak-base text-text-weak": !props.isWorking() && !props.isPaused() && !queued() && !retry() && !props.isWaitingChild() && !props.hasPermissions() && !props.hasError() && !props.isDone(),
+        }}
+      >
+        <Show when={props.isWorking()}>
+          <span class="absolute inset-0 rounded-full border border-icon-info-active opacity-25 animate-ping motion-reduce:animate-none" />
+          <Spinner class="absolute size-4 opacity-40" />
+        </Show>
+        <Show when={props.isWorking() || props.isWaitingChild()}>
+          <span class="relative z-10 max-w-[18px] overflow-hidden text-center text-[7px] leading-none font-medium tabular-nums">
+            {props.label()}
+          </span>
+        </Show>
+        <Show when={!props.isWorking() && !props.isWaitingChild()}>
+          <Show when={props.hasError()} fallback={
+            <Show when={blocked()} fallback={
+              <Show when={queued()} fallback={
+                <Show when={retry()} fallback={
+                  <Show when={waiting()} fallback={
+                    <Show when={props.isWaitingChild()} fallback={
+                      <Show when={props.isDone()} fallback={<Icon name="dash" size="small" />}>
+                        <Icon name="check-small" size="small" />
+                      </Show>
+                    }>
+                      <Icon name="hourglass" size="small" class="animate-pulse motion-reduce:animate-none" />
+                    </Show>
+                  }>
+                    <Icon name="prompt" size="small" />
+                  </Show>
+                }>
+                  <Icon name="reset" size="small" class="animate-spin motion-reduce:animate-none" />
+                </Show>
+              }>
+                <Icon name="status" size="small" />
+              </Show>
+            }>
+              <Icon name="circle-ban-sign" size="small" />
+            </Show>
+          }>
+            <Icon name="circle-x" size="small" />
+          </Show>
+        </Show>
+        <Show when={props.unseenCount() > 0 && !props.isWorking() && !props.isPaused() && !props.hasError() && !props.isDone()}>
+          <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-text-interactive-base" />
+        </Show>
+      </div>
+    </Tooltip>
+  )
+}
 const filterLabel = (filter: Filter) => {
   if (filter === "running") return "运行中"
   if (filter === "ended") return "已结束"
@@ -125,13 +171,17 @@ export const SessionFilterBar = (props: {
   </div>
 )
 
-const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 40
+const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 38
 const row = (dense?: boolean) => (dense ? "24px" : "28px")
+const mid = (dense?: boolean) => (dense ? "12px" : "14px")
+const end = (dense?: boolean) => (dense ? "22px" : "24px")
+const drop = (dense?: boolean) => (dense ? "24px" : "28px")
 const line = { "background-color": "var(--border-base)" }
-const trunk = (first?: boolean, last?: boolean) => {
-  if (first && last) return { top: "1rem", height: "0px" }
-  if (last) return { top: "0", height: "1rem" }
-  return { top: first ? "1rem" : "0", bottom: "0" }
+const trunk = (dense?: boolean, first?: boolean, last?: boolean) => {
+  const top = mid(dense)
+  if (first && last) return { top, height: "0px" }
+  if (last) return { top: "0", height: top }
+  return { top: first ? top : "0", bottom: "0" }
 }
 
 const sessionFilter = (input: {
@@ -211,6 +261,8 @@ export type SessionItemProps = {
   filter?: Accessor<Filter | undefined>
   setExpanded?: (id: string, value: boolean) => void
   children: Map<string, string[]>
+  childSummary?: Map<string, { completed: number; total: number; working: number }>
+  collapseByDefault?: Accessor<boolean>
   sidebarExpanded: Accessor<boolean>
   sidebarHovering: Accessor<boolean>
   nav: Accessor<HTMLElement | undefined>
@@ -224,11 +276,13 @@ export type SessionItemProps = {
 const SessionRow = (props: {
   session: Session
   title: Accessor<string>
-  childSummary: Accessor<{ completed: number; total: number } | undefined>
+  childSummary: Accessor<{ completed: number; total: number; working: number } | undefined>
   slug: string
   mobile?: boolean
   dense?: boolean
   tint: Accessor<string | undefined>
+  status: Accessor<string | undefined>
+  isWaitingChild: Accessor<boolean>
   isWorking: Accessor<boolean>
   isPaused: Accessor<boolean>
   isDone: Accessor<boolean>
@@ -286,6 +340,8 @@ const SessionRow = (props: {
       <div class="flex items-center gap-1 w-full">
         <StatusBadge
           label={props.durationLabel}
+          status={props.status}
+          isWaitingChild={props.isWaitingChild}
           isWorking={props.isWorking}
           isPaused={props.isPaused}
           isDone={props.isDone}
@@ -378,8 +434,13 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     if (isPaused()) return false
     return sessionWorking(sessionStore.message[props.session.id], status())
   })
+  const childSummary = createMemo(() => {
+    const summary = props.childSummary?.get(props.session.id)
+    if (!summary || summary.total === 0) return
+    return summary
+  })
   const isDone = createMemo(() => {
-    if (hasPermissions() || isWorking() || hasError()) return false
+    if (hasPermissions() || isWorking() || hasError() || childSummary()?.working) return false
     return sessionCompleted(props.session, sessionStore.message[props.session.id], status())
   })
   createEffect(() => {
@@ -440,12 +501,14 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       .indexOf(props.session.id)
     return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
   })
-  const childSummary = createMemo(() => {
-    const children = childSessions()
-    return childSessionSummary(children, sessionStore.message, sessionStore.session_status)
-  })
+  const isWaitingChild = createMemo(() => !isWorking() && !hasError() && !hasPermissions() && !!childSummary()?.working)
   const canExpand = createMemo(() => childSessions().length > 0)
-  const expanded = createMemo(() => props.expanded?.()[props.session.id] !== false || !!props.lineage?.().has(props.session.id))
+  const expanded = createMemo(() => {
+    if (props.lineage?.().has(props.session.id)) return true
+    const value = props.expanded?.()[props.session.id]
+    if (props.collapseByDefault?.()) return value === true
+    return value !== false
+  })
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
   const copy = () => {
     void navigator.clipboard
@@ -495,6 +558,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     hoverPrefetch.current = undefined
   }
   const scheduleHoverPrefetch = () => {
+    if (props.collapseByDefault?.()) return
     warm(1, "high")
     if (hoverPrefetch.current !== undefined) return
     hoverPrefetch.current = setTimeout(() => {
@@ -519,6 +583,8 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       mobile={props.mobile}
       dense={props.dense}
       tint={tint}
+      status={() => status()?.type}
+      isWaitingChild={isWaitingChild}
       isWorking={isWorking}
       isPaused={isPaused}
       isDone={isDone}
@@ -550,10 +616,11 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       >
         <Show when={expanded() && filteredChildren().length > 0}>
           <div
-            class="pointer-events-none absolute top-4 z-10 w-px"
+            class="pointer-events-none absolute z-10 w-px"
             style={{
+              top: end(props.dense),
               left: `${treeX((props.depth ?? 0) + 1)}px`,
-              height: row(props.dense),
+              height: drop(props.dense),
               ...line,
             }}
           />
@@ -561,11 +628,11 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
         <Show when={props.session.parentID}>
           <div
             class="pointer-events-none absolute w-px"
-            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.first, props.last), ...line }}
+            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.dense, props.first, props.last), ...line }}
           />
           <div
-            class="pointer-events-none absolute top-4 h-px"
-            style={{ left: `${treeX(props.depth) - 17}px`, width: "17px", ...line }}
+            class="pointer-events-none absolute h-px"
+            style={{ top: mid(props.dense), left: `${treeX(props.depth) - 18}px`, width: "18px", ...line }}
           />
         </Show>
         <div
