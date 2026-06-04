@@ -574,6 +574,21 @@ export default function Layout(props: ParentProps) {
 
   createEffect(
     on(
+      () => [pageReady(), layoutReady(), params.dir] as const,
+      ([page, synced, dir]) => {
+        if (!page) return
+        if (!synced) return
+        if (!dir) return
+
+        const directory = decode64(dir)
+        if (!directory) return
+        layout.projects.open(directory)
+      },
+    ),
+  )
+
+  createEffect(
+    on(
       () => ({ ready: pageReady(), layoutReady: layoutReady(), dir: params.dir, list: layout.projects.list() }),
       (value) => {
         if (!value.ready) return

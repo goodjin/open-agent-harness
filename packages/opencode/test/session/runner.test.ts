@@ -1382,6 +1382,10 @@ describe("SessionRunner", () => {
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("technical-reviewer")
+              expect(inputs[0]?.model).toEqual({
+                providerID: ProviderID.make("openai"),
+                modelID: ModelID.make("gpt-5.2"),
+              })
               expect(inputs[1]?.agent).toBe("protocol-runner")
               expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(true)
               expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes('"action_id": "review_toolbar_buttons"'))).toBe(true)

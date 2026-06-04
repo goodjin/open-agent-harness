@@ -478,6 +478,7 @@ export namespace SessionRunner {
                 sessionID: input.sessionID,
                 messageID: input.chat.message.id,
                 abort: input.stream.abort,
+                model: input.stream.model,
               })
             : Promise.resolve(undefined),
     })
@@ -1525,6 +1526,7 @@ export namespace SessionRunner {
     sessionID: SessionID
     messageID: MessageID
     abort: AbortSignal
+    model: LLM.StreamInput["model"]
   }): Promise<AgentProtocolExecutor.ToolResult> {
     const selected = await fallback(input.action, input.parentAgent, "target_unavailable")
     if (!selected.ok) {
@@ -1637,6 +1639,10 @@ export namespace SessionRunner {
           SessionPrompt.prompt({
             sessionID: child.id,
             agent: selected.agent.name,
+            model: {
+              providerID: input.model.providerID,
+              modelID: input.model.id,
+            },
             parts,
           }))
         .then((msg) => SessionDelegation.finish({

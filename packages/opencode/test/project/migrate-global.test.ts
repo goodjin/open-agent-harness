@@ -113,6 +113,39 @@ describe("migrateFromGlobal", () => {
     expect(row!.project_id).toBe(project.id)
   })
 
+  test("migrates sessions from a previous parent project when the directory becomes its own project", async () => {
+    await using tmp = await tmpdir()
+    const child = `${tmp.path}/lowcode-ai`
+    await $`mkdir -p ${child}`.quiet()
+    await $`git init`.cwd(child).quiet()
+    await $`git config user.name "Test"`.cwd(child).quiet()
+    await $`git config user.email "test@opencode.test"`.cwd(child).quiet()
+
+    const old = ProjectID.make("local-old-parent-project")
+    Database.use((db) =>
+      db
+        .insert(ProjectTable)
+        .values({
+          id: old,
+          worktree: tmp.path,
+          time_created: Date.now(),
+          time_updated: Date.now(),
+          sandboxes: [],
+        })
+        .run(),
+    )
+
+    const id = uid()
+    seed({ id, dir: child, project: old })
+
+    const { project } = await Project.fromDirectory(child)
+    expect(project.id).not.toBe(old)
+
+    const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
+    expect(row).toBeDefined()
+    expect(row!.project_id).toBe(project.id)
+  })
+
   test("does not claim sessions with empty directory", async () => {
     await using tmp = await tmpdir({ git: true })
     const { project } = await Project.fromDirectory(tmp.path)
