@@ -1611,6 +1611,57 @@ test("getProvider returns provider info", async () => {
   })
 })
 
+test("provider defaults concurrency to 5", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    init: async () => {
+      Env.set("DEEPSEEK_API_KEY", "test-api-key")
+    },
+    fn: async () => {
+      const provider = await Provider.getProvider(ProviderID.make("deepseek"))
+      expect(provider?.concurrency).toBe(5)
+    },
+  })
+})
+
+test("provider config overrides default concurrency", async () => {
+  await using tmp = await tmpdir({
+    init: async (dir) => {
+      await Bun.write(
+        path.join(dir, "opencode.json"),
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            deepseek: {
+              concurrency: 2,
+              options: {
+                apiKey: "test-api-key",
+              },
+            },
+          },
+        }),
+      )
+    },
+  })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const provider = await Provider.getProvider(ProviderID.make("deepseek"))
+      expect(provider?.concurrency).toBe(2)
+    },
+  })
+})
+
 test("closest returns undefined when no partial match found", async () => {
   await using tmp = await tmpdir({
     init: async (dir) => {

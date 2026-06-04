@@ -882,12 +882,26 @@ export namespace Config {
 
   export const Provider = ModelsDev.Provider.partial()
     .extend({
+      concurrency: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally."),
       whitelist: z.array(z.string()).optional(),
       blacklist: z.array(z.string()).optional(),
       models: z
         .record(
           z.string(),
           ModelsDev.Model.partial().extend({
+            concurrency: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe(
+                "Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.",
+              ),
             variants: z
               .record(
                 z.string(),

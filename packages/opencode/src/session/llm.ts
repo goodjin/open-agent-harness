@@ -108,6 +108,17 @@ export namespace LLM {
     "The model-visible contract is the native `AgentProtocolOutput` tool schema.",
   ].join("\n")
 
+  function deepseek(model: Provider.Model) {
+    const id = `${model.providerID} ${model.api.id} ${model.family ?? ""}`.toLowerCase()
+    return model.capabilities.reasoning && id.includes("deepseek")
+  }
+
+  function choice(input: StreamInput): ToolChoice<ToolSet> | undefined {
+    if (input.agent.runner !== "protocol") return input.toolChoice
+    if (deepseek(input.model)) return undefined
+    return (input.toolChoice ?? { type: "tool", toolName: PROTOCOL_OUTPUT_TOOL }) as ToolChoice<ToolSet>
+  }
+
   export type StreamInput = {
     user: MessageV2.User
     sessionID: string
@@ -261,6 +272,9 @@ export namespace LLM {
             if (args.type === "stream" || args.type === "generate") {
               // @ts-expect-error
               args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+              if (input.agent.runner === "protocol" && deepseek(input.model)) {
+                delete (args.params as { toolChoice?: unknown }).toolChoice
+              }
             }
             return args.params
           },
@@ -315,7 +329,7 @@ export namespace LLM {
       providerOptions: ProviderTransform.providerOptions(input.model, params.options),
       activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
       tools,
-      toolChoice: input.agent.runner === "protocol" ? (input.toolChoice ?? { type: "tool", toolName: PROTOCOL_OUTPUT_TOOL }) as ToolChoice<ToolSet> : input.toolChoice,
+      toolChoice: choice(input),
       maxOutputTokens,
       abortSignal: input.abort,
       headers: {

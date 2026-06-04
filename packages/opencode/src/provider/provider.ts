@@ -719,6 +719,7 @@ export namespace Provider {
         input: z.number().optional(),
         output: z.number(),
       }),
+      concurrency: z.number().int().positive().optional(),
       status: z.enum(["alpha", "beta", "deprecated", "active"]),
       options: z.record(z.string(), z.any()),
       headers: z.record(z.string(), z.string()),
@@ -738,6 +739,7 @@ export namespace Provider {
       env: z.string().array(),
       key: z.string().optional(),
       options: z.record(z.string(), z.any()),
+      concurrency: z.number().int().positive().optional(),
       models: z.record(z.string(), Model),
     })
     .meta({
@@ -819,6 +821,7 @@ export namespace Provider {
       name: provider.name,
       env: provider.env ?? [],
       options: {},
+      concurrency: 5,
       models: mapValues(provider.models, (model) => fromModelsDevModel(provider, model)),
     }
   }
@@ -873,6 +876,7 @@ export namespace Provider {
         name: provider.name ?? existing?.name ?? providerID,
         env: provider.env ?? existing?.env ?? [],
         options: mergeDeep(existing?.options ?? {}, provider.options ?? {}),
+        concurrency: provider.concurrency ?? existing?.concurrency,
         source: "config",
         models: existing?.models ?? {},
       }
@@ -929,6 +933,7 @@ export namespace Provider {
             },
           },
           options: mergeDeep(mergeDeep(existingModel?.options ?? {}, model.options ?? {}), { configured: true }),
+          concurrency: model.concurrency ?? existingModel?.concurrency,
           limit: {
             context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
             output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
