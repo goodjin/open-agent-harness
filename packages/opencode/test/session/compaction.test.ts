@@ -260,7 +260,7 @@ describe("session.compaction.isOverflow", () => {
     })
   })
 
-  test("returns true for oversized minimax prompt bytes", async () => {
+  test("uses MiniMax model context instead of provider byte guard", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -272,7 +272,7 @@ describe("session.compaction.isOverflow", () => {
           messages: [{ role: "user", content: "message".repeat(260_000) }],
         })
 
-        expect(result).toBe(true)
+        expect(result).toBe(false)
       },
     })
   })

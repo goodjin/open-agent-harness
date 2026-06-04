@@ -29,8 +29,6 @@ export namespace SessionCompaction {
   }
 
   const COMPACTION_BUFFER = 20_000
-  const MINIMAX_PROMPT_BYTES = 1_500_000
-
   function usable(input: { model: Provider.Model }, reserved: number) {
     const context = input.model.limit.context
     return input.model.limit.input ? input.model.limit.input - reserved : context - ProviderTransform.maxOutputTokens(input.model)
@@ -55,11 +53,7 @@ export namespace SessionCompaction {
     if (config.compaction?.auto === false) return false
     if (input.model.limit.context === 0) return false
 
-    const json = JSON.stringify(input.messages)
-    const bytes = input.system.join("\n").length + json.length
-    if (input.model.providerID.toLowerCase().includes("minimax") && bytes >= MINIMAX_PROMPT_BYTES) return true
-
-    const count = Token.estimate(input.system.join("\n")) + Token.estimate(json)
+    const count = Token.estimate(input.system.join("\n")) + Token.estimate(JSON.stringify(input.messages))
     const reserved = config.compaction?.reserved ?? Math.min(COMPACTION_BUFFER, ProviderTransform.maxOutputTokens(input.model))
     return count >= usable(input, reserved)
   }
@@ -97,14 +91,44 @@ export namespace SessionCompaction {
               toPrune.push(part)
             }
           }
+        if (
+          part.type === "text" &&
+          part.metadata &&
+          typeof part.metadata === "object" &&
+          part.metadata.kind === "protocol_context" &&
+          part.text.length > 8000
+        ) {
+          const data = part.metadata.protocol
+          if (data && typeof data === "object" && "compacted" in data) break loop
+          const estimate = Token.estimate(part.text)
+          total += estimate
+          if (total > PRUNE_PROTECT) {
+            pruned += estimate
+            toPrune.push(part)
+          }
+        }
       }
     }
     log.info("found", { pruned, total })
     if (pruned > PRUNE_MINIMUM) {
       for (const part of toPrune) {
-        if (part.state.status === "completed") {
+        if (part.type === "tool" && part.state.status === "completed") {
           part.state.time.compacted = Date.now()
           await Session.updatePart(part)
+        }
+        if (part.type === "text") {
+          await Session.updatePart({
+            ...part,
+            text: `[Old protocol runtime transcript cleared: ${part.text.length} characters]`,
+            metadata: {
+              ...(part.metadata ?? {}),
+              protocol: {
+                compacted: true,
+                reason: "large protocol runtime transcript removed from model context",
+                original_bytes: part.text.length,
+              },
+            },
+          })
         }
       }
       log.info("pruned", { count: toPrune.length })

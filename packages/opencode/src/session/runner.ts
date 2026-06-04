@@ -367,11 +367,7 @@ export namespace SessionRunner {
       text: transcript(run),
       synthetic: true,
       ignored: true,
-      metadata: {
-        kind: "protocol_context",
-        action: run.status,
-        protocol: run,
-      },
+      metadata: context(run),
       time: { start: Date.now(), end: Date.now() },
     })
     await project(sessionID, run)
@@ -741,11 +737,7 @@ export namespace SessionRunner {
           text: transcript(run),
           synthetic: true,
           ignored: true,
-          metadata: {
-            kind: "protocol_context",
-            action: run.status,
-            protocol: run,
-          },
+          metadata: context(run),
           time: { start: Date.now(), end: Date.now() },
         })
         await project(sessionID, run)
@@ -1130,10 +1122,33 @@ export namespace SessionRunner {
       item.tool_call_ids.length ? `Artifacts: ${item.tool_call_ids.map((id) => `artifact://${id}`).join(", ")}` : "",
       "",
       "```md",
-      result,
+      clip(result),
       "```",
       "",
     ].filter((line) => line.length > 0)
+  }
+
+  function context(run: AgentProtocol.Result) {
+    return {
+      kind: "protocol_context",
+      action: run.status,
+      protocol: {
+        type: run.type,
+        version: run.version,
+        run_id: run.run_id,
+        status: run.status,
+        title: run.title,
+        metrics: run.metrics,
+        actions: run.actions.map((item) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status,
+          executor: item.executor,
+          output_bytes: (item.output ?? item.error ?? item.summary).length,
+          tool_call_ids: item.tool_call_ids,
+        })),
+      },
+    }
   }
 
   function visible(text: string, parsed: AgentProtocolParser.Parsed | undefined) {
@@ -1213,7 +1228,7 @@ export namespace SessionRunner {
           name: "agent_protocol_plan",
           type: "protocol",
           content_type: "application/vnd.agent-protocol+json",
-          content: run,
+          content: context(run).protocol,
           source: "protocol",
         },
       },
