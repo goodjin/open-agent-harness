@@ -21,6 +21,7 @@ Runtime 接受的重要事实、状态、产物、证据、交接记录和中间
 | 04 | [v2 持久化 Action Graph](04-v2-persistent-action-graph.md) | 定义 M1 的 Action Graph 存储、事件、投影重建和恢复边界。 |
 | 05 | [v2 Resource / Document Fabric](05-v2-resource-document-fabric.md) | 定义 M2 的资源索引、文档写入、会话 ref 边界和生命周期。 |
 | 06 | [v2 Agent Definition and Assignment](06-v2-agent-assignment.md) | 定义 M4 的 Agent Template、Routing、Assignment 和 Agent Session 合同。 |
+| 07 | [v2 Context Compiler](07-v2-context-compiler.md) | 定义 M3 的 Context Bundle、ref 展开模式、预算降级和预览解释。 |
 
 ## 与 v1 的关系
 

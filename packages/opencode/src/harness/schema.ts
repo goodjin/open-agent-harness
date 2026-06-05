@@ -164,6 +164,90 @@ export namespace Harness {
     .meta({ ref: "HarnessV2ContextObject" })
   export type ContextObject = z.infer<typeof ContextObject>
 
+  export const RefExpansionMode = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"]).meta({ ref: "HarnessRefExpansionMode" })
+  export type RefExpansionMode = z.infer<typeof RefExpansionMode>
+
+  export const ContextRecord = z
+    .object({
+      ref: Ref,
+      mode: RefExpansionMode,
+      visibility: Visibility,
+      summary: z.string(),
+      content: z.string(),
+      reason: z.string(),
+      tokens: z.number().int().nonnegative(),
+    })
+    .strict()
+    .meta({ ref: "HarnessContextRecord" })
+  export type ContextRecord = z.infer<typeof ContextRecord>
+
+  export const ContextExcludedRecord = z
+    .object({
+      ref: Ref,
+      mode: RefExpansionMode,
+      visibility: Visibility.optional(),
+      reason: z.string(),
+    })
+    .strict()
+    .meta({ ref: "HarnessContextExcludedRecord" })
+  export type ContextExcludedRecord = z.infer<typeof ContextExcludedRecord>
+
+  export const ContextBundle = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      assignment_id: z.string().optional(),
+      goal: z.string(),
+      user_input: z.string().default(""),
+      included: z.array(ContextRecord).default([]),
+      excluded: z.array(ContextExcludedRecord).default([]),
+      refs: z.array(Ref).default([]),
+      summary: z.string(),
+      token_budget: z.number().int().nonnegative(),
+      tokens_used: z.number().int().nonnegative(),
+      visibility: Visibility.default("project"),
+      created_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessContextBundle" })
+  export type ContextBundle = z.infer<typeof ContextBundle>
+
+  export const ContextCompileInput = z
+    .object({
+      run_id: z.string(),
+      assignment_id: z.string().optional(),
+      goal: z.string(),
+      user_input: z.string().default(""),
+      refs: z.array(Ref).default([]),
+      resource_refs: z.array(Ref).default([]),
+      handoff_refs: z.array(Ref).default([]),
+      memory_refs: z.array(Ref).default([]),
+      expansion: z.record(z.string(), RefExpansionMode).default({}),
+      token_budget: z.number().int().nonnegative().default(4000),
+      visibility: Visibility.default("project"),
+    })
+    .strict()
+    .meta({ ref: "HarnessContextCompileInput" })
+  export type ContextCompileInput = z.infer<typeof ContextCompileInput>
+
+  export const ContextPreview = z
+    .object({
+      bundle: ContextBundle,
+      explanations: z.array(
+        z
+          .object({
+            ref: Ref,
+            decision: z.enum(["included", "excluded"]),
+            mode: RefExpansionMode,
+            reason: z.string(),
+          })
+          .strict(),
+      ),
+    })
+    .strict()
+    .meta({ ref: "HarnessContextPreview" })
+  export type ContextPreview = z.infer<typeof ContextPreview>
+
   export const MemoryObject = Object.extend({
     category: z.literal("fact"),
     scope: z.enum(["run", "project", "team", "global"]),
@@ -698,6 +782,7 @@ export namespace Harness {
       actions: z.array(ActionRecord).default([]),
       edges: z.array(ActionEdge).default([]),
       resources: z.array(ResourceRecord).default([]),
+      contexts: z.array(ContextBundle).default([]),
       agent_sessions: z.array(AgentSessionRecord).default([]),
     })
     .strict()

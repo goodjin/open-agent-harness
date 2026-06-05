@@ -88,6 +88,26 @@ export namespace HarnessRuntime {
     return { low: 1, medium: 2, high: 3 }[input]
   }
 
+  function tokens(input: string) {
+    return Math.ceil(input.length / 4)
+  }
+
+  function resId(ref: string) {
+    if (!ref.startsWith("resource://")) return
+    return ref.slice("resource://".length)
+  }
+
+  function access(item: Harness.Visibility, ctx: Harness.Visibility) {
+    if (item === "public") return true
+    if (item === "team") return ctx === "team"
+    if (item === "project") return ctx === "project" || ctx === "team"
+    return ctx === "private"
+  }
+
+  function uniq(list: Harness.Ref[]) {
+    return [...new Set(list)]
+  }
+
   async function agents(run?: string) {
     const list = await HarnessStore.agentTemplates()
     if (run) await HarnessStore.projection(run, "agent-templates", list)
@@ -241,7 +261,7 @@ export namespace HarnessRuntime {
     return { assignment, session, template }
   }
 
-  export async function writeDocument(run: string, input: Harness.DocumentWrite) {
+  export async function writeDocument(run: string, input: z.input<typeof Harness.DocumentWrite>) {
     const payload = Harness.DocumentWrite.parse(input)
     const time = now()
     const rid = id("res")
@@ -310,6 +330,110 @@ export namespace HarnessRuntime {
     await HarnessStore.append(event("resource.tombstoned", { run, payload: { resource_id: id } }))
     await resources(run)
     return next
+  }
+
+  export async function compileContext(input: z.input<typeof Harness.ContextCompileInput>) {
+    const payload = Harness.ContextCompileInput.parse(input)
+    const time = now()
+    const refs = uniq([...payload.refs, ...payload.resource_refs, ...payload.handoff_refs, ...payload.memory_refs])
+    const seed = tokens(`${payload.goal}\n${payload.user_input}`)
+    const state = await refs.reduce(
+      async (prev, ref) => {
+        const acc = await prev
+        const mode = payload.expansion[ref] ?? "summary"
+        const deferred = mode === "on_demand" ? "deferred until on demand" : mode === "on_failure" ? "deferred until on failure" : undefined
+        if (deferred) {
+          return {
+            ...acc,
+            excluded: [...acc.excluded, Harness.ContextExcludedRecord.parse({ ref, mode, reason: deferred })],
+            explanations: [...acc.explanations, { ref, decision: "excluded" as const, mode, reason: deferred }],
+          }
+        }
+        const rid = resId(ref)
+        if (!rid) {
+          const text = `ref ${ref}`
+          const cost = tokens(text)
+          return {
+            ...acc,
+            used: acc.used + cost,
+            included: [
+              ...acc.included,
+              Harness.ContextRecord.parse({ ref, mode: "summary", visibility: payload.visibility, summary: text, content: text, reason: "non-resource ref kept as summary", tokens: cost }),
+            ],
+            explanations: [...acc.explanations, { ref, decision: "included" as const, mode: "summary" as const, reason: "non-resource ref kept as summary" }],
+          }
+        }
+        const data = await readResource(payload.run_id, rid)
+        if (!access(data.resource.visibility, payload.visibility)) {
+          const reason = `visibility ${data.resource.visibility} not available to ${payload.visibility}`
+          return {
+            ...acc,
+            excluded: [...acc.excluded, Harness.ContextExcludedRecord.parse({ ref, mode, visibility: data.resource.visibility, reason })],
+            explanations: [...acc.explanations, { ref, decision: "excluded" as const, mode, reason }],
+          }
+        }
+        const full = mode === "full" || mode === "adaptive"
+        const structured = JSON.stringify({ kind: data.resource.kind, summary: data.resource.summary, evidence: data.resource.evidence, uri: data.resource.uri })
+        const text = mode === "structured" ? structured : full ? data.body : data.resource.summary
+        const cost = tokens(text)
+        const sum = data.resource.summary
+        if (acc.used + cost <= payload.token_budget) {
+          return {
+            ...acc,
+            used: acc.used + cost,
+            included: [...acc.included, Harness.ContextRecord.parse({ ref, mode, visibility: data.resource.visibility, summary: sum, content: text, reason: `${mode} expansion selected`, tokens: cost })],
+            explanations: [...acc.explanations, { ref, decision: "included" as const, mode, reason: `${mode} expansion selected` }],
+          }
+        }
+        const low = tokens(sum)
+        if (acc.used + low <= payload.token_budget) {
+          return {
+            ...acc,
+            used: acc.used + low,
+            included: [
+              ...acc.included,
+              Harness.ContextRecord.parse({ ref, mode: "summary", visibility: data.resource.visibility, summary: sum, content: sum, reason: "downgraded by token budget", tokens: low }),
+            ],
+            explanations: [...acc.explanations, { ref, decision: "included" as const, mode: "summary" as const, reason: "downgraded by token budget" }],
+          }
+        }
+        return {
+          ...acc,
+          excluded: [...acc.excluded, Harness.ContextExcludedRecord.parse({ ref, mode, visibility: data.resource.visibility, reason: "token budget exceeded" })],
+          explanations: [...acc.explanations, { ref, decision: "excluded" as const, mode, reason: "token budget exceeded" }],
+        }
+      },
+      Promise.resolve({ used: seed, included: [] as Harness.ContextRecord[], excluded: [] as Harness.ContextExcludedRecord[], explanations: [] as Harness.ContextPreview["explanations"] }),
+    )
+    const bundle = Harness.ContextBundle.parse({
+      id: id("ctx"),
+      run_id: payload.run_id,
+      assignment_id: payload.assignment_id,
+      goal: payload.goal,
+      user_input: payload.user_input,
+      included: state.included,
+      excluded: state.excluded,
+      refs,
+      summary: state.included
+        .map((item) => item.summary)
+        .join("\n")
+        .slice(0, 600),
+      token_budget: payload.token_budget,
+      tokens_used: state.used,
+      visibility: payload.visibility,
+      created_at: time,
+    })
+    await HarnessStore.putContextBundle(bundle)
+    await HarnessStore.projection(payload.run_id, "context-preview", { bundle, explanations: state.explanations })
+    await HarnessStore.append(event("context.compiled", { run: payload.run_id, summary: bundle.summary, payload: { context_id: bundle.id, refs: refs.length } }))
+    return bundle
+  }
+
+  export async function previewContext(input: z.input<typeof Harness.ContextCompileInput>) {
+    const bundle = await compileContext(input)
+    const projections = await HarnessStore.projections(bundle.run_id)
+    const item = projections.find((next) => next.name === "context-preview")
+    return Harness.ContextPreview.parse(item?.data ?? { bundle, explanations: [] })
   }
 
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>

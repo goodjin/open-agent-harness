@@ -40,6 +40,10 @@ export namespace HarnessStore {
     return path.join(resourceDir(id), "body")
   }
 
+  function contextsDir(id: string) {
+    return path.join(runDir(id), "contexts")
+  }
+
   function templatesDir() {
     return path.join(govDir(), "agents", "templates")
   }
@@ -260,6 +264,14 @@ export namespace HarnessStore {
     return Bun.file(file).text()
   }
 
+  export async function contextBundles(id: string) {
+    return (await list(contextsDir(id), Harness.ContextBundle)).sort((a, b) => b.created_at - a.created_at)
+  }
+
+  export async function putContextBundle(item: Harness.ContextBundle) {
+    await write(path.join(contextsDir(item.run_id), `${item.id}.json`), item)
+  }
+
   export async function agentTemplates() {
     return (await list(templatesDir(), Harness.AgentTemplateRecord)).sort((a, b) => a.id.localeCompare(b.id))
   }
@@ -296,6 +308,7 @@ export namespace HarnessStore {
       actions: await actions(id),
       edges: await edges(id),
       resources: await resources(id),
+      contexts: await contextBundles(id),
       agent_sessions: await agentSessions(id),
     }
   }
