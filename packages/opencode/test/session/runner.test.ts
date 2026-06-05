@@ -107,7 +107,7 @@ describe("SessionRunner", () => {
           allow_partial: true,
         },
       },
-      result: SessionRunner.proof({
+      result: await SessionRunner.proof({
         type: "agent.protocol.result",
         version: "1",
         run_id: "apr_done",
@@ -133,6 +133,54 @@ describe("SessionRunner", () => {
 
     expect(done.status).toBe("completed")
     expect(done.completion.missing_evidence).toEqual([])
+  })
+
+  test("protocol proof caches large action output to disk", async () => {
+    const text = Array.from({ length: 2100 }, (_, i) => `line ${i}`).join("\n")
+    const result = await SessionRunner.proof({
+      type: "agent.protocol.result",
+      version: "1",
+      run_id: "apr_large",
+      status: "completed",
+      title: "large output",
+      actions: [
+        {
+          id: "a1",
+          title: "large command",
+          operation: "bash",
+          status: "completed",
+          executor: { type: "tool", target: "bash", capabilities: ["repo"] },
+          input: {},
+          summary: "large command completed",
+          output: text,
+          tool_call_ids: [],
+          duration_ms: 0,
+          time: {
+            started: Date.now(),
+            completed: Date.now(),
+          },
+        },
+      ],
+      summary: "large output completed",
+      time: {
+        started: Date.now(),
+        completed: Date.now(),
+      },
+      metrics: {
+        actions: 1,
+        internal_tool_calls: 1,
+        direct_model_tool_calls: 0,
+        model_visible_bytes: 0,
+        raw_output_bytes: text.length,
+        duration_ms: 0,
+      },
+    })
+
+    expect(result.content).toContain("Full output saved to:")
+    expect(result.content).not.toContain("[Output truncated:")
+    const match = result.content.match(/Full output saved to: (.+)/)
+    if (!match?.[1]) throw new Error("expected output path")
+    expect(await fs.readFile(match[1], "utf8")).toBe(text)
   })
 
   test("workflow runner executes a workflow run instead of chat processing", async () => {

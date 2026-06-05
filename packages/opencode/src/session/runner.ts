@@ -23,6 +23,7 @@ import { SessionPrompt } from "./prompt"
 import { defer } from "@/util/defer"
 import { SessionDelegation } from "./delegation"
 import { Storage } from "@/storage/storage"
+import { Truncate } from "@/tool/truncation"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -364,7 +365,7 @@ export namespace SessionRunner {
       messageID: chat.message.id,
       sessionID,
       type: "text",
-      text: transcript(run),
+      text: await transcript(run),
       synthetic: true,
       ignored: true,
       metadata: context(run),
@@ -380,7 +381,7 @@ export namespace SessionRunner {
         messageID: chat.message.id,
         sessionID,
         type: "text",
-        text: report(run),
+        text: await report(run),
         metadata: {
           kind: "protocol_summary",
           action: run.status,
@@ -557,7 +558,7 @@ export namespace SessionRunner {
       agent: input.agent,
       meta,
       results: [
-        proof(input.run),
+        await proof(input.run),
         ...input.run.actions.flatMap((item) =>
           item.output
             ? [
@@ -734,7 +735,7 @@ export namespace SessionRunner {
           messageID: processor.message.id,
           sessionID,
           type: "text",
-          text: transcript(run),
+          text: await transcript(run),
           synthetic: true,
           ignored: true,
           metadata: context(run),
@@ -747,7 +748,7 @@ export namespace SessionRunner {
             messageID: processor.message.id,
             sessionID,
             type: "text",
-            text: report(run),
+            text: await report(run),
             metadata: {
               kind: "protocol_summary",
               action: run.status,
@@ -1088,7 +1089,8 @@ export namespace SessionRunner {
     }
   }
 
-  function transcript(run: AgentProtocol.Result) {
+  async function transcript(run: AgentProtocol.Result) {
+    const calls = await Promise.all(run.actions.map((item) => call(item)))
     return [
       "## Assistant protocol request and runtime results",
       "",
@@ -1096,13 +1098,13 @@ export namespace SessionRunner {
       run.title ? `Purpose: ${run.title}` : "",
       `Status: ${run.status}`,
       "",
-      ...run.actions.flatMap((item) => call(item)),
+      ...calls.flat(),
     ]
       .filter((line) => line.length > 0)
       .join("\n")
   }
 
-  function call(item: AgentProtocol.ResultAction) {
+  async function call(item: AgentProtocol.ResultAction) {
     const args = JSON.stringify(item.input ?? {}, null, 2)
     const result = item.error ?? item.output ?? item.summary
     return [
@@ -1122,7 +1124,7 @@ export namespace SessionRunner {
       item.tool_call_ids.length ? `Artifacts: ${item.tool_call_ids.map((id) => `artifact://${id}`).join(", ")}` : "",
       "",
       "```md",
-      clip(result),
+      await clip(result),
       "```",
       "",
     ].filter((line) => line.length > 0)
@@ -1189,31 +1191,34 @@ export namespace SessionRunner {
       .join("\n")
   }
 
-  function report(run: AgentProtocol.Result) {
-    return [
-      `Protocol results: ${run.title ?? run.run_id}`,
-      `Status: ${run.status}`,
-      "",
-      ...run.actions.flatMap((item) => {
+  async function report(run: AgentProtocol.Result) {
+    const actions = await Promise.all(
+      run.actions.map(async (item) => {
         const out = item.error ?? item.output ?? item.summary
         return [
           `### ${item.title}`,
           `Agent: \`${item.executor.target}\``,
           `Status: ${item.status}`,
           "",
-          clip(out),
+          await clip(out),
           "",
         ]
       }),
+    )
+    return [
+      `Protocol results: ${run.title ?? run.run_id}`,
+      `Status: ${run.status}`,
+      "",
+      ...actions.flat(),
       `Run ID: ${run.run_id}`,
     ]
       .filter((item) => item.length > 0)
       .join("\n")
   }
 
-  export function proof(run: AgentProtocol.Result) {
+  export async function proof(run: AgentProtocol.Result) {
     return {
-      content: report(run),
+      content: await report(run),
       source: "protocol",
       metadata: {
         evidence: [
@@ -1235,9 +1240,8 @@ export namespace SessionRunner {
     }
   }
 
-  function clip(input: string) {
-    if (input.length <= 8000) return input
-    return `${input.slice(0, 8000)}\n\n[Output truncated: ${input.length - 8000} more characters]`
+  async function clip(input: string) {
+    return (await Truncate.output(input)).content
   }
 
   function delegated(run: AgentProtocol.Result) {
