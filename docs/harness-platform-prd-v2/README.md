@@ -20,6 +20,7 @@ Runtime 接受的重要事实、状态、产物、证据、交接记录和中间
 | 03 | [v2 核心对象模型](03-v2-core-object-model.md) | 定义 M0 的对象分类、共享元数据、引用协议和 v1 语义映射。 |
 | 04 | [v2 持久化 Action Graph](04-v2-persistent-action-graph.md) | 定义 M1 的 Action Graph 存储、事件、投影重建和恢复边界。 |
 | 05 | [v2 Resource / Document Fabric](05-v2-resource-document-fabric.md) | 定义 M2 的资源索引、文档写入、会话 ref 边界和生命周期。 |
+| 06 | [v2 Agent Definition and Assignment](06-v2-agent-assignment.md) | 定义 M4 的 Agent Template、Routing、Assignment 和 Agent Session 合同。 |
 
 ## 与 v1 的关系
 

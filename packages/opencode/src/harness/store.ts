@@ -40,6 +40,14 @@ export namespace HarnessStore {
     return path.join(resourceDir(id), "body")
   }
 
+  function templatesDir() {
+    return path.join(govDir(), "agents", "templates")
+  }
+
+  function sessionsDir(id: string) {
+    return path.join(runDir(id), "agent-sessions")
+  }
+
   async function exists(file: string) {
     return Filesystem.exists(file)
   }
@@ -252,6 +260,28 @@ export namespace HarnessStore {
     return Bun.file(file).text()
   }
 
+  export async function agentTemplates() {
+    return (await list(templatesDir(), Harness.AgentTemplateRecord)).sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  export async function putAgentTemplate(item: Harness.AgentTemplateRecord) {
+    await write(path.join(templatesDir(), `${item.id}.json`), item)
+  }
+
+  export async function agentTemplate(id: string) {
+    const file = path.join(templatesDir(), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.AgentTemplateRecord.parse(await Bun.file(file).json())
+  }
+
+  export async function agentSessions(id: string) {
+    return (await list(sessionsDir(id), Harness.AgentSessionRecord)).sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  export async function putAgentSession(item: Harness.AgentSessionRecord) {
+    await write(path.join(sessionsDir(item.run_id), `${item.id}.json`), item)
+  }
+
   export async function summary(id: string): Promise<Harness.Summary | undefined> {
     const item = await maybeRun(id)
     if (!item) return
@@ -266,6 +296,7 @@ export namespace HarnessStore {
       actions: await actions(id),
       edges: await edges(id),
       resources: await resources(id),
+      agent_sessions: await agentSessions(id),
     }
   }
 }

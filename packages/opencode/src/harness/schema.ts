@@ -175,6 +175,129 @@ export namespace Harness {
     .meta({ ref: "HarnessV2MemoryObject" })
   export type MemoryObject = z.infer<typeof MemoryObject>
 
+  export const AgentKind = z.enum(["planner", "worker", "verifier", "helper"]).meta({ ref: "HarnessAgentKind" })
+  export type AgentKind = z.infer<typeof AgentKind>
+
+  export const AgentEntry = z
+    .object({
+      primary: z.boolean().default(false),
+      delegable: z.boolean().default(true),
+      mentionable: z.boolean().default(true),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentEntry" })
+  export type AgentEntry = z.infer<typeof AgentEntry>
+
+  export const AgentCapability = z
+    .object({
+      tags: z.array(z.string()).default([]),
+      writes: z.boolean().default(false),
+      cost: z.enum(["low", "medium", "high"]).default("medium"),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentCapability" })
+  export type AgentCapability = z.infer<typeof AgentCapability>
+
+  export const AgentPermission = z
+    .object({
+      tools: z.array(z.string()).default([]),
+      scopes: z.array(z.enum(["private", "project", "team", "public"])).default(["project"]),
+      write: z.boolean().default(false),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentPermission" })
+  export type AgentPermission = z.infer<typeof AgentPermission>
+
+  export const AgentTemplateRecord = z
+    .object({
+      id: z.string(),
+      identity: z.string(),
+      kind: AgentKind,
+      entry: AgentEntry,
+      capability: AgentCapability,
+      permission: AgentPermission,
+      model_preference: z
+        .object({
+          provider: z.string(),
+          model: z.string(),
+        })
+        .strict()
+        .optional(),
+      execution_mode: z.enum(["chat", "workflow", "protocol"]).default("chat"),
+      relationships: z
+        .object({
+          supervises: z.array(z.string()).default([]),
+          peers: z.array(z.string()).default([]),
+        })
+        .strict(),
+      orchestration_policy: z
+        .object({
+          max_parallel: z.number().int().min(1).default(1),
+          review_required: z.boolean().default(false),
+        })
+        .strict(),
+      availability: z.enum(["available", "busy", "disabled"]).default("available"),
+      created_at: z.number().default(0),
+      updated_at: z.number().default(0),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentTemplateRecord" })
+  export type AgentTemplateRecord = z.infer<typeof AgentTemplateRecord>
+
+  export const AgentSessionRecord = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      template_id: z.string(),
+      assignment_id: z.string(),
+      action_id: z.string(),
+      authority: z.record(z.string(), z.unknown()).default({}),
+      context_summary: z.string(),
+      trace_refs: z.array(Ref).default([]),
+      status: z.enum(["pending", "running", "completed", "failed", "cancelled"]).default("pending"),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentSessionRecord" })
+  export type AgentSessionRecord = z.infer<typeof AgentSessionRecord>
+
+  export const AgentRoute = z
+    .object({
+      entry: z.enum(["primary", "delegable", "mentionable"]),
+      capability: z.array(z.string()).default([]),
+      permission: z
+        .object({
+          write: z.boolean().optional(),
+          scopes: z.array(z.enum(["private", "project", "team", "public"])).default([]),
+        })
+        .strict()
+        .default({ scopes: [] }),
+      budget: z
+        .object({
+          max_cost: z.enum(["low", "medium", "high"]).default("high"),
+        })
+        .strict()
+        .default({ max_cost: "high" }),
+      projection: z.record(z.string(), z.unknown()).default({}),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentRoute" })
+  export type AgentRoute = z.infer<typeof AgentRoute>
+
+  export const AgentAssignmentInput = z
+    .object({
+      action_id: z.string(),
+      template_id: z.string(),
+      role: z.string().default("agent"),
+      authority: z.record(z.string(), z.unknown()).default({}),
+      context_summary: z.string(),
+      trace_refs: z.array(Ref).default([]),
+    })
+    .strict()
+    .meta({ ref: "HarnessAgentAssignmentInput" })
+  export type AgentAssignmentInput = z.infer<typeof AgentAssignmentInput>
+
   export const WorkflowObject = Object.extend({
     category: z.literal("policy"),
     version: z.number().int().min(1),
@@ -575,6 +698,7 @@ export namespace Harness {
       actions: z.array(ActionRecord).default([]),
       edges: z.array(ActionEdge).default([]),
       resources: z.array(ResourceRecord).default([]),
+      agent_sessions: z.array(AgentSessionRecord).default([]),
     })
     .strict()
     .meta({ ref: "HarnessSummary" })

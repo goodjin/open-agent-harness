@@ -1,3 +1,4 @@
+import z from "zod"
 import { Harness } from "./schema"
 import { HarnessStore } from "./store"
 
@@ -83,6 +84,16 @@ export namespace HarnessRuntime {
     return list
   }
 
+  function cost(input: "low" | "medium" | "high") {
+    return { low: 1, medium: 2, high: 3 }[input]
+  }
+
+  async function agents(run?: string) {
+    const list = await HarnessStore.agentTemplates()
+    if (run) await HarnessStore.projection(run, "agent-templates", list)
+    return list
+  }
+
   async function refresh(run: Harness.Run) {
     const tasks = await HarnessStore.tasks(run.id)
     const decisions = await HarnessStore.decisions(run.id)
@@ -140,6 +151,94 @@ export namespace HarnessRuntime {
     await HarnessStore.append(event("run.created", { run: run.id, actor: "user", summary: run.goal, payload: input }))
     await HarnessStore.append(event("task.created", { run: run.id, summary: task.title, payload: { task_id: task.id } }))
     return refresh(run)
+  }
+
+  export async function putAgentTemplate(input: z.input<typeof Harness.AgentTemplateRecord>) {
+    const time = now()
+    const item = Harness.AgentTemplateRecord.parse({
+      ...input,
+      created_at: input.created_at || time,
+      updated_at: time,
+    })
+    await HarnessStore.putAgentTemplate(item)
+    return item
+  }
+
+  export async function agentTemplates() {
+    return agents()
+  }
+
+  export async function routeAgents(input: Harness.AgentRoute) {
+    const route = Harness.AgentRoute.parse(input)
+    const list = await agents()
+    const excluded: { id: string; reason: string }[] = []
+    const candidates = list.filter((item) => {
+      if (!item.entry[route.entry]) {
+        excluded.push({ id: item.id, reason: "entry unavailable" })
+        return false
+      }
+      if (item.availability !== "available") {
+        excluded.push({ id: item.id, reason: "unavailable" })
+        return false
+      }
+      if (route.capability.length && !route.capability.every((tag) => item.capability.tags.includes(tag))) {
+        excluded.push({ id: item.id, reason: "capability mismatch" })
+        return false
+      }
+      if (route.permission.write !== undefined && item.permission.write !== route.permission.write) {
+        excluded.push({ id: item.id, reason: "permission mismatch" })
+        return false
+      }
+      if (route.permission.scopes.length && !route.permission.scopes.every((scope) => item.permission.scopes.includes(scope))) {
+        excluded.push({ id: item.id, reason: "scope mismatch" })
+        return false
+      }
+      if (cost(item.capability.cost) > cost(route.budget.max_cost)) {
+        excluded.push({ id: item.id, reason: "budget exceeded" })
+        return false
+      }
+      return true
+    })
+    return { candidates, excluded, projection: route.projection }
+  }
+
+  export async function assignAgent(run: string, input: Harness.AgentAssignmentInput) {
+    const payload = Harness.AgentAssignmentInput.parse(input)
+    const template = await HarnessStore.agentTemplate(payload.template_id)
+    if (!template) throw new Error(`Agent template not found: ${payload.template_id}`)
+    const action = await HarnessStore.action(run, payload.action_id)
+    if (!action) throw new Error(`Action not found: ${payload.action_id}`)
+    if (action.type !== "agent") throw new Error(`Action is not agent type: ${payload.action_id}`)
+    const time = now()
+    const assignment = Harness.Assignment.parse({
+      id: id("assign"),
+      task_id: action.id,
+      actor: template.id,
+      role: payload.role,
+      status: "pending",
+      capabilities: template.capability.tags,
+      authority: payload.authority,
+      context: payload.context_summary,
+      updated_at: time,
+    })
+    const session = Harness.AgentSessionRecord.parse({
+      id: id("agent-session"),
+      run_id: run,
+      template_id: template.id,
+      assignment_id: assignment.id,
+      action_id: action.id,
+      authority: payload.authority,
+      context_summary: payload.context_summary,
+      trace_refs: payload.trace_refs,
+      status: "pending",
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putAssignment(run, assignment)
+    await HarnessStore.putAgentSession(session)
+    await HarnessStore.append(event("agent.assigned", { run, actor: template.id, summary: action.title, payload: { assignment_id: assignment.id, session_id: session.id, action_id: action.id } }))
+    await HarnessStore.projection(run, "agent-sessions", await HarnessStore.agentSessions(run))
+    return { assignment, session, template }
   }
 
   export async function writeDocument(run: string, input: Harness.DocumentWrite) {
