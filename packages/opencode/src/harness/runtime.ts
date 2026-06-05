@@ -112,6 +112,12 @@ export namespace HarnessRuntime {
     return uniq([...(input.resource_refs ?? []), input.projection_ref, input.trace_ref, input.context_ref].filter((item): item is Harness.Ref => Boolean(item)))
   }
 
+  async function accepted(run: string, ref: Harness.Ref) {
+    const list = (await HarnessStore.acceptance(run)).filter((item) => item.target.ref === ref && item.required)
+    if (!list.length) return false
+    return list.every((item) => item.result === "approved" || item.result === "waived")
+  }
+
   async function agents(run?: string) {
     const list = await HarnessStore.agentTemplates()
     if (run) await HarnessStore.projection(run, "agent-templates", list)
@@ -490,6 +496,82 @@ export namespace HarnessRuntime {
     }
   }
 
+  export function acceptancePolicy(input: z.input<typeof Harness.AcceptancePolicyInput>) {
+    const payload = Harness.AcceptancePolicyInput.parse(input)
+    const level: Harness.AcceptanceLevel =
+      payload.sample_rate > 0
+        ? "sampled"
+        : payload.risk === "high" && payload.artifact_type === "code" && payload.permission === "write"
+          ? "combined"
+          : payload.risk === "high" || payload.side_effects.includes("external_service") || payload.resource_scope === "team"
+            ? "human"
+            : payload.artifact_type === "handoff" || payload.agent_kind === "verifier"
+              ? "agent"
+              : payload.artifact_type === "code" || payload.criteria.some((item) => item.toLowerCase().includes("test"))
+                ? "test"
+                : payload.criteria.length
+                  ? "auto"
+                  : "none"
+    return Harness.AcceptancePolicy.parse({
+      level,
+      required: level !== "none",
+      checks: payload.criteria,
+      reviewer: level === "agent" ? "verifier" : level === "human" ? "owner" : undefined,
+    })
+  }
+
+  async function acceptState(run: string) {
+    const list = await HarnessStore.acceptance(run)
+    await HarnessStore.projection(run, "acceptance-state", list)
+    return list
+  }
+
+  export async function bindAcceptance(run: string, input: z.input<typeof Harness.AcceptanceBind>) {
+    const payload = Harness.AcceptanceBind.parse(input)
+    const time = now()
+    const item = Harness.AcceptanceRecord.parse({
+      id: id("accept"),
+      run_id: run,
+      target: payload.target,
+      criteria: payload.criteria,
+      policy: payload.policy,
+      required: payload.required,
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putAcceptance(item)
+    await HarnessStore.append(event("acceptance.bound", { run, summary: payload.target.ref, payload: { acceptance_id: item.id, target: payload.target.ref } }))
+    await acceptState(run)
+    return item
+  }
+
+  export async function recordAcceptance(run: string, aid: string, input: z.input<typeof Harness.AcceptanceResultInput>) {
+    const payload = Harness.AcceptanceResultInput.parse(input)
+    const item = await HarnessStore.acceptanceRecord(run, aid)
+    if (!item) throw new Error(`Acceptance not found: ${aid}`)
+    const next = Harness.AcceptanceRecord.parse({ ...item, ...payload, updated_at: now() })
+    await HarnessStore.putAcceptance(next)
+    if (payload.result === "changes_requested") {
+      await HarnessStore.putAssignment(
+        run,
+        Harness.Assignment.parse({
+          id: id("assign"),
+          task_id: next.target.ref,
+          actor: payload.reviewer ?? "runtime",
+          role: "repair",
+          status: "pending",
+          capabilities: ["repair"],
+          authority: {},
+          context: payload.reason ?? "changes requested",
+          updated_at: next.updated_at,
+        }),
+      )
+    }
+    await HarnessStore.append(event(`acceptance.${payload.result}`, { run, actor: payload.reviewer, summary: payload.reason, payload: { acceptance_id: aid, target: next.target.ref, evidence: payload.evidence } }))
+    await acceptState(run)
+    return next
+  }
+
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
   export function command(input: Harness.Command & { type: "resource.tombstone" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord }>
   export function command(input: Harness.Command): Promise<Harness.Run>
@@ -519,6 +601,7 @@ export namespace HarnessRuntime {
     }
     if (input.type === "action.accept") {
       const payload = Harness.ActionAccept.parse(input.payload)
+      if (payload.status === "completed" && payload.criteria.length && !(await accepted(run.id, `action://${payload.id}`))) throw new Error(`Acceptance gate required: action://${payload.id}`)
       const item = await record(run)
       const key = payload.idempotency_key
       const found = key ? (await HarnessStore.actions(run.id)).find((next) => next.idempotency_key === key) : undefined

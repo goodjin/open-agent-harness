@@ -467,6 +467,90 @@ export namespace Harness {
     .meta({ ref: "HarnessHandoffContextInput" })
   export type HandoffContextInput = z.infer<typeof HandoffContextInput>
 
+  export const AcceptanceLevel = z.enum(["none", "auto", "test", "agent", "human", "combined", "sampled"]).meta({ ref: "HarnessAcceptanceLevel" })
+  export type AcceptanceLevel = z.infer<typeof AcceptanceLevel>
+
+  export const AcceptanceGateResult = z
+    .enum(["approved", "changes_requested", "needs_evidence", "needs_user_decision", "blocked", "waived"])
+    .meta({ ref: "HarnessAcceptanceGateResult" })
+  export type AcceptanceGateResult = z.infer<typeof AcceptanceGateResult>
+
+  export const AcceptanceTarget = z
+    .object({
+      type: z.enum(["run", "action_graph", "action", "assignment", "workflow_node", "resource"]),
+      ref: Ref,
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptanceTarget" })
+  export type AcceptanceTarget = z.infer<typeof AcceptanceTarget>
+
+  export const AcceptancePolicy = z
+    .object({
+      level: AcceptanceLevel,
+      checks: z.array(z.string()).default([]),
+      required: z.boolean().default(true),
+      reviewer: z.string().optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptancePolicy" })
+  export type AcceptancePolicy = z.infer<typeof AcceptancePolicy>
+
+  export const AcceptanceRecord = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      target: AcceptanceTarget,
+      criteria: z.array(z.string()).default([]),
+      policy: AcceptancePolicy,
+      required: z.boolean().default(true),
+      result: AcceptanceGateResult.optional(),
+      evidence: z.array(Ref).default([]),
+      reason: z.string().optional(),
+      reviewer: z.string().optional(),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptanceRecord" })
+  export type AcceptanceRecord = z.infer<typeof AcceptanceRecord>
+
+  export const AcceptanceBind = z
+    .object({
+      target: AcceptanceTarget,
+      criteria: z.array(z.string()).default([]),
+      policy: AcceptancePolicy,
+      required: z.boolean().default(true),
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptanceBind" })
+  export type AcceptanceBind = z.infer<typeof AcceptanceBind>
+
+  export const AcceptancePolicyInput = z
+    .object({
+      criteria: z.array(z.string()).default([]),
+      risk: z.enum(["low", "medium", "high"]).default("medium"),
+      side_effects: z.array(z.string()).default([]),
+      resource_scope: Visibility.optional(),
+      artifact_type: z.string().optional(),
+      agent_kind: AgentKind.optional(),
+      permission: z.enum(["read", "write"]).default("read"),
+      sample_rate: z.number().min(0).max(1).default(0),
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptancePolicyInput" })
+  export type AcceptancePolicyInput = z.infer<typeof AcceptancePolicyInput>
+
+  export const AcceptanceResultInput = z
+    .object({
+      result: AcceptanceGateResult,
+      evidence: z.array(Ref).default([]),
+      reason: z.string().optional(),
+      reviewer: z.string().optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessAcceptanceResultInput" })
+  export type AcceptanceResultInput = z.infer<typeof AcceptanceResultInput>
+
   export const WorkflowObject = Object.extend({
     category: z.literal("policy"),
     version: z.number().int().min(1),
@@ -870,6 +954,7 @@ export namespace Harness {
       contexts: z.array(ContextBundle).default([]),
       agent_sessions: z.array(AgentSessionRecord).default([]),
       handoffs: z.array(HandoffRecord).default([]),
+      acceptance: z.array(AcceptanceRecord).default([]),
     })
     .strict()
     .meta({ ref: "HarnessSummary" })
