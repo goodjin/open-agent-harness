@@ -28,6 +28,18 @@ export namespace HarnessStore {
     return path.join(graphDir(id), "actions")
   }
 
+  function resourceDir(id: string) {
+    return path.join(runDir(id), "resources")
+  }
+
+  function indexDir(id: string) {
+    return path.join(resourceDir(id), "index")
+  }
+
+  function bodyDir(id: string) {
+    return path.join(resourceDir(id), "body")
+  }
+
   async function exists(file: string) {
     return Filesystem.exists(file)
   }
@@ -216,6 +228,30 @@ export namespace HarnessStore {
     await write(path.join(graphDir(run), "edges.json"), z.array(Harness.ActionEdge).parse(list))
   }
 
+  export async function resources(id: string) {
+    return (await list(indexDir(id), Harness.ResourceRecord)).sort((a, b) => b.updated_at - a.updated_at)
+  }
+
+  export async function resource(run: string, id: string) {
+    const file = path.join(indexDir(run), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.ResourceRecord.parse(await Bun.file(file).json())
+  }
+
+  export async function putResource(item: Harness.ResourceRecord) {
+    await write(path.join(indexDir(item.run_id), `${item.id}.json`), item)
+  }
+
+  export async function putBody(run: string, id: string, body: string) {
+    await Filesystem.write(path.join(bodyDir(run), `${id}.txt`), enc.encode(body))
+  }
+
+  export async function body(run: string, id: string) {
+    const file = path.join(bodyDir(run), `${id}.txt`)
+    if (!(await exists(file))) return
+    return Bun.file(file).text()
+  }
+
   export async function summary(id: string): Promise<Harness.Summary | undefined> {
     const item = await maybeRun(id)
     if (!item) return
@@ -229,6 +265,7 @@ export namespace HarnessStore {
       graph: await actionGraph(id),
       actions: await actions(id),
       edges: await edges(id),
+      resources: await resources(id),
     }
   }
 }

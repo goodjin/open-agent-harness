@@ -65,6 +65,81 @@ export namespace Harness {
     .meta({ ref: "HarnessV2ResourceObject" })
   export type ResourceObject = z.infer<typeof ResourceObject>
 
+  export const ResourceKind = z
+    .enum(["tool_output", "model_long_output", "review_report", "test_report", "research_note", "handoff_state", "context_snapshot", "document"])
+    .meta({ ref: "HarnessResourceKind" })
+  export type ResourceKind = z.infer<typeof ResourceKind>
+
+  export const ResourceRecord = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      kind: ResourceKind,
+      uri: Ref,
+      summary: z.string(),
+      producer: Producer,
+      source_action: z.string().optional(),
+      visibility: Visibility.default("project"),
+      evidence: z.array(Ref).default([]),
+      lifecycle: Lifecycle.default("active"),
+      media_type: z.string().default("text/plain"),
+      size: z.number().int().min(0),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessResourceRecord" })
+  export type ResourceRecord = z.infer<typeof ResourceRecord>
+
+  export const DocumentWrite = z
+    .object({
+      kind: ResourceKind.default("document"),
+      title: z.string(),
+      body: z.string(),
+      media_type: z.string().default("text/plain"),
+      summary: z.string().optional(),
+      producer: Producer,
+      source_action: z.string().optional(),
+      visibility: Visibility.default("project"),
+      evidence: z.array(Ref).default([]),
+      threshold: z.number().int().min(0).default(4000),
+      redact: z.array(z.string()).default([]),
+    })
+    .strict()
+    .meta({ ref: "HarnessDocumentWrite" })
+  export type DocumentWrite = z.infer<typeof DocumentWrite>
+
+  export const ResourceSessionPart = z
+    .object({
+      type: z.literal("resource_ref"),
+      title: z.string(),
+      summary: z.string(),
+      ref: Ref,
+      next: z.array(z.string()).default([]),
+    })
+    .strict()
+    .meta({ ref: "HarnessResourceSessionPart" })
+  export type ResourceSessionPart = z.infer<typeof ResourceSessionPart>
+
+  export const ResourceRead = z
+    .object({
+      resource: ResourceRecord,
+      body: z.string(),
+    })
+    .strict()
+    .meta({ ref: "HarnessResourceRead" })
+  export type ResourceRead = z.infer<typeof ResourceRead>
+
+  export const ResourcePreview = z
+    .object({
+      resource: ResourceRecord,
+      preview: z.string(),
+      truncated: z.boolean(),
+    })
+    .strict()
+    .meta({ ref: "HarnessResourcePreview" })
+  export type ResourcePreview = z.infer<typeof ResourcePreview>
+
   export const ContextObject = Object.extend({
     category: z.literal("context"),
     target: z.string(),
@@ -467,6 +542,8 @@ export namespace Harness {
         "action.accept",
         "action.cancel",
         "action.retry",
+        "resource.write",
+        "resource.tombstone",
         "task.retry",
         "task.cancel",
         "decision.answer",
@@ -497,6 +574,7 @@ export namespace Harness {
       graph: ActionGraph.optional(),
       actions: z.array(ActionRecord).default([]),
       edges: z.array(ActionEdge).default([]),
+      resources: z.array(ResourceRecord).default([]),
     })
     .strict()
     .meta({ ref: "HarnessSummary" })

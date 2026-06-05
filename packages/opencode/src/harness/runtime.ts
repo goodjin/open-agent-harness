@@ -73,6 +73,16 @@ export namespace HarnessRuntime {
     return out
   }
 
+  function brief(input: Harness.DocumentWrite) {
+    return input.summary ?? `${input.title}: ${input.body.slice(0, 120)}${input.body.length > 120 ? "..." : ""}`
+  }
+
+  async function resources(run: string) {
+    const list = await HarnessStore.resources(run)
+    await HarnessStore.projection(run, "resource-index", list)
+    return list
+  }
+
   async function refresh(run: Harness.Run) {
     const tasks = await HarnessStore.tasks(run.id)
     const decisions = await HarnessStore.decisions(run.id)
@@ -132,6 +142,80 @@ export namespace HarnessRuntime {
     return refresh(run)
   }
 
+  export async function writeDocument(run: string, input: Harness.DocumentWrite) {
+    const payload = Harness.DocumentWrite.parse(input)
+    const time = now()
+    const rid = id("res")
+    const res = Harness.ResourceRecord.parse({
+      id: rid,
+      run_id: run,
+      kind: payload.kind,
+      uri: `resource://${rid}`,
+      summary: brief(payload),
+      producer: payload.producer,
+      source_action: payload.source_action,
+      visibility: payload.visibility,
+      evidence: payload.evidence,
+      lifecycle: "active",
+      media_type: payload.media_type,
+      size: payload.body.length,
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putResource(res)
+    await HarnessStore.putBody(run, res.id, payload.body)
+    await HarnessStore.append(event("resource.written", { run, actor: payload.producer.id, summary: res.summary, payload: { resource_id: res.id, source_action: res.source_action } }))
+    await resources(run)
+    return {
+      resource: res,
+      session: Harness.ResourceSessionPart.parse({
+        type: "resource_ref",
+        title: payload.title,
+        summary: res.summary,
+        ref: res.uri,
+        next: payload.body.length > payload.threshold ? ["preview", "full_read", "redacted_export"] : ["full_read"],
+      }),
+    }
+  }
+
+  export async function readResource(run: string, id: string) {
+    const resource = await HarnessStore.resource(run, id)
+    if (!resource) throw new Error(`Resource not found: ${id}`)
+    const body = await HarnessStore.body(run, id)
+    if (body === undefined) throw new Error(`Resource body not found: ${id}`)
+    return Harness.ResourceRead.parse({ resource, body })
+  }
+
+  export async function previewResource(run: string, id: string) {
+    const data = await readResource(run, id)
+    return Harness.ResourcePreview.parse({
+      resource: data.resource,
+      preview: data.body.slice(0, 240),
+      truncated: data.body.length > 240,
+    })
+  }
+
+  export async function exportResource(run: string, id: string, format: "redacted") {
+    const data = await readResource(run, id)
+    if (format !== "redacted") throw new Error(`Unsupported export: ${format}`)
+    return {
+      resource: data.resource,
+      body: data.body.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/g, "[redacted-email]"),
+    }
+  }
+
+  export async function tombstoneResource(run: string, id: string) {
+    const data = await readResource(run, id)
+    const next = Harness.ResourceRecord.parse({ ...data.resource, lifecycle: "tombstoned", updated_at: now() })
+    await HarnessStore.putResource(next)
+    await HarnessStore.append(event("resource.tombstoned", { run, payload: { resource_id: id } }))
+    await resources(run)
+    return next
+  }
+
+  export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
+  export function command(input: Harness.Command & { type: "resource.tombstone" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord }>
+  export function command(input: Harness.Command): Promise<Harness.Run>
   export async function command(input: Harness.Command) {
     if (input.type === "run.create") return create(Harness.CreateRun.parse(input.payload))
     if (!input.run_id) throw new Error("run_id is required")
@@ -194,6 +278,21 @@ export namespace HarnessRuntime {
       await HarnessStore.append(event(input.type.replace(".", "_"), { run: run.id, actor: input.actor, payload: { action_id: act.id } }))
       await project(run.id)
       return refresh(run)
+    }
+    if (input.type === "resource.write") {
+      const out = await writeDocument(run.id, Harness.DocumentWrite.parse(input.payload))
+      return {
+        run: await refresh(run),
+        resource: out.resource,
+        session: out.session,
+      }
+    }
+    if (input.type === "resource.tombstone" && input.payload.id) {
+      const resource = await tombstoneResource(run.id, String(input.payload.id))
+      return {
+        run: await refresh(run),
+        resource,
+      }
     }
     if ((input.type === "task.retry" || input.type === "task.cancel" || input.type === "verify.rerun") && input.task_id) {
       const task = await HarnessStore.task(run.id, input.task_id)
