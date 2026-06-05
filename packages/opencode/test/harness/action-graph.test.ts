@@ -60,6 +60,7 @@ describe("harness persistent action graph", () => {
         const projection = await HarnessRuntime.actionGraph(run.id)
         const events = await HarnessStore.events(run.id)
 
+        if (!("id" in next)) throw new Error("Expected run result")
         expect(next.id).toBe(run.id)
         expect(graph?.run_id).toBe(run.id)
         expect(list).toHaveLength(1)

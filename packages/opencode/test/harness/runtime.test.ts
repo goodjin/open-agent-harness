@@ -67,6 +67,7 @@ describe("harness runtime", () => {
         const audit = await HarnessRuntime.exportAudit(run.id, "markdown")
         const rebuild = await HarnessRuntime.rebuild(run.id)
 
+        if (!("id" in next)) throw new Error("Expected run result")
         expect(next.id).toBe(run.id)
         expect(list).toHaveLength(1)
         expect(list[0]?.new_information).toBe("The endpoint now returns settlement status.")
