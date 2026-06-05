@@ -1,6 +1,134 @@
 import z from "zod"
 
 export namespace Harness {
+  export const SchemaVersion = z.literal("v2.0").meta({ ref: "HarnessV2SchemaVersion" })
+  export type SchemaVersion = z.infer<typeof SchemaVersion>
+
+  export const ObjectCategory = z.enum(["fact", "view", "evidence", "resource", "context", "policy"]).meta({ ref: "HarnessV2ObjectCategory" })
+  export type ObjectCategory = z.infer<typeof ObjectCategory>
+
+  export const Visibility = z.enum(["private", "project", "team", "public"]).meta({ ref: "HarnessV2Visibility" })
+  export type Visibility = z.infer<typeof Visibility>
+
+  export const Lifecycle = z.enum(["draft", "active", "archived", "tombstoned"]).meta({ ref: "HarnessV2Lifecycle" })
+  export type Lifecycle = z.infer<typeof Lifecycle>
+
+  export const Producer = z
+    .object({
+      type: z.enum(["runtime", "model", "tool", "agent", "user", "system", "import"]),
+      id: z.string(),
+      run_id: z.string().optional(),
+      action_id: z.string().optional(),
+      session_id: z.string().optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessV2Producer" })
+  export type Producer = z.infer<typeof Producer>
+
+  export const RefKind = z
+    .enum(["resource", "document", "artifact", "action", "handoff", "trace", "projection", "memory", "snapshot"])
+    .meta({ ref: "HarnessV2RefKind" })
+  export type RefKind = z.infer<typeof RefKind>
+
+  export const Ref = z
+    .string()
+    .regex(/^(resource|document|artifact|action|handoff|trace|projection|memory|snapshot):\/\/[A-Za-z0-9._~:/-]+$/)
+    .meta({ ref: "HarnessV2Ref" })
+  export type Ref = z.infer<typeof Ref>
+
+  export const Object = z
+    .object({
+      id: z.string(),
+      schema_version: SchemaVersion.default("v2.0"),
+      category: ObjectCategory,
+      kind: z.string(),
+      producer: Producer,
+      visibility: Visibility,
+      lifecycle: Lifecycle.default("active"),
+      created_at: z.number(),
+      updated_at: z.number(),
+      refs: z.array(Ref).default([]),
+      summary: z.string().optional(),
+      data: z.record(z.string(), z.unknown()).default({}),
+    })
+    .strict()
+    .meta({ ref: "HarnessV2Object" })
+  export type Object = z.infer<typeof Object>
+
+  export const ResourceObject = Object.extend({
+    category: z.literal("resource"),
+    uri: z.string(),
+    media_type: z.string().optional(),
+    evidence: z.array(Ref).default([]),
+  })
+    .strict()
+    .meta({ ref: "HarnessV2ResourceObject" })
+  export type ResourceObject = z.infer<typeof ResourceObject>
+
+  export const ContextObject = Object.extend({
+    category: z.literal("context"),
+    target: z.string(),
+    included: z.array(Ref).default([]),
+    excluded: z
+      .array(
+        z
+          .object({
+            ref: Ref,
+            reason: z.string(),
+          })
+          .strict(),
+      )
+      .default([]),
+    budget: z
+      .object({
+        tokens: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+    .strict()
+    .meta({ ref: "HarnessV2ContextObject" })
+  export type ContextObject = z.infer<typeof ContextObject>
+
+  export const MemoryObject = Object.extend({
+    category: z.literal("fact"),
+    scope: z.enum(["run", "project", "team", "global"]),
+    namespace: z.string(),
+    status: z.enum(["candidate", "current", "historical", "superseded", "rejected"]).default("candidate"),
+    evidence: z.array(Ref).default([]),
+  })
+    .strict()
+    .meta({ ref: "HarnessV2MemoryObject" })
+  export type MemoryObject = z.infer<typeof MemoryObject>
+
+  export const WorkflowObject = Object.extend({
+    category: z.literal("policy"),
+    version: z.number().int().min(1),
+    nodes: z.array(Ref).default([]),
+    criteria: z.array(z.string()).default([]),
+  })
+    .strict()
+    .meta({ ref: "HarnessV2WorkflowObject" })
+  export type WorkflowObject = z.infer<typeof WorkflowObject>
+
+  export const PolicyObject = Object.extend({
+    category: z.literal("policy"),
+    rules: z.array(z.record(z.string(), z.string())).default([]),
+  })
+    .strict()
+    .meta({ ref: "HarnessV2PolicyObject" })
+  export type PolicyObject = z.infer<typeof PolicyObject>
+
+  export const V1Mapping = z
+    .object({
+      artifact: z.array(ObjectCategory),
+      context: z.array(ObjectCategory),
+      memory: z.array(ObjectCategory),
+      workflow: z.array(ObjectCategory),
+    })
+    .strict()
+    .meta({ ref: "HarnessV2V1Mapping" })
+  export type V1Mapping = z.infer<typeof V1Mapping>
+
   export const Status = z
     .enum(["drafting", "ready", "running", "paused", "blocked", "reviewing", "verifying", "reworking", "completed", "failed", "aborted"])
     .meta({ ref: "HarnessRunStatus" })
