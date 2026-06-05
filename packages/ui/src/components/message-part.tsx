@@ -55,6 +55,7 @@ import { ToolStatusTitle } from "./tool-status-title"
 import { animate } from "motion"
 import { useLocation } from "@solidjs/router"
 import { attached, inline, kind } from "./message-file"
+import { limitTextLines } from "./message-line-limit"
 import { partView, type PartView } from "./message-part-view"
 import { protocolMeta, protocolText } from "./message-part-protocol"
 
@@ -241,6 +242,28 @@ function createThrottledValue(getValue: () => string) {
   })
 
   return value
+}
+
+function LimitedText(props: { text: string; children: (text: () => string) => JSX.Element }) {
+  const i18n = useI18n()
+  const [open, setOpen] = createSignal(false)
+  const view = createMemo(() => limitTextLines(props.text))
+  const text = createMemo(() => (open() ? props.text : view().text))
+
+  return (
+    <>
+      <Show when={!open() && view().hidden > 0}>
+        <button type="button" data-component="message-line-limit" onClick={() => setOpen(true)}>
+          {i18n.t("ui.messagePart.lineLimit.notice", { hidden: view().hidden, limit: view().limit })}
+        </button>
+      </Show>
+      {props.children(text)}
+    </>
+  )
+}
+
+function LimitedMarkdown(props: { text: string; cacheKey?: string }) {
+  return <LimitedText text={props.text}>{(text) => <Markdown text={text()} cacheKey={props.cacheKey} />}</LimitedText>
 }
 
 function relativizeProjectPath(path: string, directory?: string) {
@@ -534,6 +557,7 @@ export function AssistantParts(props: {
   showReasoningSummaries?: boolean
   shellToolDefaultOpen?: boolean
   editToolDefaultOpen?: boolean
+  filter?: "all" | "thinking" | "input" | "output" | "tool"
   actions?: UserActions
 }) {
   const data = useData()
@@ -552,6 +576,14 @@ export function AssistantParts(props: {
       groupParts(
         props.messages.flatMap((message) =>
           list(data.store.part?.[message.id], emptyParts)
+            .filter((part) => {
+              const filter = props.filter ?? "all"
+              if (filter === "all") return true
+              if (filter === "thinking") return part.type === "reasoning"
+              if (filter === "output") return part.type === "text"
+              if (filter === "tool") return part.type === "tool"
+              return false
+            })
             .filter((part) => displayable(part, props.showReasoningSummaries ?? true))
             .map((part) => ({
               messageID: message.id,
@@ -1198,7 +1230,7 @@ function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { ki
         </Collapsible.Trigger>
         <Collapsible.Content>
           <div data-component="collapsed-model-output">
-            <Markdown text={text()} cacheKey={props.part.id} />
+            <LimitedMarkdown text={text()} cacheKey={props.part.id} />
           </div>
         </Collapsible.Content>
       </Collapsible>
@@ -1552,7 +1584,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
           when={workflow()}
           fallback={
             <div data-slot="text-part-body">
-              <Markdown text={throttledText()} cacheKey={part().id} />
+              <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
             </div>
           }
         >
@@ -1604,7 +1636,7 @@ PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
   return (
     <Show when={throttledText()}>
       <div data-component="reasoning-part">
-        <Markdown text={throttledText()} cacheKey={part().id} />
+        <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
       </div>
     </Show>
   )
@@ -1662,7 +1694,7 @@ ToolRegistry.register({
       >
         <Show when={props.output}>
           <div data-component="tool-output" data-scrollable>
-            <Markdown text={props.output!} />
+            <LimitedMarkdown text={props.output!} />
           </div>
         </Show>
       </BasicTool>
@@ -1686,7 +1718,7 @@ ToolRegistry.register({
       >
         <Show when={props.output}>
           <div data-component="tool-output" data-scrollable>
-            <Markdown text={props.output!} />
+            <LimitedMarkdown text={props.output!} />
           </div>
         </Show>
       </BasicTool>
@@ -1713,7 +1745,7 @@ ToolRegistry.register({
       >
         <Show when={props.output}>
           <div data-component="tool-output" data-scrollable>
-            <Markdown text={props.output!} />
+            <LimitedMarkdown text={props.output!} />
           </div>
         </Show>
       </BasicTool>
@@ -1995,9 +2027,13 @@ ToolRegistry.register({
             </Tooltip>
           </div>
           <div data-slot="bash-scroll" data-scrollable>
-            <pre data-slot="bash-pre">
-              <code>{text()}</code>
-            </pre>
+            <LimitedText text={text()}>
+              {(value) => (
+                <pre data-slot="bash-pre">
+                  <code>{value()}</code>
+                </pre>
+              )}
+            </LimitedText>
           </div>
         </div>
       </BasicTool>
@@ -2061,9 +2097,13 @@ ToolRegistry.register({
         }}
       >
         <div data-component="protocol-output" data-scrollable>
-          <pre>
-            <code>{text()}</code>
-          </pre>
+          <LimitedText text={text()}>
+            {(value) => (
+              <pre>
+                <code>{value()}</code>
+              </pre>
+            )}
+          </LimitedText>
         </div>
       </BasicTool>
     )

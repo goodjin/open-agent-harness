@@ -1,5 +1,5 @@
 import { Installation } from "@/installation"
-import { Provider } from "@/provider/provider"
+import { DEFAULT_REQUEST_TIMEOUT, Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
 import {
   streamText,
@@ -25,6 +25,8 @@ import { PermissionNext } from "@/permission/next"
 import { Auth } from "@/auth"
 import type { RuntimeTools } from "./runtime-tools"
 import { AgentProtocol } from "@/protocol/schema"
+import { LLMConcurrency } from "./llm-concurrency"
+import type { SessionID } from "./schema"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -36,7 +38,7 @@ export namespace LLM {
     "Call `AgentProtocolOutput` exactly once.",
     "Use the current flat shape only: `{ kind, message, calls }`.",
     "Never wrap the protocol package in an `input` field; the native tool arguments themselves are exactly `{ kind, message, calls }`.",
-    "For runtime work use `kind: \"act\"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.",
+    'For runtime work use `kind: "act"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.',
   ].join("\n")
   const PROTOCOL_TURN_REMINDER = [
     "Based on all turns above, decide the next step.",
@@ -49,20 +51,20 @@ export namespace LLM {
     "You have exactly one native tool available: `AgentProtocolOutput`.",
     "Call `AgentProtocolOutput` exactly once every assistant turn to submit the next flat protocol package.",
     "Every turn must end by making this native tool call. There are no exceptions.",
-    "If you only need to answer the user, call `AgentProtocolOutput` with `kind: \"answer\"` and put the answer in `message`.",
+    'If you only need to answer the user, call `AgentProtocolOutput` with `kind: "answer"` and put the answer in `message`.',
     "",
     "Input contract:",
-    "- Conversation input is a sequence of turns. Treat each `<turn role=\"...\">...</turn>` as one prior user, assistant, or runtime turn.",
+    '- Conversation input is a sequence of turns. Treat each `<turn role="...">...</turn>` as one prior user, assistant, or runtime turn.',
     "- User turn input: ordinary user text, optionally with prior conversation context. It does not contain runtime results by itself.",
-    "- Runtime turn input: a `<turn role=\"runtime\" source=\"agent-protocol\">...</turn>` contains structured Markdown observations produced by the protocol runtime.",
+    '- Runtime turn input: a `<turn role="runtime" source="agent-protocol">...</turn>` contains structured Markdown observations produced by the protocol runtime.',
     "- Available tool input: the stable system prefix includes an `Available Protocol Tools` catalog. Use it to choose concrete tool ids and JSON argument schemas.",
     "- These input terms describe the conversation and tool catalog. They are not a field named `input` in the `AgentProtocolOutput` call.",
     "",
     "Decision rule:",
     "- Always reason from the input turns, then decide the next protocol kind yourself.",
-    "- Use `kind: \"act\"` when runtime tool calls are needed: project inspection, file reads, command execution, summarization from repo state, code review, or edits.",
-    "- Use `kind: \"answer\"` when you have enough information to show a user-facing answer.",
-    "- Use `kind: \"done\"` only when the current turn is complete and there is no user-facing content to add.",
+    '- Use `kind: "act"` when runtime tool calls are needed: project inspection, file reads, command execution, summarization from repo state, code review, or edits.',
+    '- Use `kind: "answer"` when you have enough information to show a user-facing answer.',
+    '- Use `kind: "done"` only when the current turn is complete and there is no user-facing content to add.',
     "",
     "Output contract:",
     "- Do not write the protocol package as text, Markdown, XML, code fences, or provider-specific invocation syntax.",
@@ -73,7 +75,7 @@ export namespace LLM {
     "- Never print JSON for the protocol; JSON belongs only inside the native tool call arguments.",
     "- For runtime work, use `calls`: each item has required `id`, `type`, `name`, and optional `args`, `depends`, `result`, `title`.",
     "- A single tool call is still represented as a one-item `calls` array.",
-    "- For `kind: \"answer\"` or `kind: \"done\"`, do not include `calls`; put user-visible Markdown in `message`.",
+    '- For `kind: "answer"` or `kind: "done"`, do not include `calls`; put user-visible Markdown in `message`.',
     "- You must never output fake tool output or fake runtime summaries.",
     "",
     "Forbidden output:",
@@ -89,7 +91,7 @@ export namespace LLM {
     "- `calls[].type`: `tool` or `agent`.",
     "- `calls[].name`: for `tool`, one concrete tool id from the Available Protocol Tools catalog; never use `auto`. For `agent`, use a concrete agent id or `auto`.",
     "- `calls[].args`: for `tool`, the exact JSON argument object required by the selected tool schema; for `agent`, the delegation input.",
-    "- For subagent delegation, always use `type: \"agent\"`; do not use `type: \"tool\"` with `name: \"task\"`.",
+    '- For subagent delegation, always use `type: "agent"`; do not use `type: "tool"` with `name: "task"`.',
     "- `depends`: optional call id or call id array that must finish first.",
     "- `result`: optional result policy: `summary`, `full`, `structured`, `on_failure`, `on_demand`, or `adaptive`; default is `summary`.",
     "",
@@ -121,7 +123,7 @@ export namespace LLM {
 
   export type StreamInput = {
     user: MessageV2.User
-    sessionID: string
+    sessionID: SessionID
     model: Provider.Model
     agent: Agent.Info
     permission?: PermissionNext.Ruleset
@@ -136,9 +138,13 @@ export namespace LLM {
     structuredOutput?: boolean
   }
 
-  export type StreamOutput = StreamTextResult<ToolSet, unknown>
+  export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: () => void; touch?: () => void }
 
-  export function compose(input: Pick<StreamInput, "agent" | "model" | "system" | "user" | "runtimeTools" | "structuredOutput"> & { isCodex: boolean }) {
+  export function compose(
+    input: Pick<StreamInput, "agent" | "model" | "system" | "user" | "runtimeTools" | "structuredOutput"> & {
+      isCodex: boolean
+    },
+  ) {
     const protocol = input.agent.runner === "protocol" || input.structuredOutput === true
     const prompt = protocol
       ? [input.agent.prompt, PROTOCOL, input.runtimeTools?.prompt].filter((item) => item).join("\n\n")
@@ -156,7 +162,7 @@ export namespace LLM {
     return [parts.join("\n")]
   }
 
-  export async function stream(input: StreamInput) {
+  export async function stream(input: StreamInput): Promise<StreamOutput> {
     const l = log
       .clone()
       .tag("providerID", input.model.providerID)
@@ -176,196 +182,226 @@ export namespace LLM {
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    let release: (() => void) | undefined
 
-    const system = compose({ ...input, isCodex })
+    try {
+      const system = compose({ ...input, isCodex })
 
-    const header = system[0]
-    // rejoin to maintain 2-part structure for caching if header unchanged
-    if (system.length > 2 && system[0] === header) {
-      const rest = system.slice(1)
-      system.length = 0
-      system.push(header, rest.join("\n"))
-    }
+      const header = system[0]
+      // rejoin to maintain 2-part structure for caching if header unchanged
+      if (system.length > 2 && system[0] === header) {
+        const rest = system.slice(1)
+        system.length = 0
+        system.push(header, rest.join("\n"))
+      }
 
-    const variant =
-      !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
-    const base = input.small
-      ? ProviderTransform.smallOptions(input.model)
-      : ProviderTransform.options({
-          model: input.model,
-          sessionID: input.sessionID,
-          providerOptions: provider.options,
-        })
-    const options: Record<string, any> = pipe(
-      base,
-      mergeDeep(input.model.options),
-      mergeDeep(input.agent.options),
-      mergeDeep(variant),
-    )
-    if (isCodex) {
-      options.instructions = SystemPrompt.instructions()
-    }
-
-    const params = {
-      temperature: input.model.capabilities.temperature
-        ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
-        : undefined,
-      topP: input.agent.topP ?? ProviderTransform.topP(input.model),
-      topK: ProviderTransform.topK(input.model),
-      options,
-    }
-
-    const maxOutputTokens =
-      isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
-
-    const tools: ToolSet = input.agent.runner === "protocol"
-      ? {
-          [PROTOCOL_OUTPUT_TOOL]: tool({
-            description: "Submit exactly one Agent Protocol package to the runtime. This is the only allowed tool for protocol-runner.",
-            inputSchema: jsonSchema(ProviderTransform.schema(input.model, AgentProtocol.OutputSchema as never) as never),
-            execute: async () => ({
-              output: "Agent Protocol package received.",
-              title: "Agent Protocol Output",
-              metadata: { protocol: true },
-            }),
-          }),
-          invalid: tool({
-            description: "Internal protocol violation sink. Do not call.",
-            inputSchema: z.object({
-              tool: z.string(),
-              error: z.string(),
-            }),
-            execute: async (args) => ({
-              title: "Invalid Protocol Tool Call",
-              output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in a calls[] item with type "tool", name "${args.tool}", and args matching that tool. ${args.error}`,
-              metadata: { protocol: true, violation: "direct_tool_call", tool: args.tool },
-            }),
-          }),
-        }
-      : await resolveTools(input)
-
-    // LiteLLM and some Anthropic proxies require the tools parameter to be present
-    // when message history contains tool calls, even if no tools are being used.
-    // Add a dummy tool that is never called to satisfy this validation.
-    // This is enabled for:
-    // 1. Providers with "litellm" in their ID or API ID (auto-detected)
-    // 2. Providers with explicit "litellmProxy: true" option (opt-in for custom gateways)
-    const isLiteLLMProxy =
-      provider.options?.["litellmProxy"] === true ||
-      input.model.providerID.toLowerCase().includes("litellm") ||
-      input.model.api.id.toLowerCase().includes("litellm")
-
-    if (isLiteLLMProxy && Object.keys(tools).length === 0 && hasToolCalls(input.messages)) {
-      tools["_noop"] = tool({
-        description:
-          "Placeholder for LiteLLM/Anthropic proxy compatibility - required when message history contains tool calls but no active tools are needed",
-        inputSchema: jsonSchema({ type: "object", properties: {} }),
-        execute: async () => ({ output: "", title: "", metadata: {} }),
+      const variant =
+        !input.small && input.model.variants && input.user.variant ? input.model.variants[input.user.variant] : {}
+      const base = input.small
+        ? ProviderTransform.smallOptions(input.model)
+        : ProviderTransform.options({
+            model: input.model,
+            sessionID: input.sessionID,
+            providerOptions: provider.options,
+          })
+      const options: Record<string, any> = pipe(
+        base,
+        mergeDeep(input.model.options),
+        mergeDeep(input.agent.options),
+        mergeDeep(variant),
+      )
+      if (isCodex) {
+        options.instructions = SystemPrompt.instructions()
+      }
+      const timeout =
+        options["timeout"] === false
+          ? false
+          : typeof options["timeout"] === "number"
+            ? options["timeout"]
+            : DEFAULT_REQUEST_TIMEOUT
+      release = await LLMConcurrency.acquire({
+        model: input.model,
+        provider,
+        sessionID: input.sessionID,
+        abort: input.abort,
+        timeout,
       })
-    }
 
-    const model = wrapLanguageModel({
-      model: language,
-      middleware: [
-        {
-          async transformParams(args) {
-            if (args.type === "stream" || args.type === "generate") {
-              // @ts-expect-error
-              args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
-              if (input.agent.runner === "protocol" && deepseek(input.model)) {
-                delete (args.params as { toolChoice?: unknown }).toolChoice
+      const params = {
+        temperature: input.model.capabilities.temperature
+          ? (input.agent.temperature ?? ProviderTransform.temperature(input.model))
+          : undefined,
+        topP: input.agent.topP ?? ProviderTransform.topP(input.model),
+        topK: ProviderTransform.topK(input.model),
+        options,
+      }
+
+      const maxOutputTokens =
+        isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
+
+      const tools: ToolSet =
+        input.agent.runner === "protocol"
+          ? {
+              [PROTOCOL_OUTPUT_TOOL]: tool({
+                description:
+                  "Submit exactly one Agent Protocol package to the runtime. This is the only allowed tool for protocol-runner.",
+                inputSchema: jsonSchema(
+                  ProviderTransform.schema(input.model, AgentProtocol.OutputSchema as never) as never,
+                ),
+                execute: async () => ({
+                  output: "Agent Protocol package received.",
+                  title: "Agent Protocol Output",
+                  metadata: { protocol: true },
+                }),
+              }),
+              invalid: tool({
+                description: "Internal protocol violation sink. Do not call.",
+                inputSchema: z.object({
+                  tool: z.string(),
+                  error: z.string(),
+                }),
+                execute: async (args) => ({
+                  title: "Invalid Protocol Tool Call",
+                  output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in a calls[] item with type "tool", name "${args.tool}", and args matching that tool. ${args.error}`,
+                  metadata: { protocol: true, violation: "direct_tool_call", tool: args.tool },
+                }),
+              }),
+            }
+          : await resolveTools(input)
+
+      // LiteLLM and some Anthropic proxies require the tools parameter to be present
+      // when message history contains tool calls, even if no tools are being used.
+      // Add a dummy tool that is never called to satisfy this validation.
+      // This is enabled for:
+      // 1. Providers with "litellm" in their ID or API ID (auto-detected)
+      // 2. Providers with explicit "litellmProxy: true" option (opt-in for custom gateways)
+      const isLiteLLMProxy =
+        provider.options?.["litellmProxy"] === true ||
+        input.model.providerID.toLowerCase().includes("litellm") ||
+        input.model.api.id.toLowerCase().includes("litellm")
+
+      if (isLiteLLMProxy && Object.keys(tools).length === 0 && hasToolCalls(input.messages)) {
+        tools["_noop"] = tool({
+          description:
+            "Placeholder for LiteLLM/Anthropic proxy compatibility - required when message history contains tool calls but no active tools are needed",
+          inputSchema: jsonSchema({ type: "object", properties: {} }),
+          execute: async () => ({ output: "", title: "", metadata: {} }),
+        })
+      }
+
+      const model = wrapLanguageModel({
+        model: language,
+        middleware: [
+          {
+            async transformParams(args) {
+              if (args.type === "stream" || args.type === "generate") {
+                // @ts-expect-error
+                args.params.prompt = ProviderTransform.message(args.params.prompt, input.model, options)
+                if (input.agent.runner === "protocol" && deepseek(input.model)) {
+                  delete (args.params as { toolChoice?: unknown }).toolChoice
+                }
+              }
+              return args.params
+            },
+          },
+        ],
+      })
+
+      const result = streamText({
+        onError(error) {
+          l.error("stream error", {
+            error,
+          })
+        },
+        async experimental_repairToolCall(failed) {
+          if (input.agent.runner === "protocol" && failed.toolCall.toolName !== PROTOCOL_OUTPUT_TOOL) {
+            const fixed = protocol(
+              failed.toolCall.toolName,
+              failed.toolCall.input,
+              failed.error.message,
+              input.runtimeTools,
+            )
+            if (fixed) {
+              l.warn("recovering direct protocol tool call", {
+                tool: failed.toolCall.toolName,
+                repaired: PROTOCOL_OUTPUT_TOOL,
+              })
+              return {
+                ...failed.toolCall,
+                toolName: PROTOCOL_OUTPUT_TOOL,
+                input: JSON.stringify(fixed),
               }
             }
-            return args.params
-          },
-        },
-      ],
-    })
-
-    return streamText({
-      onError(error) {
-        l.error("stream error", {
-          error,
-        })
-      },
-      async experimental_repairToolCall(failed) {
-        if (input.agent.runner === "protocol" && failed.toolCall.toolName !== PROTOCOL_OUTPUT_TOOL) {
-          const fixed = protocol(failed.toolCall.toolName, failed.toolCall.input, failed.error.message, input.runtimeTools)
-          if (fixed) {
-            l.warn("recovering direct protocol tool call", {
+          }
+          const lower = failed.toolCall.toolName.toLowerCase()
+          if (lower !== failed.toolCall.toolName && tools[lower]) {
+            l.info("repairing tool call", {
               tool: failed.toolCall.toolName,
-              repaired: PROTOCOL_OUTPUT_TOOL,
+              repaired: lower,
             })
             return {
               ...failed.toolCall,
-              toolName: PROTOCOL_OUTPUT_TOOL,
-              input: JSON.stringify(fixed),
+              toolName: lower,
             }
           }
-        }
-        const lower = failed.toolCall.toolName.toLowerCase()
-        if (lower !== failed.toolCall.toolName && tools[lower]) {
-          l.info("repairing tool call", {
-            tool: failed.toolCall.toolName,
-            repaired: lower,
-          })
           return {
             ...failed.toolCall,
-            toolName: lower,
+            input: JSON.stringify({
+              tool: failed.toolCall.toolName,
+              error: failed.error.message,
+            }),
+            toolName: "invalid",
           }
-        }
-        return {
-          ...failed.toolCall,
-          input: JSON.stringify({
-            tool: failed.toolCall.toolName,
-            error: failed.error.message,
-          }),
-          toolName: "invalid",
-        }
-      },
-      temperature: params.temperature,
-      topP: params.topP,
-      topK: params.topK,
-      providerOptions: ProviderTransform.providerOptions(input.model, params.options),
-      activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
-      tools,
-      toolChoice: choice(input),
-      maxOutputTokens,
-      abortSignal: input.abort,
-      headers: {
-        ...(input.model.providerID.startsWith("opencode")
-          ? {
-              "x-opencode-project": Instance.project.id,
-              "x-opencode-session": input.sessionID,
-              "x-opencode-request": input.user.id,
-              "x-opencode-client": Flag.OPENCODE_CLIENT,
-            }
-          : input.model.providerID !== "anthropic"
-            ? {
-                "User-Agent": `opencode/${Installation.VERSION}`,
-              }
-            : undefined),
-        ...input.model.headers,
-      },
-      maxRetries: input.retries ?? 0,
-      messages: [
-        ...system.map(
-          (x): ModelMessage => ({
-            role: "system",
-            content: x,
-          }),
-        ),
-        ...prepareMessages(input),
-      ],
-      model,
-      experimental_telemetry: {
-        isEnabled: cfg.experimental?.openTelemetry,
-        metadata: {
-          userId: cfg.username ?? "unknown",
-          sessionId: input.sessionID,
         },
-      },
-    })
+        temperature: params.temperature,
+        topP: params.topP,
+        topK: params.topK,
+        providerOptions: ProviderTransform.providerOptions(input.model, params.options),
+        activeTools: Object.keys(tools).filter((x) => x !== "invalid"),
+        tools,
+        toolChoice: choice(input),
+        maxOutputTokens,
+        abortSignal: input.abort,
+        headers: {
+          ...(input.model.providerID.startsWith("opencode")
+            ? {
+                "x-opencode-project": Instance.project.id,
+                "x-opencode-session": input.sessionID,
+                "x-opencode-request": input.user.id,
+                "x-opencode-client": Flag.OPENCODE_CLIENT,
+              }
+            : input.model.providerID !== "anthropic"
+              ? {
+                  "User-Agent": `opencode/${Installation.VERSION}`,
+                }
+              : undefined),
+          ...input.model.headers,
+        },
+        maxRetries: input.retries ?? 0,
+        messages: [
+          ...system.map(
+            (x): ModelMessage => ({
+              role: "system",
+              content: x,
+            }),
+          ),
+          ...prepareMessages(input),
+        ],
+        model,
+        experimental_telemetry: {
+          isEnabled: cfg.experimental?.openTelemetry,
+          metadata: {
+            userId: cfg.username ?? "unknown",
+            sessionId: input.sessionID,
+          },
+        },
+      })
+
+      return Object.assign(result, { release })
+    } catch (err) {
+      release?.()
+      throw err
+    }
   }
 
   function protocol(tool: string, input: unknown, error: string, runtime: RuntimeTools.Info | undefined) {
@@ -427,12 +463,20 @@ export namespace LLM {
   function turns(messages: ModelMessage[]): ModelMessage[] {
     if (messages.length === 1) {
       const text = content(messages[0]!.content)
-      if (/^\s*<turn\b/.test(text)) return [{ role: "user", content: text }, { role: "user", content: PROTOCOL_TURN_REMINDER }]
+      if (/^\s*<turn\b/.test(text))
+        return [
+          { role: "user", content: text },
+          { role: "user", content: PROTOCOL_TURN_REMINDER },
+        ]
     }
-    return messages.map((item, idx): ModelMessage => ({
-      role: "user",
-      content: `<turn index="${idx + 1}">\n## ${heading(item.role)}\n\n${body(item)}\n</turn>`,
-    })).concat({ role: "user", content: PROTOCOL_TURN_REMINDER } satisfies ModelMessage)
+    return messages
+      .map(
+        (item, idx): ModelMessage => ({
+          role: "user",
+          content: `<turn index="${idx + 1}">\n## ${heading(item.role)}\n\n${body(item)}\n</turn>`,
+        }),
+      )
+      .concat({ role: "user", content: PROTOCOL_TURN_REMINDER } satisfies ModelMessage)
   }
 
   function heading(role: ModelMessage["role"]) {
@@ -479,11 +523,7 @@ export namespace LLM {
       .filter((item) => object(item).type === "reasoning")
       .flatMap((item) => {
         const data = object(item)
-        return [
-          typeof data.text === "string" ? data.text : undefined,
-          ...texts(data.summary),
-          ...texts(data.content),
-        ]
+        return [typeof data.text === "string" ? data.text : undefined, ...texts(data.summary), ...texts(data.content)]
       })
       .filter((item): item is string => Boolean(item))
       .join("\n")

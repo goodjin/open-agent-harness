@@ -47,6 +47,8 @@ export const dict = {
   "ui.sessionTurn.retry.attempt": "第 {{attempt}} 次",
   "ui.sessionTurn.retry.attemptLine": "{{line}} - 第 {{attempt}} 次",
   "ui.sessionTurn.retry.geminiHot": "gemini 当前过载",
+  "ui.sessionTurn.rateLimited.message": "等待 {{provider}}/{{model}} {{scope}} 并发槽位",
+  "ui.sessionTurn.rateLimited.info": "运行中 {{active}}/{{limit}}，排队 {{queued}}",
   "ui.sessionTurn.error.freeUsageExceeded": "免费使用额度已用完",
   "ui.sessionTurn.error.addCredits": "添加积分",
 
@@ -67,6 +69,7 @@ export const dict = {
   "ui.messagePart.compaction": "会话已压缩",
   "ui.messagePart.collapsed.ignoredText.title": "已折叠的模型输出",
   "ui.messagePart.collapsed.reasoning.title": "思考过程",
+  "ui.messagePart.lineLimit.notice": "显示最后 {{limit}} 行，已折叠前面 {{hidden}} 行。点击展开。",
   "ui.messagePart.context.read.one": "{{count}} 次读取",
   "ui.messagePart.context.read.other": "{{count}} 次读取",
   "ui.messagePart.context.search.one": "{{count}} 次搜索",

@@ -24,6 +24,7 @@ import { Tabs } from "@open-agent-harness/ui/tabs"
 import { createAutoScroll } from "@open-agent-harness/ui/hooks"
 import { previewSelectedLines } from "@open-agent-harness/ui/pierre/selection-bridge"
 import { Button } from "@open-agent-harness/ui/button"
+import type { SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { base64Encode, checksum } from "@open-agent-harness/util/encode"
 import { useNavigate, useSearchParams } from "@solidjs/router"
@@ -78,7 +79,7 @@ type SessionHistoryWindowInput = {
  */
 function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
   const turnInit = 10
-  const turnBatch = 8
+  const turnBatch = 1
   const turnScrollThreshold = 200
   const turnPrefetchBuffer = 16
   const prefetchCooldownMs = 400
@@ -496,6 +497,7 @@ export default function Page() {
     messageId: undefined as string | undefined,
     mobileTab: "session" as "session" | "changes" | "logs",
     changes: "session" as "session" | "turn",
+    filter: "all" as SessionTurnFilter,
     newSessionWorktree: "main",
     deferRender: false,
   })
@@ -1083,6 +1085,11 @@ export default function Page() {
                     }}
                     renderedUserMessages={historyWindow.renderedUserMessages()}
                     anchor={anchor}
+                    filter={store.filter}
+                    onFilterChange={(filter) => setStore("filter", filter)}
+                    onJumpPreviousUserInput={() => navigateMessageByOffset(-1)}
+                    onJumpNextUserInput={() => navigateMessageByOffset(1)}
+                    canJumpUserInput={visibleUserMessages().length > 1}
                   />
                 </Show>
               }

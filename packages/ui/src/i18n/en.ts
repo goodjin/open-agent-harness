@@ -44,6 +44,8 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.retry.attempt": "attempt #{{attempt}}",
   "ui.sessionTurn.retry.attemptLine": "{{line}} - attempt #{{attempt}}",
   "ui.sessionTurn.retry.geminiHot": "gemini is way too hot right now",
+  "ui.sessionTurn.rateLimited.message": "Waiting for {{provider}}/{{model}} {{scope}} concurrency",
+  "ui.sessionTurn.rateLimited.info": "{{active}}/{{limit}} running, {{queued}} queued",
   "ui.sessionTurn.error.freeUsageExceeded": "Free usage exceeded",
   "ui.sessionTurn.error.addCredits": "Add credits",
 
@@ -69,6 +71,7 @@ export const dict: Record<string, string> = {
   "ui.messagePart.compaction": "Session compacted",
   "ui.messagePart.collapsed.ignoredText.title": "Hidden model output",
   "ui.messagePart.collapsed.reasoning.title": "Reasoning summary",
+  "ui.messagePart.lineLimit.notice": "Showing last {{limit}} lines. {{hidden}} earlier lines hidden. Click to expand.",
   "ui.messagePart.context.read.one": "{{count}} read",
   "ui.messagePart.context.read.other": "{{count}} reads",
   "ui.messagePart.context.search.one": "{{count}} search",

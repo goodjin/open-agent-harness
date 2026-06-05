@@ -209,12 +209,18 @@ function action(input: Record<string, unknown>): GraphNode {
     deps: list(input.depends_on),
     after: [],
     executor: `${str(exec.type, "runtime")}:${str(exec.target, "auto")}`,
-    sessionID: str(input.sessionID) || undefined,
+    sessionID: str(input.sessionID) || child(input),
     output: str(input.summary) || undefined,
     error: str(input.error) || undefined,
     time: record(input.time) ? (input.time as GraphNode["time"]) : undefined,
     raw: input,
   }
+}
+
+function child(input: Record<string, unknown>) {
+  const text = `${str(input.summary)}\n${str(input.output)}`
+  const match = text.match(/\bChild session:\s*(ses_[A-Za-z0-9]+)/)
+  return match?.[1]
 }
 
 function protocol(run: Record<string, unknown>): GraphRun {

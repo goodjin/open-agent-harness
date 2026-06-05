@@ -46,6 +46,7 @@ import { ProviderTransform } from "./transform"
 import { Installation } from "../installation"
 import { ModelID, ProviderID } from "./schema"
 
+export const DEFAULT_REQUEST_TIMEOUT = 60_000
 const DEFAULT_CHUNK_TIMEOUT = 300_000
 
 export namespace Provider {
@@ -1119,6 +1120,7 @@ export namespace Provider {
 
       const customFetch = options["fetch"]
       const chunkTimeout = options["chunkTimeout"] || DEFAULT_CHUNK_TIMEOUT
+      const timeout = options["timeout"] === undefined || options["timeout"] === null ? DEFAULT_REQUEST_TIMEOUT : options["timeout"]
       delete options["chunkTimeout"]
 
       options["fetch"] = async (input: any, init?: BunFetchRequestInit) => {
@@ -1128,11 +1130,14 @@ export namespace Provider {
 
         const chunkAbortCtl = typeof chunkTimeout === "number" && chunkTimeout > 0 ? new AbortController() : undefined
         const signals: AbortSignal[] = []
+        const ctl = timeout !== false && timeout > 0 ? new AbortController() : undefined
+        const timer = ctl
+          ? setTimeout(() => ctl.abort(new DOMException("The operation timed out.", "TimeoutError")), timeout)
+          : undefined
 
         if (opts.signal) signals.push(opts.signal)
         if (chunkAbortCtl) signals.push(chunkAbortCtl.signal)
-        if (options["timeout"] !== undefined && options["timeout"] !== null && options["timeout"] !== false)
-          signals.push(AbortSignal.timeout(options["timeout"]))
+        if (ctl) signals.push(ctl.signal)
 
         const combined = signals.length === 0 ? null : signals.length === 1 ? signals[0] : AbortSignal.any(signals)
         if (combined) opts.signal = combined
@@ -1159,6 +1164,8 @@ export namespace Provider {
           ...opts,
           // @ts-ignore see here: https://github.com/oven-sh/bun/issues/16682
           timeout: false,
+        }).finally(() => {
+          if (timer) clearTimeout(timer)
         })
 
         if (!chunkAbortCtl) return res

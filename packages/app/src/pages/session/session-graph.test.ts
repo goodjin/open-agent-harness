@@ -72,6 +72,7 @@ describe("graphRuns", () => {
                 operation: "delegate",
                 status: "completed",
                 executor: { type: "agent", target: "explore" },
+                output: "Delegated to explore.\nChild session: ses_explore",
                 time: { started: 1, completed: 2 },
               },
               {
@@ -99,7 +100,7 @@ describe("graphRuns", () => {
       completed: 2,
     })
     expect(runs[0]?.nodes).toEqual([
-      expect.objectContaining({ id: "inspect", title: "Inspect code", executor: "agent:explore" }),
+      expect.objectContaining({ id: "inspect", title: "Inspect code", executor: "agent:explore", sessionID: "ses_explore" }),
       expect.objectContaining({
         id: "verify",
         title: "Verify patch",

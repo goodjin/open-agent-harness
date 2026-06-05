@@ -272,6 +272,7 @@ export namespace AgentProtocol {
       summary: z.string().default(""),
       output: z.string().optional(),
       error: z.string().optional(),
+      sessionID: Text.optional(),
       tool_call_ids: z.array(Text).default([]),
       duration_ms: z.number().int().nonnegative().default(0),
       time: z
