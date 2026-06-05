@@ -259,6 +259,61 @@ export namespace Harness {
     .meta({ ref: "HarnessV2MemoryObject" })
   export type MemoryObject = z.infer<typeof MemoryObject>
 
+  export const MemoryScope = z.enum(["run", "project", "team", "global"]).meta({ ref: "HarnessMemoryScope" })
+  export type MemoryScope = z.infer<typeof MemoryScope>
+
+  export const MemoryStatus = z.enum(["candidate", "current", "historical", "superseded", "rejected"]).meta({ ref: "HarnessMemoryStatus" })
+  export type MemoryStatus = z.infer<typeof MemoryStatus>
+
+  export const MemoryFreshness = z.enum(["current", "stale", "historical"]).meta({ ref: "HarnessMemoryFreshness" })
+  export type MemoryFreshness = z.infer<typeof MemoryFreshness>
+
+  export const MemoryRecord = z
+    .object({
+      id: z.string(),
+      uri: Ref,
+      run_id: z.string().optional(),
+      summary: z.string(),
+      scope: MemoryScope,
+      namespace: z.string(),
+      source_refs: z.array(Ref).default([]),
+      evidence_refs: z.array(Ref).default([]),
+      visibility: Visibility.default("project"),
+      status: MemoryStatus.default("candidate"),
+      freshness: MemoryFreshness.default("current"),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessMemoryRecord" })
+  export type MemoryRecord = z.infer<typeof MemoryRecord>
+
+  export const MemoryWrite = MemoryRecord.omit({ id: true, uri: true, status: true, created_at: true, updated_at: true })
+    .extend({ status: MemoryStatus.default("candidate") })
+    .strict()
+    .meta({ ref: "HarnessMemoryWrite" })
+  export type MemoryWrite = z.infer<typeof MemoryWrite>
+
+  export const MemoryPromotionInput = z
+    .object({
+      acceptance_id: z.string(),
+    })
+    .strict()
+    .meta({ ref: "HarnessMemoryPromotionInput" })
+  export type MemoryPromotionInput = z.infer<typeof MemoryPromotionInput>
+
+  export const MemoryContextInput = z
+    .object({
+      goal: z.string(),
+      namespace: z.string(),
+      memory_refs: z.array(Ref).default([]),
+      token_budget: z.number().int().nonnegative().default(4000),
+      visibility: Visibility.default("project"),
+    })
+    .strict()
+    .meta({ ref: "HarnessMemoryContextInput" })
+  export type MemoryContextInput = z.infer<typeof MemoryContextInput>
+
   export const AgentKind = z.enum(["planner", "worker", "verifier", "helper"]).meta({ ref: "HarnessAgentKind" })
   export type AgentKind = z.infer<typeof AgentKind>
 

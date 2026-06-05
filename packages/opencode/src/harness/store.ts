@@ -60,6 +60,10 @@ export namespace HarnessStore {
     return path.join(govDir(), "workflows")
   }
 
+  function memoryDir() {
+    return path.join(govDir(), "memory", "v2-records")
+  }
+
   function sessionsDir(id: string) {
     return path.join(runDir(id), "agent-sessions")
   }
@@ -204,6 +208,20 @@ export namespace HarnessStore {
 
   export async function memories() {
     return list(path.join(govDir(), "memory", "records"), Harness.Memory)
+  }
+
+  export async function memoryRecords() {
+    return (await list(memoryDir(), Harness.MemoryRecord)).sort((a, b) => b.updated_at - a.updated_at)
+  }
+
+  export async function memoryRecord(id: string) {
+    const file = path.join(memoryDir(), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.MemoryRecord.parse(await Bun.file(file).json())
+  }
+
+  export async function putMemoryRecord(item: Harness.MemoryRecord) {
+    await write(path.join(memoryDir(), `${item.id}.json`), item)
   }
 
   export async function concepts() {

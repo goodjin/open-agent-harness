@@ -97,6 +97,11 @@ export namespace HarnessRuntime {
     return ref.slice("resource://".length)
   }
 
+  function memId(ref: string) {
+    if (!ref.startsWith("memory://")) return
+    return ref.slice("memory://".length)
+  }
+
   function access(item: Harness.Visibility, ctx: Harness.Visibility) {
     if (item === "public") return true
     if (item === "team") return ctx === "team"
@@ -357,6 +362,22 @@ export namespace HarnessRuntime {
             ...acc,
             excluded: [...acc.excluded, Harness.ContextExcludedRecord.parse({ ref, mode, reason: deferred })],
             explanations: [...acc.explanations, { ref, decision: "excluded" as const, mode, reason: deferred }],
+          }
+        }
+        const mid = memId(ref)
+        if (mid) {
+          const mem = await HarnessStore.memoryRecord(mid)
+          if (mem && access(mem.visibility, payload.visibility)) {
+            const cost = tokens(mem.summary)
+            return {
+              ...acc,
+              used: acc.used + cost,
+              included: [
+                ...acc.included,
+                Harness.ContextRecord.parse({ ref, mode: "summary", visibility: mem.visibility, summary: mem.summary, content: mem.summary, reason: "memory summary expansion", tokens: cost }),
+              ],
+              explanations: [...acc.explanations, { ref, decision: "included" as const, mode: "summary" as const, reason: "memory summary expansion" }],
+            }
           }
         }
         const rid = resId(ref)
@@ -698,6 +719,80 @@ export namespace HarnessRuntime {
     })
     await HarnessStore.putDecision(decision)
     return { decision }
+  }
+
+  export async function createMemoryCandidate(run: string, input: z.input<typeof Harness.MemoryWrite>) {
+    const payload = Harness.MemoryWrite.parse({ ...input, run_id: input.run_id ?? run })
+    const time = now()
+    const mid = id("mem")
+    const item = Harness.MemoryRecord.parse({
+      ...payload,
+      id: mid,
+      uri: `memory://${mid}`,
+      status: "candidate",
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putMemoryRecord(item)
+    await HarnessStore.append(event("memory.candidate", { run, summary: item.summary, payload: { memory_id: item.id, namespace: item.namespace } }))
+    await HarnessStore.projection(run, "memory-candidates", await HarnessStore.memoryRecords())
+    return item
+  }
+
+  export async function promoteMemory(run: string, id: string, input: z.input<typeof Harness.MemoryPromotionInput>) {
+    const payload = Harness.MemoryPromotionInput.parse(input)
+    const item = await HarnessStore.memoryRecord(id)
+    if (!item) throw new Error(`Memory not found: ${id}`)
+    const acc = await HarnessStore.acceptanceRecord(run, payload.acceptance_id)
+    if (!acc || (acc.result !== "approved" && acc.result !== "waived")) throw new Error("Memory promotion requires approved acceptance")
+    const next = Harness.MemoryRecord.parse({ ...item, status: "current", updated_at: now() })
+    await HarnessStore.putMemoryRecord(next)
+    await HarnessStore.append(event("memory.promoted", { run, summary: next.summary, payload: { memory_id: next.id, acceptance_id: acc.id } }))
+    await HarnessStore.projection(run, "memory-records", await HarnessStore.memoryRecords())
+    return next
+  }
+
+  export async function memoryContext(run: string, input: z.input<typeof Harness.MemoryContextInput>) {
+    const payload = Harness.MemoryContextInput.parse(input)
+    const cur = (await HarnessStore.projections(run)).find((item) => item.name === "memory-current" && typeof item.data === "object" && item.data && "namespace" in item.data && item.data.namespace === payload.namespace)
+    if (cur && typeof cur.data === "object" && cur.data && "summary" in cur.data && typeof cur.data.summary === "string") {
+      const cost = tokens(cur.data.summary)
+      const bundle = Harness.ContextBundle.parse({
+        id: id("ctx"),
+        run_id: run,
+        goal: payload.goal,
+        included: [
+          Harness.ContextRecord.parse({
+            ref: "projection://memory-current",
+            mode: "summary",
+            visibility: payload.visibility,
+            summary: cur.data.summary,
+            content: cur.data.summary,
+            reason: "current projection takes precedence",
+            tokens: cost,
+          }),
+        ],
+        excluded: payload.memory_refs.map((ref) => Harness.ContextExcludedRecord.parse({ ref, mode: "summary", reason: "projection overrides historical memory" })),
+        refs: ["projection://memory-current", ...payload.memory_refs],
+        summary: cur.data.summary,
+        token_budget: payload.token_budget,
+        tokens_used: cost,
+        visibility: payload.visibility,
+        created_at: now(),
+      })
+      await HarnessStore.putContextBundle(bundle)
+      await HarnessStore.projection(run, "context-preview", { bundle, explanations: [] })
+      return { bundle }
+    }
+    return {
+      bundle: await compileContext({
+        run_id: run,
+        goal: payload.goal,
+        memory_refs: payload.memory_refs,
+        token_budget: payload.token_budget,
+        visibility: payload.visibility,
+      }),
+    }
   }
 
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
