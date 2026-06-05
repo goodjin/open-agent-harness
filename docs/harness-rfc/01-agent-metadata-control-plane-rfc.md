@@ -61,6 +61,7 @@ Runtime still derives concrete authority for each Assignment from:
   "name": "Cross Border Researcher",
   "description": "Research cross-border product and market opportunities.",
   "persona": "Research with cited sources, separate facts from assumptions, and produce decision-ready summaries.",
+  "kind": "worker",
   "logo": {
     "uri": "${agent.dir}/logo.svg",
     "alt": "Cross Border Researcher",
@@ -77,6 +78,44 @@ Runtime still derives concrete authority for each Assignment from:
   "lifecycle": {}
 }
 ```
+
+## Agent Kind
+
+`kind` is a coarse handoff role. It is useful for default relay policy, routing explanations, catalog grouping and evaluation slices. It should not replace `capability`, input/output contracts, runtime boundary or permission policy.
+
+Keep the taxonomy small. `default`, `milestone_planner` and `feature_planner` may all plan, coordinate and route work, but their handoff role is still `planner`. `release_runner`, `devops_agent` and `database_agent` may operate systems, but when they own the main execution result their handoff role is `worker`; permissions and risk belong in capability, runtime boundary, permission and gates.
+
+Recommended values:
+
+| kind | Use when the Agent usually... | Example Agents |
+|---|---|---|
+| `planner` | decomposes goals into plans, tasks, dependencies, acceptance criteria or execution graphs; may also coordinate routing. | `default`, `feature_planner`, `milestone_planner`, `workflow_runner` |
+| `worker` | executes the primary task and produces the main result; may change code, docs, data, config or external systems. | `frontend_developer`, `backend_developer`, `database_agent`, `release_runner`, `devops_agent` |
+| `verifier` | validates, reviews, tests, reproduces, audits risk or confirms evidence for a plan or execution result. | `verifier`, `technical_reviewer`, `security_reviewer`, `performance_reviewer`, `ux_reviewer` |
+| `helper` | provides lightweight support output or context processing without owning the main workflow chain. | `summary`, `title`, `compaction`, `librarian`, `agent_creator` |
+
+Default relay policy:
+
+- `planner` usually hands off to one or more `worker` Agents. High-risk plans may first hand off to a `verifier`.
+- `worker` usually hands off to a `verifier` when it writes state, publishes, migrates data, operates external systems or creates a critical Artifact.
+- `verifier` can close the chain, send work back to a `worker`, send planning back to a `planner`, or ask the user for a decision.
+- `helper` is usually a sidecar capability and should not create a default relay chain.
+
+Rules:
+
+- One Agent should have one primary `kind`.
+- Multi-role behavior should be expressed through `capability.tags`, `contracts` and `collaboration.edges`, or split into separate Agent templates.
+- Runtime may use `kind` as a routing feature, but final selection still depends on capability, entry, authority, availability, budget, contracts and current Projection.
+- `kind` does not grant authority.
+
+Built-in migration guidance:
+
+- Planning and routing Agents such as `default`, `feature-planner`, `milestone-planner`, `requirements-clarifier`, `prometheus`, `plan`, `protocol-runner` and `workflow-runner` should use `planner`.
+- Delivery Agents such as `backend`, `frontend`, `database-agent`, `devops-agent`, `release-runner`, `migration-runner`, `docs-maintainer`, `refactorer`, `agent-creator` and `workflow-creator` should use `worker`.
+- Review, audit, validation and failure-diagnosis Agents such as `verifier`, `technical-reviewer`, `security-reviewer`, `performance-reviewer`, `ux-reviewer`, `accessibility-reviewer`, `api-contract-reviewer`, `plan-reviewer` and `debugger` should use `verifier`.
+- Context support Agents such as `explore`, `librarian`, `multimodal-looker`, `summary`, `title` and `compaction` should use `helper`.
+
+Missing capabilities should usually create a new Agent under one of the four kinds instead of expanding the taxonomy. Examples: `brainstorm_facilitator` is a planner, `browser_e2e_verifier` is a verifier, `artifact_indexer` is a helper and `cloud_resource_worker` is a worker.
 
 ## Identity And Display
 

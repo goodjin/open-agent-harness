@@ -308,6 +308,7 @@ describe("AgentTemplate.Meta", () => {
       const result = AgentTemplate.Meta.safeParse({
         schema_version: "agent.metadata.v1",
         agent_version: "1.0.0",
+        kind: "verifier",
         id: "code-test",
         name: "Code Test",
         description: "Run validation and preserve evidence.",
@@ -393,6 +394,7 @@ describe("AgentTemplate.Meta", () => {
 
       expect(result.data.role).toBe("Verify changed behavior with focused commands.")
       expect(result.data.workflow_mode).toBe("auto")
+      expect(result.data.kind).toBe("verifier")
       expect(result.data.inherit_permissions).toBe(false)
       expect(result.data.logo?.theme).toBe("auto")
       expect(result.data.instructions?.files?.[0]?.path).toBe("${agent.dir}/rules.md")
@@ -437,6 +439,23 @@ describe("AgentTemplate.Meta", () => {
           description: "A v1 agent",
         }).inherit_permissions,
       ).toBe(false)
+    })
+
+    test("agent kind accepts control-plane collaboration roles", () => {
+      const base = {
+        id: "agent-kind",
+        name: "Agent Kind",
+        role: "Classify agent collaboration shape.",
+        description: "A metadata test agent.",
+      }
+
+      for (const kind of AgentTemplate.Kind.options) {
+        expect(AgentTemplate.Meta.safeParse({ ...base, kind }).success).toBe(true)
+      }
+
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "executor" }).success).toBe(false)
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "operator" }).success).toBe(false)
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "reviewer" }).success).toBe(false)
     })
   })
 

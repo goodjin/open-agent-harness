@@ -15,6 +15,10 @@ export namespace AgentTemplate {
   export const Runner = z.enum(["chat", "workflow", "protocol"])
   export type Runner = z.infer<typeof Runner>
 
+  // Kind describes the agent's coarse collaboration role.
+  export const Kind = z.enum(["planner", "worker", "verifier", "helper"])
+  export type Kind = z.infer<typeof Kind>
+
   export const Entry = z
     .object({
       primary: z.boolean().default(true),
@@ -244,6 +248,7 @@ export namespace AgentTemplate {
       // Optional metadata control-plane fields
       schema_version: Text.optional().describe("Agent metadata schema version"),
       agent_version: Text.optional().describe("Agent behavior or configuration version"),
+      kind: Kind.optional().describe("Coarse collaboration role for routing and catalog display"),
       logo: Logo.optional().describe("Agent display logo"),
       instructions: Instructions.optional().describe("Runtime instruction inputs"),
       contracts: Contracts.optional().describe("Input and output contracts"),
@@ -341,5 +346,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle">
 }

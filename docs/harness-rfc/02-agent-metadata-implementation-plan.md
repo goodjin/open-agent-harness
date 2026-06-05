@@ -51,7 +51,7 @@ Source RFC: `01-agent-metadata-control-plane-rfc.md`
 - `meta.json`
 - `identity.md`
 - `rules.md`
-- legacy `SKILL.md`
+- legacy external Markdown instruction import (`SKILL.md`)
 
 当前管理 API 位于 `packages/opencode/src/agent/manage.ts`。
 
@@ -90,7 +90,7 @@ Agent metadata 的完整实现分成八个系统能力。
 - 不破坏现有 `meta.json`。
 - 不让 metadata 直接授予 authority。
 - Agent Session 之间仍不直接通信。
-- 旧模板、legacy skills、builtin generated agents 必须继续加载。
+- 旧模板、legacy external Markdown instruction imports、builtin generated agents 必须继续加载。
 - 新字段先进入 schema、diagnostics、API 和 UI，再逐步进入 Runtime 行为。
 - 被运行使用过的 Agent 定义需要可追溯，后续编辑不能改写旧 run 的含义。
 - 测试必须从 package 目录运行，不能从 repo root 跑。
@@ -378,7 +378,7 @@ Lifecycle/version 实现应覆盖 RFC 的所有版本字段：
 - 加载新字段，不执行。
 - 对 `logo.uri`、`instructions.files[].path`、`schema_ref`、`target` 做基础 diagnostics。
 - `identity.md` / `rules.md` 继续按 legacy 方式读取。
-- legacy `SKILL.md` 转换出的 Agent 不自动生成 RFC 字段，只补 `schema_version` 可选诊断。
+- legacy `SKILL.md` 兼容导入转换出的 Agent 不自动生成 RFC 字段，只补 `schema_version` 可选诊断。
 
 `packages/opencode/src/agent/manage.ts`：
 
@@ -506,7 +506,7 @@ Agent Manager 分成三层：
 筛选项：
 
 - source：builtin、package、user、project。
-- kind：agent、skill。
+- kind：agent、external_markdown_instruction。
 - enabled state。
 - entry flags。
 - capability purpose/tags。

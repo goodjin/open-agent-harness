@@ -2,7 +2,7 @@
 
 本文档是 Open Agent Harness 的治理协议总纲。它按顺序说明协议目标、设计原则、协议架构、控制流、决策边界、Workflow/UI 定位、共享字段、状态词、对象定义、待讨论问题和文档地图。
 
-`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent 定义与 Skill 来源导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、Handoff、状态、上下文、Workflow Profile 和 UI 管理。总纲聚焦稳定抽象和关系边界。
+`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent 定义与外部 Markdown instruction 兼容导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、Handoff、状态、上下文、Workflow Profile 和 UI 管理。总纲聚焦稳定抽象和关系边界。
 
 ## 协议目标
 
@@ -903,7 +903,7 @@ Run 的目标边界。Goal Contract 记录目标、non-goal、约束和成功标
 | 编号 | 文档 | 责任 |
 |---|---|---|
 | 00 | `00-harness-governance-protocol.md` | 总纲：目标、原则、协议架构、对象定义和边界。 |
-| 01 | `01-agent-model-and-authoring.md` | Agent 模板、Skill 来源导入、metadata、entry、capability、permission、relationships、authoring contract。 |
+| 01 | `01-agent-model-and-authoring.md` | Agent 模板、外部 Markdown instruction 兼容导入、metadata、entry、capability、permission、relationships、authoring contract。 |
 | 02 | `02-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
 | 03 | `03-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
 | 04 | `04-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace 和 executor selection。 |

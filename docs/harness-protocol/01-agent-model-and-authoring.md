@@ -24,6 +24,7 @@ Agent metadata 是协议对象，不只是 UI 展示信息。Runtime 需要通�
 因此，Agent 定义至少需要覆盖这些 metadata 面：
 
 - identity metadata：`id`、`name`、`description`、`persona`
+- kind metadata：`kind`
 - entry metadata：`entry`
 - capability metadata：`capability.purpose`、`capability.tags`、`capability.cost`、`capability.writes`
 - permission metadata：`permission_mode`、`allowed_tools`、`denied_tools`、`inherit_permissions`
@@ -84,8 +85,38 @@ Agent id 使用直观的 `lower_snake_case`，形态为 `<domain>_<work_type>`�
 - `denied_tools`：默认 `[]`。
 - `inherit_permissions`：默认 `false`。Agent 默认使用自身 permission profile；只有显式设为 `true` 时才继承或合并外部权限策略。
 - `permission_mode`：默认 `strict`。
+- `kind`：默认不存在。用于描述 Agent 在协作图中的粗粒度职责形态，不能替代 `capability`、`entry`、`runner` 或权限策略。
 - `relationships`：默认不存在。用于声明该 Agent 与其他 Agent 或 capability 的稳定协作关系，例如上游依赖、推荐下游、互斥关系或替代候选。
 - `orchestration_policy`：默认不存在。用于声明 Runtime 可以围绕该 Agent Session 评估和创建的前置、后置、恢复、审查、仲裁等后续 Action / Assignment。
+
+## Kind 模型
+
+`kind` 描述 Agent 在接力链里的粗粒度职责。它回答“这个 Agent 完成后，Runtime 通常要不要接另一个 Agent”，而 `capability` 回答“它具体会做什么”。
+
+分类不应过细。`default`、`milestone_planner`、`feature_planner` 都可能同时做 planning、coordination 和 task routing，但它们在接力链里都属于 `planner`：产出计划、拆分任务、决定后续交给谁。`release_runner`、`devops_agent`、`database_agent` 可能操作环境或系统，但只要它们承担主执行产物，就属于 `worker`；权限和风险由 `capability`、`runtime_boundary`、permission 和 gate 表达。
+
+推荐取值：
+
+| kind | 含义 | 适合创建的 Agent |
+|---|---|---|
+| `planner` | 把目标拆成计划、任务、依赖、验收条件或执行图，可能也负责分派和协调。 | `default`、`feature_planner`、`milestone_planner`、`workflow_runner` |
+| `worker` | 执行主任务并产出主要结果，可能修改代码、文档、数据、配置或外部系统。 | `frontend_developer`、`backend_developer`、`database_agent`、`release_runner`、`devops_agent` |
+| `verifier` | 对计划或执行结果做验证、审查、测试、复现、风险检查或证据确认。 | `verifier`、`technical_reviewer`、`security_reviewer`、`performance_reviewer`、`ux_reviewer` |
+| `helper` | 提供轻量辅助产物或上下文处理，不承担主流程责任，也不决定主接力链。 | `summary`、`title`、`compaction`、`librarian`、`agent_creator` |
+
+典型接力规则：
+
+- `planner` 完成后，Runtime 通常选择一个或多个 `worker` 执行计划；高风险计划可以先接 `verifier` 做计划审查。
+- `worker` 完成后，如果产生写入、发布、迁移、外部操作或关键 Artifact，Runtime 通常接 `verifier`。
+- `verifier` 完成后，Runtime 根据结果决定结束、退回 `worker` 修复、退回 `planner` 重新拆分，或请求用户决策。
+- `helper` 通常作为旁路能力被调用，例如补上下文、摘要、标题、检索材料，不默认触发后续接力。
+
+`kind` 的使用边界：
+
+- Runtime 可以用 `kind` 做默认接力策略、routing 解释、catalog 分组和评估维度。
+- Runtime 不应只根据 `kind` 选择 Agent。实际路由仍结合 `capability`、`entry`、authority、availability、budget、contracts 和 current Projection。
+- `kind` 不授予权限。执行外部操作的 `worker` 仍要经过 permission profile、assignment authority 和 gate。
+- 一个 Agent 只能声明一个主 `kind`。如果它覆盖多个职责，应把具体能力放进 `capability.tags`，或拆成多个 Agent 模板。
 
 ## Entry 模型
 
@@ -435,6 +466,7 @@ Runtime 可以基于 `orchestration_policy` 主动创建 Assignment，但每个 
   "name": "Code Developer",
   "persona": "Write focused code changes and preserve existing behavior.",
   "description": "A development agent for implementation tasks.",
+  "kind": "worker",
   "entry": {
     "primary": true,
     "delegable": true,
@@ -538,11 +570,13 @@ Runtime 可以基于 `orchestration_policy` 主动创建 Assignment，但每个 
 }
 ```
 
-## SKILL.md 导入为虚拟 Agent
+## 历史兼容：外部 Markdown instruction 导入
 
-Open Agent Harness 可以将 `SKILL.md` 文件导入为虚拟 Agent。导入完成后，Harness 协议中的可调用对象仍是 Agent，执行实例仍是 Agent Session。
+Open Agent Harness 的核心对象是 Agent Template、Workflow、Capability、Contract、Runtime Boundary、Handoff 和 Assignment。`SKILL.md` 不是 Harness 的核心概念，也不作为运行时的一等协议对象。
 
-`SKILL.md` 是低摩擦编写格式，通常用于描述一类工作应该怎么做：适用场景、执行步骤、判断规则、输入要求、输出格式、质量检查和注意事项。Agent 表达可治理的执行模板，除了 prompt 材料，还包含入口规则、能力元数据、权限策略、模型偏好和运行策略。
+本节只定义历史兼容和外部生态导入适配：当外部系统、旧插件或历史配置仍提供 `SKILL.md` 这类 Markdown instruction package 时，Runtime 可以把它归一化为只读 Agent record。导入完成后，Harness 协议中的可调用对象仍是 Agent，执行实例仍是 Agent Session。
+
+`SKILL.md` 通常用于描述一类工作应该怎么做：适用场景、执行步骤、判断规则、输入要求、输出格式、质量检查和注意事项。Agent Template 表达可治理的执行模板，除了 prompt 材料，还包含 `kind`、入口规则、能力元数据、权限策略、模型偏好、contracts、completion 和 runtime boundary。
 
 导入层的作用，是把轻量 instruction package 归一化到 Agent registry 中，让它进入统一的 routing、delegation、permission、session creation、trace 和 UI 管理路径。
 
@@ -558,7 +592,7 @@ Open Agent Harness 可以将 `SKILL.md` 文件导入为虚拟 Agent。导入完�
 - source reference
 - source format metadata
 
-Runtime 后续只处理 Agent record。`SKILL.md` 是来源文件，虚拟 Agent 是协议对象，Agent Session 是运行实例。
+Runtime 后续只处理 Agent record。`SKILL.md` 是外部来源文件，导入后的只读 Agent record 是协议对象，Agent Session 是运行实例。
 
 ### 支持输入
 
@@ -568,7 +602,7 @@ Runtime 扫描受支持 roots 中名为以下形式的文件：
 */SKILL.md
 ```
 
-全局 root、项目 root 和插件 root 由 Runtime 配置决定。Agent 目录 root 下也可以支持同级 `skill/` 和 `skills/` 目录。
+全局 root、项目 root 和插件 root 由 Runtime 配置决定。Agent 目录 root 下也可以支持同级 `skill/` 和 `skills/` 目录，但这只用于兼容导入，不表示 Harness 内部继续以 Skill 作为建模单位。
 
 ### 导入规则
 
@@ -624,11 +658,11 @@ id 会按 Agent 命名规范归一化为 `lower_snake_case`，只包含小写字
 
 显式 Agent 模板会覆盖相同 id 的导入结果。
 
-这允许轻量 `SKILL.md` 逐步升级为完整 Agent 模板，并保持 invocation id 不变。
+这允许历史 `SKILL.md` 或外部 instruction package 逐步升级为完整 Agent Template，并保持 invocation id 不变。
 
 ### Runtime 行为
 
-由 `SKILL.md` 导入的对象在 `/agent` 中表现为普通 Agent record，包含：
+由 `SKILL.md` 导入的对象在 `/agent` 中表现为只读 Agent record，包含：
 
 - `name`：导入后的 Agent id
 - `entry`：`{ "primary": false, "delegable": true, "mentionable": true, "default": false, "hidden": false }`
@@ -657,7 +691,7 @@ Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment co
 
 ### Agent 管理 UI
 
-管理 API 按 Agent record 返回导入结果：
+管理 API 按 Agent record 返回导入结果，并明确标记为外部导入、不可编辑：
 
 ```json
 {
@@ -673,9 +707,9 @@ Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment co
 
 - 全部 Agent
 - 手写 Agent
-- 由 `SKILL.md` 导入的 Agent
+- 外部 Markdown instruction 导入的 Agent
 
-由 `SKILL.md` 导入的 Agent 在 Agent Manager 中以只读记录展示，因为它们的事实来源是原始 Markdown 文件。要定制某个导入结果，可以编辑来源文件，或创建一个相同 id 的手写 Agent 模板。
+由 `SKILL.md` 导入的 Agent 在 Agent Manager 中以只读记录展示，因为它们的事实来源是原始 Markdown 文件。要定制某个导入结果，可以编辑来源文件，或创建一个相同 id 的手写 Agent Template。
 
 ### 升级边界
 
@@ -691,53 +725,78 @@ Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment co
 - `permission_mode`
 - `orchestration_policy`
 
-`SKILL.md` 适合快速描述一项工作的步骤和规则；Agent 模板适合表达可治理、可路由、可观测、可授权的执行身份。
+`SKILL.md` 只作为历史兼容或外部导入格式保留。新能力应优先写成 Agent Template；需要组织多个 Agent 时写成 Workflow；具体能力差异放在 `capability`、contracts、completion、runtime boundary 和 collaboration metadata 中。
 
-## 内置 Agent Entry
+## 内置 Agent Kind 建议
 
-内置 Agent 应使用以下 entry/capability 形态。`purpose` 是 routing hint，`writes` 和 `cost` 是 capability metadata，不直接授予执行权限。
+下表基于当前 `packages/opencode/config/agents/*/meta.json` 的实际内置 Agent。这里的 `kind` 是建议归类，用于接力策略和后续迁移；当前文档更新不等于这些 `meta.json` 已经写入 `kind` 字段。
 
-| Agent | Entry | 用途 / Capability |
+| Agent | 建议 kind | 依据 |
 |---|---|---|
-| `accessibility_reviewer` | not primary、delegable、mentionable、not default、visible | UI 可访问性审查：语义、键盘访问、label、focus、contrast 和 assistive technology compatibility。purpose `accessibility_review`；writes false；cost low |
-| `api_contract_reviewer` | not primary、delegable、mentionable、not default、visible | API contract、schema、兼容性、SDK 影响、错误语义和前后端边界审查。purpose `api_contract_review`；writes false；cost medium |
-| `backend_developer` | not primary、delegable、mentionable、not default、visible | 后端实现、API、数据模型、auth、permissions 和 service integration。purpose `backend_implementation`；writes true；cost medium |
-| `code_debugger` | not primary、delegable、mentionable、not default、visible | 复现失败、缩小问题范围、定位根因和建议下一步。purpose `debugging`；writes false；cost medium |
-| `code_developer` | primary、delegable、mentionable、not default、visible | 主要开发 Agent，用于代码修改和验证。purpose `implementation`；writes true；cost medium |
-| `code_migration_runner` | primary、delegable、mentionable、not default、visible | 跨文件迁移、重命名、API migration 和架构迁移。purpose `migration`；writes true；cost high |
-| `code_refactorer` | primary、delegable、mentionable、not default、visible | 低风险、保持行为不变的重构和聚焦验证。purpose `refactoring`；writes true；cost medium |
-| `code_researcher` | not primary、delegable、mentionable、not default、visible | 文件发现、模式追踪，以及回答代码在哪里或如何实现。purpose `code_search`；writes false；cost low |
-| `code_test` | not primary、delegable、mentionable、not default、visible | 运行 validation commands、解释失败并建议下一步。purpose `verification`；writes false；cost low |
-| `data_migration_runner` | primary、delegable、mentionable、not default、visible | 数据迁移、schema transition、backfill、一致性检查和 rollback-aware migration plan。purpose `data_migration`；writes true；cost high |
-| `database_developer` | not primary、delegable、mentionable、not default、visible | 数据库 schema、migration、query、index、transaction 和数据一致性。purpose `database`；writes true；cost medium |
-| `dependency_maintainer` | not primary、delegable、mentionable、not default、visible | 依赖升级、lockfile、兼容性、breaking changes 和依赖安全风险。purpose `dependency_maintenance`；writes true；cost medium |
-| `devops_developer` | not primary、delegable、mentionable、not default、visible | CI/CD、build scripts、deployment config、本地服务、环境变量和运维设置。purpose `devops`；writes true；cost medium |
-| `docs_maintainer` | not primary、delegable、mentionable、not default、visible | 维护反映当前代码和 workflow 的工程文档。purpose `documentation`；writes true；cost low |
-| `external_researcher` | not primary、delegable、mentionable、not default、visible | 官方文档、远程仓库、外部库和实现示例研究。purpose `source_research`；writes false；cost low |
-| `focused_developer` | not primary、delegable、mentionable、not default、visible | 聚焦 delegated task 的实现，不承担广义 orchestration。purpose `focused_execution`；writes true；cost medium |
-| `frontend_developer` | not primary、delegable、mentionable、not default、visible | 前端实现、UI 行为、样式、可访问性和浏览器验证。purpose `frontend_implementation`；writes true；cost medium |
-| `general_developer` | primary、delegable、mentionable、default、visible | 默认通用 Agent，适合没有更明确 specialist 的普通任务。purpose `general`；writes true；cost medium |
-| `general_researcher` | not primary、delegable、mentionable、not default、visible | 广泛研究、复杂代码库问题和并行工作单元。purpose `general_research`；writes true；cost medium |
-| `incident_responder` | primary、delegable、mentionable、not default、visible | 事故响应、故障 triage、mitigation、verification 和后续复盘。purpose `incident_response`；writes true；cost high |
-| `multimodal_reader` | not primary、delegable、mentionable、not default、visible | PDF、图片、图表、diagram 和视觉文档分析。purpose `media_interpretation`；writes false；cost low |
-| `observability_developer` | not primary、delegable、mentionable、not default、visible | logging、metrics、tracing、audit events、health checks 和 operational diagnostics。purpose `observability`；writes true；cost medium |
-| `performance_reviewer` | not primary、delegable、mentionable、not default、visible | frontend、backend、runtime、database 和 build workflow 的性能审查。purpose `performance_review`；writes false；cost medium |
-| `plan_builder` | primary、delegable、mentionable、not default、visible | 通过访谈、研究和整理创建可执行工作计划。purpose `plan_building`；writes true；cost high |
-| `plan_executor` | primary、delegable、mentionable、not default、visible | 多步任务执行与验证协调。purpose `plan_execution`；writes true；cost high |
-| `plan_reviewer` | not primary、delegable、mentionable、not default、visible | 审查计划是否可执行、引用是否有效、阻塞是否真实。purpose `plan_review`；writes false；cost medium |
-| `protocol_runner` | primary、not delegable、mentionable、not default、visible | Agent Protocol DSL 的结构化声明和协议运行观察入口。purpose `protocol_orchestration`；writes false；cost low |
-| `release_runner` | primary、delegable、mentionable、not default、visible | release preparation、versioning、changelog、artifact、dry run、publishing 和 post-release verification。purpose `release`；writes true；cost high |
-| `release_test` | not primary、delegable、mentionable、not default、visible | release artifact、version、changelog、dry run output、publish readiness 和 rollback evidence 验证。purpose `release_verification`；writes false；cost medium |
-| `requirements_clarifier` | not primary、delegable、mentionable、not default、visible | 在 planning 或 implementation 前澄清意图、隐藏需求、歧义、风险和 planning directives。purpose `requirements_clarification`；writes false；cost medium |
-| `security_reviewer` | not primary、delegable、mentionable、not default、visible | security、permission、sandbox、secret 和 data-access 审查。purpose `security_review`；writes false；cost medium |
-| `session_compactor` | not primary、not delegable、not mentionable、not default、hidden | 长会话 continuation summary。purpose `system_compaction`；writes false；cost low |
-| `session_summarizer` | not primary、not delegable、not mentionable、not default、hidden | 隐藏系统 Agent，用于创建 session summaries。purpose `system_summary`；writes false；cost low |
-| `session_title_writer` | not primary、not delegable、not mentionable、not default、hidden | 根据首个用户 prompt 创建短 session title。purpose `system_title`；writes false；cost low |
-| `task_orchestrator` | primary、delegable、mentionable、not default、visible | 主 orchestrator：识别意图、委托 specialist、验证工作并推进交付。purpose `orchestration`；writes true；cost high |
-| `task_planner` | primary、delegable、mentionable、not default、visible | 只读规划 Agent，用于分析、设计、审查和实施计划。purpose `planning_analysis`；writes false；cost low |
-| `technical_reviewer` | not primary、delegable、mentionable、not default、visible | 架构、复杂 debugging、tradeoff 和实现后技术审查顾问。purpose `technical_review`；writes false；cost high |
-| `ux_reviewer` | not primary、delegable、mentionable、not default、visible | UX flow、information architecture、interaction clarity、empty states 和用户摩擦审查。purpose `ux_review`；writes false；cost low |
-| `workflow_runner` | primary、not delegable、mentionable、not default、visible | 创建、保存、更新和启动 Workflow 资产；Workflow Run materialize 为统一 Action Graph 执行。purpose `workflow_profile_management`；writes true；cost low |
+| `default` | `planner` | 默认入口，负责意图澄清、规模判断、DSL 任务拆解、路由和结果综合。 |
+| `epic-planner` | `planner` | 把 epic slice 拆成 feature，产出边界、依赖、验收信号和可调度 child calls。 |
+| `feature-planner` | `planner` | 把 feature 拆成 implementation、verification、review、docs、release 等具体任务。 |
+| `milestone-planner` | `planner` | 把 milestone 拆成 epic slices，给后续执行链提供任务图。 |
+| `plan` | `planner` | 只读规划、分析、设计、审查和 implementation plan。 |
+| `prometheus` | `planner` | 通过访谈、研究和整理创建可执行计划。 |
+| `protocol-runner` | `planner` | 以 Agent Protocol DSL 声明结构化执行和路由。 |
+| `requirements-clarifier` | `planner` | 在 planning 或 implementation 前澄清意图、隐藏需求、歧义和风险。 |
+| `workflow-runner` | `planner` | 管理 Workflow 资产并把 workflow materialize 为 Action Graph。 |
+| `agent-creator` | `worker` | 根据自然语言创建 project/user Agent 模板，产出可保存的 Agent artifact。 |
+| `atlas` | `worker` | 执行多步计划并协调完成与验证，主职责是推进交付。 |
+| `backend` | `worker` | 后端实现、API、数据模型、auth、permission 和 integration。 |
+| `build` | `worker` | 主开发 Agent，用于代码修改和验证。 |
+| `data-migration-runner` | `worker` | 数据迁移、schema transition、backfill、一致性检查和 rollback-aware plan。 |
+| `database-agent` | `worker` | 数据库 schema、migration、query、index、transaction 和数据一致性工作。 |
+| `dependency-maintainer` | `worker` | 依赖升级、lockfile、兼容性、breaking changes 和依赖安全修复。 |
+| `devops-agent` | `worker` | CI/CD、build scripts、deployment config、本地服务和环境配置。 |
+| `docs-maintainer` | `worker` | 维护工程文档，使其反映当前代码和 workflow。 |
+| `frontend` | `worker` | 前端实现、UI 行为、样式、可访问性和浏览器验证。 |
+| `general` | `worker` | 广泛研究、复杂代码库问题和并行 work unit；当它拥有主任务结果时按 worker 接力。 |
+| `hephaestus` | `worker` | 深度端到端实现，主职责是完整交付。 |
+| `incident-responder` | `worker` | 事故响应、outage triage、mitigation、verification 和 follow-up。 |
+| `migration-runner` | `worker` | 跨文件迁移、rename、API migration 和 architecture migration。 |
+| `observability-agent` | `worker` | logging、metrics、tracing、audit、health 和 diagnostics 的实现或修复。 |
+| `refactorer` | `worker` | 低风险、保持行为不变的重构。 |
+| `release-runner` | `worker` | release preparation、versioning、changelog、artifact、dry run、publish 和 post-release verification。 |
+| `sisyphus` | `worker` | 主 orchestrator，但对外承担完整交付，接力策略上更像 worker。 |
+| `sisyphus-junior` | `worker` | 聚焦 delegated implementation task。 |
+| `workflow-creator` | `worker` | 创建和更新持久化 workflow。 |
+| `accessibility-reviewer` | `verifier` | UI 语义、键盘访问、label、focus、contrast 和 assistive technology 审查。 |
+| `api-contract-reviewer` | `verifier` | API contract、schema、兼容性、SDK 影响、错误语义和边界审查。 |
+| `debugger` | `verifier` | 复现失败、缩小范围、定位根因和建议恢复步骤，通常接在失败 worker 后。 |
+| `performance-reviewer` | `verifier` | frontend、backend、runtime、database 和 build workflow 的性能审查。 |
+| `plan-reviewer` | `verifier` | 审查计划是否可执行、引用是否有效、阻塞是否真实。 |
+| `security-reviewer` | `verifier` | security、permission、sandbox、secret 和 data-access 审查。 |
+| `technical-reviewer` | `verifier` | 架构、复杂 debugging、tradeoff 和 post-implementation technical review。 |
+| `ux-reviewer` | `verifier` | UX flow、information architecture、interaction clarity、empty states 和摩擦审查。 |
+| `verifier` | `verifier` | 运行 validation commands、解释失败并建议下一步。 |
+| `compaction` | `helper` | 长会话 continuation summary，不拥有主流程责任。 |
+| `explore` | `helper` | 查文件、追代码路径、找模式，主要给 planner 或 worker 补上下文。 |
+| `librarian` | `helper` | 官方文档、远程仓库、外部库和实现示例研究。 |
+| `multimodal-looker` | `helper` | 分析 PDF、图片、diagram、chart 和视觉文档，为主流程补材料。 |
+| `summary` | `helper` | 隐藏系统 Agent，用于 session summaries。 |
+| `title` | `helper` | 根据首个用户 prompt 生成短 session title。 |
+
+边界判断：
+
+- `explore`、`librarian`、`multimodal-looker` 是 helper，不是 planner。它们提供材料，不负责把材料收敛成执行图。
+- `default`、`milestone-planner`、`feature-planner` 可以同时做协调和路由，但仍归 `planner`，不需要单独 `coordinator`。
+- `release-runner`、`devops-agent`、`database-agent` 可能操作外部或高风险资源，但仍归 `worker`；风险差异由 `capability`、`runtime_boundary`、permission 和 gate 表达。
+- `technical-reviewer`、`security-reviewer`、`ux-reviewer`、`plan-reviewer` 都归 `verifier`。它们的差异在 `capability.purpose`，不需要单独 `reviewer`。
+
+## 内置 Agent 缺口
+
+按四类看，当前系统不是缺大类，而是缺一些具体 capability：
+
+| kind | 当前覆盖 | 主要缺口 |
+|---|---|---|
+| `planner` | 已覆盖默认路由、需求澄清、feature/epic/milestone 拆分、workflow materialization 和计划生成。 | 缺少讨论收敛类 planner，例如 `brainstorm_facilitator` 或 `decision_synthesizer`，把多人/多 Agent 讨论收束成选项、取舍、结论和后续任务。 |
+| `worker` | 已覆盖前端、后端、数据库、依赖、DevOps、文档、迁移、发布、事故响应、重构、深度实现和 agent/workflow authoring。 | 缺少浏览器自动化执行类 worker、数据分析/报表类 worker、Cloudflare/云资源专门 worker，以及把设计稿或视觉输入落成前端改动的 UI implementation worker。 |
+| `verifier` | 已覆盖通用验证、计划审查、技术审查、安全、性能、UX、可访问性和 API contract。 | 缺少 artifact contract verifier、release readiness verifier、data migration consistency verifier、browser E2E verifier，以及专门比较 PRD/architecture/implementation 是否一致的 alignment verifier。 |
+| `helper` | 已覆盖代码探索、外部资料、视觉文档、摘要、标题和上下文压缩。 | 缺少头脑风暴参与 agent、memory/context retriever、artifact indexer、trace summarizer，以及长任务/CI/log watcher 这类 monitor helper。 |
+
+如果将来要加第五类，优先观察 `monitor`。只有当长期 watch agent 需要独立生命周期、订阅、唤醒和告警策略，且不能作为 helper 的 collaboration trigger 表达时，再把它提升为新 `kind`。现在先放在 `helper` 更稳。
 
 ## 协议约束
 
