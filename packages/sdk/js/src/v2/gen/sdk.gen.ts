@@ -77,13 +77,27 @@ import type {
   GlobalDisposeResponses,
   GlobalEventResponses,
   GlobalHealthResponses,
+  HarnessAgentTemplatesErrors,
+  HarnessAgentTemplatesResponses,
   HarnessCommand,
+  HarnessRunAcceptanceErrors,
+  HarnessRunAcceptanceResponses,
+  HarnessRunAgentSessionsErrors,
+  HarnessRunAgentSessionsResponses,
   HarnessRunCreateErrors,
   HarnessRunCreateResponses,
   HarnessRunGetErrors,
   HarnessRunGetResponses,
+  HarnessRunHandoffsErrors,
+  HarnessRunHandoffsResponses,
+  HarnessRunResourcesErrors,
+  HarnessRunResourcesResponses,
   HarnessRunsErrors,
   HarnessRunsResponses,
+  HarnessWorkflowGetErrors,
+  HarnessWorkflowGetResponses,
+  HarnessWorkflowsErrors,
+  HarnessWorkflowsResponses,
   InstanceDisposeResponses,
   LspStatusResponses,
   McpAddErrors,
@@ -3283,6 +3297,179 @@ export class Run extends HeyApiClient {
       ...params,
     })
   }
+
+  /**
+   * List harness run resources
+   */
+  public resources<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HarnessRunResourcesResponses, HarnessRunResourcesErrors, ThrowOnError>({
+      url: "/harness/runs/{runID}/resources",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List harness run agent sessions
+   */
+  public agentSessions<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      HarnessRunAgentSessionsResponses,
+      HarnessRunAgentSessionsErrors,
+      ThrowOnError
+    >({
+      url: "/harness/runs/{runID}/agent-sessions",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List harness run handoffs
+   */
+  public handoffs<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HarnessRunHandoffsResponses, HarnessRunHandoffsErrors, ThrowOnError>({
+      url: "/harness/runs/{runID}/handoffs",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * List harness run acceptance records
+   */
+  public acceptance<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      HarnessRunAcceptanceResponses,
+      HarnessRunAcceptanceErrors,
+      ThrowOnError
+    >({
+      url: "/harness/runs/{runID}/acceptance",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Agent extends HeyApiClient {
+  /**
+   * List harness agent templates
+   */
+  public templates<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<
+      HarnessAgentTemplatesResponses,
+      HarnessAgentTemplatesErrors,
+      ThrowOnError
+    >({
+      url: "/harness/agent-templates",
+      ...options,
+      ...params,
+    })
+  }
+}
+
+export class Workflow2 extends HeyApiClient {
+  /**
+   * Get harness workflow asset
+   */
+  public get<ThrowOnError extends boolean = false>(
+    parameters: {
+      workflowID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "workflowID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<HarnessWorkflowGetResponses, HarnessWorkflowGetErrors, ThrowOnError>({
+      url: "/harness/workflows/{workflowID}",
+      ...options,
+      ...params,
+    })
+  }
 }
 
 export class Harness extends HeyApiClient {
@@ -3303,9 +3490,36 @@ export class Harness extends HeyApiClient {
     })
   }
 
+  /**
+   * List harness workflow assets
+   */
+  public workflows<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "directory" }] }])
+    return (options?.client ?? this.client).get<HarnessWorkflowsResponses, HarnessWorkflowsErrors, ThrowOnError>({
+      url: "/harness/workflows",
+      ...options,
+      ...params,
+    })
+  }
+
   private _run?: Run
   get run(): Run {
     return (this._run ??= new Run({ client: this.client }))
+  }
+
+  private _agent?: Agent
+  get agent(): Agent {
+    return (this._agent ??= new Agent({ client: this.client }))
+  }
+
+  private _workflow?: Workflow2
+  get workflow(): Workflow2 {
+    return (this._workflow ??= new Workflow2({ client: this.client }))
   }
 }
 
@@ -3802,7 +4016,7 @@ export class Manage extends HeyApiClient {
   }
 }
 
-export class Agent extends HeyApiClient {
+export class Agent2 extends HeyApiClient {
   private _manage?: Manage
   get manage(): Manage {
     return (this._manage ??= new Manage({ client: this.client }))
@@ -5473,9 +5687,9 @@ export class OpencodeClient extends HeyApiClient {
     return (this._provider ??= new Provider({ client: this.client }))
   }
 
-  private _agent?: Agent
-  get agent(): Agent {
-    return (this._agent ??= new Agent({ client: this.client }))
+  private _agent?: Agent2
+  get agent(): Agent2 {
+    return (this._agent ??= new Agent2({ client: this.client }))
   }
 
   private _find?: Find

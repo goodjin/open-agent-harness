@@ -6147,6 +6147,222 @@
         ]
       }
     },
+    "/harness/runs/{runID}/resources": {
+      "get": {
+        "operationId": "harness.run.resources",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "List harness run resources",
+        "responses": {
+          "200": {
+            "description": "Harness run resources",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessResourceRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.resources({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/agent-sessions": {
+      "get": {
+        "operationId": "harness.run.agent-sessions",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "List harness run agent sessions",
+        "responses": {
+          "200": {
+            "description": "Harness run agent sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessAgentSessionRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.agent-sessions({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/handoffs": {
+      "get": {
+        "operationId": "harness.run.handoffs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "List harness run handoffs",
+        "responses": {
+          "200": {
+            "description": "Harness run handoffs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessHandoffRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.handoffs({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/acceptance": {
+      "get": {
+        "operationId": "harness.run.acceptance",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "List harness run acceptance records",
+        "responses": {
+          "200": {
+            "description": "Harness run acceptance records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessAcceptanceRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.run.acceptance({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/harness/runs/{runID}/tasks": {
       "get": {
         "operationId": "getHarnessRuns:runIDTasks",
@@ -6422,6 +6638,156 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDProjectionsRebuild({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/agent-templates": {
+      "get": {
+        "operationId": "harness.agent.templates",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List harness agent templates",
+        "responses": {
+          "200": {
+            "description": "Harness agent templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessAgentTemplateRecord"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.agent.templates({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/workflows": {
+      "get": {
+        "operationId": "harness.workflows",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "List harness workflow assets",
+        "responses": {
+          "200": {
+            "description": "Harness workflow assets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/HarnessWorkflowAsset"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.workflows({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/workflows/{workflowID}": {
+      "get": {
+        "operationId": "harness.workflow.get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "workflowID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get harness workflow asset",
+        "responses": {
+          "200": {
+            "description": "Harness workflow asset",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/HarnessWorkflowAsset"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.harness.workflow.get({\n  ...\n})"
           }
         ]
       }
@@ -17431,6 +17797,852 @@
         ],
         "additionalProperties": false
       },
+      "HarnessV2SchemaVersion": {
+        "default": "v2.0",
+        "type": "string",
+        "const": "v2.0"
+      },
+      "HarnessActionGraph": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "schema_version": {
+            "$ref": "#/components/schemas/HarnessV2SchemaVersion"
+          },
+          "status": {
+            "default": "active",
+            "type": "string",
+            "enum": [
+              "active",
+              "completed",
+              "blocked",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessActionStatus": {
+        "default": "ready",
+        "type": "string",
+        "enum": [
+          "ready",
+          "blocked",
+          "running",
+          "completed",
+          "failed",
+          "cancelled"
+        ]
+      },
+      "HarnessV2Visibility": {
+        "default": "project",
+        "type": "string",
+        "enum": [
+          "private",
+          "project",
+          "team",
+          "public"
+        ]
+      },
+      "HarnessV2Ref": {
+        "type": "string",
+        "pattern": "^(resource|document|artifact|action|handoff|trace|projection|memory|snapshot):\\/\\/[A-Za-z0-9._~:/-]+$"
+      },
+      "HarnessRetryPolicy": {
+        "default": {
+          "max": 0,
+          "backoff": "none"
+        },
+        "type": "object",
+        "properties": {
+          "max": {
+            "default": 0,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "backoff": {
+            "default": "none",
+            "type": "string",
+            "enum": [
+              "none",
+              "linear",
+              "exponential"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessActionRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "graph_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "const": "act"
+          },
+          "type": {
+            "default": "task",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HarnessActionStatus"
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "criteria": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failure": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "string"
+          },
+          "budget": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "expected_artifacts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "idempotency_key": {
+            "type": "string"
+          },
+          "resource_locks": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "cancellation": {
+            "default": {
+              "allowed": true
+            },
+            "type": "object",
+            "properties": {
+              "allowed": {
+                "default": true,
+                "type": "boolean"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "retry_policy": {
+            "$ref": "#/components/schemas/HarnessRetryPolicy"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "graph_id",
+          "kind",
+          "title",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessActionEdge": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "graph_id": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "kind": {
+            "default": "depends_on",
+            "type": "string",
+            "enum": [
+              "depends_on"
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "graph_id",
+          "from",
+          "to"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessResourceKind": {
+        "type": "string",
+        "enum": [
+          "tool_output",
+          "model_long_output",
+          "review_report",
+          "test_report",
+          "research_note",
+          "handoff_state",
+          "context_snapshot",
+          "document"
+        ]
+      },
+      "HarnessV2Producer": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "runtime",
+              "model",
+              "tool",
+              "agent",
+              "user",
+              "system",
+              "import"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "action_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessV2Lifecycle": {
+        "default": "active",
+        "type": "string",
+        "enum": [
+          "draft",
+          "active",
+          "archived",
+          "tombstoned"
+        ]
+      },
+      "HarnessResourceRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HarnessResourceKind"
+          },
+          "uri": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "producer": {
+            "$ref": "#/components/schemas/HarnessV2Producer"
+          },
+          "source_action": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "evidence": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "lifecycle": {
+            "$ref": "#/components/schemas/HarnessV2Lifecycle"
+          },
+          "media_type": {
+            "default": "text/plain",
+            "type": "string"
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "uri",
+          "summary",
+          "producer",
+          "size",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessRefExpansionMode": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "structured",
+          "full",
+          "on_failure",
+          "on_demand",
+          "adaptive"
+        ]
+      },
+      "HarnessContextRecord": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/HarnessRefExpansionMode"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "tokens": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "ref",
+          "mode",
+          "visibility",
+          "summary",
+          "content",
+          "reason",
+          "tokens"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessContextExcludedRecord": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/HarnessRefExpansionMode"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref",
+          "mode",
+          "reason"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessContextBundle": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "assignment_id": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "user_input": {
+            "default": "",
+            "type": "string"
+          },
+          "included": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessContextRecord"
+            }
+          },
+          "excluded": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessContextExcludedRecord"
+            }
+          },
+          "refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "token_budget": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "tokens_used": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "created_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "goal",
+          "summary",
+          "token_budget",
+          "tokens_used",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAgentSessionRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "assignment_id": {
+            "type": "string"
+          },
+          "action_id": {
+            "type": "string"
+          },
+          "authority": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "context_summary": {
+            "type": "string"
+          },
+          "trace_refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "status": {
+            "default": "pending",
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "template_id",
+          "assignment_id",
+          "action_id",
+          "context_summary",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffKind": {
+        "type": "string",
+        "enum": [
+          "assign",
+          "handoff",
+          "sync"
+        ]
+      },
+      "HarnessHandoffParty": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent",
+              "runtime",
+              "system"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "assignment_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffState": {
+        "default": "ready",
+        "type": "string",
+        "enum": [
+          "draft",
+          "ready",
+          "sent",
+          "received",
+          "blocked",
+          "completed"
+        ]
+      },
+      "HarnessHandoffRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HarnessHandoffKind"
+          },
+          "uri": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HarnessHandoffParty"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HarnessHandoffParty"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/HarnessHandoffState"
+          },
+          "evidence": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "risks": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolved": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "resource_refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "projection_ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "trace_ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "context_ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "kind",
+          "uri",
+          "source",
+          "target",
+          "summary",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAcceptanceTarget": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "run",
+              "action_graph",
+              "action",
+              "assignment",
+              "workflow_node",
+              "resource"
+            ]
+          },
+          "ref": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          }
+        },
+        "required": [
+          "type",
+          "ref"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAcceptanceLevel": {
+        "type": "string",
+        "enum": [
+          "none",
+          "auto",
+          "test",
+          "agent",
+          "human",
+          "combined",
+          "sampled"
+        ]
+      },
+      "HarnessAcceptancePolicy": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/HarnessAcceptanceLevel"
+          },
+          "checks": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reviewer": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "level"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAcceptanceGateResult": {
+        "type": "string",
+        "enum": [
+          "approved",
+          "changes_requested",
+          "needs_evidence",
+          "needs_user_decision",
+          "blocked",
+          "waived"
+        ]
+      },
+      "HarnessAcceptanceRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "run_id": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HarnessAcceptanceTarget"
+          },
+          "criteria": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "policy": {
+            "$ref": "#/components/schemas/HarnessAcceptancePolicy"
+          },
+          "required": {
+            "default": true,
+            "type": "boolean"
+          },
+          "result": {
+            "$ref": "#/components/schemas/HarnessAcceptanceGateResult"
+          },
+          "evidence": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reviewer": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "run_id",
+          "target",
+          "policy",
+          "created_at",
+          "updated_at"
+        ],
+        "additionalProperties": false
+      },
       "HarnessSummary": {
         "type": "object",
         "properties": {
@@ -17466,6 +18678,58 @@
             "items": {
               "$ref": "#/components/schemas/HarnessEvent"
             }
+          },
+          "graph": {
+            "$ref": "#/components/schemas/HarnessActionGraph"
+          },
+          "actions": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessActionRecord"
+            }
+          },
+          "edges": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessActionEdge"
+            }
+          },
+          "resources": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessResourceRecord"
+            }
+          },
+          "contexts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessContextBundle"
+            }
+          },
+          "agent_sessions": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessAgentSessionRecord"
+            }
+          },
+          "handoffs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHandoffRecord"
+            }
+          },
+          "acceptance": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessAcceptanceRecord"
+            }
           }
         },
         "required": [
@@ -17475,6 +18739,389 @@
           "artifacts",
           "decisions",
           "events"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessAgentKind": {
+        "type": "string",
+        "enum": [
+          "planner",
+          "worker",
+          "verifier",
+          "helper"
+        ]
+      },
+      "HarnessAgentEntry": {
+        "type": "object",
+        "properties": {
+          "primary": {
+            "default": false,
+            "type": "boolean"
+          },
+          "delegable": {
+            "default": true,
+            "type": "boolean"
+          },
+          "mentionable": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessAgentCapability": {
+        "type": "object",
+        "properties": {
+          "tags": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "writes": {
+            "default": false,
+            "type": "boolean"
+          },
+          "cost": {
+            "default": "medium",
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessAgentPermission": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scopes": {
+            "default": [
+              "project"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "private",
+                "project",
+                "team",
+                "public"
+              ]
+            }
+          },
+          "write": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessAgentTemplateRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/HarnessAgentKind"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/HarnessAgentEntry"
+          },
+          "capability": {
+            "$ref": "#/components/schemas/HarnessAgentCapability"
+          },
+          "permission": {
+            "$ref": "#/components/schemas/HarnessAgentPermission"
+          },
+          "model_preference": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          },
+          "execution_mode": {
+            "default": "chat",
+            "type": "string",
+            "enum": [
+              "chat",
+              "workflow",
+              "protocol"
+            ]
+          },
+          "relationships": {
+            "type": "object",
+            "properties": {
+              "supervises": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "peers": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "orchestration_policy": {
+            "type": "object",
+            "properties": {
+              "max_parallel": {
+                "default": 1,
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "review_required": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "availability": {
+            "default": "available",
+            "type": "string",
+            "enum": [
+              "available",
+              "busy",
+              "disabled"
+            ]
+          },
+          "created_at": {
+            "default": 0,
+            "type": "number"
+          },
+          "updated_at": {
+            "default": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "identity",
+          "kind",
+          "entry",
+          "capability",
+          "permission",
+          "relationships",
+          "orchestration_policy"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessWorkflowNodeProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "default": "task",
+            "type": "string"
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "criteria": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failure": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "string"
+          },
+          "loop": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "budget": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "artifacts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "handoff": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessWorkflowProfile": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string"
+          },
+          "inputs_schema": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "nodes": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessWorkflowNodeProfile"
+            }
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "criteria": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "failure": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "string"
+          },
+          "loop": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "budget": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "artifacts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessV2Ref"
+            }
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "handoff": {
+            "$ref": "#/components/schemas/HarnessV2Ref"
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessWorkflowAsset": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "version": {
+            "default": 1,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "source": {
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessV2Visibility"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/HarnessWorkflowProfile"
+          },
+          "created_at": {
+            "type": "number"
+          },
+          "updated_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "owner",
+          "source",
+          "profile",
+          "created_at",
+          "updated_at"
         ],
         "additionalProperties": false
       },
@@ -17488,6 +19135,11 @@
               "run.pause",
               "run.resume",
               "run.abort",
+              "action.accept",
+              "action.cancel",
+              "action.retry",
+              "resource.write",
+              "resource.tombstone",
               "task.retry",
               "task.cancel",
               "decision.answer",

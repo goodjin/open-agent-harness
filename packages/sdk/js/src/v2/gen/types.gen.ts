@@ -2202,6 +2202,222 @@ export type HarnessEvent = {
   }
 }
 
+export type HarnessV2SchemaVersion = "v2.0"
+
+export type HarnessActionGraph = {
+  id: string
+  run_id: string
+  schema_version?: HarnessV2SchemaVersion
+  status?: "active" | "completed" | "blocked" | "failed" | "cancelled"
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessActionStatus = "ready" | "blocked" | "running" | "completed" | "failed" | "cancelled"
+
+export type HarnessV2Visibility = "private" | "project" | "team" | "public"
+
+export type HarnessV2Ref = string
+
+export type HarnessRetryPolicy = {
+  max?: number
+  backoff?: "none" | "linear" | "exponential"
+}
+
+export type HarnessActionRecord = {
+  id: string
+  run_id: string
+  graph_id: string
+  kind: "act"
+  type?: string
+  title: string
+  status?: HarnessActionStatus
+  depends_on?: Array<string>
+  criteria?: Array<string>
+  failure?: string
+  gate?: string
+  budget?: {
+    [key: string]: unknown
+  }
+  visibility?: HarnessV2Visibility
+  expected_artifacts?: Array<HarnessV2Ref>
+  idempotency_key?: string
+  resource_locks?: Array<HarnessV2Ref>
+  cancellation?: {
+    allowed?: boolean
+    reason?: string
+  }
+  retry_policy?: HarnessRetryPolicy
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessActionEdge = {
+  run_id: string
+  graph_id: string
+  from: string
+  to: string
+  kind?: "depends_on"
+}
+
+export type HarnessResourceKind =
+  | "tool_output"
+  | "model_long_output"
+  | "review_report"
+  | "test_report"
+  | "research_note"
+  | "handoff_state"
+  | "context_snapshot"
+  | "document"
+
+export type HarnessV2Producer = {
+  type: "runtime" | "model" | "tool" | "agent" | "user" | "system" | "import"
+  id: string
+  run_id?: string
+  action_id?: string
+  session_id?: string
+}
+
+export type HarnessV2Lifecycle = "draft" | "active" | "archived" | "tombstoned"
+
+export type HarnessResourceRecord = {
+  id: string
+  run_id: string
+  kind: HarnessResourceKind
+  uri: HarnessV2Ref
+  summary: string
+  producer: HarnessV2Producer
+  source_action?: string
+  visibility?: HarnessV2Visibility
+  evidence?: Array<HarnessV2Ref>
+  lifecycle?: HarnessV2Lifecycle
+  media_type?: string
+  size: number
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessRefExpansionMode = "summary" | "structured" | "full" | "on_failure" | "on_demand" | "adaptive"
+
+export type HarnessContextRecord = {
+  ref: HarnessV2Ref
+  mode: HarnessRefExpansionMode
+  visibility: HarnessV2Visibility
+  summary: string
+  content: string
+  reason: string
+  tokens: number
+}
+
+export type HarnessContextExcludedRecord = {
+  ref: HarnessV2Ref
+  mode: HarnessRefExpansionMode
+  visibility?: HarnessV2Visibility
+  reason: string
+}
+
+export type HarnessContextBundle = {
+  id: string
+  run_id: string
+  assignment_id?: string
+  goal: string
+  user_input?: string
+  included?: Array<HarnessContextRecord>
+  excluded?: Array<HarnessContextExcludedRecord>
+  refs?: Array<HarnessV2Ref>
+  summary: string
+  token_budget: number
+  tokens_used: number
+  visibility?: HarnessV2Visibility
+  created_at: number
+}
+
+export type HarnessAgentSessionRecord = {
+  id: string
+  run_id: string
+  template_id: string
+  assignment_id: string
+  action_id: string
+  authority?: {
+    [key: string]: unknown
+  }
+  context_summary: string
+  trace_refs?: Array<HarnessV2Ref>
+  status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessHandoffKind = "assign" | "handoff" | "sync"
+
+export type HarnessHandoffParty = {
+  type: "user" | "agent" | "runtime" | "system"
+  id: string
+  assignment_id?: string
+  session_id?: string
+}
+
+export type HarnessHandoffState = "draft" | "ready" | "sent" | "received" | "blocked" | "completed"
+
+export type HarnessHandoffRecord = {
+  id: string
+  run_id: string
+  kind: HarnessHandoffKind
+  uri: HarnessV2Ref
+  source: HarnessHandoffParty
+  target: HarnessHandoffParty
+  summary: string
+  state?: HarnessHandoffState
+  evidence?: Array<HarnessV2Ref>
+  risks?: Array<string>
+  unresolved?: Array<string>
+  next?: Array<string>
+  refs?: Array<HarnessV2Ref>
+  resource_refs?: Array<HarnessV2Ref>
+  projection_ref?: HarnessV2Ref
+  trace_ref?: HarnessV2Ref
+  context_ref?: HarnessV2Ref
+  created_at: number
+  updated_at: number
+}
+
+export type HarnessAcceptanceTarget = {
+  type: "run" | "action_graph" | "action" | "assignment" | "workflow_node" | "resource"
+  ref: HarnessV2Ref
+}
+
+export type HarnessAcceptanceLevel = "none" | "auto" | "test" | "agent" | "human" | "combined" | "sampled"
+
+export type HarnessAcceptancePolicy = {
+  level: HarnessAcceptanceLevel
+  checks?: Array<string>
+  required?: boolean
+  reviewer?: string
+}
+
+export type HarnessAcceptanceGateResult =
+  | "approved"
+  | "changes_requested"
+  | "needs_evidence"
+  | "needs_user_decision"
+  | "blocked"
+  | "waived"
+
+export type HarnessAcceptanceRecord = {
+  id: string
+  run_id: string
+  target: HarnessAcceptanceTarget
+  criteria?: Array<string>
+  policy: HarnessAcceptancePolicy
+  required?: boolean
+  result?: HarnessAcceptanceGateResult
+  evidence?: Array<HarnessV2Ref>
+  reason?: string
+  reviewer?: string
+  created_at: number
+  updated_at: number
+}
+
 export type HarnessSummary = {
   run: HarnessRun
   tasks: Array<HarnessTask>
@@ -2209,6 +2425,110 @@ export type HarnessSummary = {
   artifacts: Array<HarnessArtifact>
   decisions: Array<HarnessDecision>
   events: Array<HarnessEvent>
+  graph?: HarnessActionGraph
+  actions?: Array<HarnessActionRecord>
+  edges?: Array<HarnessActionEdge>
+  resources?: Array<HarnessResourceRecord>
+  contexts?: Array<HarnessContextBundle>
+  agent_sessions?: Array<HarnessAgentSessionRecord>
+  handoffs?: Array<HarnessHandoffRecord>
+  acceptance?: Array<HarnessAcceptanceRecord>
+}
+
+export type HarnessAgentKind = "planner" | "worker" | "verifier" | "helper"
+
+export type HarnessAgentEntry = {
+  primary?: boolean
+  delegable?: boolean
+  mentionable?: boolean
+}
+
+export type HarnessAgentCapability = {
+  tags?: Array<string>
+  writes?: boolean
+  cost?: "low" | "medium" | "high"
+}
+
+export type HarnessAgentPermission = {
+  tools?: Array<string>
+  scopes?: Array<"private" | "project" | "team" | "public">
+  write?: boolean
+}
+
+export type HarnessAgentTemplateRecord = {
+  id: string
+  identity: string
+  kind: HarnessAgentKind
+  entry: HarnessAgentEntry
+  capability: HarnessAgentCapability
+  permission: HarnessAgentPermission
+  model_preference?: {
+    provider: string
+    model: string
+  }
+  execution_mode?: "chat" | "workflow" | "protocol"
+  relationships: {
+    supervises?: Array<string>
+    peers?: Array<string>
+  }
+  orchestration_policy: {
+    max_parallel?: number
+    review_required?: boolean
+  }
+  availability?: "available" | "busy" | "disabled"
+  created_at?: number
+  updated_at?: number
+}
+
+export type HarnessWorkflowNodeProfile = {
+  id: string
+  title: string
+  type?: string
+  depends_on?: Array<string>
+  criteria?: Array<string>
+  failure?: string
+  gate?: string
+  loop?: {
+    [key: string]: unknown
+  }
+  budget?: {
+    [key: string]: unknown
+  }
+  artifacts?: Array<HarnessV2Ref>
+  visibility?: HarnessV2Visibility
+  handoff?: HarnessV2Ref
+}
+
+export type HarnessWorkflowProfile = {
+  goal: string
+  inputs_schema?: {
+    [key: string]: unknown
+  }
+  nodes?: Array<HarnessWorkflowNodeProfile>
+  depends_on?: Array<string>
+  criteria?: Array<string>
+  failure?: string
+  gate?: string
+  loop?: {
+    [key: string]: unknown
+  }
+  budget?: {
+    [key: string]: unknown
+  }
+  artifacts?: Array<HarnessV2Ref>
+  visibility?: HarnessV2Visibility
+  handoff?: HarnessV2Ref
+}
+
+export type HarnessWorkflowAsset = {
+  id: string
+  owner: string
+  version?: number
+  source: string
+  visibility?: HarnessV2Visibility
+  profile: HarnessWorkflowProfile
+  created_at: number
+  updated_at: number
 }
 
 export type HarnessCommand = {
@@ -2217,6 +2537,11 @@ export type HarnessCommand = {
     | "run.pause"
     | "run.resume"
     | "run.abort"
+    | "action.accept"
+    | "action.cancel"
+    | "action.retry"
+    | "resource.write"
+    | "resource.tombstone"
     | "task.retry"
     | "task.cancel"
     | "decision.answer"
@@ -5708,6 +6033,122 @@ export type HarnessRunGetResponses = {
 
 export type HarnessRunGetResponse = HarnessRunGetResponses[keyof HarnessRunGetResponses]
 
+export type HarnessRunResourcesData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/resources"
+}
+
+export type HarnessRunResourcesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunResourcesError = HarnessRunResourcesErrors[keyof HarnessRunResourcesErrors]
+
+export type HarnessRunResourcesResponses = {
+  /**
+   * Harness run resources
+   */
+  200: Array<HarnessResourceRecord>
+}
+
+export type HarnessRunResourcesResponse = HarnessRunResourcesResponses[keyof HarnessRunResourcesResponses]
+
+export type HarnessRunAgentSessionsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/agent-sessions"
+}
+
+export type HarnessRunAgentSessionsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunAgentSessionsError = HarnessRunAgentSessionsErrors[keyof HarnessRunAgentSessionsErrors]
+
+export type HarnessRunAgentSessionsResponses = {
+  /**
+   * Harness run agent sessions
+   */
+  200: Array<HarnessAgentSessionRecord>
+}
+
+export type HarnessRunAgentSessionsResponse = HarnessRunAgentSessionsResponses[keyof HarnessRunAgentSessionsResponses]
+
+export type HarnessRunHandoffsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/handoffs"
+}
+
+export type HarnessRunHandoffsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunHandoffsError = HarnessRunHandoffsErrors[keyof HarnessRunHandoffsErrors]
+
+export type HarnessRunHandoffsResponses = {
+  /**
+   * Harness run handoffs
+   */
+  200: Array<HarnessHandoffRecord>
+}
+
+export type HarnessRunHandoffsResponse = HarnessRunHandoffsResponses[keyof HarnessRunHandoffsResponses]
+
+export type HarnessRunAcceptanceData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/acceptance"
+}
+
+export type HarnessRunAcceptanceErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunAcceptanceError = HarnessRunAcceptanceErrors[keyof HarnessRunAcceptanceErrors]
+
+export type HarnessRunAcceptanceResponses = {
+  /**
+   * Harness run acceptance records
+   */
+  200: Array<HarnessAcceptanceRecord>
+}
+
+export type HarnessRunAcceptanceResponse = HarnessRunAcceptanceResponses[keyof HarnessRunAcceptanceResponses]
+
 export type GetHarnessRunsRunIdTasksData = {
   body?: never
   path: {
@@ -5842,6 +6283,89 @@ export type GetHarnessRunsRunIdProjectionsRebuildData = {
 export type GetHarnessRunsRunIdProjectionsRebuildResponses = {
   200: unknown
 }
+
+export type HarnessAgentTemplatesData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/agent-templates"
+}
+
+export type HarnessAgentTemplatesErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessAgentTemplatesError = HarnessAgentTemplatesErrors[keyof HarnessAgentTemplatesErrors]
+
+export type HarnessAgentTemplatesResponses = {
+  /**
+   * Harness agent templates
+   */
+  200: Array<HarnessAgentTemplateRecord>
+}
+
+export type HarnessAgentTemplatesResponse = HarnessAgentTemplatesResponses[keyof HarnessAgentTemplatesResponses]
+
+export type HarnessWorkflowsData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/workflows"
+}
+
+export type HarnessWorkflowsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessWorkflowsError = HarnessWorkflowsErrors[keyof HarnessWorkflowsErrors]
+
+export type HarnessWorkflowsResponses = {
+  /**
+   * Harness workflow assets
+   */
+  200: Array<HarnessWorkflowAsset>
+}
+
+export type HarnessWorkflowsResponse = HarnessWorkflowsResponses[keyof HarnessWorkflowsResponses]
+
+export type HarnessWorkflowGetData = {
+  body?: never
+  path: {
+    workflowID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/workflows/{workflowID}"
+}
+
+export type HarnessWorkflowGetErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessWorkflowGetError = HarnessWorkflowGetErrors[keyof HarnessWorkflowGetErrors]
+
+export type HarnessWorkflowGetResponses = {
+  /**
+   * Harness workflow asset
+   */
+  200: HarnessWorkflowAsset | null
+}
+
+export type HarnessWorkflowGetResponse = HarnessWorkflowGetResponses[keyof HarnessWorkflowGetResponses]
 
 export type PostHarnessCommandsData = {
   body?: HarnessCommand
