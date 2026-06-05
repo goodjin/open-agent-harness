@@ -32,6 +32,47 @@ export namespace HarnessRuntime {
     })
   }
 
+  async function record(run: Harness.Run) {
+    const time = now()
+    const item =
+      (await HarnessStore.actionGraph(run.id)) ??
+      Harness.ActionGraph.parse({
+        id: id("graph"),
+        run_id: run.id,
+        status: "active",
+        created_at: time,
+        updated_at: time,
+      })
+    const next = Harness.ActionGraph.parse({ ...item, updated_at: time })
+    await HarnessStore.putActionGraph(next)
+    return next
+  }
+
+  async function project(run: string) {
+    const graph = await HarnessStore.actionGraph(run)
+    if (!graph) throw new Error(`Action Graph not found: ${run}`)
+    const actions = await HarnessStore.actions(run)
+    const edges = await HarnessStore.edges(run)
+    const events = await HarnessStore.events(run)
+    const done = new Set(actions.filter((item) => item.status === "completed").map((item) => item.id))
+    const blocked = actions
+      .filter((item) => item.status === "blocked" || item.depends_on.some((dep) => !done.has(dep)))
+      .map((item) => ({
+        id: item.id,
+        reason: item.status === "blocked" ? "status blocked" : "waiting for dependencies",
+      }))
+    const out = Harness.ActionGraphProjection.parse({
+      graph,
+      nodes: actions,
+      edges,
+      blocked,
+      ready: actions.filter((item) => item.status === "ready" && !blocked.some((next) => next.id === item.id)).map((item) => item.id),
+      source_events: events.length,
+    })
+    await HarnessStore.projection(run, "action-graph", out)
+    return out
+  }
+
   async function refresh(run: Harness.Run) {
     const tasks = await HarnessStore.tasks(run.id)
     const decisions = await HarnessStore.decisions(run.id)
@@ -115,6 +156,45 @@ export namespace HarnessRuntime {
       await HarnessStore.append(event("run.aborted", { run: run.id, actor: input.actor }))
       return refresh(next)
     }
+    if (input.type === "action.accept") {
+      const payload = Harness.ActionAccept.parse(input.payload)
+      const item = await record(run)
+      const key = payload.idempotency_key
+      const found = key ? (await HarnessStore.actions(run.id)).find((next) => next.idempotency_key === key) : undefined
+      const act = Harness.ActionRecord.parse({
+        ...payload,
+        id: found?.id ?? payload.id ?? id("act"),
+        run_id: run.id,
+        graph_id: item.id,
+        created_at: found?.created_at ?? time,
+        updated_at: time,
+      })
+      await HarnessStore.putAction(act)
+      const old = (await HarnessStore.edges(run.id)).filter((next) => next.to !== act.id)
+      await HarnessStore.putEdges(run.id, [
+        ...old,
+        ...act.depends_on.map((dep) =>
+          Harness.ActionEdge.parse({
+            run_id: run.id,
+            graph_id: item.id,
+            from: dep,
+            to: act.id,
+          }),
+        ),
+      ])
+      await HarnessStore.append(event("action.accepted", { run: run.id, actor: input.actor, summary: act.title, payload: { action_id: act.id } }))
+      await project(run.id)
+      return refresh(run)
+    }
+    if ((input.type === "action.cancel" || input.type === "action.retry") && input.task_id) {
+      const act = await HarnessStore.action(run.id, input.task_id)
+      if (!act) throw new Error(`Action not found: ${input.task_id}`)
+      const status = input.type === "action.cancel" ? "cancelled" : "ready"
+      await HarnessStore.putAction(Harness.ActionRecord.parse({ ...act, status, updated_at: time }))
+      await HarnessStore.append(event(input.type.replace(".", "_"), { run: run.id, actor: input.actor, payload: { action_id: act.id } }))
+      await project(run.id)
+      return refresh(run)
+    }
     if ((input.type === "task.retry" || input.type === "task.cancel" || input.type === "verify.rerun") && input.task_id) {
       const task = await HarnessStore.task(run.id, input.task_id)
       if (!task) throw new Error(`Task not found: ${input.task_id}`)
@@ -155,6 +235,14 @@ export namespace HarnessRuntime {
       return refresh(run)
     }
     throw new Error(`Unsupported command: ${input.type}`)
+  }
+
+  export async function actionGraph(run: string) {
+    return project(run)
+  }
+
+  export async function rebuildActionGraph(run: string) {
+    return project(run)
   }
 
   export async function graph(run: string) {

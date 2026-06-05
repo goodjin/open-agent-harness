@@ -1,5 +1,6 @@
 import path from "path"
 import { appendFile, mkdir } from "fs/promises"
+import z from "zod"
 import { Instance } from "@/project/instance"
 import { Filesystem } from "@/util/filesystem"
 import { Harness } from "./schema"
@@ -17,6 +18,14 @@ export namespace HarnessStore {
 
   function govDir() {
     return path.join(root(), "governance")
+  }
+
+  function graphDir(id: string) {
+    return path.join(runDir(id), "action-graph")
+  }
+
+  function actionsDir(id: string) {
+    return path.join(graphDir(id), "actions")
   }
 
   async function exists(file: string) {
@@ -175,6 +184,38 @@ export namespace HarnessStore {
     return Harness.Concept.parse(await Bun.file(file).json())
   }
 
+  export async function actionGraph(id: string) {
+    const file = path.join(graphDir(id), "graph.json")
+    if (!(await exists(file))) return
+    return Harness.ActionGraph.parse(await Bun.file(file).json())
+  }
+
+  export async function putActionGraph(item: Harness.ActionGraph) {
+    await write(path.join(graphDir(item.run_id), "graph.json"), item)
+  }
+
+  export async function actions(id: string) {
+    return (await list(actionsDir(id), Harness.ActionRecord)).sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  export async function action(run: string, id: string) {
+    const file = path.join(actionsDir(run), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.ActionRecord.parse(await Bun.file(file).json())
+  }
+
+  export async function putAction(item: Harness.ActionRecord) {
+    await write(path.join(actionsDir(item.run_id), `${item.id}.json`), item)
+  }
+
+  export async function edges(id: string) {
+    return (await read(path.join(graphDir(id), "edges.json"), z.array(Harness.ActionEdge), [])).sort((a, b) => `${a.to}:${a.from}`.localeCompare(`${b.to}:${b.from}`))
+  }
+
+  export async function putEdges(run: string, list: Harness.ActionEdge[]) {
+    await write(path.join(graphDir(run), "edges.json"), z.array(Harness.ActionEdge).parse(list))
+  }
+
   export async function summary(id: string): Promise<Harness.Summary | undefined> {
     const item = await maybeRun(id)
     if (!item) return
@@ -185,6 +226,9 @@ export namespace HarnessStore {
       artifacts: await artifacts(id),
       decisions: await decisions(id),
       events: await events(id),
+      graph: await actionGraph(id),
+      actions: await actions(id),
+      edges: await edges(id),
     }
   }
 }

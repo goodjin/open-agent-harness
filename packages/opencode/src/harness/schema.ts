@@ -184,6 +184,125 @@ export namespace Harness {
     .meta({ ref: "HarnessGate" })
   export type Gate = z.infer<typeof Gate>
 
+  export const ActionStatus = z.enum(["ready", "blocked", "running", "completed", "failed", "cancelled"]).meta({ ref: "HarnessActionStatus" })
+  export type ActionStatus = z.infer<typeof ActionStatus>
+
+  export const RetryPolicy = z
+    .object({
+      max: z.number().int().min(0).default(0),
+      backoff: z.enum(["none", "linear", "exponential"]).default("none"),
+    })
+    .strict()
+    .meta({ ref: "HarnessRetryPolicy" })
+  export type RetryPolicy = z.infer<typeof RetryPolicy>
+
+  export const ActionRecord = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      graph_id: z.string(),
+      kind: z.literal("act"),
+      type: z.string().default("task"),
+      title: z.string(),
+      status: ActionStatus.default("ready"),
+      depends_on: z.array(z.string()).default([]),
+      criteria: z.array(z.string()).default([]),
+      failure: z.string().optional(),
+      gate: z.string().optional(),
+      budget: z.record(z.string(), z.unknown()).default({}),
+      visibility: Visibility.default("project"),
+      expected_artifacts: z.array(Ref).default([]),
+      idempotency_key: z.string().optional(),
+      resource_locks: z.array(Ref).default([]),
+      cancellation: z
+        .object({
+          allowed: z.boolean().default(true),
+          reason: z.string().optional(),
+        })
+        .strict()
+        .default({ allowed: true }),
+      retry_policy: RetryPolicy.default({ max: 0, backoff: "none" }),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessActionRecord" })
+  export type ActionRecord = z.infer<typeof ActionRecord>
+
+  export const ActionEdge = z
+    .object({
+      run_id: z.string(),
+      graph_id: z.string(),
+      from: z.string(),
+      to: z.string(),
+      kind: z.enum(["depends_on"]).default("depends_on"),
+    })
+    .strict()
+    .meta({ ref: "HarnessActionEdge" })
+  export type ActionEdge = z.infer<typeof ActionEdge>
+
+  export const ActionGraph = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      schema_version: SchemaVersion.default("v2.0"),
+      status: z.enum(["active", "completed", "blocked", "failed", "cancelled"]).default("active"),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessActionGraph" })
+  export type ActionGraph = z.infer<typeof ActionGraph>
+
+  export const ActionAccept = z
+    .object({
+      id: z.string().optional(),
+      kind: z.literal("act"),
+      type: z.string().default("task"),
+      title: z.string(),
+      status: ActionStatus.default("ready"),
+      depends_on: z.array(z.string()).default([]),
+      criteria: z.array(z.string()).default([]),
+      failure: z.string().optional(),
+      gate: z.string().optional(),
+      budget: z.record(z.string(), z.unknown()).default({}),
+      visibility: Visibility.default("project"),
+      expected_artifacts: z.array(Ref).default([]),
+      idempotency_key: z.string().optional(),
+      resource_locks: z.array(Ref).default([]),
+      cancellation: z
+        .object({
+          allowed: z.boolean().default(true),
+          reason: z.string().optional(),
+        })
+        .strict()
+        .default({ allowed: true }),
+      retry_policy: RetryPolicy.default({ max: 0, backoff: "none" }),
+    })
+    .strict()
+    .meta({ ref: "HarnessActionAccept" })
+  export type ActionAccept = z.infer<typeof ActionAccept>
+
+  export const ActionGraphProjection = z
+    .object({
+      graph: ActionGraph,
+      nodes: z.array(ActionRecord),
+      edges: z.array(ActionEdge),
+      blocked: z.array(
+        z
+          .object({
+            id: z.string(),
+            reason: z.string(),
+          })
+          .strict(),
+      ),
+      ready: z.array(z.string()),
+      source_events: z.number().int().min(0),
+    })
+    .strict()
+    .meta({ ref: "HarnessActionGraphProjection" })
+  export type ActionGraphProjection = z.infer<typeof ActionGraphProjection>
+
   export const Assignment = z
     .object({
       id: z.string(),
@@ -345,6 +464,9 @@ export namespace Harness {
         "run.pause",
         "run.resume",
         "run.abort",
+        "action.accept",
+        "action.cancel",
+        "action.retry",
         "task.retry",
         "task.cancel",
         "decision.answer",
@@ -372,6 +494,9 @@ export namespace Harness {
       artifacts: z.array(Artifact),
       decisions: z.array(Decision),
       events: z.array(Event),
+      graph: ActionGraph.optional(),
+      actions: z.array(ActionRecord).default([]),
+      edges: z.array(ActionEdge).default([]),
     })
     .strict()
     .meta({ ref: "HarnessSummary" })
