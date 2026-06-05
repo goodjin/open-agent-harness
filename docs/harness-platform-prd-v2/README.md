@@ -22,6 +22,7 @@ Runtime 接受的重要事实、状态、产物、证据、交接记录和中间
 | 05 | [v2 Resource / Document Fabric](05-v2-resource-document-fabric.md) | 定义 M2 的资源索引、文档写入、会话 ref 边界和生命周期。 |
 | 06 | [v2 Agent Definition and Assignment](06-v2-agent-assignment.md) | 定义 M4 的 Agent Template、Routing、Assignment 和 Agent Session 合同。 |
 | 07 | [v2 Context Compiler](07-v2-context-compiler.md) | 定义 M3 的 Context Bundle、ref 展开模式、预算降级和预览解释。 |
+| 08 | [v2 Handoff Protocol](08-v2-handoff-protocol.md) | 定义 M5 的 assign/handoff/sync 记录、refs 交接和下游 Context Compiler 使用方式。 |
 
 ## 与 v1 的关系
 

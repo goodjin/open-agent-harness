@@ -382,6 +382,91 @@ export namespace Harness {
     .meta({ ref: "HarnessAgentAssignmentInput" })
   export type AgentAssignmentInput = z.infer<typeof AgentAssignmentInput>
 
+  export const HandoffKind = z.enum(["assign", "handoff", "sync"]).meta({ ref: "HarnessHandoffKind" })
+  export type HandoffKind = z.infer<typeof HandoffKind>
+
+  export const HandoffParty = z
+    .object({
+      type: z.enum(["user", "agent", "runtime", "system"]),
+      id: z.string(),
+      assignment_id: z.string().optional(),
+      session_id: z.string().optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessHandoffParty" })
+  export type HandoffParty = z.infer<typeof HandoffParty>
+
+  export const HandoffRefs = z
+    .object({
+      handoff_ref: Ref,
+      resource_refs: z.array(Ref).default([]),
+      projection_ref: Ref.optional(),
+      trace_ref: Ref.optional(),
+      context_ref: Ref.optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessHandoffRefs" })
+  export type HandoffRefs = z.infer<typeof HandoffRefs>
+
+  export const HandoffState = z.enum(["draft", "ready", "sent", "received", "blocked", "completed"]).meta({ ref: "HarnessHandoffState" })
+  export type HandoffState = z.infer<typeof HandoffState>
+
+  export const HandoffRecord = z
+    .object({
+      id: z.string(),
+      run_id: z.string(),
+      kind: HandoffKind,
+      uri: Ref,
+      source: HandoffParty,
+      target: HandoffParty,
+      summary: z.string(),
+      state: HandoffState.default("ready"),
+      evidence: z.array(Ref).default([]),
+      risks: z.array(z.string()).default([]),
+      unresolved: z.array(z.string()).default([]),
+      next: z.array(z.string()).default([]),
+      refs: z.array(Ref).default([]),
+      resource_refs: z.array(Ref).default([]),
+      projection_ref: Ref.optional(),
+      trace_ref: Ref.optional(),
+      context_ref: Ref.optional(),
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessHandoffRecord" })
+  export type HandoffRecord = z.infer<typeof HandoffRecord>
+
+  export const HandoffWrite = HandoffRecord.omit({
+    id: true,
+    run_id: true,
+    uri: true,
+    refs: true,
+    created_at: true,
+    updated_at: true,
+  })
+    .extend({
+      state: HandoffState.default("ready"),
+      evidence: z.array(Ref).default([]),
+      risks: z.array(z.string()).default([]),
+      unresolved: z.array(z.string()).default([]),
+      next: z.array(z.string()).default([]),
+      resource_refs: z.array(Ref).default([]),
+    })
+    .strict()
+    .meta({ ref: "HarnessHandoffWrite" })
+  export type HandoffWrite = z.infer<typeof HandoffWrite>
+
+  export const HandoffContextInput = z
+    .object({
+      goal: z.string(),
+      token_budget: z.number().int().nonnegative().default(4000),
+      visibility: Visibility.default("project"),
+    })
+    .strict()
+    .meta({ ref: "HarnessHandoffContextInput" })
+  export type HandoffContextInput = z.infer<typeof HandoffContextInput>
+
   export const WorkflowObject = Object.extend({
     category: z.literal("policy"),
     version: z.number().int().min(1),
@@ -784,6 +869,7 @@ export namespace Harness {
       resources: z.array(ResourceRecord).default([]),
       contexts: z.array(ContextBundle).default([]),
       agent_sessions: z.array(AgentSessionRecord).default([]),
+      handoffs: z.array(HandoffRecord).default([]),
     })
     .strict()
     .meta({ ref: "HarnessSummary" })

@@ -44,6 +44,10 @@ export namespace HarnessStore {
     return path.join(runDir(id), "contexts")
   }
 
+  function handoffsDir(id: string) {
+    return path.join(runDir(id), "handoffs")
+  }
+
   function templatesDir() {
     return path.join(govDir(), "agents", "templates")
   }
@@ -272,6 +276,20 @@ export namespace HarnessStore {
     await write(path.join(contextsDir(item.run_id), `${item.id}.json`), item)
   }
 
+  export async function handoffs(id: string) {
+    return (await list(handoffsDir(id), Harness.HandoffRecord)).sort((a, b) => b.updated_at - a.updated_at)
+  }
+
+  export async function handoff(run: string, id: string) {
+    const file = path.join(handoffsDir(run), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.HandoffRecord.parse(await Bun.file(file).json())
+  }
+
+  export async function putHandoff(item: Harness.HandoffRecord) {
+    await write(path.join(handoffsDir(item.run_id), `${item.id}.json`), item)
+  }
+
   export async function agentTemplates() {
     return (await list(templatesDir(), Harness.AgentTemplateRecord)).sort((a, b) => a.id.localeCompare(b.id))
   }
@@ -310,6 +328,7 @@ export namespace HarnessStore {
       resources: await resources(id),
       contexts: await contextBundles(id),
       agent_sessions: await agentSessions(id),
+      handoffs: await handoffs(id),
     }
   }
 }

@@ -108,6 +108,10 @@ export namespace HarnessRuntime {
     return [...new Set(list)]
   }
 
+  function links(input: { resource_refs?: Harness.Ref[]; projection_ref?: Harness.Ref; trace_ref?: Harness.Ref; context_ref?: Harness.Ref }) {
+    return uniq([...(input.resource_refs ?? []), input.projection_ref, input.trace_ref, input.context_ref].filter((item): item is Harness.Ref => Boolean(item)))
+  }
+
   async function agents(run?: string) {
     const list = await HarnessStore.agentTemplates()
     if (run) await HarnessStore.projection(run, "agent-templates", list)
@@ -434,6 +438,56 @@ export namespace HarnessRuntime {
     const projections = await HarnessStore.projections(bundle.run_id)
     const item = projections.find((next) => next.name === "context-preview")
     return Harness.ContextPreview.parse(item?.data ?? { bundle, explanations: [] })
+  }
+
+  export function normalizeSync(input: Omit<z.input<typeof Harness.HandoffWrite>, "kind"> & { kind?: Harness.HandoffKind }) {
+    const item = Harness.HandoffWrite.parse({ ...input, kind: "sync", state: input.state ?? "ready" })
+    return Harness.HandoffWrite.parse({ ...item, resource_refs: uniq(item.resource_refs) })
+  }
+
+  export async function writeHandoff(run: string, input: z.input<typeof Harness.HandoffWrite>) {
+    const payload = Harness.HandoffWrite.parse(input)
+    const time = now()
+    const hid = id("handoff")
+    const item = Harness.HandoffRecord.parse({
+      ...payload,
+      id: hid,
+      run_id: run,
+      uri: `handoff://${hid}`,
+      refs: links(payload),
+      resource_refs: uniq(payload.resource_refs),
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putHandoff(item)
+    await HarnessStore.append(event(`handoff.${item.kind}`, { run, actor: item.source.id, summary: item.summary, payload: { handoff_id: item.id, target: item.target.id } }))
+    await HarnessStore.projection(run, "handoffs", await HarnessStore.handoffs(run))
+    return item
+  }
+
+  export async function handoffContext(run: string, id: string, input: z.input<typeof Harness.HandoffContextInput>) {
+    const payload = Harness.HandoffContextInput.parse(input)
+    const item = await HarnessStore.handoff(run, id)
+    if (!item) throw new Error(`Handoff not found: ${id}`)
+    const out = Harness.HandoffRefs.parse({
+      handoff_ref: item.uri,
+      resource_refs: item.resource_refs,
+      projection_ref: item.projection_ref,
+      trace_ref: item.trace_ref,
+      context_ref: item.context_ref,
+    })
+    const list = uniq([out.handoff_ref, ...out.resource_refs, out.projection_ref, out.trace_ref, out.context_ref].filter((ref): ref is Harness.Ref => Boolean(ref)))
+    return {
+      refs: out,
+      bundle: await compileContext({
+        run_id: run,
+        goal: payload.goal,
+        refs: list,
+        expansion: Object.fromEntries(item.resource_refs.map((ref) => [ref, "adaptive"])) as Record<string, Harness.RefExpansionMode>,
+        token_budget: payload.token_budget,
+        visibility: payload.visibility,
+      }),
+    }
   }
 
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
