@@ -213,6 +213,12 @@ Acceptance Gate 支持以下结果：
 - Memory Panel 默认按当前 run 相关性排序，不扫描全部历史。
 - Acceptance View 默认显示未通过、待证据、待用户决策和被 waiver 的任务。
 
+实现补充（当前实现）：
+
+- run 级性能快照新增 `status/counters/pressure`，默认通过阈值门控回避超量输出。
+- `/harness/performance` 提供 scheduler 当前指标，给 API 与 UI 订阅做统一 backpressure 基线。
+- `/harness/runs/{runID}/performance` 增加 run 级压力摘要与 metrics，供首屏展示使用。
+
 ### 12.4 验收标准
 
 - AC-M10-001：列出 Event、Action Graph、Trace、Acceptance Records、Resource、Memory、Session Tree、Projection、Scheduler、Executor、Context Compiler、UI Subscription 的容量模型。

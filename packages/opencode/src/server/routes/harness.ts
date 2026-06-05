@@ -164,6 +164,22 @@ export const HarnessRoutes = lazy(() =>
       if (format === "markdown") return c.text(data as string)
       return c.json(data)
     })
+    .get(
+      "/runs/:runID/performance",
+      describeRoute({
+        summary: "Run performance summary",
+        operationId: "harness.run.performance",
+        responses: {
+          200: {
+            description: "Run performance profile",
+            content: { "application/json": {} },
+          },
+          ...errors(400),
+        },
+      }),
+      validator("param", RunParam),
+      async (c) => c.json(await HarnessRuntime.performance(c.req.valid("param").runID)),
+    )
     .get("/runs/:runID/projections/rebuild", validator("param", RunParam), async (c) => c.json(await HarnessRuntime.rebuild(c.req.valid("param").runID)))
     .get(
       "/agent-templates",
@@ -258,6 +274,7 @@ export const HarnessRoutes = lazy(() =>
       validator("json", z.object({ run_id: z.string() })),
       async (c) => c.json(await command("verify.rerun", { run_id: c.req.valid("json").run_id, task_id: c.req.valid("param").taskID })),
     )
+    .get("/performance", async (c) => c.json({ scheduler: HarnessRuntime.scheduler() }))
     .get("/memory/query", async (c) => {
       const query = c.req.query("q")?.toLowerCase()
       const scope = c.req.query("scope")

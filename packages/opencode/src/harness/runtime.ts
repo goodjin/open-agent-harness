@@ -1,6 +1,8 @@
 import z from "zod"
 import { Harness } from "./schema"
 import { HarnessStore } from "./store"
+import { Scheduler } from "../scheduler"
+import { report } from "./performance"
 
 export namespace HarnessRuntime {
   function id(prefix: string) {
@@ -1042,5 +1044,17 @@ export namespace HarnessRuntime {
       ...data.events.map((item) => `- ${new Date(item.time).toISOString()} ${item.type}: ${item.summary ?? item.actor}`),
     ]
     return lines.join("\n")
+  }
+
+  export async function performance(run: string) {
+    const result = await report(run)
+    return {
+      ...result,
+      scheduler: Scheduler.metrics(),
+    }
+  }
+
+  export function scheduler() {
+    return Scheduler.metrics()
   }
 }

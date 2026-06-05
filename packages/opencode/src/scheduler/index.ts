@@ -4,6 +4,11 @@ import { Log } from "../util/log"
 export namespace Scheduler {
   const log = Log.create({ service: "scheduler" })
 
+  let completed = 0
+  let failed = 0
+  let active = 0
+  let lastError: string | undefined
+
   export type Task = {
     id: string
     interval: number
@@ -53,9 +58,37 @@ export namespace Scheduler {
   }
 
   async function run(task: Task) {
+    active += 1
     log.info("run", { id: task.id })
-    await task.run().catch((error) => {
+    try {
+      await task.run()
+      completed += 1
+    } catch (error) {
+      failed += 1
+      lastError = String(error)
       log.error("run failed", { id: task.id, error })
-    })
+    } finally {
+      active -= 1
+    }
+  }
+
+  export function metrics() {
+    const stateRef = Instance.directory
+      ? shared.tasks.size + state().tasks.size
+      : shared.tasks.size
+    return {
+      registered: stateRef,
+      active,
+      completed,
+      failed,
+      last_error: lastError,
+    }
+  }
+
+  export function reset() {
+    completed = 0
+    failed = 0
+    active = 0
+    lastError = undefined
   }
 }
