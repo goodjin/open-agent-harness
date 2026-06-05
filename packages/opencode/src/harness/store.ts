@@ -56,6 +56,10 @@ export namespace HarnessStore {
     return path.join(govDir(), "agents", "templates")
   }
 
+  function workflowsDir() {
+    return path.join(govDir(), "workflows")
+  }
+
   function sessionsDir(id: string) {
     return path.join(runDir(id), "agent-sessions")
   }
@@ -306,6 +310,20 @@ export namespace HarnessStore {
 
   export async function putAcceptance(item: Harness.AcceptanceRecord) {
     await write(path.join(acceptanceDir(item.run_id), `${item.id}.json`), item)
+  }
+
+  export async function workflows() {
+    return (await list(workflowsDir(), Harness.WorkflowAsset)).sort((a, b) => b.updated_at - a.updated_at)
+  }
+
+  export async function workflow(id: string) {
+    const file = path.join(workflowsDir(), `${id}.json`)
+    if (!(await exists(file))) return
+    return Harness.WorkflowAsset.parse(await Bun.file(file).json())
+  }
+
+  export async function putWorkflow(item: Harness.WorkflowAsset) {
+    await write(path.join(workflowsDir(), `${item.id}.json`), item)
   }
 
   export async function agentTemplates() {

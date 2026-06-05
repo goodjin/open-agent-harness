@@ -561,6 +561,92 @@ export namespace Harness {
     .meta({ ref: "HarnessV2WorkflowObject" })
   export type WorkflowObject = z.infer<typeof WorkflowObject>
 
+  export const WorkflowNodeProfile = z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      type: z.string().default("task"),
+      depends_on: z.array(z.string()).default([]),
+      criteria: z.array(z.string()).default([]),
+      failure: z.string().optional(),
+      gate: z.string().optional(),
+      loop: z.record(z.string(), z.unknown()).default({}),
+      budget: z.record(z.string(), z.unknown()).default({}),
+      artifacts: z.array(Ref).default([]),
+      visibility: Visibility.default("project"),
+      handoff: Ref.optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowNodeProfile" })
+  export type WorkflowNodeProfile = z.infer<typeof WorkflowNodeProfile>
+
+  export const WorkflowProfile = z
+    .object({
+      goal: z.string(),
+      inputs_schema: z.record(z.string(), z.unknown()).default({}),
+      nodes: z.array(WorkflowNodeProfile).default([]),
+      depends_on: z.array(z.string()).default([]),
+      criteria: z.array(z.string()).default([]),
+      failure: z.string().optional(),
+      gate: z.string().optional(),
+      loop: z.record(z.string(), z.unknown()).default({}),
+      budget: z.record(z.string(), z.unknown()).default({}),
+      artifacts: z.array(Ref).default([]),
+      visibility: Visibility.default("project"),
+      handoff: Ref.optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowProfile" })
+  export type WorkflowProfile = z.infer<typeof WorkflowProfile>
+
+  export const WorkflowAsset = z
+    .object({
+      id: z.string(),
+      owner: z.string(),
+      version: z.number().int().min(1).default(1),
+      source: z.string(),
+      visibility: Visibility.default("project"),
+      profile: WorkflowProfile,
+      created_at: z.number(),
+      updated_at: z.number(),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowAsset" })
+  export type WorkflowAsset = z.infer<typeof WorkflowAsset>
+
+  export const WorkflowWrite = WorkflowAsset.omit({ id: true, created_at: true, updated_at: true })
+    .extend({ version: z.number().int().min(1).default(1) })
+    .strict()
+    .meta({ ref: "HarnessWorkflowWrite" })
+  export type WorkflowWrite = z.infer<typeof WorkflowWrite>
+
+  export const WorkflowSaveInput = z
+    .object({
+      owner: z.string(),
+      source: z.string(),
+      visibility: Visibility.default("project"),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowSaveInput" })
+  export type WorkflowSaveInput = z.infer<typeof WorkflowSaveInput>
+
+  export const WorkflowRunInput = z
+    .object({
+      inputs: z.record(z.string(), z.unknown()).default({}),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowRunInput" })
+  export type WorkflowRunInput = z.infer<typeof WorkflowRunInput>
+
+  export const WorkflowRecoveryInput = z
+    .object({
+      op: z.enum(["inspect", "retry", "skip", "repair", "decision"]),
+      reason: z.string().optional(),
+    })
+    .strict()
+    .meta({ ref: "HarnessWorkflowRecoveryInput" })
+  export type WorkflowRecoveryInput = z.infer<typeof WorkflowRecoveryInput>
+
   export const PolicyObject = Object.extend({
     category: z.literal("policy"),
     rules: z.array(z.record(z.string(), z.string())).default([]),

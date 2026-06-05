@@ -24,6 +24,7 @@ Runtime 接受的重要事实、状态、产物、证据、交接记录和中间
 | 07 | [v2 Context Compiler](07-v2-context-compiler.md) | 定义 M3 的 Context Bundle、ref 展开模式、预算降级和预览解释。 |
 | 08 | [v2 Handoff Protocol](08-v2-handoff-protocol.md) | 定义 M5 的 assign/handoff/sync 记录、refs 交接和下游 Context Compiler 使用方式。 |
 | 09 | [v2 Acceptance Gates](09-v2-acceptance-gates.md) | 定义 M6 的验收标准、策略生成、Gate 结果、repair routing 和 completed 拦截。 |
+| 10 | [v2 Workflow Asset](10-v2-workflow-asset.md) | 定义 M7 的 Workflow Profile、Workflow Asset、Run 展开和节点恢复。 |
 
 ## 与 v1 的关系
 

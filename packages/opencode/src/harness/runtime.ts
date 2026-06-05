@@ -572,6 +572,134 @@ export namespace HarnessRuntime {
     return next
   }
 
+  export async function putWorkflow(input: z.input<typeof Harness.WorkflowWrite>) {
+    const payload = Harness.WorkflowWrite.parse(input)
+    const time = now()
+    const item = Harness.WorkflowAsset.parse({
+      ...payload,
+      id: id("workflow"),
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putWorkflow(item)
+    return item
+  }
+
+  export async function workflows() {
+    return HarnessStore.workflows()
+  }
+
+  export async function saveWorkflowFromRun(run: string, input: z.input<typeof Harness.WorkflowSaveInput>) {
+    const payload = Harness.WorkflowSaveInput.parse(input)
+    const item = await HarnessStore.run(run)
+    const actions = await HarnessStore.actions(run)
+    const asset = await putWorkflow({
+      owner: payload.owner,
+      source: payload.source,
+      visibility: payload.visibility,
+      profile: {
+        goal: item.goal,
+        inputs_schema: {},
+        criteria: [],
+        nodes: actions.map((act) => ({
+          id: act.id,
+          title: act.title,
+          type: act.type,
+          depends_on: act.depends_on,
+          criteria: act.criteria,
+          failure: act.failure,
+          gate: act.gate,
+          budget: act.budget,
+          artifacts: act.expected_artifacts,
+          visibility: act.visibility,
+        })),
+      },
+    })
+    return { asset }
+  }
+
+  export async function runWorkflow(id: string, input: z.input<typeof Harness.WorkflowRunInput>) {
+    const payload = Harness.WorkflowRunInput.parse(input)
+    const asset = await HarnessStore.workflow(id)
+    if (!asset) throw new Error(`Workflow not found: ${id}`)
+    const run = await create({ goal: asset.profile.goal, constraints: [], memory_scopes: ["project"], automation: "guided" })
+    await Promise.all(
+      asset.profile.nodes.map(async (node) => {
+        await command({
+          type: "action.accept",
+          run_id: run.id,
+          actor: "workflow",
+          payload: {
+            id: node.id,
+            kind: "act",
+            type: node.type,
+            title: node.title,
+            depends_on: node.depends_on,
+            criteria: node.criteria,
+            failure: node.failure,
+            gate: node.gate,
+            budget: node.budget,
+            visibility: node.visibility,
+            expected_artifacts: node.artifacts,
+          },
+        })
+        if (node.criteria.length) {
+          await bindAcceptance(run.id, {
+            target: { type: "action", ref: `action://${node.id}` },
+            criteria: node.criteria,
+            policy: acceptancePolicy({ criteria: node.criteria, artifact_type: node.gate === "test" ? "code" : "workflow" }),
+            required: true,
+          })
+        }
+      }),
+    )
+    await HarnessStore.projection(run.id, "workflow-run", { workflow_id: asset.id, version: asset.version, inputs: payload.inputs })
+    return { asset, run: await refresh(run) }
+  }
+
+  export async function recoverWorkflowNode(run: string, node: string, input: z.input<typeof Harness.WorkflowRecoveryInput>) {
+    const payload = Harness.WorkflowRecoveryInput.parse(input)
+    const act = await HarnessStore.action(run, node)
+    if (!act) throw new Error(`Action not found: ${node}`)
+    if (payload.op === "inspect") return { action: act, evidence: act.expected_artifacts }
+    if (payload.op === "retry" || payload.op === "skip") {
+      const next = Harness.ActionRecord.parse({ ...act, status: payload.op === "retry" ? "ready" : "completed", updated_at: now() })
+      await HarnessStore.putAction(next)
+      await project(run)
+      return { action: next }
+    }
+    if (payload.op === "repair") {
+      const assignment = Harness.Assignment.parse({
+        id: id("assign"),
+        task_id: node,
+        actor: "runtime",
+        role: "repair",
+        status: "pending",
+        capabilities: ["repair"],
+        authority: {},
+        context: payload.reason ?? "repair workflow node",
+        updated_at: now(),
+      })
+      await HarnessStore.putAssignment(run, assignment)
+      return { assignment }
+    }
+    const time = now()
+    const decision = Harness.Decision.parse({
+      id: id("decision"),
+      run_id: run,
+      task_id: node,
+      question: payload.reason ?? `Decide recovery for ${node}`,
+      options: [
+        { id: "retry", label: "Retry" },
+        { id: "skip", label: "Skip" },
+      ],
+      created_at: time,
+      updated_at: time,
+    })
+    await HarnessStore.putDecision(decision)
+    return { decision }
+  }
+
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
   export function command(input: Harness.Command & { type: "resource.tombstone" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord }>
   export function command(input: Harness.Command): Promise<Harness.Run>
