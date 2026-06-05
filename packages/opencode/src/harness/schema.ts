@@ -1,16 +1,16 @@
 import z from "zod"
 
 export namespace Harness {
-  export const SchemaVersion = z.literal("v2.0").meta({ ref: "HarnessV2SchemaVersion" })
+  export const SchemaVersion = z.literal("v2.0")
   export type SchemaVersion = z.infer<typeof SchemaVersion>
 
-  export const ObjectCategory = z.enum(["fact", "view", "evidence", "resource", "context", "policy"]).meta({ ref: "HarnessV2ObjectCategory" })
+  export const ObjectCategory = z.enum(["fact", "view", "evidence", "resource", "context", "policy"])
   export type ObjectCategory = z.infer<typeof ObjectCategory>
 
-  export const Visibility = z.enum(["private", "project", "team", "public"]).meta({ ref: "HarnessV2Visibility" })
+  export const Visibility = z.enum(["private", "project", "team", "public"])
   export type Visibility = z.infer<typeof Visibility>
 
-  export const Lifecycle = z.enum(["draft", "active", "archived", "tombstoned"]).meta({ ref: "HarnessV2Lifecycle" })
+  export const Lifecycle = z.enum(["draft", "active", "archived", "tombstoned"])
   export type Lifecycle = z.infer<typeof Lifecycle>
 
   export const Producer = z
@@ -22,18 +22,18 @@ export namespace Harness {
       session_id: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessV2Producer" })
+    
   export type Producer = z.infer<typeof Producer>
 
   export const RefKind = z
     .enum(["resource", "document", "artifact", "action", "handoff", "trace", "projection", "memory", "snapshot"])
-    .meta({ ref: "HarnessV2RefKind" })
+    
   export type RefKind = z.infer<typeof RefKind>
 
   export const Ref = z
     .string()
     .regex(/^(resource|document|artifact|action|handoff|trace|projection|memory|snapshot):\/\/[A-Za-z0-9._~:/-]+$/)
-    .meta({ ref: "HarnessV2Ref" })
+    
   export type Ref = z.infer<typeof Ref>
 
   export const Object = z
@@ -52,7 +52,7 @@ export namespace Harness {
       data: z.record(z.string(), z.unknown()).default({}),
     })
     .strict()
-    .meta({ ref: "HarnessV2Object" })
+    
   export type Object = z.infer<typeof Object>
 
   export const ResourceObject = Object.extend({
@@ -62,12 +62,12 @@ export namespace Harness {
     evidence: z.array(Ref).default([]),
   })
     .strict()
-    .meta({ ref: "HarnessV2ResourceObject" })
+    
   export type ResourceObject = z.infer<typeof ResourceObject>
 
   export const ResourceKind = z
     .enum(["tool_output", "model_long_output", "review_report", "test_report", "research_note", "handoff_state", "context_snapshot", "document"])
-    .meta({ ref: "HarnessResourceKind" })
+    
   export type ResourceKind = z.infer<typeof ResourceKind>
 
   export const ResourceRecord = z
@@ -88,7 +88,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessResourceRecord" })
+    
   export type ResourceRecord = z.infer<typeof ResourceRecord>
 
   export const DocumentWrite = z
@@ -106,7 +106,7 @@ export namespace Harness {
       redact: z.array(z.string()).default([]),
     })
     .strict()
-    .meta({ ref: "HarnessDocumentWrite" })
+    
   export type DocumentWrite = z.infer<typeof DocumentWrite>
 
   export const ResourceSessionPart = z
@@ -118,7 +118,7 @@ export namespace Harness {
       next: z.array(z.string()).default([]),
     })
     .strict()
-    .meta({ ref: "HarnessResourceSessionPart" })
+    
   export type ResourceSessionPart = z.infer<typeof ResourceSessionPart>
 
   export const ResourceRead = z
@@ -127,7 +127,7 @@ export namespace Harness {
       body: z.string(),
     })
     .strict()
-    .meta({ ref: "HarnessResourceRead" })
+    
   export type ResourceRead = z.infer<typeof ResourceRead>
 
   export const ResourcePreview = z
@@ -137,7 +137,7 @@ export namespace Harness {
       truncated: z.boolean(),
     })
     .strict()
-    .meta({ ref: "HarnessResourcePreview" })
+    
   export type ResourcePreview = z.infer<typeof ResourcePreview>
 
   export const ContextObject = Object.extend({
@@ -161,10 +161,10 @@ export namespace Harness {
       .strict(),
   })
     .strict()
-    .meta({ ref: "HarnessV2ContextObject" })
+    
   export type ContextObject = z.infer<typeof ContextObject>
 
-  export const RefExpansionMode = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"]).meta({ ref: "HarnessRefExpansionMode" })
+  export const RefExpansionMode = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"])
   export type RefExpansionMode = z.infer<typeof RefExpansionMode>
 
   export const ContextRecord = z
@@ -178,7 +178,7 @@ export namespace Harness {
       tokens: z.number().int().nonnegative(),
     })
     .strict()
-    .meta({ ref: "HarnessContextRecord" })
+    
   export type ContextRecord = z.infer<typeof ContextRecord>
 
   export const ContextExcludedRecord = z
@@ -189,7 +189,7 @@ export namespace Harness {
       reason: z.string(),
     })
     .strict()
-    .meta({ ref: "HarnessContextExcludedRecord" })
+    
   export type ContextExcludedRecord = z.infer<typeof ContextExcludedRecord>
 
   export const ContextBundle = z
@@ -209,7 +209,7 @@ export namespace Harness {
       created_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessContextBundle" })
+    
   export type ContextBundle = z.infer<typeof ContextBundle>
 
   export const ContextCompileInput = z
@@ -227,7 +227,7 @@ export namespace Harness {
       visibility: Visibility.default("project"),
     })
     .strict()
-    .meta({ ref: "HarnessContextCompileInput" })
+    
   export type ContextCompileInput = z.infer<typeof ContextCompileInput>
 
   export const ContextPreview = z
@@ -245,7 +245,7 @@ export namespace Harness {
       ),
     })
     .strict()
-    .meta({ ref: "HarnessContextPreview" })
+    
   export type ContextPreview = z.infer<typeof ContextPreview>
 
   export const MemoryObject = Object.extend({
@@ -256,16 +256,16 @@ export namespace Harness {
     evidence: z.array(Ref).default([]),
   })
     .strict()
-    .meta({ ref: "HarnessV2MemoryObject" })
+    
   export type MemoryObject = z.infer<typeof MemoryObject>
 
-  export const MemoryScope = z.enum(["run", "project", "team", "global"]).meta({ ref: "HarnessMemoryScope" })
+  export const MemoryScope = z.enum(["run", "project", "team", "global"])
   export type MemoryScope = z.infer<typeof MemoryScope>
 
-  export const MemoryStatus = z.enum(["candidate", "current", "historical", "superseded", "rejected"]).meta({ ref: "HarnessMemoryStatus" })
+  export const MemoryStatus = z.enum(["candidate", "current", "historical", "superseded", "rejected"])
   export type MemoryStatus = z.infer<typeof MemoryStatus>
 
-  export const MemoryFreshness = z.enum(["current", "stale", "historical"]).meta({ ref: "HarnessMemoryFreshness" })
+  export const MemoryFreshness = z.enum(["current", "stale", "historical"])
   export type MemoryFreshness = z.infer<typeof MemoryFreshness>
 
   export const MemoryRecord = z
@@ -285,13 +285,13 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessMemoryRecord" })
+    
   export type MemoryRecord = z.infer<typeof MemoryRecord>
 
   export const MemoryWrite = MemoryRecord.omit({ id: true, uri: true, status: true, created_at: true, updated_at: true })
     .extend({ status: MemoryStatus.default("candidate") })
     .strict()
-    .meta({ ref: "HarnessMemoryWrite" })
+    
   export type MemoryWrite = z.infer<typeof MemoryWrite>
 
   export const MemoryPromotionInput = z
@@ -299,7 +299,7 @@ export namespace Harness {
       acceptance_id: z.string(),
     })
     .strict()
-    .meta({ ref: "HarnessMemoryPromotionInput" })
+    
   export type MemoryPromotionInput = z.infer<typeof MemoryPromotionInput>
 
   export const MemoryContextInput = z
@@ -311,10 +311,10 @@ export namespace Harness {
       visibility: Visibility.default("project"),
     })
     .strict()
-    .meta({ ref: "HarnessMemoryContextInput" })
+    
   export type MemoryContextInput = z.infer<typeof MemoryContextInput>
 
-  export const AgentKind = z.enum(["planner", "worker", "verifier", "helper"]).meta({ ref: "HarnessAgentKind" })
+  export const AgentKind = z.enum(["planner", "worker", "verifier", "helper"])
   export type AgentKind = z.infer<typeof AgentKind>
 
   export const AgentEntry = z
@@ -324,7 +324,7 @@ export namespace Harness {
       mentionable: z.boolean().default(true),
     })
     .strict()
-    .meta({ ref: "HarnessAgentEntry" })
+    
   export type AgentEntry = z.infer<typeof AgentEntry>
 
   export const AgentCapability = z
@@ -334,7 +334,7 @@ export namespace Harness {
       cost: z.enum(["low", "medium", "high"]).default("medium"),
     })
     .strict()
-    .meta({ ref: "HarnessAgentCapability" })
+    
   export type AgentCapability = z.infer<typeof AgentCapability>
 
   export const AgentPermission = z
@@ -344,7 +344,7 @@ export namespace Harness {
       write: z.boolean().default(false),
     })
     .strict()
-    .meta({ ref: "HarnessAgentPermission" })
+    
   export type AgentPermission = z.infer<typeof AgentPermission>
 
   export const AgentTemplateRecord = z
@@ -380,7 +380,7 @@ export namespace Harness {
       updated_at: z.number().default(0),
     })
     .strict()
-    .meta({ ref: "HarnessAgentTemplateRecord" })
+    
   export type AgentTemplateRecord = z.infer<typeof AgentTemplateRecord>
 
   export const AgentSessionRecord = z
@@ -398,7 +398,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessAgentSessionRecord" })
+    
   export type AgentSessionRecord = z.infer<typeof AgentSessionRecord>
 
   export const AgentRoute = z
@@ -421,7 +421,7 @@ export namespace Harness {
       projection: z.record(z.string(), z.unknown()).default({}),
     })
     .strict()
-    .meta({ ref: "HarnessAgentRoute" })
+    
   export type AgentRoute = z.infer<typeof AgentRoute>
 
   export const AgentAssignmentInput = z
@@ -434,10 +434,10 @@ export namespace Harness {
       trace_refs: z.array(Ref).default([]),
     })
     .strict()
-    .meta({ ref: "HarnessAgentAssignmentInput" })
+    
   export type AgentAssignmentInput = z.infer<typeof AgentAssignmentInput>
 
-  export const HandoffKind = z.enum(["assign", "handoff", "sync"]).meta({ ref: "HarnessHandoffKind" })
+  export const HandoffKind = z.enum(["assign", "handoff", "sync"])
   export type HandoffKind = z.infer<typeof HandoffKind>
 
   export const HandoffParty = z
@@ -448,7 +448,7 @@ export namespace Harness {
       session_id: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessHandoffParty" })
+    
   export type HandoffParty = z.infer<typeof HandoffParty>
 
   export const HandoffRefs = z
@@ -460,11 +460,14 @@ export namespace Harness {
       context_ref: Ref.optional(),
     })
     .strict()
-    .meta({ ref: "HarnessHandoffRefs" })
+    
   export type HandoffRefs = z.infer<typeof HandoffRefs>
 
-  export const HandoffState = z.enum(["draft", "ready", "sent", "received", "blocked", "completed"]).meta({ ref: "HarnessHandoffState" })
+  export const HandoffState = z.enum(["draft", "ready", "sent", "received", "blocked", "completed"])
   export type HandoffState = z.infer<typeof HandoffState>
+
+  export const HandoffSelfReportState = z.enum(["draft", "ready", "partial", "sent", "received", "blocked", "completed"])
+  export type HandoffSelfReportState = z.infer<typeof HandoffSelfReportState>
 
   export const HandoffRecord = z
     .object({
@@ -489,7 +492,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessHandoffRecord" })
+    
   export type HandoffRecord = z.infer<typeof HandoffRecord>
 
   export const HandoffWrite = HandoffRecord.omit({
@@ -509,8 +512,192 @@ export namespace Harness {
       resource_refs: z.array(Ref).default([]),
     })
     .strict()
-    .meta({ ref: "HarnessHandoffWrite" })
+    
   export type HandoffWrite = z.infer<typeof HandoffWrite>
+
+  export const HandoffSourceInput = z
+    .object({
+      run_id: z.string(),
+      session_id: z.string().optional(),
+      assignment_id: z.string().optional(),
+      agent_id: z.string().optional(),
+    })
+    .strict()
+
+  export type HandoffSourceInput = z.infer<typeof HandoffSourceInput>
+
+  export const HandoffTargetInput = z
+    .object({
+      executor: z.string(),
+      capability: z.string(),
+    })
+    .strict()
+    .default({ executor: "runtime", capability: "handoff" })
+
+  export type HandoffTargetInput = z.infer<typeof HandoffTargetInput>
+
+  export const HandoffCompatFact = z
+    .object({
+      text: z.string(),
+      refs: z.array(Ref).default([]),
+      confidence: z.enum(["raw", "evidenced", "inferred"]).default("raw"),
+    })
+    .strict()
+
+  export type HandoffCompatFact = z.infer<typeof HandoffCompatFact>
+
+  export const HandoffCompatArtifact = z
+    .object({
+      ref: Ref,
+      type: z.string(),
+      summary: z.string(),
+      status: z.string().optional(),
+    })
+    .strict()
+
+  export type HandoffCompatArtifact = z.infer<typeof HandoffCompatArtifact>
+
+  export const HandoffCompatCreate = z
+    .object({
+      source: HandoffSourceInput,
+      target: HandoffTargetInput,
+      kind: z.enum(["assign", "handoff", "sync"]).default("handoff"),
+      status: HandoffState.default("completed"),
+      goal: z.string(),
+      summary: z.string(),
+      facts: z.array(HandoffCompatFact.omit({ confidence: true })).default([]),
+      notes: z.array(z.string()).optional().default([]),
+      artifacts: z.array(HandoffCompatArtifact).default([]),
+      constraints: z.array(z.string()).default([]),
+      risks: z.array(z.string()).default([]),
+      unresolved: z.array(z.string()).default([]),
+      next: z.array(z.unknown()).default([]),
+      raw_refs: z.array(Ref).default([]),
+      visibility: z
+        .object({
+          model: z.string(),
+          user: z.string(),
+          logs: z.string(),
+          trace: z.string(),
+          future_runs: z.string(),
+        })
+        .strict()
+        .partial()
+        .default({}),
+      decisions: z.array(z.string()).default([]),
+    })
+    .strict()
+
+  export type HandoffCompatCreate = z.infer<typeof HandoffCompatCreate>
+
+  export const HandoffCompatCreateResult = z
+    .object({
+    type: z.literal("handoff"),
+    version: z.literal("1"),
+    id: z.string(),
+    goal: z.string(),
+    source: HandoffSourceInput,
+    target: HandoffTargetInput,
+    status: HandoffState,
+    facts: z.array(HandoffCompatFact),
+    notes: z.array(z.string()),
+    artifacts: z.array(HandoffCompatArtifact),
+    decisions: z.array(z.string()),
+    constraints: z.array(z.string()),
+    risks: z.array(z.string()).default([]),
+    unresolved: z.array(z.string()).default([]),
+    visibility: z.record(z.string(), z.string()),
+    raw_refs: z.array(Ref),
+    created_by: z.string(),
+    created_at: z.number(),
+    summary: z.string(),
+    next: z.array(z.unknown()).default([]),
+  })
+
+  export type HandoffCompatCreateResult = z.infer<typeof HandoffCompatCreateResult>
+
+  export const HandoffSourceBundle = z
+    .object({
+      type: z.literal("handoff.source"),
+      run_id: z.string(),
+      goal: z.string(),
+      source: HandoffSourceInput,
+      status: HandoffState.default("ready"),
+      timeline: z
+        .array(
+          z
+            .object({
+              type: z.string(),
+              summary: z.string().optional(),
+              refs: z.array(Ref).default([]),
+            })
+            .strict(),
+        )
+        .default([]),
+      artifacts: z.array(HandoffCompatArtifact).default([]),
+      self_report: z
+        .object({
+          summary: z.string(),
+          risks: z.array(z.string()).default([]),
+        })
+        .strict()
+        .nullable()
+        .default(null),
+      raw_refs: z.array(Ref).default([]),
+      created_at: z.number(),
+    })
+    .strict()
+
+  export type HandoffSourceBundle = z.infer<typeof HandoffSourceBundle>
+
+  export const HandoffPlan = z
+    .object({
+      run_id: z.string(),
+      source: HandoffSourceInput,
+      status: HandoffState.default("completed"),
+      next: z.array(z.string()).default([]),
+      prompt: z.string().optional(),
+      trigger: z.boolean().optional(),
+    })
+    .strict()
+
+  export type HandoffPlan = z.infer<typeof HandoffPlan>
+
+  export const HandoffPlanResult = z
+    .object({
+      type: z.literal("handoff.plan"),
+      trigger: z.boolean(),
+      reasons: z.array(z.string()),
+      status: HandoffState,
+      request_self_report: z.boolean(),
+      prompt: z.string(),
+    })
+    .strict()
+
+  export type HandoffPlanResult = z.infer<typeof HandoffPlanResult>
+
+  export const HandoffSelfReportRequest = z
+    .object({
+      source: HandoffSourceInput,
+      status: HandoffSelfReportState.default("ready"),
+      reasons: z.array(z.string()).default([]),
+    })
+    .strict()
+
+  export type HandoffSelfReportRequest = z.infer<typeof HandoffSelfReportRequest>
+
+  export const HandoffSelfReportResult = z
+    .object({
+      type: z.literal("handoff.self_report_request"),
+      id: z.string(),
+      prompt: z.string(),
+    })
+    .strict()
+
+  export type HandoffSelfReportResult = z.infer<typeof HandoffSelfReportResult>
+
+  export const Handoff = HandoffRecord
+  export type Handoff = z.infer<typeof Handoff>
 
   export const HandoffContextInput = z
     .object({
@@ -519,15 +706,15 @@ export namespace Harness {
       visibility: Visibility.default("project"),
     })
     .strict()
-    .meta({ ref: "HarnessHandoffContextInput" })
+    
   export type HandoffContextInput = z.infer<typeof HandoffContextInput>
 
-  export const AcceptanceLevel = z.enum(["none", "auto", "test", "agent", "human", "combined", "sampled"]).meta({ ref: "HarnessAcceptanceLevel" })
+  export const AcceptanceLevel = z.enum(["none", "auto", "test", "agent", "human", "combined", "sampled"])
   export type AcceptanceLevel = z.infer<typeof AcceptanceLevel>
 
   export const AcceptanceGateResult = z
     .enum(["approved", "changes_requested", "needs_evidence", "needs_user_decision", "blocked", "waived"])
-    .meta({ ref: "HarnessAcceptanceGateResult" })
+    
   export type AcceptanceGateResult = z.infer<typeof AcceptanceGateResult>
 
   export const AcceptanceTarget = z
@@ -536,7 +723,7 @@ export namespace Harness {
       ref: Ref,
     })
     .strict()
-    .meta({ ref: "HarnessAcceptanceTarget" })
+    
   export type AcceptanceTarget = z.infer<typeof AcceptanceTarget>
 
   export const AcceptancePolicy = z
@@ -547,7 +734,7 @@ export namespace Harness {
       reviewer: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessAcceptancePolicy" })
+    
   export type AcceptancePolicy = z.infer<typeof AcceptancePolicy>
 
   export const AcceptanceRecord = z
@@ -566,7 +753,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessAcceptanceRecord" })
+    
   export type AcceptanceRecord = z.infer<typeof AcceptanceRecord>
 
   export const AcceptanceBind = z
@@ -577,7 +764,7 @@ export namespace Harness {
       required: z.boolean().default(true),
     })
     .strict()
-    .meta({ ref: "HarnessAcceptanceBind" })
+    
   export type AcceptanceBind = z.infer<typeof AcceptanceBind>
 
   export const AcceptancePolicyInput = z
@@ -592,7 +779,7 @@ export namespace Harness {
       sample_rate: z.number().min(0).max(1).default(0),
     })
     .strict()
-    .meta({ ref: "HarnessAcceptancePolicyInput" })
+    
   export type AcceptancePolicyInput = z.infer<typeof AcceptancePolicyInput>
 
   export const AcceptanceResultInput = z
@@ -603,7 +790,7 @@ export namespace Harness {
       reviewer: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessAcceptanceResultInput" })
+    
   export type AcceptanceResultInput = z.infer<typeof AcceptanceResultInput>
 
   export const WorkflowObject = Object.extend({
@@ -613,7 +800,7 @@ export namespace Harness {
     criteria: z.array(z.string()).default([]),
   })
     .strict()
-    .meta({ ref: "HarnessV2WorkflowObject" })
+    
   export type WorkflowObject = z.infer<typeof WorkflowObject>
 
   export const WorkflowNodeProfile = z
@@ -632,7 +819,7 @@ export namespace Harness {
       handoff: Ref.optional(),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowNodeProfile" })
+    
   export type WorkflowNodeProfile = z.infer<typeof WorkflowNodeProfile>
 
   export const WorkflowProfile = z
@@ -651,7 +838,7 @@ export namespace Harness {
       handoff: Ref.optional(),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowProfile" })
+    
   export type WorkflowProfile = z.infer<typeof WorkflowProfile>
 
   export const WorkflowAsset = z
@@ -666,13 +853,13 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowAsset" })
+    
   export type WorkflowAsset = z.infer<typeof WorkflowAsset>
 
   export const WorkflowWrite = WorkflowAsset.omit({ id: true, created_at: true, updated_at: true })
     .extend({ version: z.number().int().min(1).default(1) })
     .strict()
-    .meta({ ref: "HarnessWorkflowWrite" })
+    
   export type WorkflowWrite = z.infer<typeof WorkflowWrite>
 
   export const WorkflowSaveInput = z
@@ -682,7 +869,7 @@ export namespace Harness {
       visibility: Visibility.default("project"),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowSaveInput" })
+    
   export type WorkflowSaveInput = z.infer<typeof WorkflowSaveInput>
 
   export const WorkflowRunInput = z
@@ -690,7 +877,7 @@ export namespace Harness {
       inputs: z.record(z.string(), z.unknown()).default({}),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowRunInput" })
+    
   export type WorkflowRunInput = z.infer<typeof WorkflowRunInput>
 
   export const WorkflowRecoveryInput = z
@@ -699,7 +886,7 @@ export namespace Harness {
       reason: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessWorkflowRecoveryInput" })
+    
   export type WorkflowRecoveryInput = z.infer<typeof WorkflowRecoveryInput>
 
   export const PolicyObject = Object.extend({
@@ -707,7 +894,7 @@ export namespace Harness {
     rules: z.array(z.record(z.string(), z.string())).default([]),
   })
     .strict()
-    .meta({ ref: "HarnessV2PolicyObject" })
+    
   export type PolicyObject = z.infer<typeof PolicyObject>
 
   export const V1Mapping = z
@@ -718,12 +905,12 @@ export namespace Harness {
       workflow: z.array(ObjectCategory),
     })
     .strict()
-    .meta({ ref: "HarnessV2V1Mapping" })
+    
   export type V1Mapping = z.infer<typeof V1Mapping>
 
   export const Status = z
     .enum(["drafting", "ready", "running", "paused", "blocked", "reviewing", "verifying", "reworking", "completed", "failed", "aborted"])
-    .meta({ ref: "HarnessRunStatus" })
+    
   export type Status = z.infer<typeof Status>
 
   export const TaskStatus = z
@@ -744,10 +931,10 @@ export namespace Harness {
       "failed",
       "cancelled",
     ])
-    .meta({ ref: "HarnessTaskStatus" })
+    
   export type TaskStatus = z.infer<typeof TaskStatus>
 
-  export const DecisionStatus = z.enum(["pending", "answered", "rejected", "cancelled"]).meta({ ref: "HarnessDecisionStatus" })
+  export const DecisionStatus = z.enum(["pending", "answered", "rejected", "cancelled"])
   export type DecisionStatus = z.infer<typeof DecisionStatus>
 
   export const Event = z
@@ -761,7 +948,7 @@ export namespace Harness {
       payload: z.record(z.string(), z.unknown()).default({}),
     })
     .strict()
-    .meta({ ref: "HarnessEvent" })
+    
   export type Event = z.infer<typeof Event>
 
   export const Gate = z
@@ -773,10 +960,10 @@ export namespace Harness {
       reason: z.string().optional(),
     })
     .strict()
-    .meta({ ref: "HarnessGate" })
+    
   export type Gate = z.infer<typeof Gate>
 
-  export const ActionStatus = z.enum(["ready", "blocked", "running", "completed", "failed", "cancelled"]).meta({ ref: "HarnessActionStatus" })
+  export const ActionStatus = z.enum(["ready", "blocked", "running", "completed", "failed", "cancelled"])
   export type ActionStatus = z.infer<typeof ActionStatus>
 
   export const RetryPolicy = z
@@ -785,7 +972,7 @@ export namespace Harness {
       backoff: z.enum(["none", "linear", "exponential"]).default("none"),
     })
     .strict()
-    .meta({ ref: "HarnessRetryPolicy" })
+    
   export type RetryPolicy = z.infer<typeof RetryPolicy>
 
   export const ActionRecord = z
@@ -818,7 +1005,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessActionRecord" })
+    
   export type ActionRecord = z.infer<typeof ActionRecord>
 
   export const ActionEdge = z
@@ -830,7 +1017,7 @@ export namespace Harness {
       kind: z.enum(["depends_on"]).default("depends_on"),
     })
     .strict()
-    .meta({ ref: "HarnessActionEdge" })
+    
   export type ActionEdge = z.infer<typeof ActionEdge>
 
   export const ActionGraph = z
@@ -843,7 +1030,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessActionGraph" })
+    
   export type ActionGraph = z.infer<typeof ActionGraph>
 
   export const ActionAccept = z
@@ -872,7 +1059,7 @@ export namespace Harness {
       retry_policy: RetryPolicy.default({ max: 0, backoff: "none" }),
     })
     .strict()
-    .meta({ ref: "HarnessActionAccept" })
+    
   export type ActionAccept = z.infer<typeof ActionAccept>
 
   export const ActionGraphProjection = z
@@ -892,7 +1079,7 @@ export namespace Harness {
       source_events: z.number().int().min(0),
     })
     .strict()
-    .meta({ ref: "HarnessActionGraphProjection" })
+    
   export type ActionGraphProjection = z.infer<typeof ActionGraphProjection>
 
   export const Assignment = z
@@ -908,7 +1095,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessAssignment" })
+    
   export type Assignment = z.infer<typeof Assignment>
 
   export const Artifact = z
@@ -923,7 +1110,7 @@ export namespace Harness {
       created_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessArtifact" })
+    
   export type Artifact = z.infer<typeof Artifact>
 
   export const Decision = z
@@ -951,7 +1138,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessDecision" })
+    
   export type Decision = z.infer<typeof Decision>
 
   export const Task = z
@@ -971,7 +1158,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessTask" })
+    
   export type Task = z.infer<typeof Task>
 
   export const Run = z
@@ -997,7 +1184,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessRun" })
+    
   export type Run = z.infer<typeof Run>
 
   export const Concept = z
@@ -1018,7 +1205,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessConcept" })
+    
   export type Concept = z.infer<typeof Concept>
 
   export const Memory = z
@@ -1034,7 +1221,7 @@ export namespace Harness {
       updated_at: z.number(),
     })
     .strict()
-    .meta({ ref: "HarnessMemory" })
+    
   export type Memory = z.infer<typeof Memory>
 
   export const CreateRun = z
@@ -1068,6 +1255,8 @@ export namespace Harness {
         "concept.replace.request",
         "concept.replace.approve",
         "concept.replace.reject",
+        "handoff.plan",
+        "handoff.self_report.request",
       ]),
       run_id: z.string().optional(),
       task_id: z.string().optional(),
@@ -1077,7 +1266,7 @@ export namespace Harness {
       payload: z.record(z.string(), z.unknown()).default({}),
     })
     .strict()
-    .meta({ ref: "HarnessCommand" })
+    
   export type Command = z.infer<typeof Command>
 
   export const Summary = z
@@ -1098,6 +1287,6 @@ export namespace Harness {
       acceptance: z.array(AcceptanceRecord).default([]),
     })
     .strict()
-    .meta({ ref: "HarnessSummary" })
+    
   export type Summary = z.infer<typeof Summary>
 }

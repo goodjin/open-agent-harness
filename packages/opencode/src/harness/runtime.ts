@@ -1,8 +1,8 @@
 import z from "zod"
 import { Harness } from "./schema"
 import { HarnessStore } from "./store"
-import { Scheduler } from "../scheduler"
 import { report } from "./performance"
+import { Scheduler } from "../scheduler"
 
 export namespace HarnessRuntime {
   function id(prefix: string) {
@@ -519,6 +519,188 @@ export namespace HarnessRuntime {
     }
   }
 
+  export async function buildHandoffSource(input: { run_id: string; source: z.input<typeof Harness.HandoffSourceInput>; status: Harness.HandoffState; self_report?: { summary: string; risks?: string[] } }) {
+    const body = {
+      run_id: input.run_id,
+      source: Harness.HandoffSourceInput.parse(input.source),
+      status: input.status,
+      self_report: input.self_report ? { summary: input.self_report.summary, risks: input.self_report.risks ?? [] } : null,
+    }
+    const run = await HarnessStore.run(body.run_id)
+    if (!run) throw new Error(`Run not found: ${body.run_id}`)
+    const arts = await HarnessStore.artifacts(run.id)
+    const events = await HarnessStore.events(run.id)
+    const timeline = events
+      .map((item) => {
+        const out = uniq([
+          ...strings(item.payload.artifacts),
+          ...strings(item.payload.raw_refs),
+          ...strings(item.payload.tests),
+          ...strings(item.payload.refs),
+          ...(typeof item.payload.artifact === "string" ? [item.payload.artifact] : []),
+        ])
+        return {
+          type: item.type,
+          summary: item.summary,
+          refs: uniq(out),
+        }
+      })
+      .filter((item) => item.refs.length > 0)
+    const refs = uniq(timeline.map((item) => item.refs).flat())
+    const out = {
+      type: "handoff.source" as const,
+      run_id: run.id,
+      goal: run.goal,
+      source: body.source,
+      status: body.status,
+      timeline: timeline.slice(-40),
+      artifacts: arts.map((item) => ({
+        ref: item.path,
+        type: item.kind,
+        status: "available",
+        summary: item.summary,
+      })),
+      self_report: body.self_report ? { summary: body.self_report.summary, risks: body.self_report.risks ?? [] } : null,
+      raw_refs: refs.filter((item) => item.startsWith("artifact://raw")),
+      created_at: now(),
+    }
+    return Harness.HandoffSourceBundle.parse(out)
+  }
+
+  export async function createHandoff(input: z.input<typeof Harness.HandoffCompatCreate>) {
+    const body = Harness.HandoffCompatCreate.parse(input)
+    const run = await HarnessStore.run(body.source.run_id)
+    if (!run) throw new Error(`Run not found: ${body.source.run_id}`)
+    const rec = await writeHandoff(
+      run.id,
+      Harness.HandoffWrite.parse({
+        kind: body.kind,
+        source: {
+          type: "agent",
+          id: body.source.agent_id ?? "runtime",
+          assignment_id: body.source.assignment_id,
+          session_id: body.source.session_id,
+        },
+        target: {
+          type: "agent",
+          id: body.target.executor,
+          session_id: body.target.capability,
+        },
+        summary: body.summary,
+        state: body.status,
+        risks: body.risks,
+        unresolved: body.unresolved,
+        next: body.next.filter((item): item is string => typeof item === "string"),
+        evidence: body.raw_refs,
+        resource_refs: uniq([
+          ...body.raw_refs,
+          ...body.artifacts.map((item) => item.ref),
+          ...body.facts.filter((item) => item.refs.length).flatMap((item) => item.refs),
+        ]),
+      }),
+    )
+    const facts = [] as Harness.HandoffCompatFact[]
+    const notes = [...body.notes]
+    body.facts.forEach((item) => {
+      if (item.refs.length) {
+        facts.push({ ...item, confidence: "evidenced" })
+      } else {
+        notes.push(item.text)
+      }
+    })
+    const out = Harness.HandoffCompatCreateResult.parse({
+      ...rec,
+      type: "handoff",
+      version: "1",
+      goal: body.goal,
+      source: body.source,
+      target: body.target,
+      status: body.status,
+      facts,
+      notes,
+      artifacts: body.artifacts,
+      decisions: body.decisions,
+      constraints: body.constraints,
+      visibility: body.visibility,
+      raw_refs: body.raw_refs,
+      created_by: body.source.agent_id ?? "runtime",
+      created_at: rec.created_at,
+      next: body.next,
+    })
+    await HarnessStore.append(event("handoff.created", { run: run.id, actor: body.source.agent_id ?? "runtime", summary: body.summary, payload: { handoff_id: out.id, goal: out.goal } }))
+    return out
+  }
+
+  export function renderHandoff(input: z.input<typeof Harness.HandoffCompatCreateResult>) {
+    const item = Harness.HandoffCompatCreateResult.parse(input)
+    const next = item.next.map((next) => {
+      if (typeof next === "string") return `- ${next}`
+      if (next && typeof next === "object") return `- ${JSON.stringify(next)}`
+      return `- ${String(next)}`
+    })
+    const refs = uniq([...item.raw_refs, ...item.artifacts.map((next) => next.ref)])
+    const lines = [
+      "## Handoff",
+      `Source: \`${item.source.agent_id ?? item.source.run_id}\``,
+      `Goal: ${item.goal}`,
+      `Summary: ${item.summary}`,
+      `Status: ${item.status}`,
+      "",
+      "### Facts",
+      ...item.facts.map((next) => `- ${next.text}`),
+      "",
+      "### Notes",
+      ...item.notes.map((next) => `- ${next}`),
+      "",
+      "### Artifacts",
+      ...item.artifacts.map((next) => `- ${next.type} ${next.ref}`),
+      "",
+      "### Raw Evidence",
+      ...refs.map((next) => `- Ref: \`${next}\``),
+      "",
+      "### Visibility",
+      ...Object.entries(item.visibility).map(([k, v]) => `- ${k}: ${v}`),
+    ]
+    if (item.risks.length) {
+      lines.push("", "### Risks", ...item.risks.map((risk) => `- ${risk}`))
+    }
+    if (next.length) {
+      lines.push("", "### Next", ...next)
+    }
+    return lines.filter((item) => item !== undefined && item !== null).join("\n")
+  }
+
+  export function planHandoff(input: z.input<typeof Harness.HandoffPlan>) {
+    const body = Harness.HandoffPlan.parse(input)
+    const reasons = [] as string[]
+    if (body.source.assignment_id) reasons.push("assignment_terminal")
+    if (body.next.length) reasons.push("downstream_next")
+    const trigger = reasons.length > 0
+    const out = Harness.HandoffPlanResult.parse({
+      type: "handoff.plan",
+      trigger,
+      reasons,
+      status: body.status,
+      request_self_report: trigger && body.status === "completed",
+      prompt: `Done:${trigger ? ` ${reasons.join(", ")}` : " no handoff trigger"}\nStatus: ${body.status}`,
+    })
+    return out
+  }
+
+  export async function requestHandoffSelfReport(input: z.input<typeof Harness.HandoffSelfReportRequest>) {
+    const body = Harness.HandoffSelfReportRequest.parse(input)
+    const run = await HarnessStore.run(body.source.run_id)
+    if (!run) throw new Error(`Run not found: ${body.source.run_id}`)
+    const rid = `handoff-self-report-${id("request")}`
+    const prompt = `Handoff self report requested\n\nStatus: ${body.status}\nRisks:\n${body.reasons.map((item) => `- ${item}`).join("\n") || "- none"}`
+    await HarnessStore.append(event("handoff.self_report_requested", { run: body.source.run_id, actor: body.source.agent_id ?? "runtime", payload: { request_id: rid, reasons: body.reasons } }))
+    return Harness.HandoffSelfReportResult.parse({
+      type: "handoff.self_report_request",
+      id: rid,
+      prompt,
+    })
+  }
+
   export function acceptancePolicy(input: z.input<typeof Harness.AcceptancePolicyInput>) {
     const payload = Harness.AcceptancePolicyInput.parse(input)
     const level: Harness.AcceptanceLevel =
@@ -799,8 +981,24 @@ export namespace HarnessRuntime {
 
   export function command(input: Harness.Command & { type: "resource.write" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart }>
   export function command(input: Harness.Command & { type: "resource.tombstone" }): Promise<{ run: Harness.Run; resource: Harness.ResourceRecord }>
-  export function command(input: Harness.Command): Promise<Harness.Run>
+  export function command(input: Harness.Command & { type: "handoff.self_report.request" }): Promise<Harness.HandoffSelfReportResult>
+  export function command(input: Harness.Command): Promise<Harness.Run | { run: Harness.Run; resource: Harness.ResourceRecord; session: Harness.ResourceSessionPart } | { run: Harness.Run; resource: Harness.ResourceRecord } | Harness.HandoffSelfReportResult>
   export async function command(input: Harness.Command) {
+    if (input.type === "handoff.self_report.request") {
+      return requestHandoffSelfReport(Harness.HandoffSelfReportRequest.parse(input.payload))
+    }
+    if (input.type === "handoff.plan") {
+      if (!input.run_id) throw new Error("run_id is required")
+      return planHandoff({
+        run_id: input.run_id,
+        source: {
+          run_id: input.run_id,
+          agent_id: input.actor,
+        },
+        status: "completed",
+        next: [],
+      })
+    }
     if (input.type === "run.create") return create(Harness.CreateRun.parse(input.payload))
     if (!input.run_id) throw new Error("run_id is required")
     const run = await HarnessStore.maybeRun(input.run_id)
