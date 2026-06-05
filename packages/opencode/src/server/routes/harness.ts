@@ -11,6 +11,33 @@ const DecisionParam = z.object({ decisionID: z.string() })
 const ConceptParam = z.object({ conceptID: z.string() })
 const EventParam = z.object({ eventID: z.string() })
 const WorkflowParam = z.object({ workflowID: z.string() })
+const ProjectionPath = z.object({ runID: z.string(), name: z.string() })
+const ResourcePath = z.object({ runID: z.string(), resourceID: z.string() })
+
+function toScore(input: string | undefined) {
+  if (input === "owner") return 4
+  if (input === "team") return 3
+  if (input === "project") return 2
+  if (input === "user") return 1
+  return 2
+}
+
+function toMarkdown(run: { id: string; name: string }, data: { events: Harness.Event[]; resources: Harness.ResourceRecord[]; handoffs: Harness.HandoffRecord[] }) {
+  const lines = [
+    `# Trace Export: ${run.name}`,
+    `Run: ${run.id}`,
+    "",
+    "## Events",
+    ...data.events.map((item) => `- ${new Date(item.time).toISOString()} ${item.type} ${item.summary ?? item.actor}`),
+    "",
+    "## Resources",
+    ...data.resources.map((item) => `- ${item.id} ${item.kind} ${item.summary}`),
+    "",
+    "## Handoffs",
+    ...data.handoffs.map((item) => `- ${item.kind} ${item.state} ${item.summary}`),
+  ]
+  return lines.join("\n")
+}
 
 function command(type: Harness.Command["type"], input: Partial<Harness.Command>) {
   return HarnessRuntime.command(Harness.Command.parse({ ...input, type }))
@@ -152,9 +179,36 @@ export const HarnessRoutes = lazy(() =>
     .get("/runs/:runID/artifacts", validator("param", RunParam), async (c) =>
       c.json(await HarnessStore.artifacts(c.req.valid("param").runID)),
     )
+    .get("/runs/:runID/resources/:resourceID", validator("param", ResourcePath), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 2) return c.json({ message: "forbidden" }, 403)
+      const { runID, resourceID } = c.req.valid("param")
+      const item = await HarnessStore.resource(runID, resourceID)
+      if (!item) return c.json({ message: `Resource not found: ${resourceID}` }, 404)
+      return c.json(item)
+    })
+    .get("/runs/:runID/resources/:resourceID/preview", validator("param", ResourcePath), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 2) return c.json({ message: "forbidden" }, 403)
+      const { runID, resourceID } = c.req.valid("param")
+      return c.json(await HarnessRuntime.previewResource(runID, resourceID))
+    })
     .get("/runs/:runID/decisions", validator("param", RunParam), async (c) =>
       c.json(await HarnessStore.decisions(c.req.valid("param").runID)),
     )
+    .get("/runs/:runID/projections", validator("param", RunParam), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 2) return c.json({ message: "forbidden" }, 403)
+      return c.json(await HarnessStore.projections(c.req.valid("param").runID))
+    })
+    .get("/runs/:runID/projections/:name", validator("param", ProjectionPath), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 2) return c.json({ message: "forbidden" }, 403)
+      const { runID, name } = c.req.valid("param")
+      const item = (await HarnessStore.projections(runID)).find((next) => next.name === name)
+      if (!item) return c.json({ message: `Projection not found: ${name}` }, 404)
+      return c.json(item)
+    })
     .get("/runs/:runID/events", validator("param", RunParam), async (c) => c.json(await HarnessStore.events(c.req.valid("param").runID)))
     .get("/runs/:runID/graph", validator("param", RunParam), async (c) => c.json(await HarnessRuntime.graph(c.req.valid("param").runID)))
     .get("/runs/:runID/audit", validator("param", RunParam), async (c) => c.json(await HarnessRuntime.audit(c.req.valid("param").runID)))
@@ -164,6 +218,44 @@ export const HarnessRoutes = lazy(() =>
       if (format === "markdown") return c.text(data as string)
       return c.json(data)
     })
+    .get("/runs/:runID/trace/export", validator("param", RunParam), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 3) return c.json({ message: "forbidden" }, 403)
+      const id = c.req.valid("param").runID
+      const run = await HarnessStore.run(id)
+      const item = await HarnessStore.summary(id)
+      if (!item) throw new Error(`Run not found: ${id}`)
+      const data = {
+        run_id: run.id,
+        events: item.events,
+        resources: item.resources,
+        handoffs: item.handoffs,
+      }
+      if (c.req.query("format") === "markdown") return c.text(toMarkdown(run, data))
+      return c.json(data)
+    })
+    .get("/runs/:runID/evaluation", validator("param", RunParam), async (c) => {
+      const scope = toScore(c.req.query("scope"))
+      if (scope < 2) return c.json({ message: "forbidden" }, 403)
+      const id = c.req.valid("param").runID
+      const run = await HarnessStore.run(id)
+      const item = await HarnessStore.summary(id)
+      if (!item) throw new Error(`Run not found: ${id}`)
+      return c.json({
+        run_id: run.id,
+        outcome: {
+          status: run.status,
+          completed: run.progress.completed,
+          total: run.progress.total,
+        },
+        metric: {
+          events: item.events.length,
+          resources: item.resources.length,
+          actions: item.actions.length,
+          acceptance: item.acceptance.length,
+        },
+      })
+    })
     .get(
       "/runs/:runID/performance",
       describeRoute({
@@ -172,7 +264,7 @@ export const HarnessRoutes = lazy(() =>
         responses: {
           200: {
             description: "Run performance profile",
-            content: { "application/json": {} },
+            content: { "application/json": { schema: resolver(z.record(z.string(), z.unknown())) } },
           },
           ...errors(400),
         },
@@ -240,6 +332,18 @@ export const HarnessRoutes = lazy(() =>
       async (c) => c.json(await HarnessStore.workflow(c.req.valid("param").workflowID)),
     )
     .post("/commands", validator("json", Harness.Command), async (c) => c.json(await HarnessRuntime.command(c.req.valid("json"))))
+    .get("/performance", async (c) => c.json({ scheduler: HarnessRuntime.scheduler() }))
+    .get("/agents/templates", async (c) => c.json(await HarnessStore.agentTemplates()))
+    .post("/agents/templates", validator("json", Harness.AgentTemplateRecord), async (c) => {
+      const item = Harness.AgentTemplateRecord.parse(c.req.valid("json"))
+      await HarnessStore.putAgentTemplate(item)
+      return c.json(item)
+    })
+    .post("/workflows", validator("json", Harness.WorkflowAsset), async (c) => {
+      const item = Harness.WorkflowAsset.parse(c.req.valid("json"))
+      await HarnessStore.putWorkflow(item)
+      return c.json(item)
+    })
     .post("/runs/:runID/pause", validator("param", RunParam), async (c) =>
       c.json(await command("run.pause", { run_id: c.req.valid("param").runID })),
     )
@@ -274,7 +378,6 @@ export const HarnessRoutes = lazy(() =>
       validator("json", z.object({ run_id: z.string() })),
       async (c) => c.json(await command("verify.rerun", { run_id: c.req.valid("json").run_id, task_id: c.req.valid("param").taskID })),
     )
-    .get("/performance", async (c) => c.json({ scheduler: HarnessRuntime.scheduler() }))
     .get("/memory/query", async (c) => {
       const query = c.req.query("q")?.toLowerCase()
       const scope = c.req.query("scope")
