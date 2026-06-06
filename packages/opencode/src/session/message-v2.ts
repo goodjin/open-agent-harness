@@ -933,6 +933,18 @@ export namespace MessageV2 {
             cause: e,
           },
         ).toObject()
+      case e instanceof DOMException && e.name === "TimeoutError":
+        return new MessageV2.APIError(
+          {
+            message: e.message || "The operation timed out.",
+            isRetryable: true,
+            metadata: {
+              code: e.name,
+              message: e.message,
+            },
+          },
+          { cause: e },
+        ).toObject()
       case MessageV2.OutputLengthError.isInstance(e):
         return e
       case LoadAPIKeyError.isInstance(e):

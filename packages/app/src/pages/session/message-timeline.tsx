@@ -29,6 +29,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
+import { isSessionBusy } from "@/pages/session/helpers"
 
 type MessageComment = {
   path: string
@@ -281,7 +282,7 @@ export function MessageTimeline(props: {
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
   })
-  const working = createMemo(() => !!pending() || sessionStatus().type !== "idle")
+  const working = createMemo(() => !!pending() || isSessionBusy(sessionStatus()))
   const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
   const turnMatches = (id: string) => {
     if (props.filter === "all" || props.filter === "input") return true

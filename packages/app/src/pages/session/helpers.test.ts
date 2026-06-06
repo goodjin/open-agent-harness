@@ -32,6 +32,7 @@ describe("isSessionBusy", () => {
     ).toBe(false)
 
     expect(isSessionBusy({ type: "running" })).toBe(true)
+    expect(isSessionBusy({ type: "timeout", message: "timed out" })).toBe(false)
     expect(isSessionBusy(undefined)).toBe(false)
   })
 })

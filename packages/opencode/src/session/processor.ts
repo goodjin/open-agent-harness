@@ -481,6 +481,26 @@ export namespace SessionProcessor {
             } else {
               const retry = SessionRetry.retryable(error)
               if (retry !== undefined) {
+                const timed = SessionRetry.timeout(error)
+                if (timed && attempt >= SessionRetry.TIMEOUT_MAX_ATTEMPTS) {
+                  const message = "The operation timed out after retrying."
+                  input.assistantMessage.error = error
+                  await record("error", "llm.timeout", {
+                    error: "message" in error.data ? error.data.message : error.name,
+                    name: error.name,
+                    attempt,
+                  })
+                  Bus.publish(Session.Event.Error, {
+                    sessionID: input.assistantMessage.sessionID,
+                    error: input.assistantMessage.error,
+                  })
+                  SessionStatus.set(input.sessionID, {
+                    type: "timeout",
+                    message,
+                  })
+                  failure = e
+                  break
+                }
                 attempt++
                 const delay = SessionRetry.delay(attempt, error.name === "APIError" ? error : undefined)
                 await record("warn", "llm.retry", {
@@ -488,6 +508,7 @@ export namespace SessionProcessor {
                   delay,
                   error: error.name,
                   message: "message" in error.data ? error.data.message : error.name,
+                  timeout: timed,
                 })
                 SessionStatus.set(input.sessionID, {
                   type: "retry",

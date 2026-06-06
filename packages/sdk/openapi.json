@@ -10576,6 +10576,22 @@
             "properties": {
               "type": {
                 "type": "string",
+                "const": "timeout"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "message"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
                 "const": "retry"
               },
               "attempt": {

@@ -419,7 +419,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const [sessionStore] = globalSync.child(props.session.directory)
   const status = createMemo(() => sessionStore.session_status[props.session.id])
   const unseenCount = createMemo(() => notification.session.unseenCount(props.session.id))
-  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id) || status()?.type === "error")
+  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id) || status()?.type === "error" || status()?.type === "timeout")
   const hasPermissions = createMemo(() => {
     return !!sessionPermissionRequest(sessionStore.session, sessionStore.permission, props.session.id, (item) => {
       return !permission.autoResponds(item, props.session.directory)
@@ -479,7 +479,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       filter: props.filter?.(),
       messages: sessionStore.message[session.id],
       status: next,
-      hasError: notification.session.unseenHasError(session.id) || next?.type === "error",
+      hasError: notification.session.unseenHasError(session.id) || next?.type === "error" || next?.type === "timeout",
       hasPermissions: blocked,
     })
   }

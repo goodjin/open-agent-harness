@@ -275,6 +275,10 @@ describe("layout workspace helpers", () => {
     ).toEqual({ completed: 1, total: 3 })
   })
 
+  test("does not treat timeout sessions as working", () => {
+    expect(sessionWorking(undefined, { type: "timeout" })).toBe(false)
+  })
+
   test("does not keep a session working from stale pending parts after idle", () => {
     expect(
       sessionWorking(

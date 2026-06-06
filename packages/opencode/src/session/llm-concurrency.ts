@@ -153,7 +153,7 @@ export namespace LLMConcurrency {
         done = true
         release(limits)
         SessionStatus.set(sessionID, {
-          type: "error",
+          type: "timeout",
           message: `LLM request made no progress for ${timeout}ms; released concurrency slot.`,
         })
       }, timeout)

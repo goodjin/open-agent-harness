@@ -25,6 +25,10 @@ export namespace SessionStatus {
         message: z.string(),
       }),
       z.object({
+        type: z.literal("timeout"),
+        message: z.string(),
+      }),
+      z.object({
         type: z.literal("retry"),
         attempt: z.number(),
         message: z.string(),
@@ -66,11 +70,12 @@ export namespace SessionStatus {
 
   const transitions: Record<Info["type"], Info["type"][]> = {
     idle: ["idle", "running", "waiting_permission", "waiting_user", "error"],
-    running: ["idle", "running", "waiting_permission", "waiting_user", "error", "retry"],
-    waiting_permission: ["idle", "running", "waiting_permission", "waiting_user", "error"],
-    waiting_user: ["idle", "running", "waiting_permission", "waiting_user", "error"],
+    running: ["idle", "running", "waiting_permission", "waiting_user", "error", "timeout", "retry"],
+    waiting_permission: ["idle", "running", "waiting_permission", "waiting_user", "error", "timeout"],
+    waiting_user: ["idle", "running", "waiting_permission", "waiting_user", "error", "timeout"],
     error: ["idle", "running", "error"],
-    retry: ["idle", "running", "error", "retry"],
+    timeout: ["idle", "running", "timeout"],
+    retry: ["idle", "running", "error", "timeout", "retry"],
   }
 
   export function get(sessionID: SessionID) {
@@ -111,7 +116,7 @@ export namespace SessionStatus {
 
   export function dismiss(sessionID: SessionID) {
     const current = get(sessionID)
-    if (current.type !== "error") return current
+    if (current.type !== "error" && current.type !== "timeout") return current
     set(sessionID, { type: "idle" })
     return get(sessionID)
   }

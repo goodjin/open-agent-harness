@@ -93,6 +93,10 @@ export type SessionStatus =
       message: string
     }
   | {
+      type: "timeout"
+      message: string
+    }
+  | {
       type: "retry"
       attempt: number
       message: string

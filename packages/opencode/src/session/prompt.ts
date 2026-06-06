@@ -280,7 +280,7 @@ export namespace SessionPrompt {
     const s = state()
     delete s[sessionID]
     const status = SessionStatus.get(sessionID)
-    if (status.type === "error") return
+    if (status.type === "error" || status.type === "timeout") return
     SessionStatus.set(sessionID, { type: "idle" })
   }
 

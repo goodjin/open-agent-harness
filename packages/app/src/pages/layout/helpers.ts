@@ -116,6 +116,7 @@ type Status = {
 
 export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {
   if (!status || status.type === "idle") return false
+  if (status.type === "timeout" || status.type === "error") return false
   if (status.type !== "running") return true
 
   const user = (messages ?? []).findLast((message) => message.role === "user")
