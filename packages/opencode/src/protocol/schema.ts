@@ -208,6 +208,36 @@ export namespace AgentProtocol {
       },
     },
     required: ["kind"],
+    allOf: [
+      {
+        if: {
+          properties: {
+            kind: {
+              const: "act",
+            },
+          },
+          required: ["kind"],
+        },
+        then: {
+          required: ["calls"],
+        },
+      },
+      {
+        if: {
+          properties: {
+            kind: {
+              enum: ["answer", "done"],
+            },
+          },
+          required: ["kind"],
+        },
+        then: {
+          not: {
+            required: ["calls"],
+          },
+        },
+      },
+    ],
     additionalProperties: false,
   } as const
 

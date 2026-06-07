@@ -99,11 +99,12 @@ export namespace SessionRunner {
       .flatMap((part) => (part.type === "text" ? [part.text] : []))
       .join("\n")
     const native = await nativeOutput(chat.message.id)
-    const parsed = native ? { ok: true as const, value: native } : AgentProtocolParser.parse(text)
+    const parsed = native
+      ? { ok: true as const, value: native }
+      : { ok: false as const, error: { code: "missing_block" as const, message: "No native AgentProtocolOutput tool call found." } }
     const invalid = await invalidOutput(chat.message.id)
     const partial = chat.message.finish === "length"
-    const first = parsed.ok || partial || parsed.error.code === "multiple_blocks" ? undefined : AgentProtocolParser.first(text)
-    const fixed = parsed.ok || partial ? undefined : first?.ok ? first.value : retry > 0 ? recover(text, stream) : undefined
+    const fixed = undefined
     const valid = parsed.ok && !partial
     const problem = partial
       ? { code: "partial_output", message: "Model output stopped because it reached the output length limit." }
@@ -113,7 +114,7 @@ export namespace SessionRunner {
         ? undefined
         : parsed.error
     const sessionID = SessionID.make(stream.sessionID)
-    if (!invalid && await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish })) {
+    if (retry > 0 && !invalid && await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish })) {
       await completeAssigned({
         messageID: chat.message.id,
         output: await textOf(chat.message.id),
@@ -232,7 +233,7 @@ export namespace SessionRunner {
     await Promise.all(
       parts.flatMap((part) => {
         if (part.type === "text" && part.text.includes("agent-protocol")) {
-          const show = visible(part.text, valid ? parsed.value : first?.ok ? first.value : undefined)
+          const show = visible(part.text, valid ? parsed.value : undefined)
           if (show.trim().length > 0) {
             return [
               Session.updatePart({
@@ -633,7 +634,7 @@ export namespace SessionRunner {
   async function final(input: {
     stream: LLM.StreamInput
     run: AgentProtocol.Result
-  }, retry: number) {
+  }, retry: number, missing = 0) {
     const msg = (await Session.updateMessage({
       id: MessageID.ascending(),
       parentID: input.stream.user.id,
@@ -668,12 +669,23 @@ export namespace SessionRunner {
     const prompt = [
       "You are writing the final user-facing answer after an Agent Protocol DSL run.",
       "This is not an execution turn. The runtime has already executed every available call.",
-      `Use only the conversation turns below, then answer the user.`,
-      `You may call ${LLM.PROTOCOL_OUTPUT_TOOL} with \`kind: "answer"\`, or output ordinary Markdown directly.`,
+      `Use only the conversation turns below, then decide the final protocol response.`,
+      `You must call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
+      'Use `kind: "answer"` when there is user-visible final content, and put the final Markdown answer in `message`.',
+      'Use `kind: "done"` when there is nothing else useful to add.',
+      "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
       "Only use `kind: \"act\"` with `calls` if another runtime call is truly required.",
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       "The full conversation history is preserved. Resolve references like \"these errors\", \"continue\", or \"fix them\" from the earlier turns.",
-      "If calling AgentProtocolOutput, strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
+      "Strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
+      missing > 0
+        ? [
+            "",
+            "Protocol retry warning:",
+            `Your previous final response did not call the native ${LLM.PROTOCOL_OUTPUT_TOOL} tool.`,
+            `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with \`kind: "answer"\`, \`kind: "done"\`, or a strictly necessary \`kind: "act"\`.`,
+          ].join("\n")
+        : "",
       retry > 0
         ? [
             "",
@@ -799,7 +811,52 @@ export namespace SessionRunner {
       }
     } else {
       const text = await textOf(msg.id)
+      if (text.trim().length > 0 && missing < 1) {
+        const parts = await MessageV2.parts(msg.id)
+        await Promise.all(
+          parts.flatMap((part) => {
+            if (part.type !== "text") return []
+            return [
+              Session.updatePart({
+                ...part,
+                ignored: true,
+                metadata: {
+                  ...part.metadata,
+                  kind: "protocol_final_missing_tool",
+                  retry: true,
+                },
+              }),
+            ]
+          }),
+        )
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.retry",
+          data: { runID: input.run.run_id, reason: "missing_tool_call", textBytes: text.length },
+        })
+        msg.finish = "stop"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        await final(input, retry, missing + 1)
+        return
+      }
       if (text.trim().length === 0) {
+        if (missing < 1) {
+          await SessionLog.emit({
+            sessionID: SessionID.make(input.stream.sessionID),
+            messageID: msg.id,
+            level: "warn",
+            type: "protocol.final.retry",
+            data: { runID: input.run.run_id, reason: "empty_final_output" },
+          })
+          msg.finish = "stop"
+          msg.time.completed = Date.now()
+          await Session.updateMessage(msg)
+          await final(input, retry, missing + 1)
+          return
+        }
         await Session.updatePart({
           id: PartID.ascending(),
           messageID: msg.id,
@@ -832,7 +889,7 @@ export namespace SessionRunner {
         messageID: msg.id,
         level: pseudo(text) ? "warn" : "info",
         type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
-        data: { runID: input.run.run_id, textBytes: text.length },
+        data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
       })
     }
     await SessionLog.emit({
@@ -1009,45 +1066,7 @@ export namespace SessionRunner {
   }
 
   async function protocolOutput(messageID: MessageID) {
-    const native = await nativeOutput(messageID)
-    if (native) return native
-    const parts = await MessageV2.parts(messageID)
-    const text = parts
-      .flatMap((part) => (part.type === "text" ? [part.text] : []))
-      .join("\n")
-    const parsed = AgentProtocolParser.parse(text)
-    if (!parsed.ok) return
-    await Promise.all(
-      parts.flatMap((part) => {
-        if (part.type === "text" && part.text.includes("agent-protocol")) {
-          const show = visible(part.text, parsed.value)
-          if (show.trim().length > 0) {
-            return [
-              Session.updatePart({
-                ...part,
-                text: show,
-                metadata: {
-                  ...part.metadata,
-                  kind: "protocol_intro",
-                },
-              }),
-            ]
-          }
-          return [
-            Session.updatePart({
-              ...part,
-              ignored: true,
-              metadata: {
-                ...part.metadata,
-                kind: "protocol_dsl",
-              },
-            }),
-          ]
-        }
-        return []
-      }),
-    )
-    return parsed.value
+    return nativeOutput(messageID)
   }
 
   async function nativeOutput(messageID: MessageID): Promise<AgentProtocolParser.Parsed | undefined> {
@@ -1248,289 +1267,6 @@ export namespace SessionRunner {
     return run.actions.some((item) =>
       (item.output ?? item.summary).includes("The parent session will resume automatically when the child result is available.")
     )
-  }
-
-  function goal(stream: LLM.StreamInput) {
-    const last = stream.messages.findLast((item) => item.role === "user")
-    if (!last) return ""
-    if (typeof last.content === "string") return last.content
-    if (!Array.isArray(last.content)) return ""
-    return last.content
-      .flatMap((item) => (item.type === "text" ? [item.text] : []))
-      .join("\n")
-  }
-
-  function recover(text: string, stream: LLM.StreamInput): AgentProtocolParser.Parsed | undefined {
-    if (!pseudo(text)) return
-    const output = jsonOutput(text) ?? flatOutput(text) ?? bareOutput(text)
-    if (output) {
-      return {
-        declaration: AgentProtocol.parse(output),
-        sections: { goal: goal(stream) },
-        raw: text,
-      }
-    }
-    const invoked = invoke(text)
-    if (invoked.length > 0) {
-      return {
-        declaration: {
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          persist: false,
-          title: "Recover textual tool request",
-          execution: { strategy: "sequential" },
-          payload: {
-            type: "action_graph",
-            actions: invoked.map((item, idx) => ({
-              type: "action" as const,
-              id: `recover-${idx + 1}`,
-              title: `${item.name} ${Object.values(item.input).filter((value) => typeof value === "string")[0] ?? "request"}`,
-              operation: item.name,
-              executor: { type: "tool" as const, target: item.name, capabilities: ["repo"] },
-              input: item.input,
-              depends_on: [],
-              context_refs: [],
-              result_policy: "summary" as const,
-            })),
-          },
-        },
-        sections: { goal: goal(stream) },
-        raw: text,
-      }
-    }
-    const refs = [...text.matchAll(/(?:^|[\s`"'(（])((?:\/|\.{1,2}\/)?[\w./*-]+\.(?:html|js|ts|tsx|jsx|vue|json|md|css))(?=\s|$|[`"')），,，。:：])/giu)]
-      .map((item) => item[1])
-      .filter((item): item is string => !!item)
-    if (refs.length === 0) return
-    if (!available(stream, "read") && !available(stream, "glob")) return
-    const actions: AgentProtocol.Action[] = refs.flatMap((ref, idx) => {
-      const globbed = /[*?]/.test(ref)
-      if (globbed && !available(stream, "glob")) return []
-      if (!globbed && !available(stream, "read")) return []
-      const file = globbed && ref.startsWith("/*.") ? `**${ref}` : ref
-      return [{
-        type: "action" as const,
-        id: `recover-${idx + 1}`,
-        title: globbed ? `Find ${file}` : `Read ${file}`,
-        operation: globbed ? "inspect" : "read",
-        executor: { type: "tool" as const, target: globbed ? "glob" : "read", capabilities: ["repo"] },
-        input: globbed ? { pattern: file } : { filePath: file, limit: 220 },
-        depends_on: [],
-        context_refs: [],
-        prompt_ref: file,
-        result_policy: "summary" as const,
-      }]
-    })
-    if (actions.length === 0) return
-    return {
-      declaration: {
-        type: "agent.protocol",
-        version: "1",
-        intent: "execute",
-        persist: false,
-        title: "Recover textual tool request",
-        execution: { strategy: "sequential" },
-        payload: {
-          type: "action_graph",
-          actions,
-        },
-      },
-      sections: { goal: goal(stream) },
-      raw: text,
-    }
-  }
-
-  function available(stream: LLM.StreamInput, id: string) {
-    if (!stream.runtimeTools) return true
-    return stream.runtimeTools.catalog.some((item) => item.id === id)
-  }
-
-  function jsonOutput(text: string) {
-    for (const item of jsonObjects(text)) {
-      const parsed = parseJson(item)
-      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
-      const value = parsed as Record<string, unknown>
-      const name = value.toolName ?? value.name
-      if (value.type !== undefined && value.type !== "tool-call") continue
-      if (typeof name !== "string") continue
-      if (name.toLowerCase() !== LLM.PROTOCOL_OUTPUT_TOOL.toLowerCase()) continue
-      const input = value.input
-      if (!input || typeof input !== "object" || Array.isArray(input)) continue
-      return input
-    }
-  }
-
-  function jsonObjects(text: string) {
-    const out: string[] = []
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] !== "{") continue
-      let depth = 0
-      let quoted = false
-      let slash = false
-      for (let j = i; j < text.length; j++) {
-        const char = text[j]
-        if (slash) {
-          slash = false
-          continue
-        }
-        if (char === "\\") {
-          slash = true
-          continue
-        }
-        if (char === '"') {
-          quoted = !quoted
-          continue
-        }
-        if (quoted) continue
-        if (char === "{") depth++
-        if (char === "}") depth--
-        if (depth === 0) {
-          out.push(text.slice(i, j + 1))
-          i = j
-          break
-        }
-      }
-    }
-    return out
-  }
-
-  function parseJson(input: string) {
-    try {
-      return JSON.parse(input)
-    } catch {
-      return undefined
-    }
-  }
-
-  function flatOutput(text: string) {
-    const body = invokeBody(text, "agentprotocoloutput")
-    if (!body) return
-    const kind = tag(body, "kind")
-    if (kind !== "act" && kind !== "answer" && kind !== "done") return
-    const message = tag(body, "message") ?? ""
-    if (kind !== "act") return { kind, message }
-    const calls = [...(tag(body, "calls") ?? "").matchAll(/<item>([\s\S]*?)<\/item>/gi)]
-      .map((item) => xmlCall(item[1] ?? ""))
-      .filter((item): item is { id: string; type: "tool" | "agent"; name: string; args: Record<string, unknown>; depends: string[]; result: string } => !!item)
-    if (calls.length === 0) return
-    return { kind, message, calls }
-  }
-
-  function bareOutput(text: string) {
-    const body = normalized(text)
-    if (!/"type"\s*:\s*"tool-call"|<tool_call>|\btool_call\b/i.test(body)) return
-    const call = xmlCall(body)
-    if (!call) return
-    return {
-      kind: "act",
-      message: message(text),
-      calls: [call],
-    }
-  }
-
-  function invokeBody(text: string, name: string) {
-    return [...normalized(text).matchAll(/<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi)]
-      .find((item) => item[1]?.trim().toLowerCase() === name)?.[2]
-  }
-
-  function normalized(text: string) {
-    return text.replace(/\]<\]minimax\[>\[/g, "")
-  }
-
-  function message(text: string) {
-    return text
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .find((item) => item.length > 0 && !/"type"\s*:\s*"tool-call"|<tool_call>|\btool_call\b|<id>|<type>|<name>|<args>/i.test(item))
-      ?? "Recovered textual tool request"
-  }
-
-
-  function xmlCall(input: string) {
-    const id = tag(input, "id")
-    const type = tag(input, "type")
-    const name = tag(input, "name")
-    if (!id || !name || (type !== "tool" && type !== "agent")) return
-    const args = argsOf(tag(input, "args") ?? "")
-    return {
-      id,
-      type,
-      name,
-      args,
-      depends: depends(tag(input, "depends")),
-      result: tag(input, "result") ?? "summary",
-    }
-  }
-
-  function argsOf(input: string) {
-    const out: Record<string, unknown> = {}
-    for (const item of input.matchAll(/<([A-Za-z0-9_.-]+)>([\s\S]*?)<\/\1>/g)) {
-      const key = item[1]
-      if (!key) continue
-      out[key] = xml(item[2] ?? "")
-    }
-    return out
-  }
-
-  function depends(input: string | undefined) {
-    if (!input) return []
-    return input
-      .split(/[\s,]+/)
-      .map((item) => item.trim())
-      .filter(Boolean)
-  }
-
-  function tag(input: string, name: string) {
-    return xml(input.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`, "i"))?.[1])
-  }
-
-  function xml(input: string | undefined) {
-    return input
-      ?.trim()
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&amp;/g, "&")
-  }
-
-  function invoke(text: string) {
-    return [...text.matchAll(/<invoke\s+name=["']([^"']+)["']>([\s\S]*?)<\/invoke>/gi)]
-      .map((item) => {
-        const name = item[1]?.trim().toLowerCase()
-        const body = item[2] ?? ""
-        if (!name) return
-        const params = Object.fromEntries(
-          [...body.matchAll(/<parameter\s+name=["']([^"']+)["']>([\s\S]*?)<\/parameter>/gi)]
-            .map((param) => [param[1]?.trim(), param[2]?.trim()])
-            .filter((param): param is [string, string] => Boolean(param[0])),
-        )
-        if (name === "glob" && typeof params.pattern === "string") {
-          return { name, input: clean({ pattern: params.pattern, path: params.path }) }
-        }
-        if (name === "grep" && typeof params.pattern === "string") {
-          return { name, input: clean({ pattern: params.pattern, path: params.path, include: params.include }) }
-        }
-        if (name === "read" && typeof params.filePath === "string") {
-          return { name, input: clean({ filePath: params.filePath, offset: number(params.offset), limit: number(params.limit) }) }
-        }
-        if (name === "bash" && typeof params.command === "string") {
-          return { name, input: clean({ command: params.command, timeout: number(params.timeout), workdir: params.workdir, description: params.description }) }
-        }
-        return
-      })
-      .filter((item): item is { name: string; input: Record<string, unknown> } => !!item)
-  }
-
-  function clean(input: Record<string, unknown>) {
-    return Object.fromEntries(Object.entries(input).filter((item) => item[1] !== undefined))
-  }
-
-  function number(input: string | undefined) {
-    if (!input) return
-    const value = Number(input)
-    if (Number.isFinite(value)) return value
   }
 
   function pseudo(text: string) {

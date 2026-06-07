@@ -2005,7 +2005,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner accepts plain markdown final responses", async () => {
+  test("protocol runner falls back to plain markdown final responses after retry", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -2037,7 +2037,7 @@ describe("SessionRunner", () => {
     const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
       inputs.push(input)
       calls++
-      if (calls === 2) {
+      if (calls === 2 || calls === 3) {
         return {
           fullStream: (async function* () {
             yield { type: "start" }
@@ -2150,10 +2150,13 @@ describe("SessionRunner", () => {
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
 
-              expect(calls).toBe(2)
+              expect(calls).toBe(3)
               expect(inputs[1]?.toolChoice).toBeUndefined()
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Plain final answer.")))).toBe(true)
-              expect(logs.some((item) => item.type === "protocol.final.plain")).toBe(true)
+              expect(inputs[2]?.system.join("\n")).toContain("Protocol retry warning")
+              expect(inputs[2]?.system.join("\n")).toContain('kind: "done"')
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Plain final answer.") && !part.ignored))).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.final.retry")).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.final.plain" && item.data.fallback === true)).toBe(true)
               expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
             },
           }),
@@ -2163,7 +2166,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner accepts plain markdown follow-up answers after protocol work", async () => {
+  test("protocol runner falls back to plain markdown follow-up answers after retry", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -2255,15 +2258,15 @@ describe("SessionRunner", () => {
                 messages: [{ role: "user", content: "所有任务都完成了吗？" }],
                 tools: {},
               })
-              const parts = await MessageV2.parts(assistant.id)
+              const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
 
               expect(result).toBe("stop")
-              expect(calls).toBe(1)
-              expect(parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored)).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed")).toBe(false)
+              expect(calls).toBe(2)
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored))).toBe(true)
+              expect(messages.every((item) => item.parts.every((part) => part.type !== "text" || part.metadata?.kind !== "protocol_malformed" || part.ignored))).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.plain")).toBe(true)
-              expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
+              expect(logs.some((item) => item.type === "protocol.retry")).toBe(true)
             },
           }),
       })
@@ -2877,7 +2880,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner recovers textual tool-call output instead of stopping", async () => {
+  test("protocol runner rejects textual tool-call output instead of recovering it", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -3071,16 +3074,12 @@ describe("SessionRunner", () => {
                 runs?: { total: number; actions: { output?: string }[] }[]
               } | undefined
 
-              expect(result).toBe("stop")
-              expect(calls).toBe(3)
+              expect(result).toBe("continue")
+              expect(calls).toBe(2)
               expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored)).toBe(true)
-              expect(protocol?.runs?.[0]?.total).toBe(2)
-              expect(protocol?.runs?.[0]?.actions.map((item) => item.output).join("\n")).toContain("index.html")
-              expect(protocol?.runs?.[0]?.actions.map((item) => item.output).join("\n")).toContain("app.js")
+              expect(protocol?.runs).toBeUndefined()
               expect(JSON.stringify(inputs[1]?.system)).toContain("previous response violated")
-              expect(JSON.stringify(inputs[2]?.messages)).toContain("Assistant protocol request and runtime results")
-              expect(JSON.stringify(inputs[2]?.messages)).toContain("tool glob <<'JSON'")
-              expect(JSON.stringify(inputs[2]?.messages)).toContain("Result for find-html")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("provider-specific textual tool call")
             },
           }),
       })
@@ -3089,7 +3088,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner recovers textual AgentProtocolOutput json before file fallback", async () => {
+  test("protocol runner does not recover textual AgentProtocolOutput json", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -3254,15 +3253,10 @@ describe("SessionRunner", () => {
                 runs?: { title?: string; status: string; actions: { operation: string; executor: { target: string } }[] }[]
               } | undefined
 
-              expect(result).toBe("stop")
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.title).toBe("database-agent")
-              expect(protocol?.runs?.[0]?.actions[0]?.operation).toBe("agent")
-              expect(protocol?.runs?.[0]?.actions[0]?.executor.target).toBe("database-agent")
-              expect(JSON.stringify(protocol)).not.toContain("Recover textual tool request")
-              expect(JSON.stringify(protocol)).not.toContain("\"target\":\"read\"")
-              for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
-              expect(done).toBeGreaterThanOrEqual(2)
+              expect(result).toBe("continue")
+              expect(protocol?.runs).toBeUndefined()
+              for (let i = 0; i < 20 && done > 0; i++) await Bun.sleep(10)
+              expect(done).toBe(0)
             },
           }),
       })
@@ -3272,7 +3266,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner recovers xml glob tool calls with input", async () => {
+  test("protocol runner does not recover xml glob tool calls", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -3427,12 +3421,9 @@ describe("SessionRunner", () => {
                 runs?: { status: string; actions: { output?: string; error?: string; tool_call_ids: string[] }[] }[]
               } | undefined
 
-              expect(result).toBe("stop")
-              expect(calls).toBe(3)
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.error).toBeUndefined()
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("htmly-1.7.0.vsix")
-              expect(protocol?.runs?.[0]?.actions[0]?.tool_call_ids.length).toBe(1)
+              expect(result).toBe("continue")
+              expect(calls).toBe(2)
+              expect(protocol?.runs).toBeUndefined()
             },
           }),
       })
