@@ -255,7 +255,7 @@ export namespace RuntimeTools {
 
       add(
         "session_tree",
-        "Return the current orchestration session tree with bounded session ids, parent ids, titles, agents, and runtime status fields.",
+        "Return a compact natural-language summary of all sessions in the current orchestration tree, grouped by runtime status.",
         {
           type: "object",
           additionalProperties: false,
@@ -265,8 +265,8 @@ export namespace RuntimeTools {
           const tree = await sessionTree(input.session.id)
           return {
             title: "Session tree",
-            metadata: { sessions: tree.count },
-            output: JSON.stringify(tree, null, 2),
+            metadata: { sessions: tree.count, status: tree.status },
+            output: tree.output,
           }
         },
       )
@@ -538,13 +538,14 @@ export namespace RuntimeTools {
     const sessions = [root, ...descendants]
     const rows = sessions.map((item) => ({
       id: item.id,
-      parent_id: item.parentID,
-      title: item.title,
-      agent: agentOf(item),
       status: SessionStatus.get(item.id),
     }))
-    const byParent = rows.reduce((acc, item) => {
-      const key = item.parent_id ?? ""
+    const status = rows.reduce((acc, item) => {
+      acc[item.status.type] = (acc[item.status.type] ?? 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    const byStatus = rows.reduce((acc, item) => {
+      const key = item.status.type
       const list = acc.get(key)
       if (list) {
         list.push(item)
@@ -553,14 +554,23 @@ export namespace RuntimeTools {
       acc.set(key, [item])
       return acc
     }, new Map<string, typeof rows>())
-    type Node = typeof rows[number] & { children: Node[] }
-    const node = (item: typeof rows[number]): Node => ({
-      ...item,
-      children: (byParent.get(item.id) ?? []).map(node),
-    })
+    const lines = [
+      `Session tree has ${rows.length} sessions.`,
+      `Root session: ${root.id}.`,
+      `Status counts: ${Object.entries(status).map(([key, val]) => `${key}=${val}`).join(", ")}.`,
+      "",
+      ...Array.from(byStatus.entries()).flatMap(([key, list]) => [
+        `${key} (${list.length}):`,
+        list.map((item) => item.status.type === key && Object.keys(item.status).length === 1
+          ? item.id
+          : `${item.id} ${JSON.stringify(item.status)}`).join(", "),
+        "",
+      ]),
+    ]
     return {
-      root: node(rows[0]!),
       count: rows.length,
+      status,
+      output: lines.join("\n").trim(),
     }
   }
 

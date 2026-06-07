@@ -273,8 +273,13 @@ describe("SessionDelegation", () => {
               toolCallId: "call_status",
               abortSignal: new AbortController().signal,
             } as never) as { output?: string }
+            const tree = await runtime.execute("session_tree", {}, {
+              toolCallId: "call_tree",
+              abortSignal: new AbortController().signal,
+            } as never) as { output?: string }
 
             expect(runtime.catalog.map((item) => item.id)).toContain("delegation_status")
+            expect(runtime.catalog.map((item) => item.id)).toContain("session_tree")
             expect(runtime.prompt).toContain("delegation_status")
             expect(review.catalog.map((item) => item.id)).not.toContain("delegation_status")
             expect(result.output).toContain(child.id)
@@ -283,6 +288,15 @@ describe("SessionDelegation", () => {
             expect(result.output).toContain("completed")
             expect(result.output).toContain("verified")
             expect(result.output).not.toContain("verified output")
+            expect(tree.output).toContain("Session tree has 2 sessions.")
+            expect(tree.output).toContain(`Root session: ${parent.id}.`)
+            expect(tree.output).toContain("idle (2):")
+            expect(tree.output).toContain(parent.id)
+            expect(tree.output).toContain(child.id)
+            expect(tree.output).not.toContain("child_session_id")
+            expect(tree.output).not.toContain("delegation")
+            expect(tree.output).not.toContain("verified")
+            expect(tree.output).not.toContain("verified output")
           },
       }),
     })
