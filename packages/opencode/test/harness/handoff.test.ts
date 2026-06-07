@@ -141,8 +141,9 @@ describe("harness handoff", () => {
       created_at: 1,
     })
 
-    expect(text).toContain("## Handoff")
+    expect(text).toContain("## Result Handoff")
     expect(text).toContain("Source: `code_developer`")
+    expect(text).toContain("### Runtime Guidance")
     expect(text).toContain("Ref: `artifact://patch/undo_state`")
     expect(text).toContain("### Raw Evidence")
     expect(text).not.toContain('"type": "handoff"')

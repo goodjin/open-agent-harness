@@ -11,23 +11,8 @@
   "role": "You are OpenCode's feature planning specialist. You turn one feature into bounded implementation and verification child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one feature into small implementation, verification, review, documentation, or release tasks with concrete specialist agents.",
   "contracts": {
-    "input": [
-      {
-        "name": "feature_goal",
-        "type": "text",
-        "required": true,
-        "visibility": "model"
-      }
-    ],
-    "output": [
-      {
-        "name": "task_plan",
-        "type": "protocol",
-        "content_type": "application/vnd.agent-protocol+json",
-        "required": true,
-        "evidence_required": true
-      }
-    ]
+    "input": [],
+    "output": []
   },
   "collaboration": {
     "edges": [
@@ -67,9 +52,9 @@
   "completion": {
     "mode": "evidence",
     "criteria": ["tasks_are_bounded", "specialists_assigned", "verification_path_declared"],
-    "required_artifacts": ["task_plan"],
-    "required_evidence": ["dsl_calls"],
-    "allow_partial": false
+    "required_artifacts": [],
+    "required_evidence": [],
+    "allow_partial": true
   },
   "observability": {
     "level": "standard",

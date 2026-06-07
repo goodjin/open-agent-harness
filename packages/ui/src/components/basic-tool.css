@@ -60,6 +60,7 @@
     align-items: center;
     gap: 8px;
     justify-content: flex-start;
+    min-width: 0;
   }
 
   [data-slot="basic-tool-tool-info-main"] {
@@ -149,6 +150,29 @@
     font-weight: var(--font-weight-regular);
     line-height: var(--line-height-large);
     letter-spacing: var(--letter-spacing-normal);
+    color: var(--text-base);
+  }
+
+}
+
+[data-component="generic-tool-detail"] {
+  margin-top: 6px;
+  width: 100%;
+  max-height: 360px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised-base);
+  box-shadow: var(--shadow-xs-border-base);
+
+  pre {
+    margin: 0;
+    padding: 10px 12px;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    line-height: 18px;
     color: var(--text-base);
   }
 }

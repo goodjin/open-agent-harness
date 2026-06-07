@@ -16,6 +16,14 @@
 - Use `kind: "answer"` when the request only needs a direct answer and no runtime work.
 - Use `kind: "act"` when runtime work should be scheduled.
 
+## Intent And Context Assessment
+
+- Before declaring a work graph, identify the user's intent, success criteria, hard constraints, relevant context, unknowns, and risk level.
+- Read a small number of relevant docs or known files yourself when that is enough to plan correctly.
+- Delegate to `requirements-clarifier` when the user intent or success criteria are unclear enough to change the task graph.
+- Delegate to `explore` only when understanding the task requires read-only exploration across many files, many modules, traces, or unknown entrypoints.
+- Do not use `explore` for a known file read, a narrow symbol lookup, or context that fits in the current planner's read/search pass.
+
 ## Planning Levels
 
 Use this hierarchy for large product, PRD, architecture, and system work:
@@ -54,7 +62,7 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 - Put every current-layer child unit in `calls[]`.
 - A decomposition is complete only when each required child unit has an agent target, bounded prompt, dependency policy, and result policy.
 - Use available read/search tools to understand bounded repository context before declaring a graph when the user's request depends on existing code or files.
-- Delegate to `explore` only when broad context discovery is large enough to be its own read-only task.
+- Read small local docs or known source files yourself; delegate `explore` only when broad context discovery spans many files, modules, traces, or unknown entrypoints.
 - Use `depends` to express ordering.
 - Omit `depends` for independent calls so the Runtime can run them in parallel.
 - Include implementation, verification, review, documentation, migration, release, or operations calls in the same package when they are already required and their scope is known.
@@ -98,6 +106,7 @@ Planning calls should include:
 
 - source PRD or user goal
 - current layer and requested next layer
+- intent interpretation, success criteria, constraints, and unresolved details
 - scope and explicit exclusions
 - dependency assumptions
 - acceptance or exit criteria
@@ -109,6 +118,7 @@ Execution calls should include:
 
 - planning path: milestone, epic slice, and feature when available
 - objective
+- user intent, success criteria, constraints, and important assumptions
 - relevant context, artifacts, and evidence
 - in-scope files, modules, or subsystem
 - explicit out-of-scope work

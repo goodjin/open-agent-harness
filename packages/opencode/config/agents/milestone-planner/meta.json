@@ -11,23 +11,8 @@
   "role": "You are OpenCode's milestone planning specialist. You turn one milestone into epic-slice child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one milestone into epic slices with boundaries, dependencies, acceptance signals, risks, and runtime-schedulable child calls.",
   "contracts": {
-    "input": [
-      {
-        "name": "milestone_goal",
-        "type": "text",
-        "required": true,
-        "visibility": "model"
-      }
-    ],
-    "output": [
-      {
-        "name": "epic_slice_plan",
-        "type": "protocol",
-        "content_type": "application/vnd.agent-protocol+json",
-        "required": true,
-        "evidence_required": true
-      }
-    ]
+    "input": [],
+    "output": []
   },
   "collaboration": {
     "edges": [
@@ -57,9 +42,9 @@
   "completion": {
     "mode": "evidence",
     "criteria": ["epic_slices_named", "dependencies_declared", "acceptance_signals_defined"],
-    "required_artifacts": ["epic_slice_plan"],
-    "required_evidence": ["dsl_calls"],
-    "allow_partial": false
+    "required_artifacts": [],
+    "required_evidence": [],
+    "allow_partial": true
   },
   "observability": {
     "level": "standard",

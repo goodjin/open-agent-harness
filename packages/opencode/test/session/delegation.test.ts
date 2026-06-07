@@ -89,6 +89,13 @@ describe("SessionDelegation", () => {
                   protocol: {
                     pending_delegations: {
                       [child.id]: item,
+                      ses_other: {
+                        ...item,
+                        action_id: "verify",
+                        action_title: "Verify",
+                        child_session_id: "ses_other",
+                        agent: "verifier",
+                      },
                     },
                   },
                 },
@@ -156,7 +163,12 @@ describe("SessionDelegation", () => {
               expect(inputs[0]?.agent).toBe("protocol-runner")
               expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(true)
               expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("child finished after restart"))).toBe(true)
+              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Child sessions in this parent run: 2."))).toBe(true)
+              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("This is completed child 1 of 2."))).toBe(true)
+              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Child sessions still running: 1."))).toBe(true)
+              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("prefer waiting for them or incorporating their later results before final synthesis"))).toBe(true)
               expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+              expect(pctx.pending_delegations?.ses_other).toBeDefined()
               expect(pctx.completed_delegations).toHaveLength(1)
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(cctx.delegation?.status).toBe("completed")

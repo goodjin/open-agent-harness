@@ -414,6 +414,7 @@ export namespace SessionDelegation {
 
   async function notify(body: ReturnType<typeof completed>) {
     const { SessionPrompt } = await import("./prompt")
+    const stat = await progress(body)
     await SessionPrompt.prompt({
       sessionID: SessionID.make(body.parent_session_id as string),
       agent: body.parent_agent,
@@ -427,11 +428,34 @@ export namespace SessionDelegation {
             JSON.stringify(body, null, 2),
             "</agent-delegation-result>",
             "",
-            "Use the result to decide the next step. If more delegated work is needed, issue the next AgentProtocolOutput package. If the parent task is complete, answer the user with the current status.",
+            "Runtime coordination note:",
+            `- Child sessions in this parent run: ${stat.total}.`,
+            `- This is completed child ${stat.index} of ${stat.total}.`,
+            `- Child sessions still running: ${stat.running}.`,
+            "",
+            "Use this result and the coordination note to decide the next step. If other child sessions are still running, prefer waiting for them or incorporating their later results before final synthesis. If more delegated work is needed, issue the next AgentProtocolOutput package. If the parent task is complete, answer the user with the current status.",
           ].join("\n"),
         },
       ],
     })
+  }
+
+  async function progress(body: ReturnType<typeof completed>) {
+    const parent = await Session.get(SessionID.make(body.parent_session_id as string))
+    const prev = object(object(parent.dsl_context).protocol)
+    const pend = Object.keys(object(prev.pending_delegations)).filter((item) => item !== body.child_session_id)
+    const done = Array.isArray(prev.completed_delegations)
+      ? prev.completed_delegations
+          .map((item) => object(item))
+          .filter((item) => typeof item.child_session_id === "string")
+      : []
+    const ids = new Set([...done.map((item) => item.child_session_id as string), ...pend])
+    const idx = done.findIndex((item) => item.child_session_id === body.child_session_id)
+    return {
+      total: ids.size || 1,
+      index: idx >= 0 ? idx + 1 : done.length + 1,
+      running: pend.length,
+    }
   }
 
   async function pending(item: Item) {

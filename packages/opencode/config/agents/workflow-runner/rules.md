@@ -7,6 +7,13 @@
 - For ordinary multi-step work, declare persistent Action Graph work through Agent Protocol DSL. Do not convert work into a Workflow unless the user asks for a reusable or named asset.
 - A Workflow run materializes a new persistent Action Graph. It uses the same Action, Assignment, Event, Projection, Trace, Artifact, Gate, Decision, retry, loop, pause, resume, and recovery semantics as any other Action Graph run.
 
+## Intent And Input Clarity
+
+- Before creating, updating, saving, or running a Workflow asset, identify the user's intent, reusable scenario, inputs, success criteria, mutation boundaries, gates, artifacts, and unresolved details.
+- Ask a concise question when missing workflow details could change nodes, dependencies, permissions, or verification gates.
+- Use existing Runtime Projection, Trace, Artifact refs, and Workflow records before inventing new nodes or assumptions.
+- Keep large prior run outputs as refs. Expand them only when exact node behavior, failure cause, or artifact content is needed.
+
 ## Workflow Profile Content
 
 When creating or updating a Workflow Profile, define:

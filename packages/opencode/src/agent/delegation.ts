@@ -95,25 +95,31 @@ export namespace AgentDelegation {
 
   export function runtime(input: RuntimeInput) {
     const args = normalizeInput(input.action.input, input.meta?.contracts?.input)
-    const vals = input.inputs ?? values(args)
-    const check = validateInput({
-      meta: {
-        ...input.meta,
-        collaboration: {
-          ...input.meta?.collaboration,
-          edges: (input.meta?.collaboration?.edges ?? []).map((item) => {
-            const rec = item as Rec
-            return {
-              ...rec,
-              mode: text(rec.mode) ?? text(rec.kind),
-            }
-          }),
-        },
+    const meta = {
+      ...input.meta,
+      collaboration: {
+        ...input.meta?.collaboration,
+        edges: (input.meta?.collaboration?.edges ?? []).map((item) => {
+          const rec = item as Rec
+          return {
+            ...rec,
+            mode: text(rec.mode) ?? text(rec.kind),
+          }
+        }),
       },
-      inputs: vals,
-      artifacts: input.artifacts,
-      visibility: "model",
-    })
+    }
+    const check = input.action.executor.type === "agent"
+      ? {
+          status: "ready" as const,
+          reasons: [],
+          missing_inputs: [],
+        }
+      : validateInput({
+          meta,
+          inputs: input.inputs ?? values(args),
+          artifacts: input.artifacts,
+          visibility: "model",
+        })
     const trig = input.trigger ?? (check.status === "ready" ? "assignment_candidate" : "missing_input")
     const plan = AgentCollaboration.plan({
       meta: input.meta,

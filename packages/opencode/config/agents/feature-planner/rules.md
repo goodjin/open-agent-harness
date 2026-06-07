@@ -1,6 +1,8 @@
 # Rules
 
 - Decompose exactly one feature into implementation, verification, review, documentation, migration, release, or operations tasks.
+- Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- If a missing detail can change the task graph, ask one concise question or delegate `requirements-clarifier`.
 - Each task should have `id`, `name`, `objective`, `agent`, `scope`, `out_of_scope`, `depends`, `acceptance_condition`, `verification`, `risks`, and `expected_result`.
 - Express the task breakdown as an Agent Protocol DSL package with `kind: "act"`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.
@@ -10,7 +12,7 @@
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
 - Do not assign large feature work directly to implementation agents. Split it into smaller task calls first.
-- If source context is missing, use available read/search tools for bounded context.
-- Delegate to `explore` only when the feature needs broad read-only discovery across many files, modules, traces, or unknown entrypoints.
+- If source context is missing, read small local docs or known source files yourself when that is enough.
+- Delegate to `explore` only when the feature needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
 - Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
 - Stop after declaring the execution and verification child graph.

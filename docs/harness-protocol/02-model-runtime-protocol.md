@@ -420,6 +420,13 @@ Observation 包含：
 - failure 或 blocked reason
 - next instruction
 
+Runtime-to-model 内容分为两类：
+
+- **Assignment Brief**：Runtime 分派任务时使用，说明目标、边界、验收、依赖、权限和最小上下文 refs。
+- **Result Observation / Result Handoff**：Runtime 回复执行结果、汇总 child session 或交给下游 executor 时使用，说明结果含义、证据强度、风险、未决项和按需展开路径。
+
+分派格式不应携带大量历史结果；结果格式不应伪装成新的任务指令。Runtime 在构造 Result Observation 时应加入少量语义提示，帮助模型区分事实、推断、风险、未决项和原始证据引用。
+
 示例：
 
 ````markdown
@@ -462,6 +469,29 @@ Found two issues: undo/redo state is not wired through, and the table dropdown c
 ````
 
 Runtime 也会为 logs、UI、trace export、recovery 和程序化处理存储 machine-checkable JSON records。模型可见 transcript 面向理解和下一步生成优化。
+
+### Result Observation 压缩规则
+
+Runtime 默认把大内容保存在 Artifact、raw record 或 runtime ref 中，只把可推理所需的摘要和引用放入模型上下文。
+
+默认返回：
+
+- status、goal 和一句到三句 summary。
+- evidenced facts，每条带 `Ref:` 或 artifact ref。
+- artifact refs 和简短说明。
+- risks、unresolved、blocked reason 和 next instruction。
+- guidance：哪些内容可当作证据，哪些需要展开 ref 后再判断。
+
+默认不返回：
+
+- full transcript。
+- full stdout/stderr。
+- full file content。
+- long diff。
+- 重复失败尝试。
+- 与当前决策无关的 child session 细节。
+
+模型需要精确细节时，应声明 `expand_ref`、`context` 或读取类 call。Runtime 决定是否展开、展开多少、是否只返回 excerpt，以及是否需要 permission 或 budget gate。
 
 ## 词汇与抽象边界
 
@@ -627,6 +657,12 @@ Runtime 直接解析 `md:` references。对 `runtime://` references，Runtime �
 - `adaptive`：模型声明偏好，Runtime 在预算内选择。
 
 Runtime 拥有最终 authority。Result policy 受 safety、privacy、permission 和 context budget 约束。
+
+建议默认：
+
+- 分派给 Agent Session 的 call 使用 `result: "structured"` 或 `result: "summary"`，让 Runtime 生成 Result Observation。
+- 文件、日志、测试和长输出类 call 使用 `result: "on_demand"` 或 `result: "adaptive"`，避免把完整内容塞回上下文。
+- 只有短输出、失败排查或用户明确要求原文时才请求 `full`。
 
 ## Executor Registry
 

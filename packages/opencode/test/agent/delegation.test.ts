@@ -65,7 +65,7 @@ describe("agent delegation visibility", () => {
     expect(names("feature-planner")).toEqual(["build", "plan", "backend", "frontend"])
   })
 
-  test("runtime metadata gates delegated assignment before launch", () => {
+  test("runtime metadata gates non-agent assignment before launch", () => {
     const got = AgentDelegation.runtime({
       agent: "researcher",
       meta: {
@@ -88,7 +88,7 @@ describe("agent delegation visibility", () => {
         id: "act_research",
         title: "Research",
         operation: "research",
-        executor: { type: "agent", target: "researcher", capabilities: [] },
+        executor: { type: "tool", target: "researcher", capabilities: [] },
         input: {},
         depends_on: [],
         context_refs: [],
@@ -109,6 +109,39 @@ describe("agent delegation visibility", () => {
       reason: "policy_allowed",
     })
     expect(got.observability.log_level).toBe("warn")
+  })
+
+  test("runtime metadata does not gate agent assignment on prompt fields", () => {
+    const got = AgentDelegation.runtime({
+      agent: "researcher",
+      meta: {
+        contracts: {
+          input: [{ name: "brief", required: true }],
+          output: [],
+        },
+        collaboration: {
+          edges: [{ kind: "prerequisite", trigger: "missing_input", target: "collector", required: true }],
+        },
+        observability: {
+          level: "minimal",
+        },
+      },
+      action: {
+        id: "act_research",
+        title: "Research",
+        operation: "research",
+        executor: { type: "agent", target: "researcher", capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      },
+      trigger: "missing_input",
+    })
+
+    expect(got.input.status).toBe("ready")
+    expect(got.status).toBe("ready")
+    expect(got.input.missing_inputs).toEqual([])
   })
 
   test("runtime metadata validates outputs before marking completion", () => {
@@ -208,7 +241,7 @@ describe("agent delegation visibility", () => {
     ])
   })
 
-  test("runtime maps legacy prompt input to required goal field", () => {
+  test("milestone planner starts without required goal fields", () => {
     const got = AgentDelegation.runtime({
       agent: "milestone-planner",
       meta: {
@@ -225,7 +258,7 @@ describe("agent delegation visibility", () => {
         title: "M1 Foundation",
         operation: "agent",
         executor: { type: "agent", target: "milestone-planner", capabilities: [] },
-        input: { prompt: "Build shared type contracts" },
+        input: {},
         depends_on: [],
         context_refs: [],
         result_policy: "summary",
@@ -238,7 +271,7 @@ describe("agent delegation visibility", () => {
     expect(got.input.missing_inputs).toEqual([])
   })
 
-  test("epic planner maps legacy prompt input to required epic goal", () => {
+  test("epic planner starts without required goal fields", () => {
     const got = AgentDelegation.runtime({
       agent: "epic-planner",
       meta: {
@@ -255,7 +288,7 @@ describe("agent delegation visibility", () => {
         title: "Epic Planner",
         operation: "agent",
         executor: { type: "agent", target: "epic-planner", capabilities: [] },
-        input: { prompt: "Build shared protocols" },
+        input: {},
         depends_on: [],
         context_refs: [],
         result_policy: "summary",

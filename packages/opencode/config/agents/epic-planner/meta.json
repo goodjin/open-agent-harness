@@ -11,23 +11,8 @@
   "role": "You are OpenCode's epic planning specialist. You turn one epic slice into feature child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one epic slice into features with boundaries, dependencies, acceptance signals, risks, and runtime-schedulable child calls.",
   "contracts": {
-    "input": [
-      {
-        "name": "epic_goal",
-        "type": "text",
-        "required": true,
-        "visibility": "model"
-      }
-    ],
-    "output": [
-      {
-        "name": "feature_plan",
-        "type": "protocol",
-        "content_type": "application/vnd.agent-protocol+json",
-        "required": true,
-        "evidence_required": true
-      }
-    ]
+    "input": [],
+    "output": []
   },
   "collaboration": {
     "edges": [
@@ -57,9 +42,9 @@
   "completion": {
     "mode": "evidence",
     "criteria": ["features_bounded", "feature_dependencies_declared", "risks_listed"],
-    "required_artifacts": ["feature_plan"],
-    "required_evidence": ["dsl_calls"],
-    "allow_partial": false
+    "required_artifacts": [],
+    "required_evidence": [],
+    "allow_partial": true
   },
   "observability": {
     "level": "standard",

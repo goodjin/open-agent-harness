@@ -300,10 +300,17 @@ export namespace HarnessRuntime {
     const data = Harness.Handoff.parse(input)
     const source = data.source.agent_id ?? data.source.session_id ?? data.source.assignment_id ?? data.source.run_id
     const lines = [
-      "## Handoff",
+      "## Result Handoff",
       "",
       `Source: \`${source}\``,
       `Status: \`${data.status}\``,
+      "",
+      "### Runtime Guidance",
+      "",
+      "- This is a compressed Runtime projection, not the full source session.",
+      "- Treat refs as evidence pointers and expand them only when exact detail is needed.",
+      "- Treat notes as unevidenced context and unresolved items as still open.",
+      "- Full raw evidence is stored by ref and is not loaded into context by default.",
       "",
       "### Goal",
       "",
