@@ -274,7 +274,7 @@ export namespace AgentTemplate {
       workflow_mode: WorkflowMode.default("auto").describe("How the agent executes workflows"),
       allowed_tools: z.array(Text).default([]).describe("List of tools the agent is allowed to use"),
       denied_tools: z.array(Text).default([]).describe("List of tools the agent is denied from using"),
-      inherit_permissions: z.boolean().default(true).describe("Whether to inherit permissions from parent agent"),
+      inherit_permissions: z.boolean().default(false).describe("Whether to inherit permissions from parent agent"),
       permission_mode: PermissionMode.default("strict").describe("Permission mode for the agent"),
     })
     .strict()

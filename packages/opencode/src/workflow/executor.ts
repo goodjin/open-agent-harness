@@ -861,7 +861,7 @@ export namespace WorkflowExecutor {
   async function subagent(input: Parameters<Executor>[0]) {
     const agent = await Agent.get(input.agent)
     if (!agent) throw new InvalidError({ message: `Workflow node agent not found: ${input.agent}` })
-    const rule = PermissionNext.evaluate("task", agent.name, input.parent.permission ?? [])
+    const rule = PermissionNext.evaluate("task", agent.name, Agent.permissions(agent, input.parent.permission))
     if (rule.action === "deny") {
       throw new InvalidError({ message: `Workflow node agent denied: ${agent.name}` })
     }
@@ -874,7 +874,7 @@ export namespace WorkflowExecutor {
           parentID: input.parent.id,
           title: `${input.workflow.name}: #${input.step.index + 1} ${brief} (@${agent.name})`,
           permission: [
-            ...agent.permission,
+            ...Agent.permissions(agent, input.parent.permission),
             { permission: "workflow_create", pattern: "*", action: "deny" },
             { permission: "workflow_start", pattern: "*", action: "deny" },
           ],

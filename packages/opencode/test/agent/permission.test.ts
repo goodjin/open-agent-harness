@@ -31,6 +31,7 @@ describe("buildPermission", () => {
         const policy = await buildPolicy(
           meta({
             permission_mode: "custom",
+            inherit_permissions: true,
             allowed_tools: ["read"],
           }),
         )
@@ -38,6 +39,24 @@ describe("buildPermission", () => {
         expect(sources.has("default")).toBe(true)
         expect(sources.has("user")).toBe(true)
         expect(sources.has("agent")).toBe(true)
+      },
+    })
+  })
+
+  test("default mode does not inherit config permissions", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        permission: {
+          bash: "deny",
+        },
+      },
+    })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const rules = await buildPermission(meta({ permission_mode: "lax" }))
+        expect(PermissionNext.evaluate("bash", "ls", rules).action).toBe("allow")
       },
     })
   })
@@ -55,7 +74,7 @@ describe("buildPermission", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rules = await buildPermission(meta({ permission_mode: "strict" }))
+        const rules = await buildPermission(meta({ inherit_permissions: true, permission_mode: "strict" }))
         expect(PermissionNext.evaluate("read", "file.ts", rules).action).toBe("allow")
         expect(PermissionNext.evaluate("bash", "ls", rules).action).toBe("deny")
       },
@@ -74,7 +93,7 @@ describe("buildPermission", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rules = await buildPermission(meta({ permission_mode: "lax" }))
+        const rules = await buildPermission(meta({ inherit_permissions: true, permission_mode: "lax" }))
         expect(PermissionNext.evaluate("read", "file.ts", rules).action).toBe("allow")
         expect(PermissionNext.evaluate("edit", "file.ts", rules).action).toBe("allow")
         expect(PermissionNext.evaluate("bash", "ls", rules).action).toBe("deny")
@@ -87,7 +106,7 @@ describe("buildPermission", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rules = await buildPermission(meta({ permission_mode: "lax" }))
+        const rules = await buildPermission(meta({ inherit_permissions: true, permission_mode: "lax" }))
         expect(PermissionNext.evaluate("question", "*", rules).action).toBe("deny")
         expect(PermissionNext.evaluate("plan_enter", "*", rules).action).toBe("deny")
         expect(PermissionNext.evaluate("doom_loop", "*", rules).action).toBe("ask")
@@ -109,7 +128,7 @@ describe("buildPermission", () => {
     await Instance.provide({
       directory: tmp.path,
       fn: async () => {
-        const rules = await buildPermission(meta({ permission_mode: "lax" }))
+        const rules = await buildPermission(meta({ inherit_permissions: true, permission_mode: "lax" }))
         expect(PermissionNext.evaluate("question", "*", rules).action).toBe("ask")
         expect(PermissionNext.evaluate("plan_enter", "*", rules).action).toBe("deny")
         expect(PermissionNext.evaluate("doom_loop", "*", rules).action).toBe("deny")

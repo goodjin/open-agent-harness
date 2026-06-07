@@ -443,9 +443,12 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
+    const rules = input.agent.inheritPermissions === true
+      ? PermissionNext.merge(input.agent.permission, input.permission ?? [])
+      : input.agent.permission
     const disabled = PermissionNext.disabled(
       Object.keys(input.tools),
-      PermissionNext.merge(input.agent.permission, input.permission ?? []),
+      rules,
     )
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {

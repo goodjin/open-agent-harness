@@ -55,6 +55,7 @@ export namespace RuntimeTools {
       ...input.agent,
       permission: input.agent.permission ?? [],
     }
+    const rules = Agent.permissions(agent, input.session.permission)
     const ctx = (args: unknown, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
@@ -86,7 +87,7 @@ export namespace RuntimeTools {
           sessionID: input.session.id,
           workspaceID: input.session.workspaceID,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: PermissionNext.merge(agent.permission, input.session.permission ?? []),
+          ruleset: rules,
         })
       },
     })
@@ -104,7 +105,7 @@ export namespace RuntimeTools {
 
     const disabled = PermissionNext.disabled(
       (await ToolRegistry.ids()),
-      PermissionNext.merge(agent.permission, input.session.permission ?? []),
+      rules,
     )
     for (const item of await ToolRegistry.tools(
       { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },

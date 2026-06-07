@@ -782,6 +782,9 @@ export namespace SessionRunner {
           }
           return
         } else {
+          processor.message.finish = "stop"
+          processor.message.time.completed = Date.now()
+          await Session.updateMessage(processor.message)
           await Session.updatePart({
             id: PartID.ascending(),
             messageID: processor.message.id,
@@ -1340,7 +1343,8 @@ export namespace SessionRunner {
       }
     }
     const parent = await Session.get(input.sessionID)
-    const rule = PermissionNext.evaluate("task", selected.agent.name, parent.permission ?? [])
+    const source = await Agent.get(input.parentAgent)
+    const rule = PermissionNext.evaluate("task", selected.agent.name, source ? Agent.permissions(source, parent.permission) : parent.permission ?? [])
     if (rule.action === "deny") {
       const next = await fallback(input.action, input.parentAgent, "target_denied", gate)
       if (next.ok && next.agent.name !== selected.agent.name) {
@@ -1366,7 +1370,7 @@ export namespace SessionRunner {
       parentID: parent.id,
       title: `Protocol: ${title} (@${selected.agent.name})`,
       permission: [
-        ...selected.agent.permission,
+        ...Agent.permissions(selected.agent, parent.permission),
         { permission: "workflow_create", pattern: "*", action: "deny" },
         { permission: "workflow_start", pattern: "*", action: "deny" },
       ],

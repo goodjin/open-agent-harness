@@ -650,7 +650,7 @@ describe("AgentTemplate.Meta", () => {
       expect(result.success).toBe(false)
     })
 
-    test("inherit_permissions is optional", () => {
+    test("inherit_permissions defaults to false", () => {
       const valid = {
         id: "coder",
         name: "Coder Agent",
@@ -660,7 +660,7 @@ describe("AgentTemplate.Meta", () => {
       const result = AgentTemplate.Meta.safeParse(valid)
       expect(result.success).toBe(true)
       if (result.success) {
-        expect(result.data.inherit_permissions).toBe(true)
+        expect(result.data.inherit_permissions).toBe(false)
       }
     })
   })

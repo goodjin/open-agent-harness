@@ -16,6 +16,7 @@ import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
 import { AgentDelegation } from "../../src/agent/delegation"
+import { Agent } from "../../src/agent/agent"
 
 describe("SessionRunner", () => {
   test("selects chat for ordinary agents", () => {
@@ -47,7 +48,7 @@ describe("SessionRunner", () => {
       },
     )
 
-    expect(result).toBe("continue")
+    expect(result).toBe("stop")
     expect(seen).toEqual(["chat"])
   })
 
@@ -67,7 +68,7 @@ describe("SessionRunner", () => {
       },
     )
 
-    expect(result).toBe("continue")
+    expect(result).toBe("stop")
     expect(seen).toEqual(["workflow"])
   })
 
@@ -1445,6 +1446,217 @@ describe("SessionRunner", () => {
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(logs.some((item) => item.type === "protocol.agent.started")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.agent.completed")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
+  test("protocol final agent call uses target agent permissions by default", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = [
+      {
+        kind: "act",
+        message: "Inspect package metadata.",
+        calls: [
+          {
+            id: "inspect_package",
+            type: "tool",
+            name: "read",
+            args: { filePath: "package.json" },
+            result: "summary",
+          },
+        ],
+      },
+      {
+        kind: "act",
+        message: "Delegate planning follow-up.",
+        calls: [
+          {
+            id: "feat_dirty_tracking",
+            type: "agent",
+            name: "backend",
+            args: { prompt: "Implement dirty tracking backend state." },
+            result: "structured",
+          },
+        ],
+      },
+    ]
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      const input = data[calls++] ?? data.at(-1)!
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_protocol_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_protocol_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_protocol_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: [
+          "Delegated to backend.",
+          "Child session: test",
+          "The parent session will resume automatically when the child result is available.",
+        ].join("\n"),
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              await fs.writeFile(path.join(tmp.path, "package.json"), "{}")
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [
+                  { permission: "read", pattern: "*", action: "allow" },
+                  { permission: "task", pattern: "*", action: "deny" },
+                ],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "feature-planner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "feature-planner",
+                agent: "feature-planner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const agent = await Agent.get("feature-planner")
+              if (!agent) throw new Error("missing feature-planner agent")
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "inspect then decide next work" }],
+                tools: {},
+              })
+              for (let i = 0; i < 20; i++) {
+                if ((await Session.children(session.id)).length > 0) break
+                await Bun.sleep(10)
+              }
+              const children = await Session.children(session.id)
+              const messages = await Session.messages({ sessionID: session.id, limit: 10 })
+              const final = messages.findLast((item) =>
+                item.info.role === "assistant" &&
+                item.parts.some((part) => part.type === "text" && part.text.includes("Protocol blocked")),
+              )
+              const text = messages.flatMap((item) =>
+                item.parts.flatMap((part) => part.type === "text" ? [part.text] : []),
+              ).join("\n")
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(children).toHaveLength(1)
+              expect(children[0]?.title).toContain("Protocol: feat_dirty_tracking (@backend)")
+              expect(text).toContain("The parent session will resume automatically")
+              expect(text).not.toContain("Protocol blocked")
+              expect(text).not.toContain("Protocol agent denied: backend")
+              expect(text).not.toContain("Protocol final response was empty or malformed.")
+              expect(final).toBeUndefined()
             },
           }),
       })

@@ -37,6 +37,7 @@ export namespace Agent {
       color: z.string().optional(),
       permission: PermissionNext.Ruleset,
       policy: PermissionNext.PolicyModel.optional(),
+      inheritPermissions: z.boolean().optional(),
       model: z
         .object({
           modelID: ModelID.zod,
@@ -81,6 +82,7 @@ export namespace Agent {
       hidden: template.meta.entry.hidden || template.meta.hidden,
       permission: Policy.toLegacy(policy),
       policy,
+      inheritPermissions: template.meta.inherit_permissions,
       options: {},
       prompt: prompt(template),
       model: template.meta.model_preference
@@ -106,6 +108,7 @@ export namespace Agent {
         runner: "chat",
         permission: [],
         policy: { rules: [] },
+        inheritPermissions: false,
         options: {},
       } satisfies Info)
     const mode = cfg.mode ?? next.mode
@@ -138,7 +141,13 @@ export namespace Agent {
       options: mergeDeep(next.options, cfg.options ?? {}),
       permission: Policy.toLegacy(policy),
       policy,
+      inheritPermissions: next.inheritPermissions,
     }
+  }
+
+  export function permissions(agent: Info, parent?: PermissionNext.Ruleset): PermissionNext.Ruleset {
+    if (agent.inheritPermissions === true) return PermissionNext.merge(agent.permission, parent ?? [])
+    return agent.permission
   }
 
   export async function get(agent: string, registry: AgentRegistry = getRegistry()): Promise<Info | undefined> {
