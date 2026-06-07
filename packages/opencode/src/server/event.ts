@@ -114,14 +114,48 @@ export namespace EventGateway {
     if (nested) return nested as WorkspaceID
   }
 
+  function trim(value: string, limit: number) {
+    if (value.length <= limit) return value
+    return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`
+  }
+
+  function slim(value: unknown): unknown {
+    if (!object(value)) return value
+    const info = object(value.info) ? value.info : undefined
+    const part = object(value.part) ? value.part : undefined
+
+    return {
+      ...value,
+      ...(info ? { info: { ...info, dsl_context: undefined } } : {}),
+      ...(part && part.type === "step-start"
+        ? {
+            part: {
+              id: part.id,
+              sessionID: part.sessionID,
+              messageID: part.messageID,
+              type: part.type,
+              snapshot: part.snapshot,
+            },
+          }
+        : {}),
+      ...(part && part.type === "text" && part.ignored === true && typeof part.text === "string"
+        ? { part: { ...part, text: trim(part.text, 2_000) } }
+        : {}),
+    }
+  }
+
   export function record(input: Input, opts?: { store?: boolean }): Envelope {
+    const payload = {
+      ...input.payload,
+      properties: slim(input.payload.properties),
+    }
     const event = {
       sequence: ++next,
       time: Date.now(),
       directory: input.directory,
       workspaceID: workspace(input),
-      sessionID: session(input.payload),
-      payload: input.payload,
+      sessionID: session(payload),
+      payload,
     }
     if (opts?.store !== false) {
       history.push(event)
@@ -189,8 +223,10 @@ export namespace EventGateway {
         return emit(event)
       },
       async replay(connect: () => Envelope) {
-        for (const event of replay(filter)) {
-          await emit(event)
+        if (filter.sequence !== undefined) {
+          for (const event of replay(filter)) {
+            await emit(event)
+          }
         }
         const event = connect()
         await flush((item) => item.sequence < event.sequence)

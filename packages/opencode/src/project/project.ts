@@ -1,7 +1,7 @@
 import z from "zod"
 import { Filesystem } from "../util/filesystem"
 import path from "path"
-import { and, Database, eq } from "../storage/db"
+import { and, Database, eq, ne } from "../storage/db"
 import { ProjectTable } from "./project.sql"
 import { SessionTable } from "../session/session.sql"
 import { Log } from "../util/log"
@@ -15,6 +15,7 @@ import { git } from "../util/git"
 import { Glob } from "../util/glob"
 import { which } from "../util/which"
 import { ProjectID } from "./schema"
+import { createHash } from "crypto"
 
 export namespace Project {
   const log = Log.create({ service: "project" })
@@ -95,6 +96,10 @@ export namespace Project {
       .catch(() => undefined)
   }
 
+  function localID(dir: string) {
+    return ProjectID.make(`local-${createHash("sha256").update(path.resolve(dir)).digest("hex").slice(0, 40)}`)
+  }
+
   export async function fromDirectory(directory: string) {
     log.info("fromDirectory", { directory })
 
@@ -161,7 +166,7 @@ export namespace Project {
 
           if (!roots) {
             return {
-              id: ProjectID.global,
+              id: id ?? localID(worktree),
               worktree: sandbox,
               sandbox,
               vcs: Info.shape.vcs.parse(Flag.OPENCODE_FAKE_VCS),
@@ -177,7 +182,7 @@ export namespace Project {
 
         if (!id) {
           return {
-            id: ProjectID.global,
+            id: localID(worktree),
             worktree: sandbox,
             sandbox,
             vcs: "git",
@@ -274,16 +279,24 @@ export namespace Project {
     )
     // Runs after upsert so the target project row exists (FK constraint).
     // Runs on every startup because sessions created before git init
-    // accumulate under "global" and need migrating whenever they appear.
-    if (data.id !== ProjectID.global) {
+    // accumulate under fallback project ids and need migrating whenever they appear.
+    for (const old of [ProjectID.global, localID(data.worktree)]) {
+      if (data.id === old) continue
       Database.use((db) =>
         db
           .update(SessionTable)
           .set({ project_id: data.id })
-          .where(and(eq(SessionTable.project_id, ProjectID.global), eq(SessionTable.directory, data.worktree)))
+          .where(and(eq(SessionTable.project_id, old), eq(SessionTable.directory, data.worktree)))
           .run(),
       )
     }
+    Database.use((db) =>
+      db
+        .update(SessionTable)
+        .set({ project_id: data.id })
+        .where(and(ne(SessionTable.project_id, data.id), eq(SessionTable.directory, data.sandbox)))
+        .run(),
+    )
     GlobalBus.emit("event", {
       payload: {
         type: Event.Updated.type,

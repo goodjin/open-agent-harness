@@ -8,6 +8,7 @@ import {
 } from "./deep-links"
 import { type Message, type Session } from "@open-agent-harness/sdk/v2/client"
 import {
+  childSummaryBySession,
   childSessionSummary,
   displayName,
   displaySessionTitle,
@@ -17,6 +18,7 @@ import {
   errorMessage,
   hasProjectPermissions,
   latestRootSession,
+  sessionDescendants,
   sessionLineage,
   sessionWorking,
   visibleSessionTree,
@@ -273,6 +275,59 @@ describe("layout workspace helpers", () => {
         },
       ),
     ).toEqual({ completed: 1, total: 3 })
+  })
+
+  test("does not treat timeout sessions as working", () => {
+    expect(sessionWorking(undefined, { type: "timeout" })).toBe(false)
+  })
+
+  test("summarizes recursive child sessions", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "done", directory: "/workspace", parentID: "root" }),
+      session({ id: "idle", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "done" }),
+    ]
+    const map = new Map([
+      ["root", ["done", "idle"]],
+      ["done", ["grand"]],
+    ])
+
+    expect(
+      childSessionSummary(
+        sessionDescendants([list[1], list[2]], list, map),
+        {
+          done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
+          grand: [message({ id: "grand-message", sessionID: "grand", time: { created: 0, completed: 1 } })],
+        },
+        {},
+      ),
+    ).toEqual({ completed: 2, total: 3 })
+  })
+
+  test("precomputes recursive child summaries by session", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "done", directory: "/workspace", parentID: "root" }),
+      session({ id: "idle", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "done" }),
+    ]
+    const map = childMapByParent(list)
+    const summary = childSummaryBySession(
+      list,
+      map,
+      {
+        done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
+        grand: [message({ id: "grand-message", sessionID: "grand", time: { created: 0, completed: 1 } })],
+      },
+      {
+        idle: { type: "running" },
+      },
+    )
+
+    expect(summary.get("root")).toEqual({ completed: 2, total: 3, working: 1 })
+    expect(summary.get("done")).toEqual({ completed: 1, total: 1, working: 0 })
+    expect(summary.get("idle")).toEqual({ completed: 0, total: 0, working: 0 })
   })
 
   test("does not keep a session working from stale pending parts after idle", () => {

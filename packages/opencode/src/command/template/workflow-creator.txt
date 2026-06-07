@@ -1,0 +1,11 @@
+Create or update a persisted OpenCode workflow from this request:
+
+$ARGUMENTS
+
+Discuss the workflow with the user until the orchestration is clear enough to save. Clarify the workflow goal, inputs, ordered or parallel nodes, agent assignment, mutation boundaries, verification gates, error handling, and saved workflow id.
+
+When the workflow definition is ready, use `workflow_create` to validate and save it. Do not use `workflow_start`; this command creates or updates a fixed workflow but does not execute it.
+
+If the request is not about creating or modifying a persisted workflow, refuse briefly and ask for a workflow-creation request.
+
+After saving, report the workflow id, saved path, and how the user can run it later.

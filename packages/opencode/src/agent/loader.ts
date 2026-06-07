@@ -21,9 +21,8 @@ export const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
   meta: {
     id: "default",
     name: "Default Agent",
-    role: "You are a helpful AI assistant that can assist with coding, debugging, and general software development tasks.",
-    description:
-      "The default agent template for general-purpose assistance. Use this agent for most tasks unless a specialized agent is more appropriate.",
+    role: "You are OpenCode's default project coordinator. You classify request scale, declare Agent Protocol DSL work graphs, and route each unit to the right planner or specialist.",
+    description: "Default entry agent for intent clarification, scale assessment, DSL-based task decomposition, agent routing, and result synthesis.",
     mode: "primary",
     entry: {
       primary: true,
@@ -33,33 +32,27 @@ export const BUILTIN_DEFAULT_AGENT: AgentTemplate = {
       hidden: false,
     },
     capability: {
-      purpose: "general",
-      tags: [],
+      purpose: "coordination",
+      tags: ["coordination", "planning", "routing", "protocol"],
       cost: "medium",
-      writes: true,
+      writes: false,
     },
     hidden: false,
-    runner: "chat",
+    runner: "protocol",
     workflow_mode: "auto",
-    allowed_tools: [
+    allowed_tools: ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
+    denied_tools: [
       "edit",
-      "read",
-      "glob",
-      "grep",
+      "write",
+      "apply_patch",
       "list",
       "bash",
-      "task",
       "webfetch",
       "websearch",
-      "codesearch",
-      "lsp",
-      "external_directory",
       "todowrite",
       "todoread",
-      "question",
     ],
-    denied_tools: [],
-    inherit_permissions: true,
+    inherit_permissions: false,
     permission_mode: "custom",
   },
   identity: "",
@@ -84,6 +77,8 @@ export interface AgentTemplateDiagnostic {
   source: "package" | "user" | "builtin"
   level: "warning"
   message: string
+  field?: string
+  category?: string
 }
 
 export interface AgentTemplateStatus {
@@ -213,12 +208,20 @@ export class AgentTemplateLoader {
     return stats.flat().sort().join("|")
   }
 
-  private warn(input: { dir: string; source: "package" | "user" | "builtin"; message: string }) {
+  private warn(input: {
+    dir: string
+    source: "package" | "user" | "builtin"
+    message: string
+    field?: string
+    category?: string
+  }) {
     this.diagnostics.push({
       dir: input.dir,
       source: input.source,
       level: "warning",
       message: input.message,
+      field: input.field,
+      category: input.category,
     })
     log.warn("agent template warning", input)
   }
@@ -314,6 +317,87 @@ export class AgentTemplateLoader {
     return match?.[2]?.trim()
   }
 
+  private ref(input: unknown) {
+    return typeof input === "string" && input.trim().length > 0
+  }
+
+  private unsafe(input: string) {
+    return path.isAbsolute(input) || input.split(/[\\/]+/g).includes("..")
+  }
+
+  private url(input: string) {
+    if (this.unsafe(input)) return false
+    try {
+      const url = new URL(input)
+      return url.protocol === "http:" || url.protocol === "https:" || url.protocol === "data:"
+    } catch {
+      return true
+    }
+  }
+
+  private async audit(input: { dir: string; source: "package" | "user"; meta: Schema.Meta }) {
+    const meta = input.meta
+    if (meta.logo?.uri && !this.url(meta.logo.uri)) {
+      this.warn({
+        dir: input.dir,
+        source: input.source,
+        field: "logo.uri",
+        category: "metadata.logo",
+        message: `unsupported logo URI '${meta.logo.uri}'`,
+      })
+    }
+
+    await Promise.all(
+      (meta.instructions?.files ?? []).map(async (file, index) => {
+        if (this.unsafe(file.path)) {
+          this.warn({
+            dir: input.dir,
+            source: input.source,
+            field: `instructions.files.${index}.path`,
+            category: "metadata.instructions",
+            message: `instruction path '${file.path}' must stay within the agent directory`,
+          })
+        }
+        if (!file.required) return
+        try {
+          await fs.access(path.join(input.dir, file.path))
+        } catch {
+          this.warn({
+            dir: input.dir,
+            source: input.source,
+            field: `instructions.files.${index}.path`,
+            category: "metadata.instructions",
+            message: `required instruction path '${file.path}' was not found`,
+          })
+        }
+      }),
+    )
+
+    ;(["input", "output"] as const).forEach((side) => {
+      meta.contracts?.[side].forEach((item, index) => {
+        if (!("schema_ref" in item) || this.ref(item.schema_ref)) return
+        this.warn({
+          dir: input.dir,
+          source: input.source,
+          field: `contracts.${side}.${index}.schema_ref`,
+          category: "metadata.contracts",
+          message: `${side} contract schema_ref must be a non-empty string`,
+        })
+      })
+    })
+
+    meta.collaboration?.edges.forEach((edge, index) => {
+      if (this.ref(edge.target)) return
+      this.warn({
+        dir: input.dir,
+        source: input.source,
+        field: `collaboration.edges.${index}.target`,
+        category: "metadata.collaboration",
+        message: "collaboration edge target must be a non-empty string",
+      })
+    })
+  }
+
   private async loadSkills(dir: string, source: "package" | "user"): Promise<AgentTemplate[]> {
     const out: AgentTemplate[] = []
     for (const root of this.skillRoots(dir)) {
@@ -338,7 +422,7 @@ export class AgentTemplateLoader {
           typeof parsed.data.description === "string" && parsed.data.description.trim()
             ? parsed.data.description.trim()
             : `Use this agent for tasks from the legacy ${raw} skill.`
-        const role = this.section(parsed.content, "Role") ?? parsed.content.trim()
+        const role = this.section(parsed.content, "Role") ?? `You are the ${this.title(id)} agent converted from a legacy skill.`
         const rules = [this.section(parsed.content, "Workflow"), this.section(parsed.content, "Rules")]
           .filter((item): item is string => !!item)
           .join("\n\n")
@@ -398,6 +482,8 @@ export class AgentTemplateLoader {
         this.warn({ dir: agentDir, source, message: errors.join("; ") })
         return { status: { dir: agentDir, source, id: result.data.id, valid: false, errors } }
       }
+
+      await this.audit({ dir: agentDir, source, meta: result.data })
 
       const template = {
         id: result.data.id,

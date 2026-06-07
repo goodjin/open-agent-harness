@@ -303,6 +303,162 @@ describe("AgentTemplate.Meta", () => {
     })
   })
 
+  describe("RFC metadata control-plane fields", () => {
+    test("v1 metadata fields parse without enabling runtime behavior", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        schema_version: "agent.metadata.v1",
+        agent_version: "1.0.0",
+        kind: "verifier",
+        id: "code-test",
+        name: "Code Test",
+        description: "Run validation and preserve evidence.",
+        persona: "Verify changed behavior with focused commands.",
+        logo: {
+          uri: "${agent.dir}/logo.svg",
+          alt: "Code Test",
+          theme: "auto",
+        },
+        instructions: {
+          files: [
+            {
+              path: "${agent.dir}/rules.md",
+              role: "system",
+              required: true,
+            },
+          ],
+          model_messages: [
+            {
+              on: "before_model_call",
+              position: "suffix",
+              content: "Do not claim verification without command evidence.",
+            },
+          ],
+        },
+        contracts: {
+          input: [
+            {
+              name: "patch",
+              required: true,
+              source: ["artifact"],
+              content_type: ["text/markdown"],
+            },
+          ],
+          output: [
+            {
+              name: "test_report",
+              required: true,
+              artifact_type: "verification_report",
+              content_type: "text/markdown",
+            },
+          ],
+        },
+        collaboration: {
+          edges: [
+            {
+              id: "review",
+              kind: "verifier",
+              trigger: "after_artifact_created",
+              target: {
+                executor: "agent",
+                capability: "technical_review",
+              },
+              required: true,
+            },
+          ],
+          limits: {
+            max_depth: 1,
+          },
+        },
+        runtime_boundary: {
+          resource_classes: ["filesystem", "network"],
+          actions: {
+            read: ["artifact:*"],
+            execute: ["test"],
+          },
+        },
+        completion: {
+          mode: "runtime_verified",
+          criteria: ["test_report exists"],
+          required_artifacts: ["test_report"],
+        },
+        observability: {
+          trace: "summary",
+        },
+        lifecycle: {
+          deprecated: false,
+        },
+      })
+
+      expect(result.success).toBe(true)
+      if (!result.success) return
+
+      expect(result.data.role).toBe("Verify changed behavior with focused commands.")
+      expect(result.data.workflow_mode).toBe("auto")
+      expect(result.data.kind).toBe("verifier")
+      expect(result.data.inherit_permissions).toBe(false)
+      expect(result.data.logo?.theme).toBe("auto")
+      expect(result.data.instructions?.files?.[0]?.path).toBe("${agent.dir}/rules.md")
+      expect(result.data.contracts?.output?.[0]?.name).toBe("test_report")
+      expect(result.data.collaboration?.edges?.[0]?.kind).toBe("verifier")
+      expect(result.data.runtime_boundary?.resource_classes).toEqual(["filesystem", "network"])
+      expect(result.data.completion?.required_artifacts).toEqual(["test_report"])
+      expect(result.data.observability).toEqual({ trace: "summary" })
+      expect(result.data.lifecycle).toEqual({ deprecated: false })
+    })
+
+    test("role and workflow_mode win over RFC aliases on conflict", () => {
+      const result = AgentTemplate.Meta.parse({
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        persona: "researching",
+        description: "A coder agent",
+        workflow_mode: "manual",
+        execution_mode: "supervision",
+      })
+
+      expect(result.role).toBe("coding")
+      expect(result.workflow_mode).toBe("manual")
+    })
+
+    test("legacy metadata keeps inherit permissions default", () => {
+      expect(
+        AgentTemplate.Meta.parse({
+          id: "legacy",
+          name: "Legacy",
+          role: "coding",
+          description: "A legacy agent",
+        }).inherit_permissions,
+      ).toBe(true)
+      expect(
+        AgentTemplate.Meta.parse({
+          schema_version: "agent.metadata.v1",
+          id: "modern",
+          name: "Modern",
+          persona: "coding",
+          description: "A v1 agent",
+        }).inherit_permissions,
+      ).toBe(false)
+    })
+
+    test("agent kind accepts control-plane collaboration roles", () => {
+      const base = {
+        id: "agent-kind",
+        name: "Agent Kind",
+        role: "Classify agent collaboration shape.",
+        description: "A metadata test agent.",
+      }
+
+      for (const kind of AgentTemplate.Kind.options) {
+        expect(AgentTemplate.Meta.safeParse({ ...base, kind }).success).toBe(true)
+      }
+
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "executor" }).success).toBe(false)
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "operator" }).success).toBe(false)
+      expect(AgentTemplate.Meta.safeParse({ ...base, kind: "reviewer" }).success).toBe(false)
+    })
+  })
+
   describe("runner field validation", () => {
     test("valid runner values pass", () => {
       const base = {
@@ -494,7 +650,7 @@ describe("AgentTemplate.Meta", () => {
       expect(result.success).toBe(false)
     })
 
-    test("inherit_permissions is optional", () => {
+    test("inherit_permissions defaults to false", () => {
       const valid = {
         id: "coder",
         name: "Coder Agent",
@@ -504,7 +660,7 @@ describe("AgentTemplate.Meta", () => {
       const result = AgentTemplate.Meta.safeParse(valid)
       expect(result.success).toBe(true)
       if (result.success) {
-        expect(result.data.inherit_permissions).toBe(true)
+        expect(result.data.inherit_permissions).toBe(false)
       }
     })
   })
@@ -861,7 +1017,9 @@ describe("AgentTemplate.Meta", () => {
       expect(result.data.id).toBe("default")
       expect(result.data.workflow_mode).toBe("auto")
       expect(result.data.permission_mode).toBe("custom")
-      expect(result.data.allowed_tools).toContain("edit")
+      expect(result.data.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
+      expect(result.data.capability.writes).toBe(false)
+      expect(result.data.inherit_permissions).toBe(false)
       expect(AgentTemplate.validateTemplate({ dir: "default", meta: result.data })).toEqual([])
     })
   })

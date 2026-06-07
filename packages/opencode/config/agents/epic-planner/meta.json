@@ -1,8 +1,59 @@
 {
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
   "id": "epic-planner",
   "name": "Epic Planner",
-  "role": "You are OpenCode's epic-slice planning specialist. You turn one milestone into the next epic-slice layer only.",
-  "description": "Subagent for decomposing one milestone into capability or domain epic slices with boundaries, dependencies, acceptance signals, and recommended next target.",
+  "logo": {
+    "uri": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%237c2d12'/%3E%3Ctext x='32' y='40' text-anchor='middle' font-size='28' fill='white' font-family='Arial'%3EE%3C/text%3E%3C/svg%3E",
+    "alt": "Epic planner logo",
+    "theme": "auto"
+  },
+  "role": "You are OpenCode's epic planning specialist. You turn one epic slice into feature child calls declared through Agent Protocol DSL.",
+  "description": "Subagent for decomposing one epic slice into features with boundaries, dependencies, acceptance signals, risks, and runtime-schedulable child calls.",
+  "contracts": {
+    "input": [],
+    "output": []
+  },
+  "collaboration": {
+    "edges": [
+      {
+        "kind": "decompose",
+        "to": "feature-planner",
+        "trigger": "feature_identified"
+      },
+      {
+        "kind": "fallback",
+        "to": "general",
+        "trigger": "unclear_domain_boundary"
+      }
+    ],
+    "limits": {
+      "max_depth": 2,
+      "max_parallel": 6
+    }
+  },
+  "runtime_boundary": {
+    "resource_classes": ["service.execute", "human.ask"],
+    "actions": {
+      "allow": ["task", "question", "filesystem.read", "code.search"],
+      "deny": ["filesystem.write", "filesystem.execute"]
+    }
+  },
+  "completion": {
+    "mode": "evidence",
+    "criteria": ["features_bounded", "feature_dependencies_declared", "risks_listed"],
+    "required_artifacts": [],
+    "required_evidence": [],
+    "allow_partial": true
+  },
+  "observability": {
+    "level": "standard",
+    "events": ["assignment_started", "collaboration_planned", "completion_evaluated"]
+  },
+  "lifecycle": {
+    "status": "active",
+    "owner": "agent-system"
+  },
   "entry": {
     "primary": false,
     "delegable": true,
@@ -18,8 +69,8 @@
   },
   "runner": "protocol",
   "workflow_mode": "auto",
-  "allowed_tools": ["task", "question"],
-  "denied_tools": ["edit", "write", "apply_patch", "read", "glob", "grep", "bash", "todowrite"],
-  "inherit_permissions": true,
+  "allowed_tools": ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "bash", "todowrite"],
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }

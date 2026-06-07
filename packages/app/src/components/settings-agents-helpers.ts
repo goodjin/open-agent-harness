@@ -16,9 +16,23 @@ export type Cost = NonNullable<NonNullable<Meta["capability"]>["cost"]>
 export type Perm = NonNullable<Meta["permission_mode"]>
 export type View = "create" | "edit"
 export type Tab = "all" | "agent" | "skill"
+export type RFC = Pick<
+  Meta,
+  | "schema_version"
+  | "agent_version"
+  | "logo"
+  | "instructions"
+  | "contracts"
+  | "collaboration"
+  | "runtime_boundary"
+  | "completion"
+  | "observability"
+  | "lifecycle"
+>
 
 export type Form = {
   base?: Meta
+  raw?: RFC
   scope: Scope
   id: string
   name: string
@@ -81,8 +95,35 @@ export const text = (value: string) => {
   return next
 }
 
+const clean = <T extends object>(value: T) =>
+  Object.fromEntries(Object.entries(value).filter((item) => item[1] !== undefined)) as T
+
+const keep = (item: Meta): RFC =>
+  clean({
+    schema_version: item.schema_version,
+    agent_version: item.agent_version,
+    logo: item.logo,
+    instructions: item.instructions,
+    contracts: item.contracts,
+    collaboration: item.collaboration,
+    runtime_boundary: item.runtime_boundary,
+    completion: item.completion,
+    observability: item.observability,
+    lifecycle: item.lifecycle,
+  })
+
+const count = (value: unknown[] | undefined) => value?.length ?? 0
+
+const field = (value: unknown, key: string) =>
+  typeof value === "object" && value !== null && key in value ? (value as Record<string, unknown>)[key] : undefined
+
+const string = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
+
+const replacement = (value: unknown) => string(field(value, "replacement")) ?? string(field(value, "replaced_by"))
+
 export const blank = (): Form => ({
   base: undefined,
+  raw: undefined,
   scope: "project",
   id: "",
   name: "",
@@ -110,6 +151,7 @@ export const blank = (): Form => ({
 
 export const fill = (item: AgentManageInfo): Form => ({
   base: item.meta,
+  raw: keep(item.meta),
   scope: item.source === "user" ? "user" : "project",
   id: item.meta.id,
   name: item.meta.name,
@@ -137,6 +179,33 @@ export const fill = (item: AgentManageInfo): Form => ({
 
 export const message = (value: unknown) => (value instanceof Error ? value.message : String(value))
 
+export const versions = (item: RFC | undefined) =>
+  [
+    item?.schema_version ? `schema ${item.schema_version}` : undefined,
+    item?.agent_version ? `agent ${item.agent_version}` : undefined,
+  ].filter((part): part is string => !!part)
+
+export const overview = (item: RFC | undefined) => {
+  const instructions = count(item?.instructions?.files) + count(item?.instructions?.model_messages)
+  const input = count(item?.contracts?.input)
+  const output = count(item?.contracts?.output)
+  const edges = count(item?.collaboration?.edges)
+  const resources = count(item?.runtime_boundary?.resource_classes)
+  const artifacts = count(item?.completion?.required_artifacts)
+  const life = item?.lifecycle
+  const deprecated = field(life, "deprecated") === true
+  return [
+    instructions ? `instructions ${instructions}` : undefined,
+    input || output ? `contracts ${input} input / ${output} output` : undefined,
+    edges ? `edges ${edges}` : undefined,
+    resources ? `resources ${resources}` : undefined,
+    artifacts ? `artifacts ${artifacts}` : undefined,
+    deprecated ? `deprecated${replacement(life) ? ` -> ${replacement(life)}` : ""}` : undefined,
+  ].filter((part): part is string => !!part)
+}
+
+export const json = (form: Form) => JSON.stringify(form.raw ?? {}, null, 2)
+
 export const summary = (item: AgentManageInfo) => {
   const entry = [
     item.effective.entry.primary ? "primary" : undefined,
@@ -158,6 +227,7 @@ export const meta = (form: Form): Meta => {
   const denied = split(form.denied)
   return {
     ...form.base,
+    ...form.raw,
     id: form.id.trim(),
     name: form.name.trim(),
     role: form.role.trim(),

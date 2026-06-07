@@ -9,6 +9,7 @@ import { Log } from "../util/log"
 import { SessionRevert } from "./revert"
 import { Session } from "."
 import { Agent } from "../agent/agent"
+import { getRegistry } from "../agent/registry"
 import { Provider } from "../provider/provider"
 import { ModelID, ProviderID } from "../provider/schema"
 import { type Tool as AITool, tool, jsonSchema } from "ai"
@@ -49,6 +50,9 @@ import { Shell } from "@/shell/shell"
 import { decodeDataUrl } from "@/util/data-url"
 import { Trace } from "@/observability/trace"
 import { AgentEntry } from "@/agent/entry"
+import { resolveInstructions } from "@/agent/instructions"
+import { Global } from "@/global"
+import { Storage } from "@/storage/storage"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -65,6 +69,7 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
+  const MAX_AUTO_OVERFLOW_COMPACTIONS = 2
 
   const state = Instance.state(
     () => {
@@ -112,6 +117,7 @@ export namespace SessionPrompt {
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -163,7 +169,7 @@ export namespace SessionPrompt {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
-    const message = await createUserMessage(input)
+    const message = await createUserMessage(input, session)
     await Session.touch(input.sessionID)
 
     // this is backwards compatibility for allowing `tools` to be specified when
@@ -275,7 +281,7 @@ export namespace SessionPrompt {
     const s = state()
     delete s[sessionID]
     const status = SessionStatus.get(sessionID)
-    if (status.type === "error") return
+    if (status.type === "error" || status.type === "timeout") return
     SessionStatus.set(sessionID, { type: "idle" })
   }
 
@@ -637,6 +643,20 @@ export namespace SessionPrompt {
         break
       }
 
+      let instructions: string[] = []
+      try {
+        instructions = await agentInstructions(agent)
+      } catch (error) {
+        await failSetup({
+          sessionID,
+          assistant: processor.message,
+          providerID: model.providerID,
+          error,
+          stage: "resolve_instructions",
+        })
+        break
+      }
+
       if (step === 1) {
         SessionSummary.summarize({
           sessionID: sessionID,
@@ -667,6 +687,7 @@ export namespace SessionPrompt {
       const system = [
         ...(await SystemPrompt.environment(model)),
         ...(await InstructionPrompt.system()),
+        ...instructions,
       ]
       const format = lastUser.format ?? { type: "text" }
       if (format.type === "json_schema") {
@@ -723,12 +744,17 @@ export namespace SessionPrompt {
 
       if (result === "stop") break
       if (result === "compact") {
+        const overflow = !processor.message.finish
+        if (shouldStopCompact({ messages: msgs, overflow })) {
+          await stopCompact({ sessionID, assistant: processor.message })
+          break
+        }
         await SessionCompaction.create({
           sessionID,
           agent: lastUser.agent,
           model: lastUser.model,
           auto: true,
-          overflow: !processor.message.finish,
+          overflow,
         })
       }
       continue
@@ -743,6 +769,34 @@ export namespace SessionPrompt {
       return item
     }
     throw new Error("Impossible")
+  }
+
+  export function shouldStopCompact(input: { messages: MessageV2.WithParts[]; overflow: boolean }) {
+    if (!input.overflow) return false
+    const count = input.messages
+      .flatMap((item) => item.parts)
+      .filter((part) => part.type === "compaction" && part.auto && part.overflow === true).length
+    return count >= MAX_AUTO_OVERFLOW_COMPACTIONS
+  }
+
+  async function stopCompact(input: { sessionID: SessionID; assistant: MessageV2.Assistant }) {
+    const text = [
+      "Automatic compaction was attempted multiple times, but the request is still too large for the provider.",
+      "",
+      "Start a new session for this task, or remove/truncate older messages, large tool outputs, and attachments before retrying.",
+    ].join("\n")
+    input.assistant.error = new MessageV2.ContextOverflowError({ message: text }).toObject()
+    input.assistant.finish = "error"
+    input.assistant.time.completed = Date.now()
+    await Session.updateMessage(input.assistant)
+    SessionStatus.set(input.sessionID, { type: "error", message: text })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.assistant.id,
+      level: "error",
+      type: "llm.compact_limit",
+      data: { limit: MAX_AUTO_OVERFLOW_COMPACTIONS, error: text },
+    })
   }
 
   /** @internal Exported for testing */
@@ -785,6 +839,28 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
+  function pref(session: Session.Info) {
+    const ctx = session.dsl_context?.session_tree
+    if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return {}
+    const item = ctx as {
+      agent?: unknown
+      model?: {
+        providerID?: unknown
+        modelID?: unknown
+      }
+    }
+    return {
+      agent: typeof item.agent === "string" ? item.agent : undefined,
+      model:
+        typeof item.model?.providerID === "string" && typeof item.model.modelID === "string"
+          ? {
+              providerID: ProviderID.make(item.model.providerID),
+              modelID: ModelID.make(item.model.modelID),
+            }
+          : undefined,
+    }
+  }
+
   /** @internal Exported for testing */
   export async function resolveTools(input: {
     agent: Agent.Info
@@ -799,27 +875,90 @@ export namespace SessionPrompt {
     return RuntimeTools.build(input)
   }
 
-  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
-    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
-    const prev = ctx.protocol && typeof ctx.protocol === "object" && !Array.isArray(ctx.protocol) ? ctx.protocol as Record<string, unknown> : {}
-    const tools = prev.tools && typeof prev.tools === "object" && !Array.isArray(prev.tools) ? prev.tools as Record<string, unknown> : {}
-    if (typeof tools.prompt === "string") {
-      return { ...runtime, prompt: tools.prompt }
-    }
-    await Session.setDslContext({
-      sessionID,
-      dsl_context: {
-        ...ctx,
-        protocol: {
-          ...prev,
-          tools: {
-            prompt: runtime.prompt,
-            catalog: runtime.catalog.map((item) => item.id),
-          },
-        },
-      },
+  async function agentInstructions(agent: Agent.Info) {
+    const registry = getRegistry()
+    const template = await registry.get(agent.name)
+    if (!template?.meta.instructions?.files?.length) return []
+
+    const status = (await registry.templates()).find((item) => item.valid && item.id === template.id)
+    if (!status) throw new Error(`Agent instruction template directory not found: ${template.id}`)
+
+    const result = await resolveInstructions({
+      meta: template.meta,
+      agentDir: status.dir,
+      projectRoot: Instance.worktree,
+      workspaceRoot: Instance.directory,
+      globalRulesPath: path.join(Global.Path.config, "AGENTS.md"),
+      userHome: Global.Path.home,
+      runDir: Instance.directory,
     })
-    return runtime
+    if (result.blocking) {
+      throw new Error(
+        [
+          `Agent instruction resolution failed for ${template.id}`,
+          ...result.diagnostics
+            .filter((item) => item.blocking)
+            .map((item) => `${item.code}: ${item.message}`),
+        ].join("\n"),
+      )
+    }
+
+    return result.records
+      .filter((item) => item.content !== undefined)
+      .map((item) =>
+        [
+          "<agent-instruction>",
+          `Source: ${item.path}`,
+          item.resolved ? `Resolved path: ${item.resolved}` : undefined,
+          item.role ? `Role: ${item.role}` : undefined,
+          "",
+          item.content?.trimEnd(),
+          "</agent-instruction>",
+        ]
+          .filter((line) => line !== undefined)
+          .join("\n"),
+      )
+  }
+
+  type RuntimeContext = {
+    protocol?: {
+      prompt?: string
+      catalog?: string[]
+    }
+  }
+
+  function obj(input: unknown) {
+    return input && typeof input === "object" && !Array.isArray(input) ? input as Record<string, unknown> : {}
+  }
+
+  async function cache(sessionID: SessionID) {
+    return Storage.read<RuntimeContext>(["session_runtime_context", sessionID]).catch(() => undefined)
+  }
+
+  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
+    const saved = await cache(sessionID)
+    if (saved?.protocol?.prompt) return { ...runtime, prompt: saved.protocol.prompt }
+
+    const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
+    const prev = obj(ctx.protocol)
+    const tools = obj(prev.tools)
+    const prompt = typeof tools.prompt === "string" ? tools.prompt : runtime.prompt
+    await Storage.write(["session_runtime_context", sessionID], {
+      protocol: {
+        prompt,
+        catalog: runtime.catalog.map((item) => item.id),
+      },
+    } satisfies RuntimeContext)
+    if (typeof tools.prompt === "string" || prev.tools !== undefined) {
+      await Session.setDslContext({
+        sessionID,
+        dsl_context: {
+          ...ctx,
+          protocol: Object.fromEntries(Object.entries(prev).filter((item) => item[0] !== "tools")),
+        },
+      })
+    }
+    return { ...runtime, prompt }
   }
 
   /** @internal Exported for testing */
@@ -852,11 +991,12 @@ export namespace SessionPrompt {
     })
   }
 
-  async function createUserMessage(input: PromptInput) {
-    const agentName = input.agent ?? (await Agent.defaultAgent())
+  async function createUserMessage(input: PromptInput, session: Session.Info) {
+    const sessionPref = pref(session)
+    const agentName = input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
     const agent = agentName ? await Agent.get(agentName) : undefined
 
-    const model = input.model ?? agent?.model ?? (await lastModel(input.sessionID))
+    const model = input.model ?? sessionPref.model ?? agent?.model ?? (await lastModel(input.sessionID))
     const full =
       !input.variant && agent?.variant
         ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
@@ -876,6 +1016,7 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
+      metadata: input.metadata,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1382,7 +1523,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
     const agent = await Agent.get(input.agent)
     if (!agent) throw new Error(`Agent not found: ${input.agent}`)
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const sessionPref = pref(session)
+    const model = input.model ?? sessionPref.model ?? agent.model ?? (await lastModel(input.sessionID))
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
       sessionID: input.sessionID,
@@ -1629,7 +1771,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export async function command(input: CommandInput) {
     log.info("command", input)
     const command = await Command.get(input.command)
-    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
+    const session = await Session.get(input.sessionID)
+    const sessionPref = pref(session)
+    const agentName = command.agent ?? input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
@@ -1687,7 +1831,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
       }
       if (input.model) return Provider.parseModel(input.model)
-      return await lastModel(input.sessionID)
+      return sessionPref.model ?? (await lastModel(input.sessionID))
     })()
 
     try {
@@ -1738,7 +1882,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const userModel = isSubtask
       ? input.model
         ? Provider.parseModel(input.model)
-        : await lastModel(input.sessionID)
+        : sessionPref.model ?? (await lastModel(input.sessionID))
       : taskModel
 
     const result = (await prompt({
@@ -1818,17 +1962,21 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           : MessageV2.toModelMessages(contextMessages, model)),
       ],
     })
-    const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
-    if (text) {
-      const cleaned = text
-        .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
-        .split("\n")
-        .map((line) => line.trim())
-        .find((line) => line.length > 0)
-      if (!cleaned) return
+    try {
+      const text = await result.text.catch((err) => log.error("failed to generate title", { error: err }))
+      if (text) {
+        const cleaned = text
+          .replace(/<think>[\s\S]*?<\/think>\s*/g, "")
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.length > 0)
+        if (!cleaned) return
 
-      const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
-      return Session.setTitle({ sessionID: input.session.id, title })
+        const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
+        return Session.setTitle({ sessionID: input.session.id, title })
+      }
+    } finally {
+      result.release?.()
     }
   }
 }

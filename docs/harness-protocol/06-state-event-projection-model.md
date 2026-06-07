@@ -2,13 +2,13 @@
 
 ## 目的
 
-本文定义 Harness run、Action、Action Graph、Assignment、Artifact、Handoff、workflow adapter record、protocol run、UI projection、audit、evaluation 和 recovery 共享的状态、projection、trace 与 observability 模型。
+本文定义 Harness run、Action、Action Graph、Assignment、Artifact、Handoff、Workflow Profile、protocol run、UI projection、audit、evaluation 和 recovery 共享的状态、projection、trace 与 observability 模型。
 
 ## 事实来源
 
 已接受 Event 是规范历史。Projection 是从已接受 Event 派生出来的当前操作视图。
 
-状态文件、数据库行和 adapter-specific JSON 文件可以作为 materialized projection，但不能与已接受 Event 矛盾。
+状态文件、数据库行、Action Graph record、Workflow Profile JSON 和场景化 Adapter JSON 可以作为 materialized projection，但不能与已接受 Event 矛盾。
 
 ```txt
 Command -> validation -> Event -> Projection -> Trigger/Gate -> next Action/Assignment
@@ -18,7 +18,7 @@ Command -> validation -> Event -> Projection -> Trigger/Gate -> next Action/Assi
 
 - **Event**：Runtime 接受的事实记录。
 - **Projection**：从 Event 和 materialized state 推导出的当前操作视图。
-- **Materialized State**：用于快速读取、恢复和 adapter 运行的持久化状态。
+- **Materialized State**：用于快速读取、恢复和调度的持久化状态。
 - **Trace**：围绕 run、Action、Assignment、Artifact、Gate、Decision 和 Observation 组织出的证据链。
 - **Artifact Index**：记录产物 id、来源、状态、可见性、摘要和引用位置。
 
@@ -110,6 +110,7 @@ Runtime 评估和展开 `orchestration_policy` 时，应产生可审计 Event。
 Action、Assignment、Artifact、Gate 和环境恢复使用共享事件类型：
 
 - `run.created`
+- `action.graph_persisted`
 - `action.accepted`
 - `action.graph_ready`
 - `action.started`
@@ -119,6 +120,9 @@ Action、Assignment、Artifact、Gate 和环境恢复使用共享事件类型：
 - `action.output_stored`
 - `action.completed`
 - `action.partially_completed`
+- `action.retry_scheduled`
+- `action.loop_attempt_started`
+- `action.loop_attempt_completed`
 - `action.failed`
 - `action.cancelled`
 - `assignment.created`
@@ -137,6 +141,11 @@ Action、Assignment、Artifact、Gate 和环境恢复使用共享事件类型：
 - `rehydration.started`
 - `rehydration.completed`
 - `rehydration.failed`
+- `workflow.created`
+- `workflow.saved_from_run`
+- `workflow.updated`
+- `workflow.run_created`
+- `workflow.archived`
 
 `orchestration.triggered` 数据形态：
 
@@ -198,7 +207,7 @@ Projection 应能从 Event 和 stored state 重建。如果重建失败，Runtim
 
 ## 规范状态
 
-不同 adapter 使用总纲定义的共同状态词汇：
+不同 Run、Action Graph、Workflow asset 和场景化 Adapter 使用总纲定义的共同状态词汇：
 
 | Canonical | 含义 |
 |---|---|
@@ -215,14 +224,14 @@ Projection 应能从 Event 和 stored state 重建。如果重建失败，Runtim
 | `cancelled` | Runtime/用户在完成前取消。 |
 | `aborted` | Run 被有意终止为最终状态。 |
 
-Adapter 映射：
+Profile / Adapter 映射：
 
-- workflow run `completed` -> `completed`
-- workflow run `blocked` -> `blocked`
-- workflow run `waiting_user` -> `waiting_user`
-- workflow run `waiting_permission` -> `waiting_permission`
-- workflow run `failed` -> `failed`
-- workflow run `partial` -> `partial`
+- Workflow Run `completed` -> `completed`
+- Workflow Run `blocked` -> `blocked`
+- Workflow Run `waiting_user` -> `waiting_user`
+- Workflow Run `waiting_permission` -> `waiting_permission`
+- Workflow Run `failed` -> `failed`
+- Workflow Run `partial` -> `partial`
 - protocol run `completed` -> `completed`
 - protocol run `blocked` -> `blocked`
 - protocol run `partial` -> `partial`
@@ -257,9 +266,9 @@ Artifact Index 让 Runtime 在构造模型上下文、UI 视图、Handoff Contra
 
 ## Materialized State
 
-Materialized State 是状态的持久化形态，用于快速读取、调度、展示和恢复。它包括数据库行、状态文件、adapter JSON、artifact index、UI summary cache 和 executor checkpoint。
+Materialized State 是状态的持久化形态，用于快速读取、调度、展示和恢复。它包括数据库行、状态文件、Action Graph record、Workflow Profile JSON、场景化 Adapter JSON、artifact index、UI summary cache 和 executor checkpoint。
 
-Materialized State 保存“当前状态”，Projection 保存“当前操作视图”。例如 workflow node state 文件可以记录某个 node 的状态、attempt、output 和 error；Projection 会把这些状态和 Event 一起汇总成 run 进度、blocked reason、pending decision 和 UI summary。
+Materialized State 保存“当前状态”，Projection 保存“当前操作视图”。例如 Action Graph node state 文件可以记录某个 node 的状态、attempt、output 和 error；Projection 会把这些状态和 Event 一起汇总成 run 进度、blocked reason、pending decision 和 UI summary。
 
 Runtime 接受新 mutation 时以 Event 和当前 Projection 为准；Materialized State 提供恢复和查询效率。
 
@@ -284,21 +293,23 @@ Runtime 接受新 mutation 时以 Event 和当前 Projection 为准；Materializ
 events.jsonl or event table
   -> projections/
   -> traces/
-  -> adapter state files
+  -> action graph records
+  -> workflow profile records
+  -> adapter state records
   -> UI/API responses
 ```
 
-Workflow adapter state 位于 durable Harness run store 内部的 workflow namespace。Adapter state 作为 Materialized State 参与 Projection、Trace、Replay、Export 和恢复。
+Run、Action Graph、Action、Assignment、Workflow Profile、Workflow Run、Adapter state 和 executor checkpoint 都位于 Harness run store 或受 Runtime 管理的 profile / adapter store 中。它们作为 Materialized State 参与 Projection、Trace、Replay、Export 和恢复。
 
 ## Replay、Export 与恢复
 
-Replay 从 Event sequence、Materialized State、Artifact Index 和 Adapter records 重建 Projection。Export 从 Trace、Event、Artifact summaries 和 redaction policy 生成可审计材料。
+Replay 从 Event sequence、Materialized State、Artifact Index、Action Graph records、Workflow Profile records 和 Adapter records 重建 Projection。Export 从 Trace、Event、Artifact summaries 和 redaction policy 生成可审计材料。
 
 恢复流程使用以下对象：
 
 - Event Log：确定 Runtime 已接受的事实。
 - Projection：判断当前是否可继续执行。
-- Materialized State：恢复 run、Action、Assignment、adapter 和 executor 当前状态。
+- Materialized State：恢复 run、Action Graph、Action、Assignment、Workflow Profile、Adapter 和 executor 当前状态。
 - Snapshot：恢复 workspace、artifact index 或 executor state。
 - Manifest：重建 executor 可见环境。
 - Trace：解释恢复前后的证据链和决策来源。

@@ -7,6 +7,7 @@ export namespace SessionRetry {
   export const RETRY_BACKOFF_FACTOR = 2
   export const RETRY_MAX_DELAY_NO_HEADERS = 30_000 // 30 seconds
   export const RETRY_MAX_DELAY = 2_147_483_647 // max 32-bit signed integer for setTimeout
+  export const TIMEOUT_MAX_ATTEMPTS = 2
 
   export async function sleep(ms: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -63,6 +64,7 @@ export namespace SessionRetry {
     if (MessageV2.ContextOverflowError.isInstance(error)) return undefined
     if (MessageV2.APIError.isInstance(error)) {
       if (!error.data.isRetryable) return undefined
+      if (timeout(error)) return "The operation timed out"
       if (error.data.responseBody?.includes("FreeUsageLimitError"))
         return `Free usage exceeded, add credits https://opencode.ai/zen`
       return error.data.message.includes("Overloaded") ? "Provider is overloaded" : error.data.message
@@ -97,5 +99,11 @@ export namespace SessionRetry {
     } catch {
       return undefined
     }
+  }
+
+  export function timeout(error: ReturnType<NamedError["toObject"]>) {
+    if (!MessageV2.APIError.isInstance(error)) return false
+    if (error.data.metadata?.code === "TimeoutError") return true
+    return /timed out|timeout/i.test(error.data.message)
   }
 }

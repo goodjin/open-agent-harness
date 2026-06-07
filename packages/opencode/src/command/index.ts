@@ -7,6 +7,7 @@ import { Identifier } from "../id/id"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import PROMPT_AGENT_CREATE from "./template/agent-create.txt"
+import PROMPT_WORKFLOW_CREATOR from "./template/workflow-creator.txt"
 import { MCP } from "../mcp"
 
 export namespace Command {
@@ -56,6 +57,7 @@ export namespace Command {
     INIT: "init",
     REVIEW: "review",
     AGENT_CREATE: "agent-create",
+    WORKFLOW_CREATOR: "workflow-creator",
   } as const
 
   const state = Instance.state(async () => {
@@ -85,12 +87,23 @@ export namespace Command {
         name: Default.AGENT_CREATE,
         description: "create an agent from a natural language description",
         source: "command",
-        agent: "general",
+        agent: "agent-creator",
         get template() {
           return PROMPT_AGENT_CREATE
         },
         subtask: true,
         hints: hints(PROMPT_AGENT_CREATE),
+      },
+      [Default.WORKFLOW_CREATOR]: {
+        name: Default.WORKFLOW_CREATOR,
+        description: "create or update a persisted workflow through discussion",
+        source: "command",
+        agent: "workflow-creator",
+        get template() {
+          return PROMPT_WORKFLOW_CREATOR
+        },
+        subtask: true,
+        hints: hints(PROMPT_WORKFLOW_CREATOR),
       },
     }
 

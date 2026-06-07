@@ -32,10 +32,11 @@ function createModel(opts: {
   input?: number
   cost?: Provider.Model["cost"]
   npm?: string
+  provider?: string
 }): Provider.Model {
   return {
     id: "test-model",
-    providerID: "test",
+    providerID: opts.provider ?? "test",
     name: "Test",
     limit: {
       context: opts.context,
@@ -238,6 +239,40 @@ describe("session.compaction.isOverflow", () => {
         const model = createModel({ context: 100_000, output: 32_000 })
         const tokens = { input: 75_000, output: 5_000, reasoning: 0, cache: { read: 0, write: 0 } }
         expect(await SessionCompaction.isOverflow({ tokens, model })).toBe(false)
+      },
+    })
+  })
+
+  test("returns true before sending an oversized prompt", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = createModel({ context: 100_000, output: 32_000 })
+        const result = await SessionCompaction.isPromptOverflow({
+          model,
+          system: ["system".repeat(40_000)],
+          messages: [{ role: "user", content: "message".repeat(20_000) }],
+        })
+
+        expect(result).toBe(true)
+      },
+    })
+  })
+
+  test("uses MiniMax model context instead of provider byte guard", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const model = createModel({ provider: "minimax-cn-coding-plan", context: 1_000_000, output: 131_072 })
+        const result = await SessionCompaction.isPromptOverflow({
+          model,
+          system: ["system"],
+          messages: [{ role: "user", content: "message".repeat(260_000) }],
+        })
+
+        expect(result).toBe(false)
       },
     })
   })

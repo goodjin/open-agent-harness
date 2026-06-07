@@ -1,10 +1,13 @@
-import { createEffect, For, Match, on, onCleanup, Show, Switch, type JSX } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch, type JSX } from "solid-js"
 import { animate, type AnimationPlaybackControls } from "motion"
 import { useI18n } from "../context/i18n"
 import { createStore } from "solid-js/store"
 import { Collapsible } from "./collapsible"
 import type { IconProps } from "./icon"
 import { TextShimmer } from "./text-shimmer"
+import { IconButton } from "./icon-button"
+import { Tooltip } from "./tooltip"
+import { genericToolText } from "./basic-tool-detail"
 
 export type TriggerTitle = {
   title: string
@@ -233,8 +236,28 @@ export function GenericTool(props: {
   status?: string
   hideDetails?: boolean
   input?: Record<string, unknown>
+  output?: string
+  metadata?: Record<string, unknown>
 }) {
   const i18n = useI18n()
+  const [copied, setCopied] = createSignal(false)
+  const body = createMemo(() => genericToolText(props))
+  let timer: ReturnType<typeof setTimeout> | undefined
+
+  const copy = (event: MouseEvent) => {
+    event.stopPropagation()
+    const text = body()
+    if (!text) return
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true)
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => setCopied(false), 1200)
+    })
+  }
+
+  onCleanup(() => {
+    if (timer) clearTimeout(timer)
+  })
 
   return (
     <BasicTool
@@ -244,8 +267,29 @@ export function GenericTool(props: {
         title: i18n.t("ui.basicTool.called", { tool: props.tool }),
         subtitle: label(props.input),
         args: args(props.input),
+        action: (
+          <Show when={body()}>
+            <Tooltip value={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")} placement="top">
+              <IconButton
+                icon={copied() ? "check" : "copy"}
+                variant="ghost"
+                size="small"
+                aria-label={copied() ? i18n.t("ui.message.copied") : i18n.t("ui.message.copy")}
+                data-slot="basic-tool-copy-button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={copy}
+              />
+            </Tooltip>
+          </Show>
+        ),
       }}
       hideDetails={props.hideDetails}
-    />
+    >
+      <Show when={body()}>
+        <div data-component="generic-tool-detail">
+          <pre>{body()}</pre>
+        </div>
+      </Show>
+    </BasicTool>
   )
 }

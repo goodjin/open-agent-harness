@@ -4,6 +4,7 @@ import {
   estimateRootSessionTotal,
   loadRootSessionsWithFallback,
   loadSessionTreeWithFallback,
+  sessionFromNode,
 } from "./global-sync/session-load"
 
 describe("pickDirectoriesToEvict", () => {
@@ -65,10 +66,28 @@ describe("loadRootSessionsWithFallback", () => {
       { directory: "dir", roots: true },
     ])
   })
+
+  test("loads all roots without limit when requested", async () => {
+    const calls: Array<{ directory: string; roots: true; limit?: number }> = []
+
+    const result = await loadRootSessionsWithFallback({
+      directory: "dir",
+      limit: 10,
+      all: true,
+      list: async (query) => {
+        calls.push(query)
+        return { data: [{ id: "root", time: { created: 1, updated: 1 } }] as never }
+      },
+    })
+
+    expect(result.limited).toBe(false)
+    expect(result.ids).toEqual(["root"])
+    expect(calls).toEqual([{ directory: "dir", roots: true }])
+  })
 })
 
 describe("loadSessionTreeWithFallback", () => {
-  test("loads descendants in one batch and merges them", async () => {
+  test("loads roots without descendants by default", async () => {
     const calls: string[][] = []
     const result = await loadSessionTreeWithFallback({
       directory: "dir",
@@ -87,8 +106,104 @@ describe("loadSessionTreeWithFallback", () => {
       },
     })
 
+    expect(calls).toEqual([])
+    expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b"])
+  })
+
+  test("loads descendants in one batch and merges them when enabled", async () => {
+    const calls: string[][] = []
+    const result = await loadSessionTreeWithFallback({
+      directory: "dir",
+      limit: 10,
+      children: true,
+      list: async () => ({
+        data: [
+          { id: "root-a", time: { created: 1, updated: 1 } },
+          { id: "root-b", time: { created: 2, updated: 2 } },
+        ] as never,
+      }),
+      descendants: async (query) => {
+        calls.push(query.ids)
+        return {
+          data: [{ id: "child", parentID: "root-a", time: { created: 3, updated: 3 } }] as never,
+        }
+      },
+    })
+
     expect(calls).toEqual([["root-a", "root-b"]])
     expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b", "child"])
+  })
+
+  test("loads lightweight trees for roots and merges converted children", async () => {
+    const calls: string[] = []
+    const result = await loadSessionTreeWithFallback({
+      directory: "dir",
+      limit: 10,
+      children: true,
+      list: async () => ({
+        data: [
+          {
+            id: "root-a",
+            slug: "root-a",
+            projectID: "proj",
+            directory: "dir",
+            title: "Root A",
+            version: "v2",
+            time: { created: 1, updated: 1 },
+          },
+        ] as never,
+      }),
+      tree: async (query) => {
+        calls.push(query.root)
+        return {
+          data: {
+            nodes: [
+              {
+                id: "root-a",
+                root_id: "root-a",
+                title: "Root A",
+                status: { type: "idle" },
+                stats: {
+                  messages: 1,
+                  tokens_input: 0,
+                  tokens_output: 0,
+                  tool_calls: 0,
+                  files: 0,
+                  additions: 0,
+                  deletions: 0,
+                },
+                time: { created: 1, updated: 1 },
+              },
+              {
+                id: "child-a",
+                parent_id: "root-a",
+                root_id: "root-a",
+                title: "Child A",
+                status: { type: "idle" },
+                stats: {
+                  messages: 2,
+                  tokens_input: 0,
+                  tokens_output: 0,
+                  tool_calls: 0,
+                  files: 3,
+                  additions: 4,
+                  deletions: 5,
+                },
+                time: { created: 2, updated: 3 },
+              },
+            ],
+          },
+        } as never
+      },
+    })
+
+    expect(calls).toEqual(["root-a"])
+    expect(result.data?.map((s) => s.id)).toEqual(["root-a", "child-a"])
+    expect(result.data?.find((s) => s.id === "child-a")).toMatchObject({
+      directory: "dir",
+      parentID: "root-a",
+      summary: { files: 3, additions: 4, deletions: 5 },
+    })
   })
 
   test("loads descendants only for roots not loaded before", async () => {
@@ -96,6 +211,7 @@ describe("loadSessionTreeWithFallback", () => {
     const result = await loadSessionTreeWithFallback({
       directory: "dir",
       limit: 10,
+      children: true,
       loaded: new Set(["root-a"]),
       list: async () => ({
         data: [
@@ -114,6 +230,51 @@ describe("loadSessionTreeWithFallback", () => {
     expect(calls).toEqual([["root-b"]])
     expect(result.ids).toEqual(["root-a", "root-b"])
     expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b", "child-b"])
+  })
+})
+
+describe("sessionFromNode", () => {
+  test("converts lightweight tree node into sidebar session shape", () => {
+    const session = sessionFromNode(
+      {
+        id: "child",
+        parent_id: "root",
+        root_id: "root",
+        title: "Child",
+        status: { type: "idle" },
+        stats: {
+          messages: 0,
+          tokens_input: 0,
+          tokens_output: 0,
+          tool_calls: 0,
+          files: 1,
+          additions: 2,
+          deletions: 3,
+        },
+        time: { created: 10, updated: 20 },
+      },
+      {
+        id: "root",
+        slug: "root",
+        projectID: "proj",
+        directory: "dir",
+        title: "Root",
+        version: "v2",
+        time: { created: 1, updated: 2 },
+      } as never,
+    )
+
+    expect(session).toMatchObject({
+      id: "child",
+      slug: "child",
+      projectID: "proj",
+      directory: "dir",
+      parentID: "root",
+      title: "Child",
+      version: "v2",
+      summary: { files: 1, additions: 2, deletions: 3 },
+      time: { created: 10, updated: 20 },
+    })
   })
 })
 

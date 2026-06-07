@@ -11,7 +11,7 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
-import { AgentEntry } from "@/agent/entry"
+import { AgentDelegation } from "@/agent/delegation"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -27,7 +27,9 @@ const parameters = z.object({
 })
 
 export const TaskTool = Tool.define("task", async (ctx) => {
-  const agents = await Agent.list().then((x) => x.filter((a) => AgentEntry.delegable(a)))
+  const agents = ctx?.agent
+    ? AgentDelegation.list(await Agent.list(), ctx.agent.name)
+    : AgentDelegation.list(await Agent.list(), "")
 
   // Filter agents by permissions if agent provided
   const caller = ctx?.agent
@@ -62,9 +64,46 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       const agent = await Agent.get(params.subagent_type)
       if (!agent) throw new Error(`Unknown agent type: ${params.subagent_type} is not a valid agent type`)
+      if (!AgentDelegation.visible(agent, ctx.agent)) throw new Error(`Agent ${params.subagent_type} is not available from ${ctx.agent}`)
+      const meta = await AgentDelegation.meta(agent.name).catch(() => undefined)
+      const gate = AgentDelegation.runtime({
+        agent: agent.name,
+        meta,
+        action: {
+          id: params.task_id ?? Identifier.ascending("tool"),
+          title: params.description,
+          operation: "task",
+          executor: { type: "agent", target: agent.name, capabilities: [] },
+          input: { prompt: params.prompt },
+        },
+      })
+      await ctx.metadata({
+        title: params.description,
+        metadata: {
+          metadata: gate,
+        },
+      })
+      if (gate.status !== "ready") {
+        return {
+          title: params.description,
+          metadata: data({
+            blocked: true,
+            metadata: gate,
+          }),
+          output: [
+            `Task blocked by agent metadata control-plane: ${agent.name}`,
+            `status: ${gate.status}`,
+            gate.input.missing_inputs.length ? `missing_inputs: ${gate.input.missing_inputs.join(", ")}` : "",
+            gate.collaboration.items.length ? `collaboration_plan: ${gate.collaboration.items.map((item) => `${item.edge_kind}:${item.target}`).join(", ")}` : "",
+            gate.fallback ? `fallback_assignment: ${gate.fallback.target}` : "",
+            gate.boundary.candidates.length ? `boundary: ${gate.boundary.candidates.map((item) => `${item.resource}.${item.action}:${item.status}`).join(", ")}` : "",
+          ].filter((item) => item.length > 0).join("\n"),
+        }
+      }
 
       const hasTaskPermission = agent.permission.some((rule) => rule.permission === "task")
 
+      const parent = await Session.get(ctx.sessionID)
       const session = await iife(async () => {
         if (params.task_id) {
           const found = await Session.get(SessionID.make(params.task_id)).catch(() => {})
@@ -74,7 +113,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
         return await Session.create({
           parentID: ctx.sessionID,
           title: params.description + ` (@${agent.name} subagent)`,
-          permission: agent.permission,
+          permission: Agent.permissions(agent, parent.permission),
         })
       })
       const msg = await MessageV2.get({ sessionID: ctx.sessionID, messageID: ctx.messageID })
@@ -88,8 +127,13 @@ export const TaskTool = Tool.define("task", async (ctx) => {
       ctx.metadata({
         title: params.description,
         metadata: {
-          sessionId: session.id,
-          model,
+          ...data({
+            blocked: false,
+            sessionId: session.id,
+            model,
+            agentSnapshot: gate.snapshot,
+            observability: gate.observability,
+          }),
         },
       })
 
@@ -131,12 +175,18 @@ export const TaskTool = Tool.define("task", async (ctx) => {
 
       return {
         title: params.description,
-        metadata: {
+        metadata: data({
+          blocked: false,
+          metadata: gate,
           sessionId: session.id,
           model,
-        },
+        }),
         output,
       }
     },
   }
 })
+
+function data(input: Record<string, unknown>) {
+  return input
+}

@@ -9,7 +9,7 @@ import { getRegistry, resetRegistry } from "../../src/agent/registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionLog } from "../../src/session/log"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID } from "../../src/session/schema"
+import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
@@ -40,6 +40,35 @@ async function agent(dir: string, id: string, cfg: Record<string, unknown> = {})
 }
 
 describe("session.prompt missing file", () => {
+  test("stops automatic overflow compaction after repeated attempts", () => {
+    const item = (auto: boolean, overflow: boolean | undefined): MessageV2.WithParts =>
+      ({
+        info: {
+          id: MessageID.ascending(),
+          sessionID: "ses_test",
+          role: "user",
+          time: { created: Date.now() },
+          agent: "build",
+          model: { providerID: "test", modelID: "test" },
+        },
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: MessageID.ascending(),
+            sessionID: "ses_test",
+            type: "compaction",
+            auto,
+            overflow,
+          },
+        ],
+      }) as MessageV2.WithParts
+
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(true, true)] })).toBe(false)
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(false, true), item(true, true)] })).toBe(false)
+    expect(SessionPrompt.shouldStopCompact({ overflow: true, messages: [item(true, true), item(true, true)] })).toBe(true)
+    expect(SessionPrompt.shouldStopCompact({ overflow: false, messages: [item(true, true), item(true, true)] })).toBe(false)
+  })
+
   test("records setup failures in the assistant message and session log", async () => {
     await using tmp = await tmpdir({ git: true })
 
@@ -428,6 +457,61 @@ describe("session.prompt agent variant", () => {
 })
 
 describe("session.prompt agent switch", () => {
+  test("uses session tree model preference when caller omits model", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setModel({
+              sessionID: session.id,
+              model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+            })
+
+            const msg = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [{ type: "text", text: "service message" }],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            expect(msg.info.model).toEqual({
+              providerID: ProviderID.make("opencode"),
+              modelID: ModelID.make("kimi-k2.5-free"),
+            })
+
+            const explicit = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-sonnet-4") },
+              noReply: true,
+              parts: [{ type: "text", text: "explicit model" }],
+            })
+            if (explicit.info.role !== "user") throw new Error("expected user message")
+            expect(explicit.info.model).toEqual({
+              providerID: ProviderID.make("anthropic"),
+              modelID: ModelID.make("claude-sonnet-4"),
+            })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("registry switch changes next prompt agent without dropping messages", async () => {
     await using tmp = await tmpdir({ git: true })
     await agent(tmp.path, "build")

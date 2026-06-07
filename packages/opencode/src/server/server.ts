@@ -50,6 +50,7 @@ import { lazy } from "@/util/lazy"
 import { Event, EventGateway } from "./event"
 import { AgentRoutes } from "./routes/agent"
 import { HarnessRoutes } from "./routes/harness"
+import { SessionRecovery } from "@/session/recovery"
 import { lookup } from "mime-types"
 import fs from "node:fs"
 import path from "node:path"
@@ -682,6 +683,19 @@ export namespace Server {
     } else if (opts.mdns) {
       log.warn("mDNS enabled but hostname is loopback; skipping mDNS publish")
     }
+
+    try {
+      setTimeout(
+        Instance.bind(() => {
+          SessionRecovery.mark().catch((err) => {
+            log.warn("session recovery scan failed", {
+              error: err instanceof Error ? err.message : String(err),
+            })
+          })
+        }),
+        0,
+      )
+    } catch {}
 
     const originalStop = server.stop.bind(server)
     server.stop = async (closeActiveConnections?: boolean) => {

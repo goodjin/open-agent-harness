@@ -159,6 +159,7 @@ describe("session processor lifecycle", () => {
               model: {
                 id: "test",
                 providerID: "test",
+                limit: { context: 100_000, output: 32_000 },
               } as Provider.Model,
               abort: new AbortController().signal,
             })
@@ -193,8 +194,9 @@ describe("session processor lifecycle", () => {
             ])
             expect(logs.find((item) => item.type === "llm.start")?.data).toMatchObject({
               request: {
-                system: ["system prompt"],
-                messages: [{ role: "user", content: "hello prompt" }],
+                systemInputCount: 1,
+                messageCount: 1,
+                messageBytes: 42,
               },
             })
             expect(logs.find((item) => item.type === "reasoning.end")?.data).toMatchObject({
@@ -214,6 +216,88 @@ describe("session processor lifecycle", () => {
     })
 
     stream.mockRestore()
+  })
+
+  test("stops repeated preflight compaction for the same user message", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-preflight-limit"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "minimax-cn-coding-plan", modelID: "MiniMax-M3" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+
+            for (const _ of [1, 2]) {
+              await SessionLog.emit({
+                sessionID: session.id,
+                level: "warn",
+                type: "llm.preflight_compact",
+                data: { user },
+              })
+              await Session.updateMessage({
+                id: MessageID.ascending(),
+                parentID: user,
+                role: "assistant",
+                mode: "test",
+                agent: "test",
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("MiniMax-M3"),
+                providerID: ProviderID.make("minimax-cn-coding-plan"),
+                path: {
+                  cwd: projectRoot,
+                  root: projectRoot,
+                },
+                time: { created: Date.now() },
+                sessionID: session.id,
+              } as MessageV2.Assistant)
+            }
+
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "test",
+              agent: "test",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("MiniMax-M3"),
+              providerID: ProviderID.make("minimax-cn-coding-plan"),
+              path: {
+                cwd: projectRoot,
+                root: projectRoot,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            } as MessageV2.Assistant)
+
+            expect(await SessionProcessor.shouldStopCompact(session.id, user)).toBe(true)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
   })
 })
 

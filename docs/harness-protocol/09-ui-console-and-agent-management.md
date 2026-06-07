@@ -2,7 +2,7 @@
 
 ## 目的
 
-Harness UI 是用户管理、观察和使用 Harness 系统的操作面。UI 读取 Runtime Projection、Trace、Event、Artifact、Memory 和 Agent registry；用户操作通过 Command、受控 Action 或 Adapter operation 进入 Runtime。
+Harness UI 是用户管理、观察和使用 Harness 系统的操作面。UI 读取 Runtime Projection、Trace、Event、Artifact、Memory 和 Agent registry；用户操作通过 Command、受控 Action 或场景化 operation 进入 Runtime。
 
 UI 不从自然语言 transcript 推断系统状态。它展示 Runtime 已接受和投影出的结构化状态，并让用户在合适边界内创建 run、切换 Agent、进入不同 Agent Session、批准决策、恢复执行、审查证据和导出 trace。
 
@@ -13,7 +13,7 @@ UI 由五类 surface 组成：
 - **Harness Console**：管理 Run、Task、Action、Assignment、Gate、Decision、Artifact、Event、Projection 和 Trace。
 - **Agent Session Workbench**：展示 root session、child session、descendant session，并允许用户进入不同 Agent Session 继续交互。
 - **Agent Manager**：管理 Agent 模板、entry、capability、permission、model preference、relationships、orchestration policy 和启用状态。
-- **Protocol / Workflow Panel**：观察模型 DSL、Action Graph、Workflow DAG、executor routing、adapter state 和恢复状态。
+- **Protocol / Workflow Panel**：观察模型 DSL、Action Graph、Workflow 资产、executor routing、state record 和恢复状态。
 - **Governance View**：观察 Memory、Concept、Authority、Gate、Trace export、redaction 和 audit evidence。
 
 ## 数据读取模型
@@ -36,7 +36,8 @@ UI 读取对象：
 - `Concept`
 - `Agent`
 - `Workflow Profile`
-- `Workflow Node`
+- `Workflow Asset`
+- `Workflow Run`
 
 每个 UI record 都应包含稳定 id、status、summary、refs、evidence、actor、time、visibility 和 provenance，让人类和后续 Agent Session 都能读取和复用。
 
@@ -60,6 +61,11 @@ Command 类型：
 - `verify.rerun`
 - `session.message.submit`
 - `session.focus`
+- `workflow.create`
+- `workflow.save_from_run`
+- `workflow.update`
+- `workflow.run`
+- `workflow.archive`
 - `agent.enable`
 - `agent.disable`
 - `agent.update`
@@ -94,7 +100,7 @@ Session Workbench 展示：
 - root session
 - child session
 - descendant session
-- workflow runner session
+- Workflow asset management session
 - review / test / debug / research 等 specialist session
 - waiting_user、waiting_permission、blocked、partial、failed 等状态标记
 
@@ -147,12 +153,14 @@ Protocol Panel 展示模型与 Runtime 的结构化交互。
 - recovery event
 - trace export
 
-Workflow Panel 展示 Workflow Adapter 的 durable orchestration 状态。
+Workflow Panel 展示用户创建、保存或命名后的 Workflow 资产，以及从这些资产启动的 Workflow Run。
 
 它展示：
 
 - Workflow Profile
-- DAG / node graph
+- Workflow asset metadata
+- Workflow Run history
+- materialized Action Graph
 - node status
 - ready / running / blocked / partial / failed nodes
 - loop attempt
@@ -162,7 +170,7 @@ Workflow Panel 展示 Workflow Adapter 的 durable orchestration 状态。
 - recovery / rehydration status
 - workflow trace
 
-Protocol Panel 和 Workflow Panel 使用同一套字段、状态词、Artifact refs、Trace refs 和 visibility。
+Protocol Panel 和 Workflow Panel 使用同一套字段、状态词、Artifact refs、Trace refs 和 visibility。Workflow Run 的执行能力与任务执行生成的 Action Graph 相同；差异在于 Workflow 是可保存、可命名、可复用和可管理的资产。
 
 ## Governance View
 
@@ -218,6 +226,6 @@ UI 管理协议覆盖以下能力：
 - 通过 Command 推进 Run、Task、Action、Assignment、Decision、Agent 和 Concept。
 - 与 root、child、descendant Agent Session 分别交互。
 - 管理 Agent 模板和启用状态。
-- 观察模型 DSL、Action Graph、Workflow DAG、executor routing 和 Runtime Observation。
+- 观察模型 DSL、Action Graph、Workflow 资产、executor routing 和 Runtime Observation。
 - 检查 authority、gate、memory、concept、artifact、trace 和 audit evidence。
 - 将 UI 产物作为 agent-readable refs 供后续 Context Bundle 使用。

@@ -50,6 +50,7 @@ const Home = lazy(() => import("@/pages/home"))
 const Harness = lazy(() => import("@/pages/harness"))
 const HarnessHome = lazy(() => import("@/pages/harness-home"))
 const Session = lazy(() => import("@/pages/session"))
+const SessionTreeManager = lazy(() => import("@/pages/session-tree-manager"))
 const Loading = () => <div class="size-full" />
 
 const HomeRoute = () => (
@@ -62,6 +63,14 @@ const SessionRoute = () => (
   <SessionProviders>
     <Suspense fallback={<Loading />}>
       <Session />
+    </Suspense>
+  </SessionProviders>
+)
+
+const SessionTreeRoute = () => (
+  <SessionProviders>
+    <Suspense fallback={<Loading />}>
+      <SessionTreeManager />
     </Suspense>
   </SessionProviders>
 )
@@ -300,6 +309,7 @@ export function AppInterface(props: {
               <Route path="/:dir" component={DirectoryLayout}>
                 <Route path="/" component={SessionIndexRoute} />
                 <Route path="/harness" component={HarnessRoute} />
+                <Route path="/session/:id/tree" component={SessionTreeRoute} />
                 <Route path="/session/:id?" component={SessionRoute} />
               </Route>
             </Dynamic>

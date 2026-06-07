@@ -323,12 +323,14 @@ export function mergeLogs(current: Log[], incoming: Log[]) {
   return [...logs.values()].sort((a, b) => b.time - a.time || b.id.localeCompare(a.id))
 }
 
-const protocol = (log: Log) => log.type.startsWith("protocol.") || log.data.protocol === true
+const protocol = (log: Log) => log.type.startsWith("protocol.") || log.type.startsWith("agent.metadata.") || log.data.protocol === true
 const noisy = (log: Log) => {
   if (log.type === "protocol.action.tool_call") return false
+  if (log.type === "agent.metadata.output_validation_failed") return false
   if (log.type === "protocol.failed" || log.type === "protocol.action.failed" || log.type === "protocol.action.blocked") return false
   if (log.type === "protocol.final.malformed" || log.type === "protocol.final.plain_tool_syntax") return false
   if (log.type === "tool.error" && log.data.protocol === true) return false
+  if (log.type === "agent.metadata.output_validated") return true
   if (log.type.startsWith("protocol.")) return true
   return log.data.protocol === true
 }

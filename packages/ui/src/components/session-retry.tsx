@@ -7,6 +7,10 @@ import { Spinner } from "./spinner"
 
 export function SessionRetry(props: { status: SessionStatus; show?: boolean }) {
   const i18n = useI18n()
+  const limited = createMemo(() => {
+    if (props.status.type !== "rate_limited") return
+    return props.status
+  })
   const retry = createMemo(() => {
     if (props.status.type !== "retry") return
     return props.status
@@ -51,20 +55,50 @@ export function SessionRetry(props: { status: SessionStatus; show?: boolean }) {
   })
 
   return (
-    <Show when={retry() && (props.show ?? true)}>
+    <Show when={(retry() || limited()) && (props.show ?? true)} keyed>
       <div data-slot="session-turn-retry">
-        <Card variant="error" class="error-card">
+        <Card variant={retry() ? "error" : "normal"} class="error-card">
           <div class="flex items-start gap-2">
             <Spinner class="size-4 mt-0.5" />
             <div class="min-w-0">
-              <Show when={truncated()} fallback={<div data-slot="session-turn-retry-message">{message()}</div>}>
-                <Tooltip value={retry()?.message ?? ""} placement="top">
-                  <div data-slot="session-turn-retry-message" class="cursor-help truncate">
-                    {message()}
+              <Show
+                when={limited()}
+                fallback={
+                  <Show when={truncated()} fallback={<div data-slot="session-turn-retry-message">{message()}</div>}>
+                    <Tooltip value={retry()?.message ?? ""} placement="top">
+                      <div data-slot="session-turn-retry-message" class="cursor-help truncate">
+                        {message()}
+                      </div>
+                    </Tooltip>
+                  </Show>
+                }
+              >
+                {(item) => (
+                  <div data-slot="session-turn-retry-message">
+                    {i18n.t("ui.sessionTurn.rateLimited.message", {
+                      provider: item().providerID,
+                      model: item().modelID,
+                      scope: item().scope,
+                    })}
                   </div>
-                </Tooltip>
+                )}
               </Show>
-              <Show when={info()}>{(line) => <div data-slot="session-turn-retry-info">{line()}</div>}</Show>
+              <Show
+                when={limited()}
+                fallback={
+                  <Show when={info()}>{(line) => <div data-slot="session-turn-retry-info">{line()}</div>}</Show>
+                }
+              >
+                {(item) => (
+                  <div data-slot="session-turn-retry-info">
+                    {i18n.t("ui.sessionTurn.rateLimited.info", {
+                      active: item().active,
+                      limit: item().limit,
+                      queued: item().queued,
+                    })}
+                  </div>
+                )}
+              </Show>
             </div>
           </div>
         </Card>

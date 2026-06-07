@@ -1,7 +1,7 @@
 import z from "zod"
 import { asSchema, jsonSchema, tool, type Tool as AITool, type ToolCallOptions } from "ai"
 import { Agent } from "@/agent/agent"
-import { AgentEntry } from "@/agent/entry"
+import { AgentDelegation } from "@/agent/delegation"
 import { MCP } from "@/mcp"
 import { Metrics } from "@/observability/metrics"
 import { Trace } from "@/observability/trace"
@@ -9,9 +9,11 @@ import { ModelID } from "@/provider/schema"
 import type { Provider } from "@/provider/provider"
 import { ProviderTransform } from "@/provider/transform"
 import { Session } from "@/session"
+import { SessionDelegation } from "@/session/delegation"
 import { MessageV2 } from "@/session/message-v2"
-import { PartID } from "@/session/schema"
+import { PartID, SessionID } from "@/session/schema"
 import { SessionProcessor } from "@/session/processor"
+import { SessionStatus } from "@/session/status"
 import { ToolRegistry } from "@/tool/registry"
 import { Tool } from "@/tool/tool"
 import { Truncate } from "@/tool/truncation"
@@ -53,6 +55,7 @@ export namespace RuntimeTools {
       ...input.agent,
       permission: input.agent.permission ?? [],
     }
+    const rules = Agent.permissions(agent, input.session.permission)
     const ctx = (args: unknown, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
@@ -84,7 +87,7 @@ export namespace RuntimeTools {
           sessionID: input.session.id,
           workspaceID: input.session.workspaceID,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
-          ruleset: PermissionNext.merge(agent.permission, input.session.permission ?? []),
+          ruleset: rules,
         })
       },
     })
@@ -102,7 +105,7 @@ export namespace RuntimeTools {
 
     const disabled = PermissionNext.disabled(
       (await ToolRegistry.ids()),
-      PermissionNext.merge(agent.permission, input.session.permission ?? []),
+      rules,
     )
     for (const item of await ToolRegistry.tools(
       { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
@@ -212,7 +215,140 @@ export namespace RuntimeTools {
       })
     }
 
-    const visible = agent.name === "default" ? [] : catalog
+    if (delegating(agent)) {
+      const desc = [
+        "Query this parent session's delegated child task status from dsl_context.protocol.",
+        "Use it only to inspect pending or completed delegated agent tasks before deciding the next Agent Protocol step.",
+      ].join(" ")
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          child_session_id: {
+            type: "string",
+            description: "Optional child session id to inspect.",
+          },
+          status: {
+            type: "string",
+            enum: ["pending", "completed", "partial", "blocked", "failed", "waiting_user"],
+            description: "Optional status filter.",
+          },
+          include_output: {
+            type: "boolean",
+            description: "Include full child output. Defaults to false and returns summaries only.",
+          },
+        },
+      }
+      add("delegation_status", desc, schema, async (args) => {
+        const req = object(args)
+        const info = await SessionDelegation.query({
+          sessionID: input.session.id,
+          childID: text(req.child_session_id),
+          status: status(req.status),
+          output: req.include_output === true,
+        })
+        return {
+          title: "Delegation status",
+          metadata: info.counts,
+          output: JSON.stringify(info, null, 2),
+        }
+      })
+
+      add(
+        "session_tree",
+        "Return a compact natural-language summary of all sessions in the current orchestration tree, grouped by runtime status.",
+        {
+          type: "object",
+          additionalProperties: false,
+          properties: {},
+        },
+        async () => {
+          const tree = await sessionTree(input.session.id)
+          return {
+            title: "Session tree",
+            metadata: { sessions: tree.count, status: tree.status },
+            output: tree.output,
+          }
+        },
+      )
+
+      add(
+        "session_result",
+        "Read progress and result details for one delegated child session under the current orchestration session.",
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["child_session_id"],
+          properties: {
+            child_session_id: {
+              type: "string",
+              description: "Child session id to inspect.",
+            },
+            include_messages: {
+              type: "boolean",
+              description: "Include recent child messages. Defaults to false.",
+            },
+            include_output: {
+              type: "boolean",
+              description: "Include full completed delegation output. Defaults to false.",
+            },
+          },
+        },
+        async (args) => {
+          const req = object(args)
+          const child = childID(req.child_session_id)
+          await allowed(input.session.id, child)
+          const info = await sessionResult(input.session.id, child, {
+            messages: req.include_messages === true,
+            output: req.include_output === true,
+          })
+          return {
+            title: "Session result",
+            metadata: { child_session_id: child },
+            output: JSON.stringify(info, null, 2),
+          }
+        },
+      )
+
+      add(
+        "session_continue",
+        "Continue one delegated child session under the current orchestration session with an additional instruction.",
+        {
+          type: "object",
+          additionalProperties: false,
+          required: ["child_session_id", "prompt"],
+          properties: {
+            child_session_id: {
+              type: "string",
+              description: "Child session id to continue.",
+            },
+            prompt: {
+              type: "string",
+              description: "Instruction to append to the child session.",
+            },
+          },
+        },
+        async (args) => {
+          const req = object(args)
+          const child = childID(req.child_session_id)
+          const prompt = required(req.prompt, "prompt")
+          await allowed(input.session.id, child)
+          const result = await continueSession(child, prompt)
+          return {
+            title: "Session continued",
+            metadata: { child_session_id: child, message_id: result.info.id },
+            output: JSON.stringify({
+              child_session_id: child,
+              status: SessionStatus.get(child),
+              message_id: result.info.id,
+              finish: result.info.role === "assistant" ? result.info.finish : undefined,
+            }, null, 2),
+          }
+        },
+      )
+    }
+
+    const visible = agent.name === "default" ? catalog.filter((item) => sessionTool(item.id)) : catalog
     return {
       tools,
       catalog: visible,
@@ -231,10 +367,37 @@ export namespace RuntimeTools {
     return id !== "task"
   }
 
+  function delegating(agent: Agent.Info) {
+    if (agent.runner !== "protocol") return false
+    return PermissionNext.trace("task", "*", agent.permission).rule.action === "allow"
+  }
+
+  function object(input: unknown) {
+    if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>
+    return {}
+  }
+
+  function text(input: unknown) {
+    if (typeof input === "string") return input
+  }
+
+  function status(input: unknown): SessionDelegation.QueryStatus | undefined {
+    if (
+      input === "pending" ||
+      input === "completed" ||
+      input === "partial" ||
+      input === "blocked" ||
+      input === "failed" ||
+      input === "waiting_user"
+    ) return input
+  }
+
+  function sessionTool(id: string) {
+    return id === "delegation_status" || id === "session_tree" || id === "session_result" || id === "session_continue"
+  }
+
   async function agents(agent: Agent.Info) {
-    return (await Agent.list())
-      .filter((item) => AgentEntry.delegable(item))
-      .filter((item) => !(agent.name === "default" && item.name === "default"))
+    return AgentDelegation.list(await Agent.list(), agent.name)
       .map((item) => ({
         id: item.name,
         purpose: item.capability.purpose,
@@ -357,6 +520,122 @@ export namespace RuntimeTools {
         "",
       ].join("\n")
     }
+    const tree = catalog.find((item) => item.id === "session_tree")
+    if (tree) {
+      return [
+        "Example:",
+        "```json",
+        '{ "kind": "act", "message": "I will inspect the orchestration tree.", "calls": [{ "id": "inspect_sessions", "type": "tool", "name": "session_tree", "args": {} }] }',
+        "```",
+        "",
+      ].join("\n")
+    }
     return ""
+  }
+
+  async function sessionTree(sessionID: Session.Info["id"]) {
+    const root = await Session.get(sessionID)
+    const descendants = await Session.descendants(sessionID)
+    const sessions = [root, ...descendants]
+    const rows = sessions.map((item) => ({
+      id: item.id,
+      status: SessionStatus.get(item.id),
+    }))
+    const status = rows.reduce((acc, item) => {
+      acc[item.status.type] = (acc[item.status.type] ?? 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+    const byStatus = rows.reduce((acc, item) => {
+      const key = item.status.type
+      const list = acc.get(key)
+      if (list) {
+        list.push(item)
+        return acc
+      }
+      acc.set(key, [item])
+      return acc
+    }, new Map<string, typeof rows>())
+    const lines = [
+      `Session tree has ${rows.length} sessions.`,
+      `Root session: ${root.id}.`,
+      `Status counts: ${Object.entries(status).map(([key, val]) => `${key}=${val}`).join(", ")}.`,
+      "",
+      ...Array.from(byStatus.entries()).flatMap(([key, list]) => [
+        `${key} (${list.length}):`,
+        list.map((item) => item.status.type === key && Object.keys(item.status).length === 1
+          ? item.id
+          : `${item.id} ${JSON.stringify(item.status)}`).join(", "),
+        "",
+      ]),
+    ]
+    return {
+      count: rows.length,
+      status,
+      output: lines.join("\n").trim(),
+    }
+  }
+
+  async function sessionResult(parent: Session.Info["id"], child: Session.Info["id"], opts: { messages: boolean; output: boolean }) {
+    const session = await Session.get(child)
+    const delegations = await SessionDelegation.query({ sessionID: parent, childID: child, output: opts.output })
+    const messages = opts.messages
+      ? (await Session.messages({ sessionID: child, limit: 20 })).map((item) => ({
+          id: item.info.id,
+          role: item.info.role,
+          agent: item.info.agent,
+          finish: item.info.role === "assistant" ? item.info.finish : undefined,
+          created_at: item.info.time.created,
+          completed_at: item.info.role === "assistant" ? item.info.time.completed : undefined,
+          text: item.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n\n").slice(0, 4000),
+        }))
+      : undefined
+    return {
+      session: {
+        id: session.id,
+        parent_id: session.parentID,
+        title: session.title,
+        agent: agentOf(session),
+        status: SessionStatus.get(child),
+        delegation: delegationOf(session),
+      },
+      delegations,
+      ...(messages ? { messages } : {}),
+    }
+  }
+
+  async function continueSession(child: Session.Info["id"], prompt: string) {
+    const { SessionPrompt } = await import("./prompt")
+    return SessionPrompt.prompt({
+      sessionID: child,
+      agent: agentOf(await Session.get(child)),
+      parts: [{ type: "text", text: prompt }],
+    })
+  }
+
+  async function allowed(parent: Session.Info["id"], child: Session.Info["id"]) {
+    if (parent === child) return
+    if ((await Session.descendants(parent)).some((item) => item.id === child)) return
+    throw new Error(`Session ${child} is not a child of ${parent}.`)
+  }
+
+  function agentOf(session: Session.Info) {
+    const found = text(object(object(object(session.dsl_context).protocol).delegation).agent)
+    if (found) return found
+    return "default"
+  }
+
+  function delegationOf(session: Session.Info) {
+    const found = object(object(session.dsl_context).protocol).delegation
+    if (!found || typeof found !== "object" || Array.isArray(found)) return undefined
+    return found
+  }
+
+  function childID(input: unknown) {
+    return SessionID.make(required(input, "child_session_id"))
+  }
+
+  function required(input: unknown, key: string) {
+    if (typeof input === "string" && input.trim()) return input
+    throw new Error(`Missing required field: ${key}`)
   }
 }

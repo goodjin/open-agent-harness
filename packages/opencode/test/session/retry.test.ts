@@ -125,6 +125,17 @@ describe("session.retry.retryable", () => {
 
     expect(SessionRetry.retryable(error)).toBeUndefined()
   })
+
+  test("maps timeout API errors", () => {
+    const error = new MessageV2.APIError({
+      message: "The operation timed out.",
+      isRetryable: true,
+      metadata: { code: "TimeoutError", message: "The operation timed out." },
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBe("The operation timed out")
+    expect(SessionRetry.timeout(error)).toBe(true)
+  })
 })
 
 describe("session.message-v2.fromError", () => {
@@ -174,6 +185,15 @@ describe("session.message-v2.fromError", () => {
     const retryable = SessionRetry.retryable(error)
     expect(retryable).toBeDefined()
     expect(retryable).toBe("Connection reset by server")
+  })
+
+  test("converts TimeoutError DOMException to retryable APIError", () => {
+    const result = MessageV2.fromError(new DOMException("The operation timed out.", "TimeoutError"), { providerID })
+
+    expect(MessageV2.APIError.isInstance(result)).toBe(true)
+    expect((result as MessageV2.APIError).data.isRetryable).toBe(true)
+    expect((result as MessageV2.APIError).data.message).toBe("The operation timed out.")
+    expect((result as MessageV2.APIError).data.metadata?.code).toBe("TimeoutError")
   })
 
   test("marks OpenAI 404 status codes as retryable", () => {

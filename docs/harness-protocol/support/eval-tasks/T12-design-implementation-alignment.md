@@ -17,7 +17,7 @@
 使用本地设计文档：
 
 ```txt
-docs/harness-protocol/03-model-runtime-protocol.md
+docs/harness-protocol/02-model-runtime-protocol.md
 docs/harness-protocol/support/agent-protocol-dsl-research-notes.md
 docs/harness-protocol/support/agent-protocol-dsl-paper.html
 ```
@@ -63,7 +63,7 @@ docs/harness-protocol/support/agent-protocol-dsl-paper.html
       "executor": "repo.read",
       "operation": "read",
       "resources": [
-        "docs/harness-protocol/03-model-runtime-protocol.md",
+        "docs/harness-protocol/02-model-runtime-protocol.md",
         "docs/harness-protocol/support/agent-protocol-dsl-research-notes.md",
         "docs/harness-protocol/support/agent-protocol-dsl-paper.html"
       ],

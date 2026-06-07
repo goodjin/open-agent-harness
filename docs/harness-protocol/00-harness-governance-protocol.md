@@ -2,7 +2,7 @@
 
 本文档是 Open Agent Harness 的治理协议总纲。它按顺序说明协议目标、设计原则、协议架构、控制流、决策边界、Workflow/UI 定位、共享字段、状态词、对象定义、待讨论问题和文档地图。
 
-`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent、Skill 导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、状态、上下文、Workflow Adapter 和 UI 管理。总纲聚焦稳定抽象和关系边界。
+`01` 到 `09` 是本总纲的分章详细协议，分别展开 Agent 定义与外部 Markdown instruction 兼容导入、模型-Runtime 交互、Action/Executor、Routing/Delegation、Handoff、状态、上下文、Workflow Profile 和 UI 管理。总纲聚焦稳定抽象和关系边界。
 
 ## 协议目标
 
@@ -16,7 +16,7 @@ Harness 的目标是建立一个可治理的 agent operating environment。
 
 所有会改变系统状态的请求都必须由 Runtime 接受、校验、执行和记录。
 
-Runtime 接受结构化 Command、Action 或 adapter operation，并据此推进 run、修改任务状态、批准审查或替换概念。
+Runtime 接受结构化 Command 或 Action，并据此推进 run、修改任务状态、批准审查或替换概念。
 
 ### 2. Agent 会话之间不直接通信
 
@@ -38,7 +38,7 @@ Harness 通过一套 DSL 供模型声明 semantic action graph。Runtime 负责�
 
 Tool call 先归一化为 Action，再通过 Runtime 获得执行资格。
 
-任何模型侧请求、工具调用、Agent delegation、Runtime operation、human approval 或 adapter operation，在执行前都必须归一化为 Harness `Action`，再经过 policy、gate、executor、event、projection。
+任何模型侧请求、工具调用、Agent delegation、Runtime operation、human approval、workflow command 或外部 service invocation，在执行前都必须归一化为 Harness `Action` 或 Runtime `Command`，再经过 policy、gate、executor、event、projection。
 
 ```txt
 model intent
@@ -67,11 +67,13 @@ Trace 是 Runtime 从 Event、Action、Assignment、executor invocation、Artifa
 
 Observability 是 Harness 治理能力的一部分，用于解释系统为什么执行、执行到了哪里、哪个环节失败、哪些证据支撑当前 Projection，以及如何审计、评测和恢复。
 
-### 8. 场景编排通过 Adapter 扩展
+### 8. 流程能力统一在 Action Graph
 
-Harness 基础 DSL 提供通用语义表达。针对常见场景，可以定制场景化结构、模板和约束，例如 Workflow、evaluation loop、release gate、long-running monitor。
+Harness 基础 DSL 提供通用 Action Graph 语义。Runtime 接受的执行流程都会持久化为 Action Graph，并使用同一套状态、调度、恢复、Trace 和 Artifact 模型执行。
 
-这些场景化结构最终由 Runtime 按统一的 Action、状态迁移和事件投影模型执行。
+Workflow 是用户创建、保存或命名后的 Action Graph Profile。平时任务生成的图仍称为 Action Graph；当用户保存为 Workflow 或主动创建 Workflow 时，它成为 Workflow 资产。
+
+Retry、loop、gate、handoff、verification、decision 和恢复可以由 Action Graph 字段表达，也可以由 Agent metadata 的 Orchestration Policy 或 Runtime policy 补齐，最终都会归一化为统一 Action、状态迁移和事件投影。
 
 ### 9. 协议产物面向人和 Agent 可读
 
@@ -85,13 +87,14 @@ Artifact、Trace、Projection 和 UI 视图都需要提供稳定 id、结构化�
 
 ### 协议构件
 
-Harness 协议由六类协议构件协同工作：
+Harness 协议由七类协议构件协同工作：
 
 - **Model**：负责判断、规划、解释和产生产物，通过模型-Runtime 协议声明意图。
 - **Runtime**：负责状态、权限、调度、执行、门禁、持久化、审计和恢复。
 - **Agent**：可复用执行模板。Runtime 基于 Agent 模板创建会话，由会话接收 assignment，并在授权上下文中完成具体工作。Agent 模板可以声明默认 Orchestration Policy，供 Runtime 主动评估前置准备、完成后验证、失败恢复、风险审查和冲突仲裁。
 - **State**：通过 Event Log、Projection、Trace、Artifact、Memory 和 Concept 表示可审计系统状态。
-- **Adapter**：在 Harness 协议之上实现 Workflow、release gate、evaluation loop、long-running automation 等编排形态。
+- **Workflow Profile**：用户创建、保存或命名后的 Action Graph Profile，用于复用、管理和从模板启动新的 Run。
+- **Adapter**：在 Harness 协议之上实现 evaluation loop、release gate、long-running automation 等产品接入形态。
 - **UI**：负责观察、管理、批准、暂停、恢复和追溯，通过 Command 推进系统。
 
 ### 运行平面
@@ -129,13 +132,14 @@ Context construction plane
   -> Visibility Policy
 
 Adapter and product access plane
-  Adapter -> Workflow / Evaluation loop / Release gate / Long-running automation
+  Workflow Profile -> saved / created Action Graph assets
+  Adapter -> Evaluation loop / Release gate / Long-running automation
   UI -> Command / Approval / Observation
 ```
 
 #### 模型交互平面
 
-模型与 Runtime 的交互由 `03-model-runtime-protocol.md` 定义。
+模型与 Runtime 的交互由 `02-model-runtime-protocol.md` 定义。
 
 该协议定义了：
 
@@ -146,12 +150,13 @@ Adapter and product access plane
 
 #### 执行平面
 
-执行平面由 `04-action-executor-contract.md` 和 `05-routing-and-delegation-policy.md` 定义。
+执行平面由 `03-action-executor-contract.md`、`04-routing-and-delegation-policy.md` 和 `05-handoff-protocol.md` 定义。
 
 - **Action**：Runtime 接受后的可执行语义单元，描述要执行什么操作、携带什么参数、涉及哪些资源、具有什么 side effect、期望什么结果返回策略，以及建议由哪类 executor 执行。所有模型请求、toolCall、delegation request、runtime operation 或 human approval 在执行前都归一化为 Action。
 - **Executor**：执行 Action 的统一抽象，表示由哪类执行者完成这个 Action。具体目标可以是 tool、Agent Session、runtime service、human、pipeline 或 external service。Executor 的执行环境契约覆盖 Sandbox、Workspace、Manifest、Snapshot 和 Rehydration。
 - **Routing**：Runtime 把 Action 绑定到具体 executor 的选择过程。Routing 根据 operation、executor hint、资源范围、side effect、权限、可用性、成本、agent entry/capability 和当前 run state 做选择，并记录选择结果。
 - **Delegation**：Routing 选择 Agent Session 作为 executor 时形成的执行形态。Runtime 基于 Agent 模板创建会话，生成 Assignment，并记录 child session trace；Assignment 是 Action 绑定给 Agent Session 后形成的执行边界。
+- **Handoff**：Assignment 或 Agent Session 到达交接边界时，Runtime 把来源会话的结果、证据、风险、未决项和 raw refs 归一化为 Handoff record，并渲染为目标 Context Bundle。
 
 #### 状态控制平面
 
@@ -162,7 +167,7 @@ Adapter and product access plane
 - **Event**：状态变更记录，说明发生了什么，用于审计、回放和恢复。
 - **Projection**：当前操作视图，由 Event 和状态规则推导，供 Runtime、Agent Session 和 UI 读取。
 - **Trace / Observability**：围绕 run、action、assignment、executor、artifact、gate、decision 和 observation 组织出的可观察证据链，供 UI、审计、调试、评测和恢复使用。
-- **Materialized state**：状态的持久化形态，例如数据库行、状态文件、adapter JSON、索引文件和 UI summary，用于快速查询、展示、调度和恢复。
+- **Materialized state**：状态的持久化形态，例如数据库行、状态文件、Profile JSON、索引文件和 UI summary，用于快速查询、展示、调度和恢复。
 - **Canonical status**：统一状态词汇，例如 `ready`、`running`、`blocked`、`partial`、`completed`，用于对齐 run、action、assignment、adapter 的状态含义。
 - **Transaction / replay / export**：状态控制机制，定义状态如何安全写入、如何从历史重建、如何导出为可审计 trace。
 
@@ -179,12 +184,12 @@ Adapter and product access plane
 
 #### Adapter 与产品接入平面
 
-Workflow adapter 由 `08-workflow-durable-orchestration-adapter.md` 定义。UI 由 `09-ui-console-and-agent-management.md` 定义。
+Workflow Profile 由 `08-workflow-profile-action-graph-assets.md` 定义。UI 由 `09-ui-console-and-agent-management.md` 定义。
 
 它们回答：
 
-- Workflow 如何在 Harness 上表达 durable DAG orchestration？
-- Workflow Runner agent 如何创建和决策 workflow run？
+- Workflow 如何作为被用户创建、保存或命名的 Action Graph Profile？
+- 任务执行产生的 Action Graph 与 Workflow Run 如何使用同一套持久化、恢复和 UI 投影？
 - UI 如何展示 run、task、decision、event、memory、concept、agent manager 和 session tree？
 - 用户如何通过 Command 推进系统状态？
 
@@ -197,8 +202,8 @@ Workflow adapter 由 `08-workflow-durable-orchestration-adapter.md` 定义。UI 
 | Model Layer | 判断、计划、协议声明、用户可见解释 | 协议输出、DSL 声明、回答、恢复输入 |
 | Runtime Layer | 状态迁移、权限校验、调度、门禁、事件追加、投影更新、恢复 | `Command`、`Action`、`Assignment`、`Event`、`Projection` |
 | Execution Layer | 工具、Agent 会话、Runtime 服务、人工批准、流水线、外部服务 | 执行器调用、执行结果、产物 |
-| State Layer | Event Log、Projection、Trace、Artifact、Memory、Concept、Adapter 状态 | 状态查询、上下文引用、trace/export 引用 |
-| Adapter Layer | Workflow、evaluation loop、release gate、long-running automation | 场景化操作、Adapter 状态投影 |
+| State Layer | Event Log、Projection、Trace、Artifact、Memory、Concept、Profile 状态、Adapter 状态 | 状态查询、上下文引用、trace/export 引用 |
+| Adapter Layer | Workflow 资产、evaluation loop、release gate、long-running automation | 场景化资产、操作和状态投影 |
 | Product Layer | Harness Console、Session Tree、Agent Manager、Protocol Panel | UI 命令、批准、观察、trace 视图 |
 
 ## 控制流
@@ -227,7 +232,7 @@ User request
 - Executor 是执行 Action 的目标；Assignment 是 Action 被委派给 Agent 会话时形成的任务边界。
 - Agent delegation 通过 Runtime Assignment 发生。
 - UI 中会改变系统状态的操作必须提交为 Command，由 Runtime 校验、执行并记录。
-- Adapter 状态必须投影回统一 Harness run state。
+- Workflow Profile、Adapter 状态和产品视图必须投影回统一 Harness run state。
 
 ## 决策边界与升级规则
 
@@ -247,18 +252,22 @@ Harness 按风险、影响半径、可逆性和价值判断含量确定决策边
 
 ## Workflow 定位
 
-Workflow 是基于 Harness 基础 DSL 的 durable orchestration adapter。
+Workflow 是用户创建、保存或命名后的 Action Graph Profile。
 
-它适合：
+Harness 的执行能力统一属于 Action Graph 和 Runtime。任务执行时生成的图称为 Action Graph；用户将其保存为 Workflow，或用户主动创建 Workflow 后，它成为可管理、可复用的 Workflow 资产。
+
+所有 Action Graph 都是持久化执行对象，支持：
 
 - 多阶段任务
 - 并行子任务
 - 多 Agent 执行
-- 可恢复运行
-- 失败后 retry、replan、decision
-- 用户需要进度、暂停、恢复和审计
+- 系统重启后恢复
+- pause / resume / abort
+- retry、loop、replan、decision
+- gate、verification、approval
+- Artifact、Trace、Projection 和 UI 观察
 
-Workflow Profile 的 DAG、node、loop、verification、artifact、decision 和 handoff 都基于 Harness 基础 DSL 表达。Runtime 将它们展开为 Action Graph、Action、Assignment、Event、Projection、Trace 和 Artifact，并投影到统一 run state。
+Workflow Run 从 Workflow Profile materialize 出新的 Action Graph，并使用与任务执行生成的 Action Graph Run 相同的 Action、Assignment、Event、Projection、Trace 和 Artifact 模型。
 
 ## UI 定位
 
@@ -283,7 +292,7 @@ UI 需要展示：
 
 ### 统一字段
 
-模型 DSL、Action、Assignment Contract、Handoff Contract 和 Adapter Profile 使用同一组治理字段。字段名保持短、稳定、模型友好；概念解释保留完整语义名称。
+模型 DSL、Action、Action Graph Profile、Assignment Contract、Handoff Contract、Workflow Profile 和场景化 Adapter Profile 使用同一组治理字段。字段名保持短、稳定、模型友好；概念解释保留完整语义名称。
 
 | 字段 | 语义对象 | 用途 |
 |---|---|---|
@@ -298,11 +307,11 @@ UI 需要展示：
 | `gate` | Gate Policy | 声明 approval、verification、review、privacy、release gate 等状态迁移条件。 |
 | `result` | Result Policy | 声明执行结果回放给模型、用户、日志和 Artifact store 的粒度。 |
 
-这些字段在不同层表达同一语义。模型侧可以只声明其中一部分，并可使用 string、array 等简写形态；Runtime 在归一化时根据 Projection、authority、routing、adapter policy 和 safety policy 展开为对象形态，补齐可执行边界。
+这些字段在不同层表达同一语义。模型侧可以只声明其中一部分，并可使用 string、array 等简写形态；Runtime 在归一化时根据 Projection、authority、routing、profile policy、adapter policy 和 safety policy 展开为对象形态，补齐可执行边界。
 
 ### 规范状态词
 
-Run、Action、Assignment、Adapter run、Workflow node 和 UI Projection 使用同一组状态词。
+Run、Action Graph、Action、Assignment、Workflow Run、Workflow asset、Adapter run 和 UI Projection 使用同一组状态词。
 
 | Status | 语义 |
 |---|---|
@@ -326,13 +335,13 @@ Run、Action、Assignment、Adapter run、Workflow node 和 UI Projection 使用
 
 ### Actor
 
-可以参与协议并出现在事件、命令、审计记录中的主体。Actor 是最宽的执行身份概念，覆盖 Agent Session、Runtime 服务、确定性程序、工具包装器、adapter runner 和 human owner。
+可以参与协议并出现在事件、命令、审计记录中的主体。Actor 是最宽的执行身份概念，覆盖 Agent Session、Runtime 服务、确定性程序、工具包装器、Profile runner、Adapter runner 和 human owner。
 
 示例：
 
 - `agent-session-13`
 - `memory-service`
-- `workflow_runner`
+- `workflow_asset_manager`
 - `bun-test-runner`
 - `human-owner`
 
@@ -340,7 +349,7 @@ Run、Action、Assignment、Adapter run、Workflow node 和 UI Projection 使用
 
 生成回答、协议输出和推理结果的模型能力。Model 可以由不同 provider 或 runtime backend 提供，通常通过 Agent Session 被使用。
 
-Model 不直接改变 Harness 状态；状态变更需要通过 Runtime 接受的 Command、Action 或 adapter operation 发生。
+Model 不直接改变 Harness 状态；状态变更需要通过 Runtime 接受的 Command 或 Action 发生。
 
 示例：
 
@@ -363,7 +372,7 @@ Agent 模型由 `01-agent-model-and-authoring.md` 定义。
 - 负责开发工作的 `code_developer`
 - 负责审查补丁的 `technical_reviewer`
 - 负责准备上下文的 memory agent
-- 负责 durable DAG 编排的 `workflow_runner`
+- 负责 Workflow 资产创建、保存、更新和启动的 `workflow_runner`
 
 ### Orchestration Policy
 
@@ -392,18 +401,30 @@ Agent Session 不等同于模型上下文。Session log 是会话的持久记录
 
 - root coding session
 - review child session
-- workflow runner session
+- Workflow asset management session
 - memory summarization session
+
+### Workflow Profile
+
+用户创建、保存或命名后的 Action Graph Profile。Workflow Profile 记录可复用流程的 graph、输入 schema、版本、owner、visibility 和运行历史。
+
+保存为 Workflow 后，这份 Action Graph Profile 获得名称、版本、输入 schema、权限和 UI 管理入口。Workflow Run 会从 Profile materialize 出新的 Action Graph，并进入统一 Runtime 执行路径。
+
+示例：
+
+- 用户保存的一次发布流程
+- 固定代码审查流程
+- 常规评测流程模板
+- 长期监控流程模板
 
 ### Adapter
 
-基于 Harness 基础 DSL 的场景化编排结构。Adapter 用于表达 Workflow、evaluation loop、release gate、long-running monitor 等常见场景。
+基于 Harness 基础 DSL 的产品接入结构。Adapter 用于表达 evaluation loop、release gate、long-running monitor 等常见场景。
 
 Adapter 定义场景化结构、模板和约束。Runtime 将 Adapter 输入展开为统一 Action Graph、Action、Assignment、状态迁移、事件投影、Trace 和 Artifact。
 
 示例：
 
-- workflow adapter
 - evaluation loop adapter
 - release gate adapter
 - long-running monitor adapter
@@ -492,7 +513,7 @@ Command 经过 schema、authority、gate 和 projection 校验后，才能产生
 
 Runtime 接受后的可执行语义工作单元。
 
-Action 可以映射到 tool、Agent Session、runtime service、human approval、pipeline 或 adapter operation。Action 契约由 `04-action-executor-contract.md` 定义。
+Action 可以映射到 tool、Agent Session、runtime service、human approval、pipeline、Workflow Command 或 service invocation。Action 契约由 `03-action-executor-contract.md` 定义。
 
 示例：
 
@@ -500,13 +521,13 @@ Action 可以映射到 tool、Agent Session、runtime service、human approval�
 - 搜索代码
 - 委派 review agent session
 - 请求 human approval
-- 启动 workflow run
+- 从 Workflow Profile 启动 run
 
 ### Action Graph
 
 由 Action nodes 和 dependency edges 组成的执行图。Action Graph 表达哪些工作可以并行、哪些工作依赖上游结果、哪些 gate 或 handoff 决定下游是否可继续。
 
-Action Graph 可以来自模型侧 `calls[]`，也可以来自 Workflow、Evaluation、Release Gate 等 Adapter Profile。Runtime 负责校验 graph、调度 ready actions、记录状态、处理失败并更新 Projection。
+Action Graph 可以来自模型侧 `calls[]`，也可以从 Workflow Profile、Evaluation Profile、Release Gate Profile 等场景化 profile materialize。Runtime 负责持久化 graph、校验依赖、调度 ready actions、记录状态、处理失败并更新 Projection。
 
 示例：
 
@@ -555,7 +576,7 @@ Assignment 或 Action 的输入输出契约。Contract 定义执行者收到什�
 
 ### Success Criteria
 
-Action、Assignment、Run 或 Adapter node 的完成标准。Success Criteria 让 Runtime、Executor、Review、Verification 和 UI 可以围绕同一组验收条件判断工作是否完成。
+Action、Assignment、Run 或 Action Graph node 的完成标准。Success Criteria 让 Runtime、Executor、Review、Verification 和 UI 可以围绕同一组验收条件判断工作是否完成。
 
 示例：
 
@@ -575,7 +596,7 @@ Action、Assignment、Run 或 Adapter node 的完成标准。Success Criteria �
 
 ### Budget Policy
 
-Runtime 对成本、时间、token、attempt、parallelism、缓存和外部资源的约束。Budget Policy 可以绑定到 Run、Action、Assignment、Adapter 或 Model Policy。
+Runtime 对成本、时间、token、attempt、parallelism、缓存和外部资源的约束。Budget Policy 可以绑定到 Run、Action、Assignment、Workflow Profile、Adapter 或 Model Policy。
 
 示例：
 
@@ -599,9 +620,11 @@ Runtime 对成本、时间、token、attempt、parallelism、缓存和外部资�
 
 Runtime 在 Assignment 之间建立的结构化交接关系。Handoff 用于把一个 Agent Session 的结果、证据、风险和未决问题交给另一个 Agent Session 或 human owner 继续处理。
 
-Handoff 包含目标、约束、依赖、证据、Artifact refs、预算、风险、未决问题、来源 session 和目标 executor，并使用 `handoff` 字段进入 Action、Assignment 或 Adapter node。
+Handoff 包含目标、约束、依赖、证据、Artifact refs、预算、风险、未决问题、来源 session 和目标 executor，并使用 `handoff` 字段进入 Action、Assignment 或 Action Graph node。
 
 Handoff 可以来自模型声明的 next Action，也可以来自 Agent 模板上的 Orchestration Policy。无论来源如何，Runtime 都将其转换为受治理的 Action / Assignment。
+
+`05-handoff-protocol.md` 进一步定义 Handoff 的生成流程：Runtime 保存 raw records 和 structured trace，在边界处请求 source Agent 生成 self-report，handoff writer 做压缩整理，Runtime 最后校验并渲染给目标 Context Bundle。
 
 示例：
 
@@ -669,7 +692,8 @@ Projection 或场景状态的持久化形态，用于快速查询、展示、调
 示例：
 
 - 数据库里的 run/action/assignment 行
-- workflow node state 文件
+- action graph node state 文件
+- Workflow Profile state 文件
 - artifact index
 - UI summary cache
 
@@ -707,7 +731,7 @@ Gate 可以校验 schema、authority、scope、dependency、review、verificatio
 
 - 修复一个 bug 的 run
 - 一次代码审查 run
-- 一次 workflow DAG run
+- 一次从 Workflow Profile 启动的 run
 - 一次 release gate run
 
 ### Task
@@ -732,11 +756,11 @@ Run 内的可管理工作单元。Task 表达用户或 Planner 关心的工作�
 - review report
 - generated plan
 - protocol trace export
-- workflow node result
+- Action Graph node result
 
 ### Artifact Contract
 
-Action、Assignment 或 Adapter node 对产物的声明。Artifact Contract 定义期望产生、读取或更新的 Artifact type、name、scope、visibility 和 evidence 要求。
+Action、Assignment 或 Action Graph node 对产物的声明。Artifact Contract 定义期望产生、读取或更新的 Artifact type、name、scope、visibility 和 evidence 要求。
 
 示例：
 
@@ -792,7 +816,7 @@ Concept 可以记录版本、替换关系、引用、证据和影响范围。Con
 
 - `user-profile-api`
 - `agent-entry-model`
-- `workflow-node-state`
+- `action-graph-node-state`
 - `runtime-permission-policy`
 
 ### Goal Contract
@@ -879,14 +903,22 @@ Run 的目标边界。Goal Contract 记录目标、non-goal、约束和成功标
 | 编号 | 文档 | 责任 |
 |---|---|---|
 | 00 | `00-harness-governance-protocol.md` | 总纲：目标、原则、协议架构、对象定义和边界。 |
-| 01 | `01-agent-model-and-authoring.md` | Agent 模板、metadata、entry、capability、permission、relationships、authoring contract。 |
-| 02 | `02-skill-format-agent-import.md` | 将 `SKILL.md` authoring format 导入为 virtual agent。 |
-| 03 | `03-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
-| 04 | `04-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
-| 05 | `05-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace、handoff。 |
+| 01 | `01-agent-model-and-authoring.md` | Agent 模板、外部 Markdown instruction 兼容导入、metadata、entry、capability、permission、relationships、authoring contract。 |
+| 02 | `02-model-runtime-protocol.md` | 模型与 Runtime 的 DSL / protocol 交互协议。 |
+| 03 | `03-action-executor-contract.md` | Action、Executor、toolCall carrier、recovery normalization、执行环境契约。 |
+| 04 | `04-routing-and-delegation-policy.md` | Routing、delegation、assignment、child session trace 和 executor selection。 |
+| 05 | `05-handoff-protocol.md` | Handoff 触发、self-report、source bundle、handoff writer、canonical record 和目标 Context Bundle 渲染。 |
 | 06 | `06-state-event-projection-model.md` | Event source、Projection、Trace / Observability、状态映射、事务边界、replay。 |
 | 07 | `07-context-memory-visibility-policy.md` | Context Bundle、Memory Scope、visibility、privacy、replay policy。 |
-| 08 | `08-workflow-durable-orchestration-adapter.md` | Workflow 作为 DSL 之上的 durable orchestration adapter。 |
+| 08 | `08-workflow-profile-action-graph-assets.md` | Workflow Profile、Workflow asset 与统一 Action Graph 执行语义。 |
 | 09 | `09-ui-console-and-agent-management.md` | UI 如何管理、观察和使用 Harness 系统。 |
 
 支持性研究、评测材料和参考资料放在 `docs/harness-protocol/support/`，作为协议设计依据和评测背景。
+
+RFC、实现计划和阶段性执行编排不放在协议目录中。它们归入 `docs/harness-rfc/`：
+
+| 文档 | 责任 |
+|---|---|
+| `../harness-rfc/01-agent-metadata-control-plane-rfc.md` | Agent metadata control plane RFC。 |
+| `../harness-rfc/02-agent-metadata-implementation-plan.md` | Agent metadata RFC 的实现计划、测试边界和 UI/API 落点。 |
+| `../harness-rfc/03-agent-metadata-execution-orchestration.md` | Agent metadata 实施编排：phase、并行窗口、PR 边界和 worker handoff。 |

@@ -83,6 +83,21 @@ export type SessionStatus =
       type: "running"
     }
   | {
+      type: "queued"
+    }
+  | {
+      type: "starting"
+    }
+  | {
+      type: "rate_limited"
+      providerID: string
+      modelID: string
+      scope: "provider" | "model"
+      active: number
+      limit: number
+      queued: number
+    }
+  | {
       type: "waiting_permission"
     }
   | {
@@ -91,6 +106,36 @@ export type SessionStatus =
   | {
       type: "error"
       message: string
+    }
+  | {
+      type: "timeout"
+      message: string
+    }
+  | {
+      type: "paused"
+      message?: string
+    }
+  | {
+      type: "aborting"
+      message?: string
+    }
+  | {
+      type: "aborted"
+      message?: string
+    }
+  | {
+      type: "failed"
+      message?: string
+    }
+  | {
+      type: "blocked"
+      message?: string
+    }
+  | {
+      type: "completed"
+    }
+  | {
+      type: "archived"
     }
   | {
       type: "retry"
@@ -508,6 +553,9 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  metadata?: {
+    [key: string]: unknown
+  }
 }
 
 export type ProviderAuthError = {
@@ -1378,8 +1426,16 @@ export type ProviderConfig = {
           [key: string]: unknown | boolean | undefined
         }
       }
+      /**
+       * Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.
+       */
+      concurrency?: number
     }
   }
+  /**
+   * Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally.
+   */
+  concurrency?: number
   whitelist?: Array<string>
   blacklist?: Array<string>
   options?: {
@@ -1394,7 +1450,7 @@ export type ProviderConfig = {
      */
     setCacheKey?: boolean
     /**
-     * Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.
+     * Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.
      */
     timeout?: number | false
     /**
@@ -1797,6 +1853,7 @@ export type Model = {
     input?: number
     output: number
   }
+  concurrency?: number
   status: "alpha" | "beta" | "deprecated" | "active"
   options: {
     [key: string]: unknown
@@ -1821,6 +1878,7 @@ export type Provider = {
   options: {
     [key: string]: unknown
   }
+  concurrency?: number
   models: {
     [key: string]: Model
   }
@@ -1917,6 +1975,32 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type SessionTreeNode = {
+  id: string
+  parent_id?: string
+  root_id: string
+  title: string
+  agent?: string
+  model?: {
+    provider_id: string
+    model_id: string
+  }
+  status: SessionStatus
+  stats: {
+    messages: number
+    tokens_input: number
+    tokens_output: number
+    tool_calls: number
+    files: number
+    additions: number
+    deletions: number
+  }
+  time: {
+    created: number
+    updated: number
+  }
 }
 
 export type TextPartInput = {
@@ -2072,493 +2156,6 @@ export type WorkflowRun = {
   }
 }
 
-export type HarnessRunStatus =
-  | "drafting"
-  | "ready"
-  | "running"
-  | "paused"
-  | "blocked"
-  | "reviewing"
-  | "verifying"
-  | "reworking"
-  | "completed"
-  | "failed"
-  | "aborted"
-
-export type HarnessRun = {
-  id: string
-  name: string
-  status?: HarnessRunStatus
-  goal: string
-  mode?: string
-  constraints?: Array<string>
-  memory_scopes?: Array<"run" | "project" | "team" | "global">
-  automation?: "manual" | "guided" | "auto"
-  progress?: {
-    completed?: number
-    total?: number
-  }
-  active_assignments?: number
-  pending_decisions?: number
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessTaskStatus =
-  | "draft"
-  | "ready"
-  | "assigned"
-  | "running"
-  | "submitted"
-  | "reviewing"
-  | "review_rejected"
-  | "review_approved"
-  | "verifying"
-  | "verify_failed"
-  | "approved"
-  | "merged"
-  | "blocked"
-  | "failed"
-  | "cancelled"
-
-export type HarnessGate = {
-  id: string
-  status?: "pending" | "passed" | "failed" | "blocked"
-  required?: Array<string>
-  evidence?: Array<string>
-  reason?: string
-}
-
-export type HarnessAssignment = {
-  id: string
-  task_id: string
-  actor: string
-  role: string
-  status?: "pending" | "running" | "completed" | "failed" | "cancelled"
-  capabilities?: Array<string>
-  authority?: {
-    [key: string]: unknown
-  }
-  context?: string
-  updated_at: number
-}
-
-export type HarnessTask = {
-  id: string
-  run_id: string
-  title: string
-  type?: string
-  status?: HarnessTaskStatus
-  goal: string
-  depends_on?: Array<string>
-  acceptance?: Array<string>
-  gates?: Array<HarnessGate>
-  assignment?: HarnessAssignment
-  artifacts?: Array<string>
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessArtifact = {
-  id: string
-  run_id: string
-  task_id?: string
-  kind: string
-  path: string
-  summary?: string
-  created_event?: string
-  created_at: number
-}
-
-export type HarnessDecisionStatus = "pending" | "answered" | "rejected" | "cancelled"
-
-export type HarnessDecision = {
-  id: string
-  run_id: string
-  task_id?: string
-  level?: "L0" | "L1" | "L2" | "L3" | "L4"
-  status?: HarnessDecisionStatus
-  question: string
-  options?: Array<{
-    id: string
-    label: string
-    tradeoff?: string
-  }>
-  recommended?: string
-  answer?: string
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessEvent = {
-  id: string
-  run_id?: string
-  type: string
-  actor?: string
-  time: number
-  summary?: string
-  payload?: {
-    [key: string]: unknown
-  }
-}
-
-export type HarnessV2SchemaVersion = "v2.0"
-
-export type HarnessActionGraph = {
-  id: string
-  run_id: string
-  schema_version?: HarnessV2SchemaVersion
-  status?: "active" | "completed" | "blocked" | "failed" | "cancelled"
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessActionStatus = "ready" | "blocked" | "running" | "completed" | "failed" | "cancelled"
-
-export type HarnessV2Visibility = "private" | "project" | "team" | "public"
-
-export type HarnessV2Ref = string
-
-export type HarnessRetryPolicy = {
-  max?: number
-  backoff?: "none" | "linear" | "exponential"
-}
-
-export type HarnessActionRecord = {
-  id: string
-  run_id: string
-  graph_id: string
-  kind: "act"
-  type?: string
-  title: string
-  status?: HarnessActionStatus
-  depends_on?: Array<string>
-  criteria?: Array<string>
-  failure?: string
-  gate?: string
-  budget?: {
-    [key: string]: unknown
-  }
-  visibility?: HarnessV2Visibility
-  expected_artifacts?: Array<HarnessV2Ref>
-  idempotency_key?: string
-  resource_locks?: Array<HarnessV2Ref>
-  cancellation?: {
-    allowed?: boolean
-    reason?: string
-  }
-  retry_policy?: HarnessRetryPolicy
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessActionEdge = {
-  run_id: string
-  graph_id: string
-  from: string
-  to: string
-  kind?: "depends_on"
-}
-
-export type HarnessResourceKind =
-  | "tool_output"
-  | "model_long_output"
-  | "review_report"
-  | "test_report"
-  | "research_note"
-  | "handoff_state"
-  | "context_snapshot"
-  | "document"
-
-export type HarnessV2Producer = {
-  type: "runtime" | "model" | "tool" | "agent" | "user" | "system" | "import"
-  id: string
-  run_id?: string
-  action_id?: string
-  session_id?: string
-}
-
-export type HarnessV2Lifecycle = "draft" | "active" | "archived" | "tombstoned"
-
-export type HarnessResourceRecord = {
-  id: string
-  run_id: string
-  kind: HarnessResourceKind
-  uri: HarnessV2Ref
-  summary: string
-  producer: HarnessV2Producer
-  source_action?: string
-  visibility?: HarnessV2Visibility
-  evidence?: Array<HarnessV2Ref>
-  lifecycle?: HarnessV2Lifecycle
-  media_type?: string
-  size: number
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessRefExpansionMode = "summary" | "structured" | "full" | "on_failure" | "on_demand" | "adaptive"
-
-export type HarnessContextRecord = {
-  ref: HarnessV2Ref
-  mode: HarnessRefExpansionMode
-  visibility: HarnessV2Visibility
-  summary: string
-  content: string
-  reason: string
-  tokens: number
-}
-
-export type HarnessContextExcludedRecord = {
-  ref: HarnessV2Ref
-  mode: HarnessRefExpansionMode
-  visibility?: HarnessV2Visibility
-  reason: string
-}
-
-export type HarnessContextBundle = {
-  id: string
-  run_id: string
-  assignment_id?: string
-  goal: string
-  user_input?: string
-  included?: Array<HarnessContextRecord>
-  excluded?: Array<HarnessContextExcludedRecord>
-  refs?: Array<HarnessV2Ref>
-  summary: string
-  token_budget: number
-  tokens_used: number
-  visibility?: HarnessV2Visibility
-  created_at: number
-}
-
-export type HarnessAgentSessionRecord = {
-  id: string
-  run_id: string
-  template_id: string
-  assignment_id: string
-  action_id: string
-  authority?: {
-    [key: string]: unknown
-  }
-  context_summary: string
-  trace_refs?: Array<HarnessV2Ref>
-  status?: "pending" | "running" | "completed" | "failed" | "cancelled"
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessHandoffKind = "assign" | "handoff" | "sync"
-
-export type HarnessHandoffParty = {
-  type: "user" | "agent" | "runtime" | "system"
-  id: string
-  assignment_id?: string
-  session_id?: string
-}
-
-export type HarnessHandoffState = "draft" | "ready" | "sent" | "received" | "blocked" | "completed"
-
-export type HarnessHandoffRecord = {
-  id: string
-  run_id: string
-  kind: HarnessHandoffKind
-  uri: HarnessV2Ref
-  source: HarnessHandoffParty
-  target: HarnessHandoffParty
-  summary: string
-  state?: HarnessHandoffState
-  evidence?: Array<HarnessV2Ref>
-  risks?: Array<string>
-  unresolved?: Array<string>
-  next?: Array<string>
-  refs?: Array<HarnessV2Ref>
-  resource_refs?: Array<HarnessV2Ref>
-  projection_ref?: HarnessV2Ref
-  trace_ref?: HarnessV2Ref
-  context_ref?: HarnessV2Ref
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessAcceptanceTarget = {
-  type: "run" | "action_graph" | "action" | "assignment" | "workflow_node" | "resource"
-  ref: HarnessV2Ref
-}
-
-export type HarnessAcceptanceLevel = "none" | "auto" | "test" | "agent" | "human" | "combined" | "sampled"
-
-export type HarnessAcceptancePolicy = {
-  level: HarnessAcceptanceLevel
-  checks?: Array<string>
-  required?: boolean
-  reviewer?: string
-}
-
-export type HarnessAcceptanceGateResult =
-  | "approved"
-  | "changes_requested"
-  | "needs_evidence"
-  | "needs_user_decision"
-  | "blocked"
-  | "waived"
-
-export type HarnessAcceptanceRecord = {
-  id: string
-  run_id: string
-  target: HarnessAcceptanceTarget
-  criteria?: Array<string>
-  policy: HarnessAcceptancePolicy
-  required?: boolean
-  result?: HarnessAcceptanceGateResult
-  evidence?: Array<HarnessV2Ref>
-  reason?: string
-  reviewer?: string
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessSummary = {
-  run: HarnessRun
-  tasks: Array<HarnessTask>
-  assignments: Array<HarnessAssignment>
-  artifacts: Array<HarnessArtifact>
-  decisions: Array<HarnessDecision>
-  events: Array<HarnessEvent>
-  graph?: HarnessActionGraph
-  actions?: Array<HarnessActionRecord>
-  edges?: Array<HarnessActionEdge>
-  resources?: Array<HarnessResourceRecord>
-  contexts?: Array<HarnessContextBundle>
-  agent_sessions?: Array<HarnessAgentSessionRecord>
-  handoffs?: Array<HarnessHandoffRecord>
-  acceptance?: Array<HarnessAcceptanceRecord>
-}
-
-export type HarnessAgentKind = "planner" | "worker" | "verifier" | "helper"
-
-export type HarnessAgentEntry = {
-  primary?: boolean
-  delegable?: boolean
-  mentionable?: boolean
-}
-
-export type HarnessAgentCapability = {
-  tags?: Array<string>
-  writes?: boolean
-  cost?: "low" | "medium" | "high"
-}
-
-export type HarnessAgentPermission = {
-  tools?: Array<string>
-  scopes?: Array<"private" | "project" | "team" | "public">
-  write?: boolean
-}
-
-export type HarnessAgentTemplateRecord = {
-  id: string
-  identity: string
-  kind: HarnessAgentKind
-  entry: HarnessAgentEntry
-  capability: HarnessAgentCapability
-  permission: HarnessAgentPermission
-  model_preference?: {
-    provider: string
-    model: string
-  }
-  execution_mode?: "chat" | "workflow" | "protocol"
-  relationships: {
-    supervises?: Array<string>
-    peers?: Array<string>
-  }
-  orchestration_policy: {
-    max_parallel?: number
-    review_required?: boolean
-  }
-  availability?: "available" | "busy" | "disabled"
-  created_at?: number
-  updated_at?: number
-}
-
-export type HarnessWorkflowNodeProfile = {
-  id: string
-  title: string
-  type?: string
-  depends_on?: Array<string>
-  criteria?: Array<string>
-  failure?: string
-  gate?: string
-  loop?: {
-    [key: string]: unknown
-  }
-  budget?: {
-    [key: string]: unknown
-  }
-  artifacts?: Array<HarnessV2Ref>
-  visibility?: HarnessV2Visibility
-  handoff?: HarnessV2Ref
-}
-
-export type HarnessWorkflowProfile = {
-  goal: string
-  inputs_schema?: {
-    [key: string]: unknown
-  }
-  nodes?: Array<HarnessWorkflowNodeProfile>
-  depends_on?: Array<string>
-  criteria?: Array<string>
-  failure?: string
-  gate?: string
-  loop?: {
-    [key: string]: unknown
-  }
-  budget?: {
-    [key: string]: unknown
-  }
-  artifacts?: Array<HarnessV2Ref>
-  visibility?: HarnessV2Visibility
-  handoff?: HarnessV2Ref
-}
-
-export type HarnessWorkflowAsset = {
-  id: string
-  owner: string
-  version?: number
-  source: string
-  visibility?: HarnessV2Visibility
-  profile: HarnessWorkflowProfile
-  created_at: number
-  updated_at: number
-}
-
-export type HarnessCommand = {
-  type:
-    | "run.create"
-    | "run.pause"
-    | "run.resume"
-    | "run.abort"
-    | "action.accept"
-    | "action.cancel"
-    | "action.retry"
-    | "resource.write"
-    | "resource.tombstone"
-    | "task.retry"
-    | "task.cancel"
-    | "decision.answer"
-    | "verify.rerun"
-    | "concept.replace.request"
-    | "concept.replace.approve"
-    | "concept.replace.reject"
-  run_id?: string
-  task_id?: string
-  decision_id?: string
-  concept_id?: string
-  actor?: string
-  payload?: {
-    [key: string]: unknown
-  }
-}
-
 export type MemoryPrivacy = "project" | "session"
 
 export type MemorySource = {
@@ -2709,6 +2306,7 @@ export type AgentManageDiagnostic = {
   source?: "builtin" | "package" | "user" | "project"
   dir?: string
   field?: string
+  category?: string
 }
 
 export type AgentManageInfo = {
@@ -2720,6 +2318,140 @@ export type AgentManageInfo = {
   editable: boolean
   dir?: string
   meta: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */
@@ -2810,6 +2542,140 @@ export type AgentManageInfo = {
 export type AgentManageValidateOutput = {
   valid: boolean
   meta?: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */
@@ -2906,6 +2772,140 @@ export type AgentManageSaveInput = {
   scope?: "user" | "project"
   meta: {
     /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
+    /**
      * Unique identifier for the agent
      */
     id: string
@@ -2993,6 +2993,140 @@ export type AgentManageSaveInput = {
 export type AgentManagePatchInput = {
   scope?: "user" | "project"
   meta?: {
+    /**
+     * Agent metadata schema version
+     */
+    schema_version?: string
+    /**
+     * Agent behavior or configuration version
+     */
+    agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
+    /**
+     * Agent display logo
+     */
+    logo?: {
+      /**
+       * Logo URI
+       */
+      uri: string
+      /**
+       * Accessible logo label
+       */
+      alt?: string
+      /**
+       * Logo theme
+       */
+      theme?: "light" | "dark" | "auto"
+      /**
+       * Logo integrity hash
+       */
+      hash?: string
+    }
+    /**
+     * Runtime instruction inputs
+     */
+    instructions?: {
+      files?: Array<{
+        /**
+         * Instruction file path
+         */
+        path: string
+        /**
+         * Instruction message role
+         */
+        role?: string
+        /**
+         * Whether the file is required
+         */
+        required?: boolean
+      }>
+      model_messages?: Array<{
+        /**
+         * Runtime event name
+         */
+        on: string
+        /**
+         * Message insertion position
+         */
+        position: string
+        /**
+         * Message content
+         */
+        content: string
+      }>
+    }
+    /**
+     * Input and output contracts
+     */
+    contracts?: {
+      input?: Array<{
+        [key: string]: unknown
+      }>
+      output?: Array<{
+        [key: string]: unknown
+      }>
+    }
+    /**
+     * Agent collaboration policy
+     */
+    collaboration?: {
+      edges?: Array<{
+        [key: string]: unknown
+      }>
+      limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Runtime boundary declaration
+     */
+    runtime_boundary?: {
+      resource_classes?: Array<string>
+      actions?: {
+        [key: string]: Array<string>
+      }
+      network?: {
+        [key: string]: unknown
+      }
+      data?: {
+        [key: string]: unknown
+      }
+      approval?: {
+        [key: string]: unknown
+      }
+      rate_limits?: {
+        [key: string]: unknown
+      }
+    }
+    /**
+     * Completion contract
+     */
+    completion?: {
+      mode?: string
+      criteria?: Array<string>
+      required_artifacts?: Array<string>
+      required_evidence?: Array<string>
+      gates?: Array<{
+        [key: string]: unknown
+      }>
+      allow_partial?: boolean
+    }
+    /**
+     * Observability policy
+     */
+    observability?: {
+      [key: string]: unknown
+    }
+    /**
+     * Lifecycle metadata
+     */
+    lifecycle?: {
+      [key: string]: unknown
+    }
     /**
      * Unique identifier for the agent
      */
@@ -3186,6 +3320,7 @@ export type Agent = {
       note?: string
     }>
   }
+  inheritPermissions?: boolean
   model?: {
     modelID: string
     providerID: string
@@ -4439,6 +4574,7 @@ export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusRe
 
 export type SessionDescendantsBatchData = {
   body?: {
+    directory?: string
     ids: Array<string>
   }
   path?: never
@@ -4473,6 +4609,179 @@ export type SessionDescendantsBatchResponses = {
 }
 
 export type SessionDescendantsBatchResponse = SessionDescendantsBatchResponses[keyof SessionDescendantsBatchResponses]
+
+export type SessionTreeData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    root: string
+  }
+  url: "/session/tree"
+}
+
+export type SessionTreeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeError = SessionTreeErrors[keyof SessionTreeErrors]
+
+export type SessionTreeResponses = {
+  /**
+   * Session tree projection
+   */
+  200: {
+    nodes: Array<SessionTreeNode>
+  }
+}
+
+export type SessionTreeResponse = SessionTreeResponses[keyof SessionTreeResponses]
+
+export type SessionTreeUpdateData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    title?: string
+    agent?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/sessions"
+}
+
+export type SessionTreeUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeUpdateError = SessionTreeUpdateErrors[keyof SessionTreeUpdateErrors]
+
+export type SessionTreeUpdateResponses = {
+  /**
+   * Updated sessions
+   */
+  200: {
+    updated: number
+  }
+}
+
+export type SessionTreeUpdateResponse = SessionTreeUpdateResponses[keyof SessionTreeUpdateResponses]
+
+export type SessionTreeAbortData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    source?: "user" | "parent_session" | "runtime"
+    source_session?: string
+    reason?: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/abort"
+}
+
+export type SessionTreeAbortErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeAbortError = SessionTreeAbortErrors[keyof SessionTreeAbortErrors]
+
+export type SessionTreeAbortResponses = {
+  /**
+   * Aborted sessions
+   */
+  200: {
+    aborted: number
+  }
+}
+
+export type SessionTreeAbortResponse = SessionTreeAbortResponses[keyof SessionTreeAbortResponses]
+
+export type SessionTreeResumeData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    source?: "user" | "parent_session" | "runtime"
+    source_session?: string
+    include_completed?: boolean
+    mode?: "restore" | "message"
+    reason?: string
+    message?: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/resume"
+}
+
+export type SessionTreeResumeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeResumeError = SessionTreeResumeErrors[keyof SessionTreeResumeErrors]
+
+export type SessionTreeResumeResponses = {
+  /**
+   * Resumed sessions
+   */
+  200: {
+    resumed: number
+  }
+}
+
+export type SessionTreeResumeResponse = SessionTreeResumeResponses[keyof SessionTreeResumeResponses]
 
 export type SessionGetStatusData = {
   body?: never
@@ -5123,6 +5432,9 @@ export type SessionPromptData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    metadata?: {
+      [key: string]: unknown
+    }
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -5318,6 +5630,9 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    metadata?: {
+      [key: string]: unknown
+    }
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -5965,7 +6280,35 @@ export type HarnessRunsResponses = {
   /**
    * Harness runs
    */
-  200: Array<HarnessRun>
+  200: Array<{
+    id: string
+    name: string
+    status?:
+      | "drafting"
+      | "ready"
+      | "running"
+      | "paused"
+      | "blocked"
+      | "reviewing"
+      | "verifying"
+      | "reworking"
+      | "completed"
+      | "failed"
+      | "aborted"
+    goal: string
+    mode?: string
+    constraints?: Array<string>
+    memory_scopes?: Array<"run" | "project" | "team" | "global">
+    automation?: "manual" | "guided" | "auto"
+    progress?: {
+      completed?: number
+      total?: number
+    }
+    active_assignments?: number
+    pending_decisions?: number
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessRunsResponse = HarnessRunsResponses[keyof HarnessRunsResponses]
@@ -5999,7 +6342,35 @@ export type HarnessRunCreateResponses = {
   /**
    * Harness run
    */
-  200: HarnessRun
+  200: {
+    id: string
+    name: string
+    status?:
+      | "drafting"
+      | "ready"
+      | "running"
+      | "paused"
+      | "blocked"
+      | "reviewing"
+      | "verifying"
+      | "reworking"
+      | "completed"
+      | "failed"
+      | "aborted"
+    goal: string
+    mode?: string
+    constraints?: Array<string>
+    memory_scopes?: Array<"run" | "project" | "team" | "global">
+    automation?: "manual" | "guided" | "auto"
+    progress?: {
+      completed?: number
+      total?: number
+    }
+    active_assignments?: number
+    pending_decisions?: number
+    created_at: number
+    updated_at: number
+  }
 }
 
 export type HarnessRunCreateResponse = HarnessRunCreateResponses[keyof HarnessRunCreateResponses]
@@ -6028,7 +6399,307 @@ export type HarnessRunGetResponses = {
   /**
    * Harness run summary
    */
-  200: HarnessSummary | null
+  200: {
+    run: {
+      id: string
+      name: string
+      status?:
+        | "drafting"
+        | "ready"
+        | "running"
+        | "paused"
+        | "blocked"
+        | "reviewing"
+        | "verifying"
+        | "reworking"
+        | "completed"
+        | "failed"
+        | "aborted"
+      goal: string
+      mode?: string
+      constraints?: Array<string>
+      memory_scopes?: Array<"run" | "project" | "team" | "global">
+      automation?: "manual" | "guided" | "auto"
+      progress?: {
+        completed?: number
+        total?: number
+      }
+      active_assignments?: number
+      pending_decisions?: number
+      created_at: number
+      updated_at: number
+    }
+    tasks: Array<{
+      id: string
+      run_id: string
+      title: string
+      type?: string
+      status?:
+        | "draft"
+        | "ready"
+        | "assigned"
+        | "running"
+        | "submitted"
+        | "reviewing"
+        | "review_rejected"
+        | "review_approved"
+        | "verifying"
+        | "verify_failed"
+        | "approved"
+        | "merged"
+        | "blocked"
+        | "failed"
+        | "cancelled"
+      goal: string
+      depends_on?: Array<string>
+      acceptance?: Array<string>
+      gates?: Array<{
+        id: string
+        status?: "pending" | "passed" | "failed" | "blocked"
+        required?: Array<string>
+        evidence?: Array<string>
+        reason?: string
+      }>
+      assignment?: {
+        id: string
+        task_id: string
+        actor: string
+        role: string
+        status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+        capabilities?: Array<string>
+        authority?: {
+          [key: string]: unknown
+        }
+        context?: string
+        updated_at: number
+      }
+      artifacts?: Array<string>
+      created_at: number
+      updated_at: number
+    }>
+    assignments: Array<{
+      id: string
+      task_id: string
+      actor: string
+      role: string
+      status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+      capabilities?: Array<string>
+      authority?: {
+        [key: string]: unknown
+      }
+      context?: string
+      updated_at: number
+    }>
+    artifacts: Array<{
+      id: string
+      run_id: string
+      task_id?: string
+      kind: string
+      path: string
+      summary?: string
+      created_event?: string
+      created_at: number
+    }>
+    decisions: Array<{
+      id: string
+      run_id: string
+      task_id?: string
+      level?: "L0" | "L1" | "L2" | "L3" | "L4"
+      status?: "pending" | "answered" | "rejected" | "cancelled"
+      question: string
+      options?: Array<{
+        id: string
+        label: string
+        tradeoff?: string
+      }>
+      recommended?: string
+      answer?: string
+      created_at: number
+      updated_at: number
+    }>
+    events: Array<{
+      id: string
+      run_id?: string
+      type: string
+      actor?: string
+      time: number
+      summary?: string
+      payload?: {
+        [key: string]: unknown
+      }
+    }>
+    graph?: {
+      id: string
+      run_id: string
+      schema_version?: "v2.0"
+      status?: "active" | "completed" | "blocked" | "failed" | "cancelled"
+      created_at: number
+      updated_at: number
+    }
+    actions?: Array<{
+      id: string
+      run_id: string
+      graph_id: string
+      kind: "act"
+      type?: string
+      title: string
+      status?: "ready" | "blocked" | "running" | "completed" | "failed" | "cancelled"
+      depends_on?: Array<string>
+      criteria?: Array<string>
+      failure?: string
+      gate?: string
+      budget?: {
+        [key: string]: unknown
+      }
+      visibility?: "private" | "project" | "team" | "public"
+      expected_artifacts?: Array<string>
+      idempotency_key?: string
+      resource_locks?: Array<string>
+      cancellation?: {
+        allowed?: boolean
+        reason?: string
+      }
+      retry_policy?: {
+        max?: number
+        backoff?: "none" | "linear" | "exponential"
+      }
+      created_at: number
+      updated_at: number
+    }>
+    edges?: Array<{
+      run_id: string
+      graph_id: string
+      from: string
+      to: string
+      kind?: "depends_on"
+    }>
+    resources?: Array<{
+      id: string
+      run_id: string
+      kind:
+        | "tool_output"
+        | "model_long_output"
+        | "review_report"
+        | "test_report"
+        | "research_note"
+        | "handoff_state"
+        | "context_snapshot"
+        | "document"
+      uri: string
+      summary: string
+      producer: {
+        type: "runtime" | "model" | "tool" | "agent" | "user" | "system" | "import"
+        id: string
+        run_id?: string
+        action_id?: string
+        session_id?: string
+      }
+      source_action?: string
+      visibility?: "private" | "project" | "team" | "public"
+      evidence?: Array<string>
+      lifecycle?: "draft" | "active" | "archived" | "tombstoned"
+      media_type?: string
+      size: number
+      created_at: number
+      updated_at: number
+    }>
+    contexts?: Array<{
+      id: string
+      run_id: string
+      assignment_id?: string
+      goal: string
+      user_input?: string
+      included?: Array<{
+        ref: string
+        mode: "summary" | "structured" | "full" | "on_failure" | "on_demand" | "adaptive"
+        visibility: "private" | "project" | "team" | "public"
+        summary: string
+        content: string
+        reason: string
+        tokens: number
+      }>
+      excluded?: Array<{
+        ref: string
+        mode: "summary" | "structured" | "full" | "on_failure" | "on_demand" | "adaptive"
+        visibility?: "private" | "project" | "team" | "public"
+        reason: string
+      }>
+      refs?: Array<string>
+      summary: string
+      token_budget: number
+      tokens_used: number
+      visibility?: "private" | "project" | "team" | "public"
+      created_at: number
+    }>
+    agent_sessions?: Array<{
+      id: string
+      run_id: string
+      template_id: string
+      assignment_id: string
+      action_id: string
+      authority?: {
+        [key: string]: unknown
+      }
+      context_summary: string
+      trace_refs?: Array<string>
+      status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+      created_at: number
+      updated_at: number
+    }>
+    handoffs?: Array<{
+      id: string
+      run_id: string
+      kind: "assign" | "handoff" | "sync"
+      uri: string
+      source: {
+        type: "user" | "agent" | "runtime" | "system"
+        id: string
+        assignment_id?: string
+        session_id?: string
+      }
+      target: {
+        type: "user" | "agent" | "runtime" | "system"
+        id: string
+        assignment_id?: string
+        session_id?: string
+      }
+      summary: string
+      state?: "draft" | "ready" | "sent" | "received" | "blocked" | "completed"
+      evidence?: Array<string>
+      risks?: Array<string>
+      unresolved?: Array<string>
+      next?: Array<string>
+      refs?: Array<string>
+      resource_refs?: Array<string>
+      projection_ref?: string
+      trace_ref?: string
+      context_ref?: string
+      created_at: number
+      updated_at: number
+    }>
+    acceptance?: Array<{
+      id: string
+      run_id: string
+      target: {
+        type: "run" | "action_graph" | "action" | "assignment" | "workflow_node" | "resource"
+        ref: string
+      }
+      criteria?: Array<string>
+      policy: {
+        level: "none" | "auto" | "test" | "agent" | "human" | "combined" | "sampled"
+        checks?: Array<string>
+        required?: boolean
+        reviewer?: string
+      }
+      required?: boolean
+      result?: "approved" | "changes_requested" | "needs_evidence" | "needs_user_decision" | "blocked" | "waived"
+      evidence?: Array<string>
+      reason?: string
+      reviewer?: string
+      created_at: number
+      updated_at: number
+    }>
+  } | null
 }
 
 export type HarnessRunGetResponse = HarnessRunGetResponses[keyof HarnessRunGetResponses]
@@ -6057,7 +6728,36 @@ export type HarnessRunResourcesResponses = {
   /**
    * Harness run resources
    */
-  200: Array<HarnessResourceRecord>
+  200: Array<{
+    id: string
+    run_id: string
+    kind:
+      | "tool_output"
+      | "model_long_output"
+      | "review_report"
+      | "test_report"
+      | "research_note"
+      | "handoff_state"
+      | "context_snapshot"
+      | "document"
+    uri: string
+    summary: string
+    producer: {
+      type: "runtime" | "model" | "tool" | "agent" | "user" | "system" | "import"
+      id: string
+      run_id?: string
+      action_id?: string
+      session_id?: string
+    }
+    source_action?: string
+    visibility?: "private" | "project" | "team" | "public"
+    evidence?: Array<string>
+    lifecycle?: "draft" | "active" | "archived" | "tombstoned"
+    media_type?: string
+    size: number
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessRunResourcesResponse = HarnessRunResourcesResponses[keyof HarnessRunResourcesResponses]
@@ -6086,7 +6786,21 @@ export type HarnessRunAgentSessionsResponses = {
   /**
    * Harness run agent sessions
    */
-  200: Array<HarnessAgentSessionRecord>
+  200: Array<{
+    id: string
+    run_id: string
+    template_id: string
+    assignment_id: string
+    action_id: string
+    authority?: {
+      [key: string]: unknown
+    }
+    context_summary: string
+    trace_refs?: Array<string>
+    status?: "pending" | "running" | "completed" | "failed" | "cancelled"
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessRunAgentSessionsResponse = HarnessRunAgentSessionsResponses[keyof HarnessRunAgentSessionsResponses]
@@ -6115,7 +6829,37 @@ export type HarnessRunHandoffsResponses = {
   /**
    * Harness run handoffs
    */
-  200: Array<HarnessHandoffRecord>
+  200: Array<{
+    id: string
+    run_id: string
+    kind: "assign" | "handoff" | "sync"
+    uri: string
+    source: {
+      type: "user" | "agent" | "runtime" | "system"
+      id: string
+      assignment_id?: string
+      session_id?: string
+    }
+    target: {
+      type: "user" | "agent" | "runtime" | "system"
+      id: string
+      assignment_id?: string
+      session_id?: string
+    }
+    summary: string
+    state?: "draft" | "ready" | "sent" | "received" | "blocked" | "completed"
+    evidence?: Array<string>
+    risks?: Array<string>
+    unresolved?: Array<string>
+    next?: Array<string>
+    refs?: Array<string>
+    resource_refs?: Array<string>
+    projection_ref?: string
+    trace_ref?: string
+    context_ref?: string
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessRunHandoffsResponse = HarnessRunHandoffsResponses[keyof HarnessRunHandoffsResponses]
@@ -6144,7 +6888,28 @@ export type HarnessRunAcceptanceResponses = {
   /**
    * Harness run acceptance records
    */
-  200: Array<HarnessAcceptanceRecord>
+  200: Array<{
+    id: string
+    run_id: string
+    target: {
+      type: "run" | "action_graph" | "action" | "assignment" | "workflow_node" | "resource"
+      ref: string
+    }
+    criteria?: Array<string>
+    policy: {
+      level: "none" | "auto" | "test" | "agent" | "human" | "combined" | "sampled"
+      checks?: Array<string>
+      required?: boolean
+      reviewer?: string
+    }
+    required?: boolean
+    result?: "approved" | "changes_requested" | "needs_evidence" | "needs_user_decision" | "blocked" | "waived"
+    evidence?: Array<string>
+    reason?: string
+    reviewer?: string
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessRunAcceptanceResponse = HarnessRunAcceptanceResponses[keyof HarnessRunAcceptanceResponses]
@@ -6194,6 +6959,38 @@ export type GetHarnessRunsRunIdArtifactsResponses = {
   200: unknown
 }
 
+export type GetHarnessRunsRunIdResourcesResourceIdData = {
+  body?: never
+  path: {
+    runID: string
+    resourceID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/resources/{resourceID}"
+}
+
+export type GetHarnessRunsRunIdResourcesResourceIdResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdResourcesResourceIdPreviewData = {
+  body?: never
+  path: {
+    runID: string
+    resourceID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/resources/{resourceID}/preview"
+}
+
+export type GetHarnessRunsRunIdResourcesResourceIdPreviewResponses = {
+  200: unknown
+}
+
 export type GetHarnessRunsRunIdDecisionsData = {
   body?: never
   path: {
@@ -6206,6 +7003,37 @@ export type GetHarnessRunsRunIdDecisionsData = {
 }
 
 export type GetHarnessRunsRunIdDecisionsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdProjectionsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/projections"
+}
+
+export type GetHarnessRunsRunIdProjectionsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdProjectionsNameData = {
+  body?: never
+  path: {
+    runID: string
+    name: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/projections/{name}"
+}
+
+export type GetHarnessRunsRunIdProjectionsNameResponses = {
   200: unknown
 }
 
@@ -6269,6 +7097,67 @@ export type GetHarnessRunsRunIdAuditExportResponses = {
   200: unknown
 }
 
+export type GetHarnessRunsRunIdTraceExportData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/trace/export"
+}
+
+export type GetHarnessRunsRunIdTraceExportResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdEvaluationData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/evaluation"
+}
+
+export type GetHarnessRunsRunIdEvaluationResponses = {
+  200: unknown
+}
+
+export type HarnessRunPerformanceData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/performance"
+}
+
+export type HarnessRunPerformanceErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type HarnessRunPerformanceError = HarnessRunPerformanceErrors[keyof HarnessRunPerformanceErrors]
+
+export type HarnessRunPerformanceResponses = {
+  /**
+   * Run performance profile
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type HarnessRunPerformanceResponse = HarnessRunPerformanceResponses[keyof HarnessRunPerformanceResponses]
+
 export type GetHarnessRunsRunIdProjectionsRebuildData = {
   body?: never
   path: {
@@ -6306,7 +7195,42 @@ export type HarnessAgentTemplatesResponses = {
   /**
    * Harness agent templates
    */
-  200: Array<HarnessAgentTemplateRecord>
+  200: Array<{
+    id: string
+    identity: string
+    kind: "planner" | "worker" | "verifier" | "helper"
+    entry: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+    }
+    capability: {
+      tags?: Array<string>
+      writes?: boolean
+      cost?: "low" | "medium" | "high"
+    }
+    permission: {
+      tools?: Array<string>
+      scopes?: Array<"private" | "project" | "team" | "public">
+      write?: boolean
+    }
+    model_preference?: {
+      provider: string
+      model: string
+    }
+    execution_mode?: "chat" | "workflow" | "protocol"
+    relationships: {
+      supervises?: Array<string>
+      peers?: Array<string>
+    }
+    orchestration_policy: {
+      max_parallel?: number
+      review_required?: boolean
+    }
+    availability?: "available" | "busy" | "disabled"
+    created_at?: number
+    updated_at?: number
+  }>
 }
 
 export type HarnessAgentTemplatesResponse = HarnessAgentTemplatesResponses[keyof HarnessAgentTemplatesResponses]
@@ -6333,10 +7257,113 @@ export type HarnessWorkflowsResponses = {
   /**
    * Harness workflow assets
    */
-  200: Array<HarnessWorkflowAsset>
+  200: Array<{
+    id: string
+    owner: string
+    version?: number
+    source: string
+    visibility?: "private" | "project" | "team" | "public"
+    profile: {
+      goal: string
+      inputs_schema?: {
+        [key: string]: unknown
+      }
+      nodes?: Array<{
+        id: string
+        title: string
+        type?: string
+        depends_on?: Array<string>
+        criteria?: Array<string>
+        failure?: string
+        gate?: string
+        loop?: {
+          [key: string]: unknown
+        }
+        budget?: {
+          [key: string]: unknown
+        }
+        artifacts?: Array<string>
+        visibility?: "private" | "project" | "team" | "public"
+        handoff?: string
+      }>
+      depends_on?: Array<string>
+      criteria?: Array<string>
+      failure?: string
+      gate?: string
+      loop?: {
+        [key: string]: unknown
+      }
+      budget?: {
+        [key: string]: unknown
+      }
+      artifacts?: Array<string>
+      visibility?: "private" | "project" | "team" | "public"
+      handoff?: string
+    }
+    created_at: number
+    updated_at: number
+  }>
 }
 
 export type HarnessWorkflowsResponse = HarnessWorkflowsResponses[keyof HarnessWorkflowsResponses]
+
+export type PostHarnessWorkflowsData = {
+  body?: {
+    id: string
+    owner: string
+    version?: number
+    source: string
+    visibility?: "private" | "project" | "team" | "public"
+    profile: {
+      goal: string
+      inputs_schema?: {
+        [key: string]: unknown
+      }
+      nodes?: Array<{
+        id: string
+        title: string
+        type?: string
+        depends_on?: Array<string>
+        criteria?: Array<string>
+        failure?: string
+        gate?: string
+        loop?: {
+          [key: string]: unknown
+        }
+        budget?: {
+          [key: string]: unknown
+        }
+        artifacts?: Array<string>
+        visibility?: "private" | "project" | "team" | "public"
+        handoff?: string
+      }>
+      depends_on?: Array<string>
+      criteria?: Array<string>
+      failure?: string
+      gate?: string
+      loop?: {
+        [key: string]: unknown
+      }
+      budget?: {
+        [key: string]: unknown
+      }
+      artifacts?: Array<string>
+      visibility?: "private" | "project" | "team" | "public"
+      handoff?: string
+    }
+    created_at: number
+    updated_at: number
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/workflows"
+}
+
+export type PostHarnessWorkflowsResponses = {
+  200: unknown
+}
 
 export type HarnessWorkflowGetData = {
   body?: never
@@ -6362,13 +7389,86 @@ export type HarnessWorkflowGetResponses = {
   /**
    * Harness workflow asset
    */
-  200: HarnessWorkflowAsset | null
+  200: {
+    id: string
+    owner: string
+    version?: number
+    source: string
+    visibility?: "private" | "project" | "team" | "public"
+    profile: {
+      goal: string
+      inputs_schema?: {
+        [key: string]: unknown
+      }
+      nodes?: Array<{
+        id: string
+        title: string
+        type?: string
+        depends_on?: Array<string>
+        criteria?: Array<string>
+        failure?: string
+        gate?: string
+        loop?: {
+          [key: string]: unknown
+        }
+        budget?: {
+          [key: string]: unknown
+        }
+        artifacts?: Array<string>
+        visibility?: "private" | "project" | "team" | "public"
+        handoff?: string
+      }>
+      depends_on?: Array<string>
+      criteria?: Array<string>
+      failure?: string
+      gate?: string
+      loop?: {
+        [key: string]: unknown
+      }
+      budget?: {
+        [key: string]: unknown
+      }
+      artifacts?: Array<string>
+      visibility?: "private" | "project" | "team" | "public"
+      handoff?: string
+    }
+    created_at: number
+    updated_at: number
+  } | null
 }
 
 export type HarnessWorkflowGetResponse = HarnessWorkflowGetResponses[keyof HarnessWorkflowGetResponses]
 
 export type PostHarnessCommandsData = {
-  body?: HarnessCommand
+  body?: {
+    type:
+      | "run.create"
+      | "run.pause"
+      | "run.resume"
+      | "run.abort"
+      | "action.accept"
+      | "action.cancel"
+      | "action.retry"
+      | "resource.write"
+      | "resource.tombstone"
+      | "task.retry"
+      | "task.cancel"
+      | "decision.answer"
+      | "verify.rerun"
+      | "concept.replace.request"
+      | "concept.replace.approve"
+      | "concept.replace.reject"
+      | "handoff.plan"
+      | "handoff.self_report.request"
+    run_id?: string
+    task_id?: string
+    decision_id?: string
+    concept_id?: string
+    actor?: string
+    payload?: {
+      [key: string]: unknown
+    }
+  }
   path?: never
   query?: {
     directory?: string
@@ -6377,6 +7477,54 @@ export type PostHarnessCommandsData = {
 }
 
 export type PostHarnessCommandsResponses = {
+  200: unknown
+}
+
+export type PostHarnessAgentsTemplatesData = {
+  body?: {
+    id: string
+    identity: string
+    kind: "planner" | "worker" | "verifier" | "helper"
+    entry: {
+      primary?: boolean
+      delegable?: boolean
+      mentionable?: boolean
+    }
+    capability: {
+      tags?: Array<string>
+      writes?: boolean
+      cost?: "low" | "medium" | "high"
+    }
+    permission: {
+      tools?: Array<string>
+      scopes?: Array<"private" | "project" | "team" | "public">
+      write?: boolean
+    }
+    model_preference?: {
+      provider: string
+      model: string
+    }
+    execution_mode?: "chat" | "workflow" | "protocol"
+    relationships: {
+      supervises?: Array<string>
+      peers?: Array<string>
+    }
+    orchestration_policy: {
+      max_parallel?: number
+      review_required?: boolean
+    }
+    availability?: "available" | "busy" | "disabled"
+    created_at?: number
+    updated_at?: number
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/harness/agents/templates"
+}
+
+export type PostHarnessAgentsTemplatesResponses = {
   200: unknown
 }
 

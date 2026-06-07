@@ -15,6 +15,21 @@ export namespace SessionStatus {
         type: z.literal("running"),
       }),
       z.object({
+        type: z.literal("queued"),
+      }),
+      z.object({
+        type: z.literal("starting"),
+      }),
+      z.object({
+        type: z.literal("rate_limited"),
+        providerID: z.string(),
+        modelID: z.string(),
+        scope: z.enum(["provider", "model"]),
+        active: z.number().int().nonnegative(),
+        limit: z.number().int().positive(),
+        queued: z.number().int().positive(),
+      }),
+      z.object({
         type: z.literal("waiting_permission"),
       }),
       z.object({
@@ -23,6 +38,36 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("error"),
         message: z.string(),
+      }),
+      z.object({
+        type: z.literal("timeout"),
+        message: z.string(),
+      }),
+      z.object({
+        type: z.literal("paused"),
+        message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("aborting"),
+        message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("aborted"),
+        message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("failed"),
+        message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("blocked"),
+        message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("completed"),
+      }),
+      z.object({
+        type: z.literal("archived"),
       }),
       z.object({
         type: z.literal("retry"),
@@ -65,12 +110,107 @@ export namespace SessionStatus {
   })
 
   const transitions: Record<Info["type"], Info["type"][]> = {
-    idle: ["idle", "running", "waiting_permission", "waiting_user", "error"],
-    running: ["idle", "running", "waiting_permission", "waiting_user", "error", "retry"],
-    waiting_permission: ["idle", "running", "waiting_permission", "waiting_user", "error"],
-    waiting_user: ["idle", "running", "waiting_permission", "waiting_user", "error"],
-    error: ["idle", "running", "error"],
-    retry: ["idle", "running", "error", "retry"],
+    idle: [
+      "idle",
+      "queued",
+      "starting",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "paused",
+      "aborting",
+      "aborted",
+      "failed",
+      "blocked",
+      "completed",
+      "archived",
+    ],
+    queued: ["idle", "starting", "running", "aborted", "failed", "blocked"],
+    starting: [
+      "idle",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "retry",
+      "aborted",
+      "failed",
+      "blocked",
+    ],
+    running: [
+      "idle",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "retry",
+      "paused",
+      "aborting",
+      "aborted",
+      "failed",
+      "blocked",
+      "completed",
+    ],
+    rate_limited: [
+      "idle",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "retry",
+      "paused",
+      "aborting",
+      "aborted",
+      "failed",
+      "blocked",
+    ],
+    waiting_permission: [
+      "idle",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "paused",
+      "aborting",
+      "aborted",
+      "failed",
+      "blocked",
+    ],
+    waiting_user: [
+      "idle",
+      "running",
+      "rate_limited",
+      "waiting_permission",
+      "waiting_user",
+      "error",
+      "timeout",
+      "paused",
+      "aborting",
+      "aborted",
+      "failed",
+      "blocked",
+    ],
+    error: ["idle", "running", "rate_limited", "error", "timeout", "aborted", "failed", "blocked", "archived"],
+    timeout: ["idle", "running", "rate_limited", "error", "timeout", "aborted", "failed", "blocked", "archived"],
+    retry: ["idle", "running", "rate_limited", "error", "timeout", "retry", "paused", "aborted", "failed", "blocked"],
+    paused: ["idle", "running", "aborting", "aborted", "failed", "blocked"],
+    aborting: ["idle", "aborted", "failed"],
+    aborted: ["idle", "running", "aborted", "archived"],
+    failed: ["idle", "running", "failed", "archived"],
+    blocked: ["idle", "running", "waiting_permission", "waiting_user", "aborted", "failed", "blocked"],
+    completed: ["idle", "running", "completed", "archived"],
+    archived: ["idle", "archived"],
   }
 
   export function get(sessionID: SessionID) {
@@ -111,7 +251,7 @@ export namespace SessionStatus {
 
   export function dismiss(sessionID: SessionID) {
     const current = get(sessionID)
-    if (current.type !== "error") return current
+    if (current.type !== "error" && current.type !== "timeout") return current
     set(sessionID, { type: "idle" })
     return get(sessionID)
   }

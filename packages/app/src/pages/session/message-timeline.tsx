@@ -9,7 +9,7 @@ import { DropdownMenu } from "@open-agent-harness/ui/dropdown-menu"
 import { Dialog } from "@open-agent-harness/ui/dialog"
 import { InlineInput } from "@open-agent-harness/ui/inline-input"
 import { Spinner } from "@open-agent-harness/ui/spinner"
-import { SessionTurn } from "@open-agent-harness/ui/session-turn"
+import { SessionTurn, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
 import type { AssistantMessage, Message as MessageType, Part, TextPart, UserMessage } from "@open-agent-harness/sdk/v2"
@@ -29,6 +29,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
+import { isSessionBusy } from "@/pages/session/helpers"
 
 type MessageComment = {
   path: string
@@ -247,6 +248,11 @@ export function MessageTimeline(props: {
   onLoadEarlier: () => void
   renderedUserMessages: UserMessage[]
   anchor: (id: string) => string
+  filter: SessionTurnFilter
+  onFilterChange: (filter: SessionTurnFilter) => void
+  onJumpPreviousUserInput: () => void
+  onJumpNextUserInput: () => void
+  canJumpUserInput: boolean
 }) {
   let touchGesture: number | undefined
 
@@ -260,7 +266,6 @@ export function MessageTimeline(props: {
   const { params, sessionKey } = useSessionKey()
   const platform = usePlatform()
 
-  const rendered = createMemo(() => props.renderedUserMessages.map((message) => message.id))
   const sessionID = createMemo(() => params.id)
   const sessionMessages = createMemo(() => {
     const id = sessionID()
@@ -277,8 +282,28 @@ export function MessageTimeline(props: {
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
   })
-  const working = createMemo(() => !!pending() || sessionStatus().type !== "idle")
+  const working = createMemo(() => !!pending() || isSessionBusy(sessionStatus()))
   const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
+  const turnMatches = (id: string) => {
+    if (props.filter === "all" || props.filter === "input") return true
+    const messages = sessionMessages()
+    const index = messages.findIndex((item) => item.id === id)
+    if (index === -1) return false
+
+    for (let i = index + 1; i < messages.length; i++) {
+      const item = messages[i]
+      if (!item) continue
+      if (item.role === "user") break
+      if (item.role !== "assistant" || item.parentID !== id) continue
+      const parts = sync.data.part[item.id] ?? []
+      if (props.filter === "thinking" && parts.some((part) => part.type === "reasoning")) return true
+      if (props.filter === "output" && parts.some((part) => part.type === "text")) return true
+      if (props.filter === "tool" && parts.some((part) => part.type === "tool")) return true
+    }
+
+    return false
+  }
+  const rendered = createMemo(() => props.renderedUserMessages.filter((message) => turnMatches(message.id)).map((message) => message.id))
 
   const [slot, setSlot] = createStore({
     open: false,
@@ -340,7 +365,14 @@ export function MessageTimeline(props: {
   const shareUrl = createMemo(() => info()?.share?.url)
   const shareEnabled = createMemo(() => sync.data.config.share !== "disabled")
   const parentID = createMemo(() => info()?.parentID)
-  const showHeader = createMemo(() => !!(titleValue() || parentID()))
+  const showHeader = createMemo(() => true)
+  const filterOptions: { id: SessionTurnFilter; label: string }[] = [
+    { id: "all", label: "全部" },
+    { id: "thinking", label: "思考" },
+    { id: "input", label: "输入" },
+    { id: "output", label: "输出" },
+    { id: "tool", label: "工具调用" },
+  ]
   const stageCfg = { init: 1, batch: 3 }
   const staging = createTimelineStaging({
     sessionKey,
@@ -652,6 +684,26 @@ export function MessageTimeline(props: {
             <Icon name="arrow-down-to-line" />
           </button>
         </div>
+        <Show when={props.canJumpUserInput}>
+          <div class="absolute right-3 top-20 z-40 flex flex-col gap-2">
+            <IconButton
+              icon="arrow-up"
+              variant="ghost"
+              class="size-8 rounded-full border border-border-weak-base bg-background-base shadow-sm"
+              aria-label="跳到上一次用户输入"
+              onClick={props.onJumpPreviousUserInput}
+            />
+            <Show when={!props.scroll.bottom}>
+              <IconButton
+                icon="arrow-down-to-line"
+                variant="ghost"
+                class="size-8 rounded-full border border-border-weak-base bg-background-base shadow-sm"
+                aria-label="跳到下一次用户输入"
+                onClick={props.onJumpNextUserInput}
+              />
+            </Show>
+          </div>
+        </Show>
         <ScrollView
           viewportRef={props.setScrollRef}
           onWheel={(e) => {
@@ -700,8 +752,8 @@ export function MessageTimeline(props: {
           onClick={props.onAutoScrollInteraction}
           class="relative min-w-0 w-full h-full"
           style={{
-            "--session-title-height": showHeader() ? "40px" : "0px",
-            "--sticky-accordion-top": showHeader() ? "48px" : "0px",
+            "--session-title-height": showHeader() ? "80px" : "0px",
+            "--sticky-accordion-top": showHeader() ? "88px" : "0px",
           }}
         >
           <div ref={props.setContentRef} class="min-w-0 w-full">
@@ -976,6 +1028,23 @@ export function MessageTimeline(props: {
                     )}
                   </Show>
                 </div>
+                <div class="flex w-full items-center gap-1 overflow-x-auto no-scrollbar pb-1">
+                  <For each={filterOptions}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md px-2.5 py-1 text-12-medium transition-colors"
+                        classList={{
+                          "bg-surface-base-active text-text-strong": props.filter === item.id,
+                          "text-text-weak hover:bg-surface-base-hover hover:text-text-base": props.filter !== item.id,
+                        }}
+                        onClick={() => props.onFilterChange(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    )}
+                  </For>
+                </div>
               </div>
             </Show>
 
@@ -1022,7 +1091,7 @@ export function MessageTimeline(props: {
                         "md:max-w-200 2xl:max-w-[1000px]": props.centered,
                       }}
                     >
-                      <Show when={commentCount() > 0}>
+                      <Show when={props.filter === "all" && commentCount() > 0}>
                         <div class="w-full px-4 md:px-5 pb-2">
                           <div class="ml-auto max-w-[82%] overflow-x-auto no-scrollbar">
                             <div class="flex w-max min-w-full justify-end gap-2">
@@ -1066,6 +1135,7 @@ export function MessageTimeline(props: {
                         sessionID={sessionID() ?? ""}
                         messageID={messageID}
                         actions={props.actions}
+                        filter={props.filter}
                         active={active()}
                         status={active() ? sessionStatus() : undefined}
                         showReasoningSummaries={settings.general.showReasoningSummaries()}
@@ -1077,7 +1147,7 @@ export function MessageTimeline(props: {
                           container: "w-full px-4 md:px-5",
                         }}
                       />
-                      <Show when={completed()}>
+                      <Show when={props.filter === "all" && completed()}>
                         <div class="px-4 md:px-5 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
                             <div class="h-px flex-1 bg-border-weaker-base" />

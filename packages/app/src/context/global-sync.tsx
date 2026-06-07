@@ -31,7 +31,6 @@ import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } fr
 import { createRefreshQueue } from "./global-sync/queue"
 import { clearSessionPrefetchDirectory } from "./global-sync/session-prefetch"
 import { estimateRootSessionTotal, loadSessionTreeWithFallback } from "./global-sync/session-load"
-import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
 import { sanitizeProject } from "./global-sync/utils"
@@ -186,14 +185,6 @@ function createGlobalSync() {
     const [store, setStore] = children.child(directory, { bootstrap: false })
     const meta = sessionMeta.get(directory)
     if (meta && meta.limit >= store.limit) {
-      const next = trimSessions(store.session, {
-        limit: store.limit,
-        permission: store.permission,
-      })
-      if (next.length !== store.session.length) {
-        setStore("session", reconcile(next, { key: "id" }))
-        cleanupDroppedSessionCaches(store, setStore, next, setSessionTodo)
-      }
       children.unpin(directory)
       return
     }
@@ -202,11 +193,14 @@ function createGlobalSync() {
     const promise = loadSessionTreeWithFallback({
       directory,
       limit,
+      all: true,
+      children: true,
       loaded: meta?.roots,
       list: (query) => globalSDK.client.session.list(query),
+      tree: (query) => globalSDK.client.session.tree(query),
       descendants: (query) =>
         globalSDK.client.session.descendantsBatch({
-          directory: query.directory,
+          body_directory: query.directory,
           ids: query.ids,
         }),
     })
@@ -219,16 +213,13 @@ function createGlobalSync() {
         const limit = store.limit
         const ids = new Set(nonArchived.map((s) => s.id))
         const childSessions = store.session.filter((s) => !!s.parentID && !ids.has(s.id))
-        const sessions = trimSessions([...nonArchived, ...childSessions], {
-          limit,
-          permission: store.permission,
-        })
+        const sessions = [...nonArchived, ...childSessions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         setStore(
           "sessionTotal",
           estimateRootSessionTotal({
             count: roots.length,
-            limit: x.limit,
-            limited: x.limited,
+            limit,
+            limited: false,
           }),
         )
         setStore("session", reconcile(sessions, { key: "id" }))

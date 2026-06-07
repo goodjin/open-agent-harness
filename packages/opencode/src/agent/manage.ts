@@ -30,6 +30,7 @@ export namespace AgentManage {
       source: Source.optional(),
       dir: z.string().optional(),
       field: z.string().optional(),
+      category: z.string().optional(),
     })
     .meta({ ref: "AgentManageDiagnostic" })
   export type Diagnostic = z.infer<typeof Diagnostic>
@@ -170,16 +171,33 @@ export namespace AgentManage {
     return (await item.json()) as Config.Info
   }
 
+  function category(field: string | undefined) {
+    if (!field) return undefined
+    if (field === "logo" || field.startsWith("logo.")) return "metadata.logo"
+    if (field === "instructions" || field.startsWith("instructions.")) return "metadata.instructions"
+    if (field === "contracts" || field.startsWith("contracts.")) return "metadata.contracts"
+    if (field === "collaboration" || field.startsWith("collaboration.")) return "metadata.collaboration"
+    if (field === "runtime_boundary" || field.startsWith("runtime_boundary.")) return "metadata.runtime_boundary"
+    if (field === "completion" || field.startsWith("completion.")) return "metadata.completion"
+    if (field === "observability" || field.startsWith("observability.")) return "metadata.observability"
+    if (field === "lifecycle" || field.startsWith("lifecycle.")) return "metadata.lifecycle"
+    return undefined
+  }
+
   function validate(scope: Scope, meta: unknown): ValidateOutput {
     const diagnostics: Diagnostic[] = []
     const result = Template.Meta.safeParse(meta)
     if (!result.success) {
       diagnostics.push(
-        ...result.error.issues.map((issue) => ({
-          level: "error" as const,
-          field: issue.path.join(".") || undefined,
-          message: issue.message,
-        })),
+        ...result.error.issues.map((issue) => {
+          const field = issue.path.join(".") || undefined
+          return {
+            level: "error" as const,
+            field,
+            category: category(field),
+            message: issue.message,
+          }
+        }),
       )
       return { valid: false, diagnostics }
     }

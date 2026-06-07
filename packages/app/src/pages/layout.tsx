@@ -574,6 +574,21 @@ export default function Layout(props: ParentProps) {
 
   createEffect(
     on(
+      () => [pageReady(), layoutReady(), params.dir] as const,
+      ([page, synced, dir]) => {
+        if (!page) return
+        if (!synced) return
+        if (!dir) return
+
+        const directory = decode64(dir)
+        if (!directory) return
+        layout.projects.open(directory)
+      },
+    ),
+  )
+
+  createEffect(
+    on(
       () => ({ ready: pageReady(), layoutReady: layoutReady(), dir: params.dir, list: layout.projects.list() }),
       (value) => {
         if (!value.ready) return
@@ -677,14 +692,14 @@ export default function Layout(props: ParentProps) {
     running: number
   }
 
-  const prefetchChunk = 200
-  const prefetchConcurrency = 2
-  const prefetchPendingLimit = 10
-  const span = 4
+  const prefetchChunk = 30
+  const prefetchConcurrency = 1
+  const prefetchPendingLimit = 3
+  const span = 1
   const prefetchToken = { value: 0 }
   const prefetchQueues = new Map<string, PrefetchQueue>()
 
-  const PREFETCH_MAX_SESSIONS_PER_DIR = 10
+  const PREFETCH_MAX_SESSIONS_PER_DIR = 3
   const prefetchedByDir = new Map<string, Set<string>>()
 
   const lruFor = (directory: string) => {
@@ -1259,7 +1274,7 @@ export default function Layout(props: ParentProps) {
         return true
       }
       const resolved = await globalSDK.client.session
-        .get({ sessionID: target.id })
+        .get({ directory: target.directory, sessionID: target.id })
         .then((x) => x.data)
         .catch(() => undefined)
       if (!resolved?.directory) return false

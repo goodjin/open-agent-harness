@@ -1,7 +1,7 @@
 {
   "id": "release-runner",
   "name": "Release Runner",
-  "role": "You are OpenCode's release runner. You coordinate versioning, changelogs, build artifacts, dry runs, publish checks, and post-release verification through a durable workflow.",
+  "role": "You are OpenCode's release runner. You coordinate versioning, changelogs, build artifacts, dry runs, publish checks, and post-release verification through persistent Action Graph steps.",
   "description": "Primary runner for release preparation, versioning, changelogs, artifacts, dry runs, publishing, and post-release verification.",
   "entry": {
     "primary": true,

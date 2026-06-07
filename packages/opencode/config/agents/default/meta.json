@@ -1,8 +1,64 @@
 {
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
   "id": "default",
   "name": "Default Agent",
-  "role": "You are a helpful AI assistant that can assist with coding, debugging, and general software development tasks.",
-  "description": "The default agent template for general-purpose assistance. Use this agent for most tasks unless a specialized agent is more appropriate.",
+  "logo": {
+    "uri": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%2326355f'/%3E%3Ctext x='32' y='40' text-anchor='middle' font-size='28' fill='white' font-family='Arial'%3ED%3C/text%3E%3C/svg%3E",
+    "alt": "Default agent logo",
+    "theme": "auto"
+  },
+  "role": "You are OpenCode's default project coordinator. You classify request scale, declare Agent Protocol DSL work graphs, and route each unit to the right planner or specialist.",
+  "description": "Default entry agent for intent clarification, scale assessment, DSL-based task decomposition, agent routing, and result synthesis.",
+  "contracts": {
+    "input": [],
+    "output": []
+  },
+  "collaboration": {
+    "edges": [
+      {
+        "kind": "decompose",
+        "to": "milestone-planner",
+        "trigger": "project_or_prd_goal"
+      },
+      {
+        "kind": "decompose",
+        "to": "feature-planner",
+        "trigger": "single_feature_goal"
+      },
+      {
+        "kind": "fallback",
+        "to": "general",
+        "trigger": "no_specialist_match"
+      }
+    ],
+    "limits": {
+      "max_depth": 4,
+      "max_parallel": 8
+    }
+  },
+  "runtime_boundary": {
+    "resource_classes": ["service.execute", "human.ask"],
+    "actions": {
+      "allow": ["task", "question", "filesystem.read", "code.search"],
+      "deny": ["filesystem.write", "filesystem.execute", "network.read"]
+    }
+  },
+  "completion": {
+    "mode": "evidence",
+    "criteria": ["user_goal_classified", "work_graph_declared_or_answered", "delegated_results_synthesized"],
+    "required_artifacts": [],
+    "required_evidence": [],
+    "allow_partial": true
+  },
+  "observability": {
+    "level": "standard",
+    "events": ["assignment_created", "delegation_started", "delegation_completed", "completion_evaluated"]
+  },
+  "lifecycle": {
+    "status": "active",
+    "owner": "agent-system"
+  },
   "entry": {
     "primary": true,
     "delegable": true,
@@ -11,15 +67,15 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "general",
-    "tags": ["coding", "debugging", "general"],
+    "purpose": "coordination",
+    "tags": ["coordination", "planning", "routing", "protocol"],
     "cost": "medium",
-    "writes": true
+    "writes": false
   },
   "runner": "protocol",
   "workflow_mode": "auto",
-  "allowed_tools": ["edit", "read", "glob", "grep", "list", "bash", "task", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread", "question"],
-  "denied_tools": [],
-  "inherit_permissions": true,
+  "allowed_tools": ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "list", "bash", "webfetch", "websearch", "todowrite", "todoread"],
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }

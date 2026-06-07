@@ -11,7 +11,8 @@ describe("validateCustomProvider", () => {
         name: " Custom Provider ",
         baseURL: "https://api.example.com ",
         apiKey: " {env: CUSTOM_PROVIDER_KEY} ",
-        models: [{ row: "m0", id: " model-a ", name: " Model A ", err: {} }],
+        concurrency: "2",
+        models: [{ row: "m0", id: " model-a ", name: " Model A ", concurrency: "1", err: {} }],
         headers: [
           { row: "h0", key: " X-Test ", value: " enabled ", err: {} },
           { row: "h1", key: "", value: "", err: {} },
@@ -32,6 +33,7 @@ describe("validateCustomProvider", () => {
         npm: "@ai-sdk/openai-compatible",
         name: "Custom Provider",
         env: ["CUSTOM_PROVIDER_KEY"],
+        concurrency: 2,
         options: {
           baseURL: "https://api.example.com",
           headers: {
@@ -39,7 +41,7 @@ describe("validateCustomProvider", () => {
           },
         },
         models: {
-          "model-a": { name: "Model A" },
+          "model-a": { name: "Model A", concurrency: 1 },
         },
       },
     })
@@ -52,9 +54,10 @@ describe("validateCustomProvider", () => {
         name: "Provider",
         baseURL: "https://api.example.com",
         apiKey: "secret",
+        concurrency: "",
         models: [
-          { row: "m0", id: "model-a", name: "Model A", err: {} },
-          { row: "m1", id: "model-a", name: "Model A 2", err: {} },
+          { row: "m0", id: "model-a", name: "Model A", concurrency: "", err: {} },
+          { row: "m1", id: "model-a", name: "Model A 2", concurrency: "", err: {} },
         ],
         headers: [
           { row: "h0", key: "Authorization", value: "one", err: {} },
@@ -73,6 +76,7 @@ describe("validateCustomProvider", () => {
     expect(result.models[1]).toEqual({
       id: "provider.custom.error.duplicate",
       name: undefined,
+      concurrency: undefined,
     })
     expect(result.headers[1]).toEqual({
       key: "provider.custom.error.duplicate",

@@ -18,7 +18,12 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { childSessionSummary, displaySessionTitle, hasProjectPermissions, sessionCompleted, sessionWorking } from "./helpers"
+import {
+  displaySessionTitle,
+  hasProjectPermissions,
+  sessionCompleted,
+  sessionWorking,
+} from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -46,36 +51,77 @@ const duration = (session: Session, messages: Message[] | undefined, working: bo
 
 const StatusBadge = (props: {
   label: Accessor<string>
+  status: Accessor<string | undefined>
+  isWaitingChild: Accessor<boolean>
   isWorking: Accessor<boolean>
   isPaused: Accessor<boolean>
   isDone: Accessor<boolean>
   hasError: Accessor<boolean>
   hasPermissions: Accessor<boolean>
   unseenCount: Accessor<number>
-}): JSX.Element => (
-  <div
-    class="relative shrink-0 size-5 rounded-full flex items-center justify-center border bg-background-base"
-    classList={{
-      "border-icon-info-active text-text-interactive-base": props.isWorking(),
-      "border-icon-warning-base text-icon-warning-base": props.isPaused() || props.hasPermissions(),
-      "border-icon-critical-base text-icon-critical-base": props.hasError(),
-      "border-text-diff-add-base text-text-diff-add-base": props.isDone(),
-      "border-border-weak-base text-text-weak": !props.isWorking() && !props.isPaused() && !props.hasPermissions() && !props.hasError() && !props.isDone(),
-    }}
-  >
-    <Show when={props.isWorking()}>
-      <span class="absolute inset-0 rounded-full border border-icon-info-active opacity-25 animate-ping motion-reduce:animate-none" />
-      <Spinner class="absolute size-4 opacity-30" />
-    </Show>
-    <span class="relative z-10 max-w-[18px] overflow-hidden text-center text-[7px] leading-none font-medium tabular-nums">
-      {props.label()}
-    </span>
-    <Show when={props.unseenCount() > 0 && !props.isWorking() && !props.isPaused() && !props.hasError() && !props.isDone()}>
-      <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-text-interactive-base" />
-    </Show>
-  </div>
-)
-
+}): JSX.Element => {
+  const queued = createMemo(() => props.status() === "rate_limited")
+  const retry = createMemo(() => props.status() === "retry")
+  const blocked = createMemo(() => props.hasPermissions() || props.status() === "blocked" || props.status() === "waiting_permission")
+  const waiting = createMemo(() => props.status() === "waiting_user")
+  const tip = createMemo(() => (props.isWaitingChild() ? "等待子会话完成" : props.label()))
+  return (
+    <Tooltip value={tip()} placement="top">
+      <div
+        class="relative shrink-0 size-5 rounded-full flex items-center justify-center border bg-background-base"
+        classList={{
+          "border-icon-info-active text-text-interactive-base": props.isWorking(),
+          "border-icon-warning-base text-icon-warning-base": props.isPaused() || queued() || retry() || props.isWaitingChild(),
+          "border-icon-critical-base text-icon-critical-base": props.hasError() || blocked(),
+          "border-text-diff-add-base text-text-diff-add-base": props.isDone(),
+          "border-border-weak-base text-text-weak": !props.isWorking() && !props.isPaused() && !queued() && !retry() && !props.isWaitingChild() && !props.hasPermissions() && !props.hasError() && !props.isDone(),
+        }}
+      >
+        <Show when={props.isWorking()}>
+          <span class="absolute inset-0 rounded-full border border-icon-info-active opacity-25 animate-ping motion-reduce:animate-none" />
+          <Spinner class="absolute size-4 opacity-40" />
+        </Show>
+        <Show when={props.isWorking() || props.isWaitingChild()}>
+          <span class="relative z-10 max-w-[18px] overflow-hidden text-center text-[7px] leading-none font-medium tabular-nums">
+            {props.label()}
+          </span>
+        </Show>
+        <Show when={!props.isWorking() && !props.isWaitingChild()}>
+          <Show when={props.hasError()} fallback={
+            <Show when={blocked()} fallback={
+              <Show when={queued()} fallback={
+                <Show when={retry()} fallback={
+                  <Show when={waiting()} fallback={
+                    <Show when={props.isWaitingChild()} fallback={
+                      <Show when={props.isDone()} fallback={<Icon name="dash" size="small" />}>
+                        <Icon name="check-small" size="small" />
+                      </Show>
+                    }>
+                      <Icon name="hourglass" size="small" class="animate-pulse motion-reduce:animate-none" />
+                    </Show>
+                  }>
+                    <Icon name="prompt" size="small" />
+                  </Show>
+                }>
+                  <Icon name="reset" size="small" class="animate-spin motion-reduce:animate-none" />
+                </Show>
+              }>
+                <Icon name="status" size="small" />
+              </Show>
+            }>
+              <Icon name="circle-ban-sign" size="small" />
+            </Show>
+          }>
+            <Icon name="circle-x" size="small" />
+          </Show>
+        </Show>
+        <Show when={props.unseenCount() > 0 && !props.isWorking() && !props.isPaused() && !props.hasError() && !props.isDone()}>
+          <span class="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-text-interactive-base" />
+        </Show>
+      </div>
+    </Tooltip>
+  )
+}
 const filterLabel = (filter: Filter) => {
   if (filter === "running") return "运行中"
   if (filter === "ended") return "已结束"
@@ -125,12 +171,21 @@ export const SessionFilterBar = (props: {
   </div>
 )
 
-const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 40
+const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 38
 const row = (dense?: boolean) => (dense ? "24px" : "28px")
-const trunk = (first?: boolean, last?: boolean) => {
-  if (first && last) return { top: "1rem", height: "0px" }
-  if (last) return { top: "0", height: "1rem" }
-  return { top: first ? "1rem" : "0", bottom: "0" }
+const mid = (dense?: boolean) => (dense ? "12px" : "14px")
+const end = (dense?: boolean) => (dense ? "22px" : "24px")
+const line = { "background-color": "var(--border-strong)" }
+const short = (text: string) => {
+  const chars = Array.from(text)
+  if (chars.length <= 20) return text
+  return `${chars.slice(0, 20).join("")}...`
+}
+const trunk = (dense?: boolean, first?: boolean, last?: boolean) => {
+  const top = mid(dense)
+  if (first && last) return { top, height: "0px" }
+  if (last) return { top: "0", height: top }
+  return { top: first ? top : "0", bottom: "0" }
 }
 
 const sessionFilter = (input: {
@@ -210,6 +265,8 @@ export type SessionItemProps = {
   filter?: Accessor<Filter | undefined>
   setExpanded?: (id: string, value: boolean) => void
   children: Map<string, string[]>
+  childSummary?: Map<string, { completed: number; total: number; working: number }>
+  collapseByDefault?: Accessor<boolean>
   sidebarExpanded: Accessor<boolean>
   sidebarHovering: Accessor<boolean>
   nav: Accessor<HTMLElement | undefined>
@@ -222,12 +279,16 @@ export type SessionItemProps = {
 
 const SessionRow = (props: {
   session: Session
-  title: Accessor<string>
-  childSummary: Accessor<{ completed: number; total: number } | undefined>
+  titleLabel: Accessor<string>
+  titleTip: Accessor<string>
+  agentLabel: Accessor<string | undefined>
+  childSummary: Accessor<{ completed: number; total: number; working: number } | undefined>
   slug: string
   mobile?: boolean
   dense?: boolean
   tint: Accessor<string | undefined>
+  status: Accessor<string | undefined>
+  isWaitingChild: Accessor<boolean>
   isWorking: Accessor<boolean>
   isPaused: Accessor<boolean>
   isDone: Accessor<boolean>
@@ -254,7 +315,6 @@ const SessionRow = (props: {
         class="shrink-0 size-5 rounded flex items-center justify-center text-icon-weak focus:outline-none focus-visible:bg-surface-base-active"
         classList={{
           "hover:bg-surface-base-hover": !props.expanded?.(),
-          "opacity-0 group-hover/session:opacity-100 group-focus-within/session:opacity-100": props.expanded?.(),
         }}
         aria-expanded={props.expanded?.() ?? false}
         aria-label="Toggle session children"
@@ -285,6 +345,8 @@ const SessionRow = (props: {
       <div class="flex items-center gap-1 w-full">
         <StatusBadge
           label={props.durationLabel}
+          status={props.status}
+          isWaitingChild={props.isWaitingChild}
           isWorking={props.isWorking}
           isPaused={props.isPaused}
           isDone={props.isDone}
@@ -292,9 +354,14 @@ const SessionRow = (props: {
           hasError={props.hasError}
           unseenCount={props.unseenCount}
         />
-        <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
-          {props.title()}
-        </span>
+        <Tooltip value={props.titleTip()} placement="top">
+          <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
+            {props.titleLabel()}
+          </span>
+        </Tooltip>
+        <Show when={props.agentLabel()}>
+          {(agent) => <span class="shrink-0 text-12-regular text-text-weak">({agent()})</span>}
+        </Show>
         <Show when={props.childSummary()}>
           {(summary) => (
             <span class="shrink-0 rounded bg-surface-base px-1.5 py-0.5 text-11-regular tabular-nums text-text-weak">
@@ -362,7 +429,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const [sessionStore] = globalSync.child(props.session.directory)
   const status = createMemo(() => sessionStore.session_status[props.session.id])
   const unseenCount = createMemo(() => notification.session.unseenCount(props.session.id))
-  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id) || status()?.type === "error")
+  const hasError = createMemo(() => notification.session.unseenHasError(props.session.id) || status()?.type === "error" || status()?.type === "timeout")
   const hasPermissions = createMemo(() => {
     return !!sessionPermissionRequest(sessionStore.session, sessionStore.permission, props.session.id, (item) => {
       return !permission.autoResponds(item, props.session.directory)
@@ -377,8 +444,13 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     if (isPaused()) return false
     return sessionWorking(sessionStore.message[props.session.id], status())
   })
+  const childSummary = createMemo(() => {
+    const summary = props.childSummary?.get(props.session.id)
+    if (!summary || summary.total === 0) return
+    return summary
+  })
   const isDone = createMemo(() => {
-    if (hasPermissions() || isWorking() || hasError()) return false
+    if (hasPermissions() || isWorking() || hasError() || childSummary()?.working) return false
     return sessionCompleted(props.session, sessionStore.message[props.session.id], status())
   })
   createEffect(() => {
@@ -389,6 +461,14 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
 
   const tint = createMemo(() => {
     return messageAgentColor(sessionStore.message[props.session.id], sessionStore.agent)
+  })
+  const agent = createMemo(() => {
+    const list = sessionStore.message[props.session.id]
+    if (!list) return
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i]
+      if (item.role === "user" && item.agent) return item.agent
+    }
   })
   const durationLabel = createMemo(() =>
     duration(props.session, sessionStore.message[props.session.id], isWorking(), now()),
@@ -417,7 +497,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       filter: props.filter?.(),
       messages: sessionStore.message[session.id],
       status: next,
-      hasError: notification.session.unseenHasError(session.id) || next?.type === "error",
+      hasError: notification.session.unseenHasError(session.id) || next?.type === "error" || next?.type === "timeout",
       hasPermissions: blocked,
     })
   }
@@ -439,12 +519,17 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       .indexOf(props.session.id)
     return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
   })
-  const childSummary = createMemo(() => {
-    const children = childSessions()
-    return childSessionSummary(children, sessionStore.message, sessionStore.session_status)
-  })
+  const titleSuffix = createMemo(() => (agent() ? ` (${agent()})` : ""))
+  const titleLabel = createMemo(() => short(title()))
+  const titleTip = createMemo(() => `${title()}${titleSuffix()}`)
+  const isWaitingChild = createMemo(() => !isWorking() && !hasError() && !hasPermissions() && !!childSummary()?.working)
   const canExpand = createMemo(() => childSessions().length > 0)
-  const expanded = createMemo(() => props.expanded?.()[props.session.id] !== false || !!props.lineage?.().has(props.session.id))
+  const expanded = createMemo(() => {
+    if (props.lineage?.().has(props.session.id)) return true
+    const value = props.expanded?.()[props.session.id]
+    if (props.collapseByDefault?.()) return value === true
+    return value !== false
+  })
   const toggle = () => props.setExpanded?.(props.session.id, !expanded())
   const copy = () => {
     void navigator.clipboard
@@ -494,6 +579,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     hoverPrefetch.current = undefined
   }
   const scheduleHoverPrefetch = () => {
+    if (props.collapseByDefault?.()) return
     warm(1, "high")
     if (hoverPrefetch.current !== undefined) return
     hoverPrefetch.current = setTimeout(() => {
@@ -509,15 +595,25 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     const text = parts.find((part): part is TextPart => part?.type === "text" && !part.synthetic && !part.ignored)
     return text?.text
   }
+  const action = {
+    "opacity-100 pointer-events-auto": !!props.mobile,
+    "opacity-0 pointer-events-none": !props.mobile,
+    "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+    "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
+  }
   const item = (
     <SessionRow
       session={props.session}
-      title={title}
+      titleLabel={titleLabel}
+      titleTip={titleTip}
+      agentLabel={agent}
       childSummary={childSummary}
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}
       tint={tint}
+      status={() => status()?.type}
+      isWaitingChild={isWaitingChild}
       isWorking={isWorking}
       isPaused={isPaused}
       isDone={isDone}
@@ -541,24 +637,36 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
 
   return (
     <Show when={visible(props.session)}>
-      <div class="relative">
+      <div
+        class="relative"
+        classList={{
+          "border-t border-border-weaker-base mt-1 pt-1": !props.session.parentID && props.first === false,
+        }}
+      >
         <Show when={expanded() && filteredChildren().length > 0}>
           <div
-            class="pointer-events-none absolute top-4 z-10 w-px bg-border-weak-base"
+            class="pointer-events-none absolute w-px"
             style={{
-              left: `${treeX((props.depth ?? 0) + 1)}px`,
-              height: row(props.dense),
+              top: end(props.dense),
+              left: `${treeX(props.depth)}px`,
+              bottom: "0",
+              ...line,
             }}
           />
         </Show>
         <Show when={props.session.parentID}>
           <div
-            class="pointer-events-none absolute w-px bg-border-weak-base"
-            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.first, props.last) }}
+            class="pointer-events-none absolute w-px"
+            style={{ left: `${treeX(props.depth)}px`, ...trunk(props.dense, props.first, props.last), ...line }}
           />
           <div
-            class="pointer-events-none absolute top-4 h-px bg-border-weak-base"
-            style={{ left: `${treeX(props.depth) - 17}px`, width: "17px" }}
+            class="pointer-events-none absolute h-px"
+            style={{
+              top: mid(props.dense),
+              left: `${treeX(Math.max((props.depth ?? 0) - 1, 0))}px`,
+              width: `${indent}px`,
+              ...line,
+            }}
           />
         </Show>
         <div
@@ -569,7 +677,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
           <Show
             when={hoverEnabled()}
             fallback={
-              <Tooltip placement={props.mobile ? "bottom" : "right"} value={title()} gutter={10}>
+              <Tooltip placement={props.mobile ? "bottom" : "right"} value={titleTip()} gutter={10}>
                 {item}
               </Tooltip>
             }
@@ -600,28 +708,22 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
           <div
             class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 pointer-events-auto`}
           >
-            <Tooltip value={language.t("session.copyName")} placement="top">
-              <IconButton
-                icon="copy"
-                variant="ghost"
-                class="size-6 rounded-md"
-                aria-label={language.t("session.copyName")}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  copy()
-                }}
-              />
-            </Tooltip>
-            <div
-              class="transition-opacity"
-              classList={{
-                "opacity-100 pointer-events-auto": !!props.mobile,
-                "opacity-0 pointer-events-none": !props.mobile,
-                "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-                "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-              }}
-            >
+            <div class="transition-opacity" classList={action}>
+              <Tooltip value={language.t("session.copyName")} placement="top">
+                <IconButton
+                  icon="copy"
+                  variant="ghost"
+                  class="size-6 rounded-md"
+                  aria-label={language.t("session.copyName")}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    copy()
+                  }}
+                />
+              </Tooltip>
+            </div>
+            <div class="transition-opacity" classList={action}>
               <Tooltip value={language.t("common.archive")} placement="top">
                 <IconButton
                   icon="archive"

@@ -24,6 +24,7 @@ import { Tabs } from "@open-agent-harness/ui/tabs"
 import { createAutoScroll } from "@open-agent-harness/ui/hooks"
 import { previewSelectedLines } from "@open-agent-harness/ui/pierre/selection-bridge"
 import { Button } from "@open-agent-harness/ui/button"
+import type { SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { base64Encode, checksum } from "@open-agent-harness/util/encode"
 import { useNavigate, useSearchParams } from "@solidjs/router"
@@ -78,7 +79,7 @@ type SessionHistoryWindowInput = {
  */
 function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
   const turnInit = 10
-  const turnBatch = 8
+  const turnBatch = 1
   const turnScrollThreshold = 200
   const turnPrefetchBuffer = 16
   const prefetchCooldownMs = 400
@@ -332,6 +333,7 @@ export default function Page() {
     pendingMessage: undefined as string | undefined,
     restoring: undefined as string | undefined,
     reverting: false,
+    missing: undefined as string | undefined,
     scrollGesture: 0,
     scroll: {
       overflow: false,
@@ -495,6 +497,7 @@ export default function Page() {
     messageId: undefined as string | undefined,
     mobileTab: "session" as "session" | "changes" | "logs",
     changes: "session" as "session" | "turn",
+    filter: "all" as SessionTurnFilter,
     newSessionWorktree: "main",
     deferRender: false,
   })
@@ -669,6 +672,32 @@ export default function Page() {
 
   const hasScrollGesture = () => Date.now() - ui.scrollGesture < scrollGestureWindowMs
 
+  const notFound = (err: unknown) => {
+    const text = err instanceof Error ? err.message : JSON.stringify(err)
+    return /404|not found/i.test(text)
+  }
+
+  const syncCurrentSession = (id: string, opts?: { force?: boolean }) =>
+    sync.session.sync(id, opts).catch((err) => {
+      if (params.id !== id) return
+      if (!notFound(err)) {
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: formatServerError(err, language.t),
+        })
+        return
+      }
+      if (ui.missing === id) return
+      setUi("missing", id)
+      showToast({
+        variant: "error",
+        title: "Session unavailable",
+        description: "This session no longer exists. Returning to a new session.",
+      })
+      navigate(`/${params.dir}/session`, { replace: true })
+    })
+
   createEffect(
     on([() => sdk.directory, () => params.id] as const, ([, id]) => {
       if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
@@ -688,7 +717,7 @@ export default function Page() {
       const todos = untrack(() => sync.data.todo[id] !== undefined || globalSync.data.session_todo[id] !== undefined)
 
       untrack(() => {
-        void sync.session.sync(id)
+        void syncCurrentSession(id)
       })
 
       refreshFrame = requestAnimationFrame(() => {
@@ -697,7 +726,7 @@ export default function Page() {
           refreshTimer = undefined
           if (params.id !== id) return
           untrack(() => {
-            if (stale) void sync.session.sync(id, { force: true })
+            if (stale) void syncCurrentSession(id, { force: true })
             void sync.session.todo(id, todos ? { force: true } : undefined)
           })
         }, 0)
@@ -1009,63 +1038,70 @@ export default function Page() {
   )
 
   const sessionPanel = () => (
-    <div class="flex-1 min-h-0 overflow-hidden">
-      <Switch>
-        <Match when={params.id}>
-          <Show
-            when={mobileLogs()}
-            fallback={
-              <Show when={lastUserMessage()}>
-                <MessageTimeline
-                  mobileChanges={mobileChanges()}
-                  mobileFallback={reviewContent({
-                    diffStyle: "unified",
-                    classes: {
-                      root: "pb-8",
-                      header: "px-4",
-                      container: "px-4",
-                    },
-                    loadingClass: "px-4 py-4 text-text-weak",
-                    emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
-                  })}
-                  actions={actions}
-                  scroll={ui.scroll}
-                  onResumeScroll={resumeScroll}
-                  setScrollRef={setScrollRef}
-                  onScheduleScrollState={scheduleScrollState}
-                  onAutoScrollHandleScroll={autoScroll.handleScroll}
-                  onMarkScrollGesture={markScrollGesture}
-                  hasScrollGesture={hasScrollGesture}
-                  onUserScroll={markUserScroll}
-                  onTurnBackfillScroll={historyWindow.onScrollerScroll}
-                  onAutoScrollInteraction={autoScroll.handleInteraction}
-                  centered={centered()}
-                  setContentRef={(el) => {
-                    content = el
-                    autoScroll.contentRef(el)
+    <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
+      <div class="flex-1 min-h-0 overflow-hidden">
+        <Switch>
+          <Match when={params.id}>
+            <Show
+              when={mobileLogs()}
+              fallback={
+                <Show when={lastUserMessage()}>
+                  <MessageTimeline
+                    mobileChanges={mobileChanges()}
+                    mobileFallback={reviewContent({
+                      diffStyle: "unified",
+                      classes: {
+                        root: "pb-8",
+                        header: "px-4",
+                        container: "px-4",
+                      },
+                      loadingClass: "px-4 py-4 text-text-weak",
+                      emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
+                    })}
+                    actions={actions}
+                    scroll={ui.scroll}
+                    onResumeScroll={resumeScroll}
+                    setScrollRef={setScrollRef}
+                    onScheduleScrollState={scheduleScrollState}
+                    onAutoScrollHandleScroll={autoScroll.handleScroll}
+                    onMarkScrollGesture={markScrollGesture}
+                    hasScrollGesture={hasScrollGesture}
+                    onUserScroll={markUserScroll}
+                    onTurnBackfillScroll={historyWindow.onScrollerScroll}
+                    onAutoScrollInteraction={autoScroll.handleInteraction}
+                    centered={centered()}
+                    setContentRef={(el) => {
+                      content = el
+                      autoScroll.contentRef(el)
 
-                    const root = scroller
-                    if (root) scheduleScrollState(root)
-                  }}
-                  turnStart={historyWindow.turnStart()}
-                  historyMore={historyMore()}
-                  historyLoading={historyLoading()}
-                  onLoadEarlier={() => {
-                    void historyWindow.loadAndReveal()
-                  }}
-                  renderedUserMessages={historyWindow.renderedUserMessages()}
-                  anchor={anchor}
-                />
-              </Show>
-            }
-          >
-            {logPanel()}
-          </Show>
-        </Match>
-        <Match when={true}>
-          <NewSessionView worktree={newSessionWorktree()} />
-        </Match>
-      </Switch>
+                      const root = scroller
+                      if (root) scheduleScrollState(root)
+                    }}
+                    turnStart={historyWindow.turnStart()}
+                    historyMore={historyMore()}
+                    historyLoading={historyLoading()}
+                    onLoadEarlier={() => {
+                      void historyWindow.loadAndReveal()
+                    }}
+                    renderedUserMessages={historyWindow.renderedUserMessages()}
+                    anchor={anchor}
+                    filter={store.filter}
+                    onFilterChange={(filter) => setStore("filter", filter)}
+                    onJumpPreviousUserInput={() => navigateMessageByOffset(-1)}
+                    onJumpNextUserInput={() => navigateMessageByOffset(1)}
+                    canJumpUserInput={visibleUserMessages().length > 1}
+                  />
+                </Show>
+              }
+            >
+              {logPanel()}
+            </Show>
+          </Match>
+          <Match when={true}>
+            <NewSessionView worktree={newSessionWorktree()} />
+          </Match>
+        </Switch>
+      </div>
     </div>
   )
 

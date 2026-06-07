@@ -19,6 +19,7 @@ describe("session state machine", () => {
           { type: "waiting_permission" as const },
           { type: "waiting_user" as const },
           { type: "error" as const, message: "test error" },
+          { type: "timeout" as const, message: "test timeout" },
           { type: "retry" as const, attempt: 1, message: "retry message", next: Date.now() + 2000 },
         ]
 
@@ -202,6 +203,29 @@ describe("session state machine", () => {
     })
   })
 
+  test("running to timeout transition", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-timeout" as SessionID
+        SessionStatus.set(sessionID, { type: "running" })
+
+        let receivedStatus: SessionStatus.Info | undefined
+        const unsub = Bus.subscribe(SessionStatus.Event.Status, (event) => {
+          receivedStatus = event.properties.status
+        })
+
+        SessionStatus.set(sessionID, { type: "timeout", message: "operation timed out" })
+
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        unsub()
+
+        expect(receivedStatus?.type).toBe("timeout")
+        expect(SessionStatus.get(sessionID)).toEqual({ type: "timeout", message: "operation timed out" })
+      },
+    })
+  })
+
   test("VAL-SESSION-008: Error to idle transition (recovery)", async () => {
     await Instance.provide({
       directory: projectRoot,
@@ -225,6 +249,20 @@ describe("session state machine", () => {
 
         expect(eventCount).toBe(1)
         expect(receivedStatus?.type).toBe("idle")
+      },
+    })
+  })
+
+  test("timeout to idle transition (recovery)", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-timeout-recovery" as SessionID
+        SessionStatus.set(sessionID, { type: "running" })
+        SessionStatus.set(sessionID, { type: "timeout", message: "timed out" })
+        SessionStatus.set(sessionID, { type: "idle" })
+
+        expect(SessionStatus.get(sessionID).type).toBe("idle")
       },
     })
   })

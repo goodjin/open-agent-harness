@@ -6,12 +6,14 @@
 
 任何可能改变执行状态的模型请求、tool call、委托 Agent 任务、Runtime 操作、人工审批、pipeline 或 service invocation，在执行前都要归一化为 `Action`。Runtime 可以接受不同的模型侧 carrier，但内部执行路径保持一致。
 
+Action 属于持久化 Action Graph。Runtime 接受执行声明后，先创建或更新 Run、Action Graph、Action records 和 dependency edges，再根据 policy、gate 和 executor availability 调度执行。
+
 ## 核心规则
 
 协议边界是 Action。Tool call 是可能的 carrier 之一。
 
 ```txt
-model intent -> normalized Action -> policy checks -> executor invocation -> result -> event/projection
+model intent -> persisted Action Graph -> normalized Action -> policy checks -> executor invocation -> result -> event/projection
 ```
 
 可接受的 carrier：
@@ -133,7 +135,9 @@ Action 字段沿用总纲的统一字段。Runtime 内部可以把模型侧简�
 
 ## Contract 语义
 
-Action Contract 描述 Runtime 接受该 Action 后需要维护的执行边界。
+Action Graph Contract 描述一次 Run 或流程图的整体目标、输入、约束、依赖、预算、gate、loop、failure、Artifact 和完成标准。Action Contract 描述 Runtime 接受单个 Action 后需要维护的执行边界。
+
+Graph-level policy、Action-level policy、Runtime policy 和 Agent metadata / Orchestration Policy 都可以提供执行策略。Runtime 在接受和调度前合并这些策略，并把最终结果记录到 Action、Assignment、Event、Projection 和 Trace。
 
 核心字段：
 
@@ -149,6 +153,7 @@ Action Contract 描述 Runtime 接受该 Action 后需要维护的执行边界�
 | `failure` | failed、blocked、retry、ask_user、handoff、abort 等处理语义。 |
 | `handoff` | 后续 executor 接力时需要携带的目标、约束、证据、风险和未决问题。 |
 | `visibility` | 结果进入 model、user、logs、trace 和 future runs 的规则。 |
+| `loop` | 有边界的重复执行语义，必须有 attempt、预算、时间、条件或 Decision 边界。 |
 
 Action Contract 是 Runtime、Executor、UI 和后续 Agent Session 共同读取的治理对象。模型可以声明其中一部分，Runtime 根据上下文补齐可执行边界。
 
@@ -278,14 +283,20 @@ Manifest 字段：
 Action 生命周期事件：
 
 ```txt
+action.graph_persisted
 action.accepted
+action.graph_ready
 action.blocked
 action.started
 action.executor_selected
 action.permission_requested
 action.permission_resolved
+action.retry_scheduled
+action.loop_attempt_started
+action.loop_attempt_completed
 action.output_stored
 action.completed
+action.partially_completed
 action.failed
 action.cancelled
 ```
@@ -313,3 +324,4 @@ Action / Executor 契约覆盖以下能力：
 - Artifact、Trace、Projection 和 Event 的统一引用。
 - Handoff 和 downstream Assignment。
 - Runtime 对 side effect、permission、privacy、approval 和 budget 的 gate enforcement。
+- Action Graph 持久化、pause / resume、retry、bounded loop、Decision 和系统重启后的恢复。

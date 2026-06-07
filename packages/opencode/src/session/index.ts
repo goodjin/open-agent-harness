@@ -31,6 +31,7 @@ import { Log } from "../util/log"
 import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
+import { SessionStatus } from "./status"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
@@ -178,6 +179,39 @@ export namespace Session {
       ref: "Session",
     })
   export type Info = z.output<typeof Info>
+
+  export const TreeNode = z
+    .object({
+      id: SessionID.zod,
+      parent_id: SessionID.zod.optional(),
+      root_id: SessionID.zod,
+      title: z.string(),
+      agent: z.string().optional(),
+      model: z
+        .object({
+          provider_id: ProviderID.zod,
+          model_id: ModelID.zod,
+        })
+        .optional(),
+      status: SessionStatus.Info,
+      stats: z.object({
+        messages: z.number(),
+        tokens_input: z.number(),
+        tokens_output: z.number(),
+        tool_calls: z.number(),
+        files: z.number(),
+        additions: z.number(),
+        deletions: z.number(),
+      }),
+      time: z.object({
+        created: z.number(),
+        updated: z.number(),
+      }),
+    })
+    .meta({
+      ref: "SessionTreeNode",
+    })
+  export type TreeNode = z.output<typeof TreeNode>
 
   export const ProjectInfo = z
     .object({
@@ -576,6 +610,182 @@ export namespace Session {
       })
     },
   )
+
+  export const setModel = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      model: z.object({
+        providerID: ProviderID.zod,
+        modelID: ModelID.zod,
+      }),
+    }),
+    async (input) => {
+      return Database.use((db) => {
+        const prev = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
+        if (!prev) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const old = fromRow(prev)
+        if (old.projectID !== Instance.project.id) {
+          throw new ForbiddenError({ message: `Session ${input.sessionID} does not belong to the current project` })
+        }
+        if (old.directory !== Instance.directory) {
+          throw new ForbiddenError({
+            message: `Session ${input.sessionID} does not belong to the current directory`,
+          })
+        }
+        const ctx = {
+          ...(old.dsl_context ?? {}),
+          session_tree: {
+            ...((old.dsl_context?.session_tree as Record<string, unknown> | undefined) ?? {}),
+            model: input.model,
+          },
+        }
+        const row = db
+          .update(SessionTable)
+          .set({
+            dsl_context: ctx,
+            time_updated: Date.now(),
+          })
+          .where(eq(SessionTable.id, input.sessionID))
+          .returning()
+          .get()
+        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const info = fromRow(row)
+        Database.effect(() => Bus.publish(Event.Updated, { info }))
+        return info
+      })
+    },
+  )
+
+  export const setAgent = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      agent: z.string(),
+    }),
+    async (input) => {
+      return Database.use((db) => {
+        const prev = db.select().from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get()
+        if (!prev) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const old = fromRow(prev)
+        if (old.projectID !== Instance.project.id) {
+          throw new ForbiddenError({ message: `Session ${input.sessionID} does not belong to the current project` })
+        }
+        if (old.directory !== Instance.directory) {
+          throw new ForbiddenError({
+            message: `Session ${input.sessionID} does not belong to the current directory`,
+          })
+        }
+        const ctx = {
+          ...(old.dsl_context ?? {}),
+          session_tree: {
+            ...((old.dsl_context?.session_tree as Record<string, unknown> | undefined) ?? {}),
+            agent: input.agent,
+          },
+        }
+        const row = db
+          .update(SessionTable)
+          .set({
+            dsl_context: ctx,
+            time_updated: Date.now(),
+          })
+          .where(eq(SessionTable.id, input.sessionID))
+          .returning()
+          .get()
+        if (!row) throw new NotFoundError({ message: `Session not found: ${input.sessionID}` })
+        const info = fromRow(row)
+        Database.effect(() => Bus.publish(Event.Updated, { info }))
+        return info
+      })
+    },
+  )
+
+  export const tree = fn(SessionID.zod, async (rootID) => {
+    const root = await get(rootID)
+    const rows = [root, ...(await descendants(rootID))]
+    const ids = rows.map((item) => item.id)
+    const stats = new Map<
+      SessionID,
+      {
+        messages: number
+        tokens_input: number
+        tokens_output: number
+        tool_calls: number
+        model?: { provider_id: ProviderID; model_id: ModelID }
+        agent?: string
+      }
+    >()
+    for (const item of ids) {
+      stats.set(item, {
+        messages: 0,
+        tokens_input: 0,
+        tokens_output: 0,
+        tool_calls: 0,
+      })
+    }
+    const msgs =
+      ids.length === 0
+        ? []
+        : Database.use((db) => db.select().from(MessageTable).where(inArray(MessageTable.session_id, ids)).all())
+    for (const msg of msgs) {
+      const item = stats.get(msg.session_id)
+      if (!item) continue
+      const data = {
+        id: msg.id,
+        sessionID: msg.session_id,
+        ...msg.data,
+      } as MessageV2.Info
+      item.messages++
+      if (data.role === "user") {
+        item.agent = data.agent
+        item.model = {
+          provider_id: data.model.providerID,
+          model_id: data.model.modelID,
+        }
+      }
+      if (data.role === "assistant") {
+        item.agent = data.agent
+        item.model = {
+          provider_id: data.providerID,
+          model_id: data.modelID,
+        }
+        item.tokens_input += data.tokens.input
+        item.tokens_output += data.tokens.output
+      }
+    }
+    return rows.map((item): TreeNode => {
+      const stat = stats.get(item.id)!
+      const ctx = item.dsl_context?.session_tree as
+        | { agent?: string; model?: { providerID?: ProviderID; modelID?: ModelID } }
+        | undefined
+      return {
+        id: item.id,
+        parent_id: item.parentID,
+        root_id: rootID,
+        title: item.title,
+        agent: ctx?.agent ?? stat.agent,
+        model:
+          ctx?.model?.providerID && ctx.model.modelID
+            ? {
+                provider_id: ctx.model.providerID,
+                model_id: ctx.model.modelID,
+              }
+            : stat.model,
+        status: SessionStatus.get(item.id),
+        stats: {
+          messages: stat.messages,
+          tokens_input: stat.tokens_input,
+          tokens_output: stat.tokens_output,
+          tool_calls: 0,
+          files: item.summary?.files ?? 0,
+          additions: item.summary?.additions ?? 0,
+          deletions: item.summary?.deletions ?? 0,
+        },
+        time: {
+          created: item.time.created,
+          updated: item.time.updated,
+        },
+      }
+    })
+  })
 
   export const diff = fn(SessionID.zod, async (sessionID) => {
     try {

@@ -29,6 +29,7 @@ export function DialogCustomProvider(props: Props) {
     name: "",
     baseURL: "",
     apiKey: "",
+    concurrency: "",
     models: [modelRow()],
     headers: [headerRow()],
     saving: false,
@@ -81,13 +82,13 @@ export function DialogCustomProvider(props: Props) {
     )
   }
 
-  const setField = (key: "providerID" | "name" | "baseURL" | "apiKey", value: string) => {
+  const setField = (key: "providerID" | "name" | "baseURL" | "apiKey" | "concurrency", value: string) => {
     setForm(key, value)
     if (key === "apiKey") return
     setForm("err", key, undefined)
   }
 
-  const setModel = (index: number, key: "id" | "name", value: string) => {
+  const setModel = (index: number, key: "id" | "name" | "concurrency", value: string) => {
     batch(() => {
       setForm("models", index, key, value)
       setForm("models", index, "err", key, undefined)
@@ -222,6 +223,15 @@ export function DialogCustomProvider(props: Props) {
               value={form.apiKey}
               onChange={(v) => setField("apiKey", v)}
             />
+            <TextField
+              label={language.t("provider.custom.field.concurrency.label")}
+              placeholder={language.t("provider.custom.field.concurrency.placeholder")}
+              description={language.t("provider.custom.field.concurrency.description")}
+              value={form.concurrency}
+              onChange={(v) => setField("concurrency", v)}
+              validationState={form.err.concurrency ? "invalid" : undefined}
+              error={form.err.concurrency}
+            />
           </div>
 
           <div class="flex flex-col gap-3">
@@ -249,6 +259,17 @@ export function DialogCustomProvider(props: Props) {
                       onChange={(v) => setModel(i(), "name", v)}
                       validationState={m.err.name ? "invalid" : undefined}
                       error={m.err.name}
+                    />
+                  </div>
+                  <div class="w-24">
+                    <TextField
+                      label={language.t("provider.custom.models.concurrency.label")}
+                      hideLabel
+                      placeholder={language.t("provider.custom.models.concurrency.placeholder")}
+                      value={m.concurrency}
+                      onChange={(v) => setModel(i(), "concurrency", v)}
+                      validationState={m.err.concurrency ? "invalid" : undefined}
+                      error={m.err.concurrency}
                     />
                   </div>
                   <IconButton

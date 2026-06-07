@@ -52,25 +52,38 @@ function ensureGlobal() {
 
 describe("migrateFromGlobal", () => {
   test("migrates global sessions on first project creation", async () => {
-    // 1. Start with git init but no commits — creates "global" project row
     await using tmp = await tmpdir()
     await $`git init`.cwd(tmp.path).quiet()
     await $`git config user.name "Test"`.cwd(tmp.path).quiet()
     await $`git config user.email "test@opencode.test"`.cwd(tmp.path).quiet()
-    const { project: pre } = await Project.fromDirectory(tmp.path)
-    expect(pre.id).toBe(ProjectID.global)
+    ensureGlobal()
 
-    // 2. Seed a session under "global" with matching directory
     const id = uid()
     seed({ id, dir: tmp.path, project: ProjectID.global })
 
-    // 3. Make a commit so the project gets a real ID
-    await $`git commit --allow-empty -m "root"`.cwd(tmp.path).quiet()
+    const { project } = await Project.fromDirectory(tmp.path)
+    expect(project.id).not.toBe(ProjectID.global)
 
+    const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
+    expect(row).toBeDefined()
+    expect(row!.project_id).toBe(project.id)
+  })
+
+  test("migrates local fallback sessions when a root commit appears", async () => {
+    await using tmp = await tmpdir()
+    await $`git init`.cwd(tmp.path).quiet()
+    await $`git config user.name "Test"`.cwd(tmp.path).quiet()
+    await $`git config user.email "test@opencode.test"`.cwd(tmp.path).quiet()
+    const { project: local } = await Project.fromDirectory(tmp.path)
+    expect(local.id).not.toBe(ProjectID.global)
+
+    const id = uid()
+    seed({ id, dir: tmp.path, project: local.id })
+
+    await $`git commit --allow-empty -m "root"`.cwd(tmp.path).quiet()
     const { project: real } = await Project.fromDirectory(tmp.path)
     expect(real.id).not.toBe(ProjectID.global)
 
-    // 4. The session should have been migrated to the real project ID
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     expect(row).toBeDefined()
     expect(row!.project_id).toBe(real.id)
@@ -94,6 +107,39 @@ describe("migrateFromGlobal", () => {
     // 4. Call fromDirectory again — project row already exists,
     //    so the current code skips migration entirely. This is the bug.
     await Project.fromDirectory(tmp.path)
+
+    const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
+    expect(row).toBeDefined()
+    expect(row!.project_id).toBe(project.id)
+  })
+
+  test("migrates sessions from a previous parent project when the directory becomes its own project", async () => {
+    await using tmp = await tmpdir()
+    const child = `${tmp.path}/lowcode-ai`
+    await $`mkdir -p ${child}`.quiet()
+    await $`git init`.cwd(child).quiet()
+    await $`git config user.name "Test"`.cwd(child).quiet()
+    await $`git config user.email "test@opencode.test"`.cwd(child).quiet()
+
+    const old = ProjectID.make("local-old-parent-project")
+    Database.use((db) =>
+      db
+        .insert(ProjectTable)
+        .values({
+          id: old,
+          worktree: tmp.path,
+          time_created: Date.now(),
+          time_updated: Date.now(),
+          sandboxes: [],
+        })
+        .run(),
+    )
+
+    const id = uid()
+    seed({ id, dir: child, project: old })
+
+    const { project } = await Project.fromDirectory(child)
+    expect(project.id).not.toBe(old)
 
     const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, id)).get())
     expect(row).toBeDefined()

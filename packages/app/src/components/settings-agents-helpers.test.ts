@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from "bun:test"
 import type { AgentManageInfo, AgentManageValidateOutput } from "@open-agent-harness/sdk/v2"
-import { fill, input, load, save, summary, tabs, toggle, typed } from "./settings-agents-helpers"
+import { fill, input, json, load, overview, save, summary, tabs, toggle, typed, versions } from "./settings-agents-helpers"
 
 let valid: AgentManageValidateOutput = { valid: true, diagnostics: [] }
 
@@ -209,6 +209,209 @@ describe("settings agent helpers", () => {
         },
       },
     })
+  })
+
+  test("round-trips raw RFC metadata while basic fields override", async () => {
+    calls.validate.mockClear()
+    calls.update.mockClear()
+    valid = { valid: true, diagnostics: [] }
+
+    const form = fill(
+      agent({
+        meta: {
+          ...agent().meta,
+          schema_version: "agent.metadata.v1",
+          agent_version: "2026.06.02",
+          logo: {
+            uri: "file://agents/reviewer.svg",
+            alt: "Reviewer",
+            theme: "auto",
+            hash: "sha256:reviewer",
+          },
+          instructions: {
+            files: [{ path: "identity.md", role: "system", required: true }],
+            model_messages: [
+              {
+                on: "before_run",
+                position: "prepend",
+                content: "Check the pull request context first.",
+              },
+            ],
+          },
+          contracts: {
+            input: [{ kind: "diff" }],
+            output: [{ kind: "review" }],
+          },
+          collaboration: {
+            edges: [{ to: "implementer", mode: "handoff" }],
+            limits: { max_handoffs: 2 },
+          },
+          runtime_boundary: {
+            resource_classes: ["repo"],
+            actions: { allow: ["read", "grep"] },
+            network: { mode: "disabled" },
+            data: { retention: "session" },
+            approval: { required: ["write"] },
+            rate_limits: { actions_per_minute: 20 },
+          },
+          completion: {
+            mode: "gated",
+            criteria: ["findings complete"],
+            required_artifacts: ["review.md"],
+            required_evidence: ["test output"],
+            gates: [{ type: "tests" }],
+            allow_partial: false,
+          },
+          observability: {
+            trace: true,
+            audit: "recorded",
+          },
+          lifecycle: {
+            owner: "platform",
+            deprecated: false,
+          },
+        },
+      }),
+    )
+
+    expect(form.raw).toMatchObject({
+      schema_version: "agent.metadata.v1",
+      runtime_boundary: {
+        resource_classes: ["repo"],
+      },
+      lifecycle: {
+        owner: "platform",
+      },
+    })
+
+    await save(
+      calls,
+      {
+        ...form,
+        name: " Senior Reviewer ",
+        runner: "protocol",
+        purpose: "risk review",
+        allowed: "grep\nread",
+      },
+      "edit",
+    )
+
+    const call = calls.update.mock.calls[0] as unknown[] | undefined
+    expect(call?.[0]).toMatchObject({
+      agentManagePatchInput: {
+        meta: {
+          schema_version: "agent.metadata.v1",
+          agent_version: "2026.06.02",
+          logo: {
+            uri: "file://agents/reviewer.svg",
+            alt: "Reviewer",
+            theme: "auto",
+            hash: "sha256:reviewer",
+          },
+          instructions: {
+            files: [{ path: "identity.md", role: "system", required: true }],
+            model_messages: [
+              {
+                on: "before_run",
+                position: "prepend",
+                content: "Check the pull request context first.",
+              },
+            ],
+          },
+          contracts: {
+            input: [{ kind: "diff" }],
+            output: [{ kind: "review" }],
+          },
+          collaboration: {
+            edges: [{ to: "implementer", mode: "handoff" }],
+            limits: { max_handoffs: 2 },
+          },
+          runtime_boundary: {
+            resource_classes: ["repo"],
+            actions: { allow: ["read", "grep"] },
+            network: { mode: "disabled" },
+            data: { retention: "session" },
+            approval: { required: ["write"] },
+            rate_limits: { actions_per_minute: 20 },
+          },
+          completion: {
+            mode: "gated",
+            criteria: ["findings complete"],
+            required_artifacts: ["review.md"],
+            required_evidence: ["test output"],
+            gates: [{ type: "tests" }],
+            allow_partial: false,
+          },
+          observability: {
+            trace: true,
+            audit: "recorded",
+          },
+          lifecycle: {
+            owner: "platform",
+            deprecated: false,
+          },
+          name: "Senior Reviewer",
+          runner: "protocol",
+          capability: {
+            purpose: "risk review",
+          },
+          allowed_tools: ["grep", "read"],
+        },
+      },
+    })
+  })
+
+  test("formats visible RFC metadata overview and raw json", () => {
+    const form = fill(
+      agent({
+        diagnostics: [
+          {
+            level: "warning",
+            category: "metadata",
+            field: "lifecycle.replacement",
+            message: "Replacement target is missing.",
+          },
+        ],
+        meta: {
+          ...agent().meta,
+          schema_version: "agent.metadata.v1",
+          agent_version: "2026.06.02",
+          instructions: {
+            files: [{ path: "identity.md" }, { path: "rules.md" }],
+            model_messages: [{ on: "before_run", position: "prepend", content: "Read context." }],
+          },
+          contracts: {
+            input: [{ kind: "diff" }, { kind: "issue" }],
+            output: [{ kind: "review" }],
+          },
+          collaboration: {
+            edges: [{ to: "implementer" }, { to: "planner" }],
+          },
+          runtime_boundary: {
+            resource_classes: ["repo", "shell"],
+          },
+          completion: {
+            required_artifacts: ["review.md", "evidence.md"],
+          },
+          lifecycle: {
+            deprecated: true,
+            replacement: "senior-reviewer",
+          },
+        },
+      }),
+    )
+
+    expect(versions(form.raw)).toEqual(["schema agent.metadata.v1", "agent 2026.06.02"])
+    expect(overview(form.raw)).toEqual([
+      "instructions 3",
+      "contracts 2 input / 1 output",
+      "edges 2",
+      "resources 2",
+      "artifacts 2",
+      "deprecated -> senior-reviewer",
+    ])
+    expect(json(form)).toContain('"schema_version": "agent.metadata.v1"')
+    expect(json(form)).toContain('"replacement": "senior-reviewer"')
   })
 
   test("sends empty strings when clearing identity and rules", () => {

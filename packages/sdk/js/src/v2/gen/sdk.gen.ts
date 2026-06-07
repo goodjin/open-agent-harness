@@ -67,10 +67,16 @@ import type {
   GetHarnessRunsRunIdAuditExportResponses,
   GetHarnessRunsRunIdAuditResponses,
   GetHarnessRunsRunIdDecisionsResponses,
+  GetHarnessRunsRunIdEvaluationResponses,
   GetHarnessRunsRunIdEventsResponses,
   GetHarnessRunsRunIdGraphResponses,
+  GetHarnessRunsRunIdProjectionsNameResponses,
   GetHarnessRunsRunIdProjectionsRebuildResponses,
+  GetHarnessRunsRunIdProjectionsResponses,
+  GetHarnessRunsRunIdResourcesResourceIdPreviewResponses,
+  GetHarnessRunsRunIdResourcesResourceIdResponses,
   GetHarnessRunsRunIdTasksResponses,
+  GetHarnessRunsRunIdTraceExportResponses,
   GlobalConfigGetResponses,
   GlobalConfigUpdateErrors,
   GlobalConfigUpdateResponses,
@@ -79,7 +85,6 @@ import type {
   GlobalHealthResponses,
   HarnessAgentTemplatesErrors,
   HarnessAgentTemplatesResponses,
-  HarnessCommand,
   HarnessRunAcceptanceErrors,
   HarnessRunAcceptanceResponses,
   HarnessRunAgentSessionsErrors,
@@ -90,6 +95,8 @@ import type {
   HarnessRunGetResponses,
   HarnessRunHandoffsErrors,
   HarnessRunHandoffsResponses,
+  HarnessRunPerformanceErrors,
+  HarnessRunPerformanceResponses,
   HarnessRunResourcesErrors,
   HarnessRunResourcesResponses,
   HarnessRunsErrors,
@@ -135,6 +142,7 @@ import type {
   PermissionRespondErrors,
   PermissionRespondResponses,
   PermissionRuleset,
+  PostHarnessAgentsTemplatesResponses,
   PostHarnessCommandsResponses,
   PostHarnessDecisionsDecisionIdAnswerResponses,
   PostHarnessRunsRunIdAbortResponses,
@@ -143,6 +151,7 @@ import type {
   PostHarnessTasksTaskIdCancelResponses,
   PostHarnessTasksTaskIdRetryResponses,
   PostHarnessVerificationsTaskIdRerunResponses,
+  PostHarnessWorkflowsResponses,
   ProjectCurrentResponses,
   ProjectInitGitResponses,
   ProjectInitResponses,
@@ -245,6 +254,14 @@ import type {
   SessionSummarizeResponses,
   SessionTodoErrors,
   SessionTodoResponses,
+  SessionTreeAbortErrors,
+  SessionTreeAbortResponses,
+  SessionTreeErrors,
+  SessionTreeResponses,
+  SessionTreeResumeErrors,
+  SessionTreeResumeResponses,
+  SessionTreeUpdateErrors,
+  SessionTreeUpdateResponses,
   SessionUnrevertErrors,
   SessionUnrevertResponses,
   SessionUnshareErrors,
@@ -1543,6 +1560,170 @@ export class Worktree extends HeyApiClient {
   }
 }
 
+export class Tree extends HeyApiClient {
+  /**
+   * Update session tree nodes
+   *
+   * Batch update lightweight session tree metadata such as title, agent, and model preference.
+   */
+  public update<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      title?: string
+      agent?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "title" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).patch<SessionTreeUpdateResponses, SessionTreeUpdateErrors, ThrowOnError>({
+      url: "/session/tree/sessions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Abort session tree nodes
+   *
+   * Abort selected sessions from the session tree manager.
+   */
+  public abort<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      source?: "user" | "parent_session" | "runtime"
+      source_session?: string
+      reason?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "source" },
+            { in: "body", key: "source_session" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionTreeAbortResponses, SessionTreeAbortErrors, ThrowOnError>({
+      url: "/session/tree/abort",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Resume session tree nodes
+   *
+   * Restore interrupted sessions or send structured resume commands from the session tree manager.
+   */
+  public resume<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      source?: "user" | "parent_session" | "runtime"
+      source_session?: string
+      include_completed?: boolean
+      mode?: "restore" | "message"
+      reason?: string
+      message?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "source" },
+            { in: "body", key: "source_session" },
+            { in: "body", key: "include_completed" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "reason" },
+            { in: "body", key: "message" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionTreeResumeResponses, SessionTreeResumeErrors, ThrowOnError>({
+      url: "/session/tree/resume",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Protocol extends HeyApiClient {
   /**
    * Get protocol trace
@@ -1683,7 +1864,8 @@ export class Session3 extends HeyApiClient {
    */
   public descendantsBatch<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
+      query_directory?: string
+      body_directory?: string
       ids?: Array<string>
     },
     options?: Options<never, ThrowOnError>,
@@ -1693,7 +1875,16 @@ export class Session3 extends HeyApiClient {
       [
         {
           args: [
-            { in: "query", key: "directory" },
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
             { in: "body", key: "ids" },
           ],
         },
@@ -1712,6 +1903,36 @@ export class Session3 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get lightweight session tree
+   *
+   * Retrieve a lightweight session tree projection without message bodies or raw session metadata.
+   */
+  public tree<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      root: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "root" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTreeResponses, SessionTreeErrors, ThrowOnError>({
+      url: "/session/tree",
+      ...options,
+      ...params,
     })
   }
 
@@ -2301,6 +2522,9 @@ export class Session3 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      metadata?: {
+        [key: string]: unknown
+      }
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -2320,6 +2544,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "metadata" },
             { in: "body", key: "parts" },
           ],
         },
@@ -2427,6 +2652,9 @@ export class Session3 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      metadata?: {
+        [key: string]: unknown
+      }
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -2446,6 +2674,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "metadata" },
             { in: "body", key: "parts" },
           ],
         },
@@ -2781,6 +3010,11 @@ export class Session3 extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _tree?: Tree
+  get tree2(): Tree {
+    return (this._tree ??= new Tree({ client: this.client }))
   }
 
   private _protocol?: Protocol
@@ -3413,6 +3647,38 @@ export class Run extends HeyApiClient {
       ThrowOnError
     >({
       url: "/harness/runs/{runID}/acceptance",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Run performance summary
+   */
+  public performance<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      HarnessRunPerformanceResponses,
+      HarnessRunPerformanceErrors,
+      ThrowOnError
+    >({
+      url: "/harness/runs/{runID}/performance",
       ...options,
       ...params,
     })
@@ -5117,6 +5383,66 @@ export class OpencodeClient extends HeyApiClient {
     })
   }
 
+  public getHarnessRunsRunIdResourcesResourceId<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      resourceID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "path", key: "resourceID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdResourcesResourceIdResponses, unknown, ThrowOnError>(
+      {
+        url: "/harness/runs/{runID}/resources/{resourceID}",
+        ...options,
+        ...params,
+      },
+    )
+  }
+
+  public getHarnessRunsRunIdResourcesResourceIdPreview<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      resourceID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "path", key: "resourceID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      GetHarnessRunsRunIdResourcesResourceIdPreviewResponses,
+      unknown,
+      ThrowOnError
+    >({
+      url: "/harness/runs/{runID}/resources/{resourceID}/preview",
+      ...options,
+      ...params,
+    })
+  }
+
   public getHarnessRunsRunIdDecisions<ThrowOnError extends boolean = false>(
     parameters: {
       runID: string
@@ -5137,6 +5463,58 @@ export class OpencodeClient extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<GetHarnessRunsRunIdDecisionsResponses, unknown, ThrowOnError>({
       url: "/harness/runs/{runID}/decisions",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdProjections<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdProjectionsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/projections",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdProjectionsName<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      name: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "path", key: "name" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdProjectionsNameResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/projections/{name}",
       ...options,
       ...params,
     })
@@ -5242,6 +5620,56 @@ export class OpencodeClient extends HeyApiClient {
     })
   }
 
+  public getHarnessRunsRunIdTraceExport<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdTraceExportResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/trace/export",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdEvaluation<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdEvaluationResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/evaluation",
+      ...options,
+      ...params,
+    })
+  }
+
   public getHarnessRunsRunIdProjectionsRebuild<ThrowOnError extends boolean = false>(
     parameters: {
       runID: string
@@ -5267,10 +5695,53 @@ export class OpencodeClient extends HeyApiClient {
     })
   }
 
-  public postHarnessCommands<ThrowOnError extends boolean = false>(
+  public postHarnessWorkflows<ThrowOnError extends boolean = false>(
     parameters?: {
       directory?: string
-      harnessCommand?: HarnessCommand
+      id?: string
+      owner?: string
+      version?: number
+      source?: string
+      visibility?: "private" | "project" | "team" | "public"
+      profile?: {
+        goal: string
+        inputs_schema?: {
+          [key: string]: unknown
+        }
+        nodes?: Array<{
+          id: string
+          title: string
+          type?: string
+          depends_on?: Array<string>
+          criteria?: Array<string>
+          failure?: string
+          gate?: string
+          loop?: {
+            [key: string]: unknown
+          }
+          budget?: {
+            [key: string]: unknown
+          }
+          artifacts?: Array<string>
+          visibility?: "private" | "project" | "team" | "public"
+          handoff?: string
+        }>
+        depends_on?: Array<string>
+        criteria?: Array<string>
+        failure?: string
+        gate?: string
+        loop?: {
+          [key: string]: unknown
+        }
+        budget?: {
+          [key: string]: unknown
+        }
+        artifacts?: Array<string>
+        visibility?: "private" | "project" | "team" | "public"
+        handoff?: string
+      }
+      created_at?: number
+      updated_at?: number
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -5280,13 +5751,157 @@ export class OpencodeClient extends HeyApiClient {
         {
           args: [
             { in: "query", key: "directory" },
-            { key: "harnessCommand", map: "body" },
+            { in: "body", key: "id" },
+            { in: "body", key: "owner" },
+            { in: "body", key: "version" },
+            { in: "body", key: "source" },
+            { in: "body", key: "visibility" },
+            { in: "body", key: "profile" },
+            { in: "body", key: "created_at" },
+            { in: "body", key: "updated_at" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessWorkflowsResponses, unknown, ThrowOnError>({
+      url: "/harness/workflows",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessCommands<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      type?:
+        | "run.create"
+        | "run.pause"
+        | "run.resume"
+        | "run.abort"
+        | "action.accept"
+        | "action.cancel"
+        | "action.retry"
+        | "resource.write"
+        | "resource.tombstone"
+        | "task.retry"
+        | "task.cancel"
+        | "decision.answer"
+        | "verify.rerun"
+        | "concept.replace.request"
+        | "concept.replace.approve"
+        | "concept.replace.reject"
+        | "handoff.plan"
+        | "handoff.self_report.request"
+      run_id?: string
+      task_id?: string
+      decision_id?: string
+      concept_id?: string
+      actor?: string
+      payload?: {
+        [key: string]: unknown
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "type" },
+            { in: "body", key: "run_id" },
+            { in: "body", key: "task_id" },
+            { in: "body", key: "decision_id" },
+            { in: "body", key: "concept_id" },
+            { in: "body", key: "actor" },
+            { in: "body", key: "payload" },
           ],
         },
       ],
     )
     return (options?.client ?? this.client).post<PostHarnessCommandsResponses, unknown, ThrowOnError>({
       url: "/harness/commands",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  public postHarnessAgentsTemplates<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      id?: string
+      identity?: string
+      kind?: "planner" | "worker" | "verifier" | "helper"
+      entry?: {
+        primary?: boolean
+        delegable?: boolean
+        mentionable?: boolean
+      }
+      capability?: {
+        tags?: Array<string>
+        writes?: boolean
+        cost?: "low" | "medium" | "high"
+      }
+      permission?: {
+        tools?: Array<string>
+        scopes?: Array<"private" | "project" | "team" | "public">
+        write?: boolean
+      }
+      model_preference?: {
+        provider: string
+        model: string
+      }
+      execution_mode?: "chat" | "workflow" | "protocol"
+      relationships?: {
+        supervises?: Array<string>
+        peers?: Array<string>
+      }
+      orchestration_policy?: {
+        max_parallel?: number
+        review_required?: boolean
+      }
+      availability?: "available" | "busy" | "disabled"
+      created_at?: number
+      updated_at?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "body", key: "id" },
+            { in: "body", key: "identity" },
+            { in: "body", key: "kind" },
+            { in: "body", key: "entry" },
+            { in: "body", key: "capability" },
+            { in: "body", key: "permission" },
+            { in: "body", key: "model_preference" },
+            { in: "body", key: "execution_mode" },
+            { in: "body", key: "relationships" },
+            { in: "body", key: "orchestration_policy" },
+            { in: "body", key: "availability" },
+            { in: "body", key: "created_at" },
+            { in: "body", key: "updated_at" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<PostHarnessAgentsTemplatesResponses, unknown, ThrowOnError>({
+      url: "/harness/agents/templates",
       ...options,
       ...params,
       headers: {

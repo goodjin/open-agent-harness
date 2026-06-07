@@ -380,6 +380,7 @@ export namespace MessageV2 {
     system: z.string().optional(),
     tools: z.record(z.string(), z.boolean()).optional(),
     variant: z.string().optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
   }).meta({
     ref: "UserMessage",
   })
@@ -932,6 +933,18 @@ export namespace MessageV2 {
           {
             cause: e,
           },
+        ).toObject()
+      case e instanceof DOMException && e.name === "TimeoutError":
+        return new MessageV2.APIError(
+          {
+            message: e.message || "The operation timed out.",
+            isRetryable: true,
+            metadata: {
+              code: e.name,
+              message: e.message,
+            },
+          },
+          { cause: e },
         ).toObject()
       case MessageV2.OutputLengthError.isInstance(e):
         return e

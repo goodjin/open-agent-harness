@@ -1,6 +1,16 @@
+import type { Session, SessionTreeNode } from "@open-agent-harness/sdk/v2/client"
 import type { RootLoadArgs, TreeLoadArgs } from "./types"
 
 export async function loadRootSessionsWithFallback(input: RootLoadArgs) {
+  if (input.all) {
+    const result = await input.list({ directory: input.directory, roots: true })
+    return {
+      data: result.data,
+      limit: input.limit,
+      limited: false,
+      ids: (result.data ?? []).map((session) => session.id),
+    } as const
+  }
   try {
     const result = await input.list({ directory: input.directory, roots: true, limit: input.limit })
     return {
@@ -23,7 +33,7 @@ export async function loadRootSessionsWithFallback(input: RootLoadArgs) {
 export async function loadSessionTreeWithFallback(input: TreeLoadArgs) {
   const roots = await loadRootSessionsWithFallback(input)
   const ids = roots.ids.filter((id) => !input.loaded?.has(id))
-  const found = ids.length > 0 ? await input.descendants({ directory: input.directory, ids }) : undefined
+  const found = input.children ? await loadChildren(input, roots.data ?? [], ids) : undefined
   const by = new Map((roots.data ?? []).map((session) => [session.id, session]))
   for (const session of found?.data ?? []) {
     by.set(session.id, session)
@@ -31,6 +41,45 @@ export async function loadSessionTreeWithFallback(input: TreeLoadArgs) {
   return {
     ...roots,
     data: [...by.values()],
+  }
+}
+
+async function loadChildren(input: TreeLoadArgs, roots: Session[], ids: string[]) {
+  if (ids.length === 0) return undefined
+  if (input.tree) {
+    const trees = await Promise.all(ids.map((root) => input.tree!({ directory: input.directory, root })))
+    const rootsByID = new Map(roots.map((session) => [session.id, session]))
+    return {
+      data: trees.flatMap((tree) =>
+        (tree.data?.nodes ?? [])
+          .filter((node) => !!node.parent_id)
+          .map((node) => sessionFromNode(node, rootsByID.get(node.root_id))),
+      ),
+    }
+  }
+  if (!input.descendants) return undefined
+  return input.descendants({ directory: input.directory, ids })
+}
+
+export function sessionFromNode(node: SessionTreeNode, root?: Session): Session {
+  return {
+    id: node.id,
+    slug: node.id,
+    projectID: root?.projectID ?? "",
+    workspaceID: root?.workspaceID,
+    directory: root?.directory ?? "",
+    parentID: node.parent_id,
+    title: node.title,
+    version: root?.version ?? "v2",
+    summary: {
+      additions: node.stats.additions,
+      deletions: node.stats.deletions,
+      files: node.stats.files,
+    },
+    time: {
+      created: node.time.created,
+      updated: node.time.updated,
+    },
   }
 }
 

@@ -1,7 +1,9 @@
 import { Component } from "solid-js"
 import { Dialog } from "@open-agent-harness/ui/dialog"
+import { IconButton } from "@open-agent-harness/ui/icon-button"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import { Icon } from "@open-agent-harness/ui/icon"
+import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { SettingsGeneral } from "./settings-general"
@@ -10,13 +12,21 @@ import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsAgents } from "./settings-agents"
 
-export const DialogSettings: Component = () => {
+export const DialogSettings: Component<{ defaultTab?: string; agent?: string }> = (props) => {
+  const dialog = useDialog()
   const language = useLanguage()
   const platform = usePlatform()
 
   return (
     <Dialog size="x-large" transition>
-      <Tabs orientation="vertical" variant="settings" defaultValue="general" class="h-full settings-dialog">
+      <IconButton
+        icon="circle-x"
+        variant="ghost"
+        class="absolute right-3 top-3 z-20"
+        aria-label={language.t("common.close")}
+        onClick={() => dialog.close()}
+      />
+      <Tabs orientation="vertical" variant="settings" defaultValue={props.defaultTab ?? "general"} class="h-full settings-dialog">
         <Tabs.List>
           <div class="flex flex-col justify-between h-full w-full">
             <div class="flex flex-col gap-3 w-full pt-3">
@@ -73,7 +83,7 @@ export const DialogSettings: Component = () => {
           <SettingsModels />
         </Tabs.Content>
         <Tabs.Content value="agents" class="no-scrollbar">
-          <SettingsAgents />
+          <SettingsAgents selected={props.agent} />
         </Tabs.Content>
       </Tabs>
     </Dialog>

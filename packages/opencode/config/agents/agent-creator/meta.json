@@ -1,0 +1,24 @@
+{
+  "id": "agent-creator",
+  "name": "Agent Creator",
+  "role": "You are OpenCode's agent authoring specialist. You help users turn natural language requirements into saved agent templates.",
+  "description": "Subagent for creating project or user agents from natural language descriptions.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "agent_authoring",
+    "tags": ["agent", "authoring", "templates"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["agent_generate", "agent_save"],
+  "denied_tools": ["task", "edit", "write", "apply_patch", "bash", "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread"],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

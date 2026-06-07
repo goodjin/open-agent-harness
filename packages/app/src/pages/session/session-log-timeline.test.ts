@@ -285,12 +285,13 @@ describe("session log timeline", () => {
       record("d", 4, "protocol.final.plain", { runID: "apr_1" }),
       record("e", 5, "protocol.final.completed", { runID: "apr_1" }),
       record("f", 6, "memory.captured", { count: 1 }),
+      record("g", 7, "agent.metadata.output_validated", { agent: "tester" }),
     ]
 
     expect(groupLogs(logs).map((row) => [row.id, row.logs.map((log) => log.type)])).toEqual([
       ["f", ["memory.captured"]],
     ])
-    expect(groupLogs(logs, "protocol").map((row) => row.id)).toEqual(["e", "d", "c", "b", "a"])
+    expect(groupLogs(logs, "protocol").map((row) => row.id)).toEqual(["g", "e", "d", "c", "b", "a"])
   })
 
   test("shows protocol errors and tool call markers in the default timeline", () => {
@@ -300,9 +301,10 @@ describe("session log timeline", () => {
       record("c", 3, "protocol.action.failed", { runID: "apr_1", actionID: "bad" }),
       record("d", 4, "tool.finish", { protocol: true, callID: "call_1", tool: "read" }),
       record("e", 5, "tool.error", { protocol: true, callID: "call_2", tool: "read", error: "boom" }),
+      record("f", 6, "agent.metadata.output_validation_failed", { agent: "tester" }),
     ]
 
-    expect(groupLogs(logs).map((row) => row.id)).toEqual(["e", "c", "b"])
+    expect(groupLogs(logs).map((row) => row.id)).toEqual(["f", "e", "c", "b"])
   })
 
   test("compacts start end lifecycle pairs in details", () => {

@@ -6,6 +6,7 @@ type Translator = (key: string, vars?: Record<string, string | number | boolean>
 export type ModelErr = {
   id?: string
   name?: string
+  concurrency?: string
 }
 
 export type HeaderErr = {
@@ -17,6 +18,7 @@ export type ModelRow = {
   row: string
   id: string
   name: string
+  concurrency: string
   err: ModelErr
 }
 
@@ -32,6 +34,7 @@ export type FormState = {
   name: string
   baseURL: string
   apiKey: string
+  concurrency: string
   models: ModelRow[]
   headers: HeaderRow[]
   saving: boolean
@@ -39,6 +42,7 @@ export type FormState = {
     providerID?: string
     name?: string
     baseURL?: string
+    concurrency?: string
   }
 }
 
@@ -54,6 +58,7 @@ export function validateCustomProvider(input: ValidateArgs) {
   const name = input.form.name.trim()
   const baseURL = input.form.baseURL.trim()
   const apiKey = input.form.apiKey.trim()
+  const concurrency = input.form.concurrency.trim()
 
   const env = apiKey.match(/^\{env:([^}]+)\}$/)?.[1]?.trim()
   const key = apiKey && !env ? apiKey : undefined
@@ -69,6 +74,11 @@ export function validateCustomProvider(input: ValidateArgs) {
     ? input.t("provider.custom.error.baseURL.required")
     : !/^https?:\/\//.test(baseURL)
       ? input.t("provider.custom.error.baseURL.format")
+      : undefined
+  const concurrencyValue = concurrency ? Number(concurrency) : undefined
+  const concurrencyError =
+    concurrency && (concurrencyValue === undefined || !Number.isInteger(concurrencyValue) || concurrencyValue < 1)
+      ? input.t("provider.custom.error.concurrency")
       : undefined
 
   const disabled = input.disabledProviders.includes(providerID)
@@ -90,10 +100,24 @@ export function validateCustomProvider(input: ValidateArgs) {
             return undefined
           })()
     const nameError = !m.name.trim() ? input.t("provider.custom.error.required") : undefined
-    return { id: idError, name: nameError }
+    const concurrency = m.concurrency.trim()
+    const value = concurrency ? Number(concurrency) : undefined
+    const concurrencyError =
+      concurrency && (value === undefined || !Number.isInteger(value) || value < 1)
+        ? input.t("provider.custom.error.concurrency")
+        : undefined
+    return { id: idError, name: nameError, concurrency: concurrencyError }
   })
-  const modelsValid = models.every((m) => !m.id && !m.name)
-  const modelConfig = Object.fromEntries(input.form.models.map((m) => [m.id.trim(), { name: m.name.trim() }]))
+  const modelsValid = models.every((m) => !m.id && !m.name && !m.concurrency)
+  const modelConfig = Object.fromEntries(
+    input.form.models.map((m) => [
+      m.id.trim(),
+      {
+        name: m.name.trim(),
+        ...(m.concurrency.trim() ? { concurrency: Number(m.concurrency.trim()) } : {}),
+      },
+    ]),
+  )
 
   const seenHeaders = new Set<string>()
   const headers = input.form.headers.map((h) => {
@@ -124,9 +148,10 @@ export function validateCustomProvider(input: ValidateArgs) {
     providerID: idError ?? existsError,
     name: nameError,
     baseURL: urlError,
+    concurrency: concurrencyError,
   }
 
-  const ok = !idError && !existsError && !nameError && !urlError && modelsValid && headersValid
+  const ok = !idError && !existsError && !nameError && !urlError && !concurrencyError && modelsValid && headersValid
   if (!ok) return { err, models, headers }
 
   return {
@@ -141,6 +166,7 @@ export function validateCustomProvider(input: ValidateArgs) {
         npm: OPENAI_COMPATIBLE,
         name,
         ...(env ? { env: [env] } : {}),
+        ...(concurrencyValue ? { concurrency: concurrencyValue } : {}),
         options: {
           baseURL,
           ...(Object.keys(headerConfig).length ? { headers: headerConfig } : {}),
@@ -155,5 +181,5 @@ let row = 0
 
 const nextRow = () => `row-${row++}`
 
-export const modelRow = (): ModelRow => ({ row: nextRow(), id: "", name: "", err: {} })
+export const modelRow = (): ModelRow => ({ row: nextRow(), id: "", name: "", concurrency: "", err: {} })
 export const headerRow = (): HeaderRow => ({ row: nextRow(), key: "", value: "", err: {} })

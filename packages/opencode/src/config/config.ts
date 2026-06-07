@@ -882,12 +882,26 @@ export namespace Config {
 
   export const Provider = ModelsDev.Provider.partial()
     .extend({
+      concurrency: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally."),
       whitelist: z.array(z.string()).optional(),
       blacklist: z.array(z.string()).optional(),
       models: z
         .record(
           z.string(),
           ModelsDev.Model.partial().extend({
+            concurrency: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe(
+                "Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.",
+              ),
             variants: z
               .record(
                 z.string(),
@@ -915,13 +929,13 @@ export namespace Config {
                 .int()
                 .positive()
                 .describe(
-                  "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+                  "Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.",
                 ),
               z.literal(false).describe("Disable timeout for this provider entirely."),
             ])
             .optional()
             .describe(
-              "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+              "Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.",
             ),
           chunkTimeout: z
             .number()

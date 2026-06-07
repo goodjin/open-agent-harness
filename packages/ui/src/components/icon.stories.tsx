@@ -97,6 +97,7 @@ const names = [
   "branch",
   "edit",
   "help",
+  "hourglass",
   "settings-gear",
   "dash",
   "cloud-upload",

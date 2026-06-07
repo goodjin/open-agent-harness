@@ -118,7 +118,7 @@ Agent A -> action result / command -> Runtime -> assignment -> Agent B
 
 Agent A 可以提出 next Action 或 handoff request。Runtime 校验该请求、创建 Assignment，并将工作分发给 Agent B。
 
-Handoff 应保留 contract boundary，而不是依赖自由文本 transcript continuation。
+Handoff 应保留 contract boundary，避免把自由文本 transcript continuation 当作交接机制。
 
 Handoff 字段：
 
@@ -144,6 +144,8 @@ Handoff 字段：
 ```
 
 Runtime 使用该结构创建下一个 Assignment、构造目标 Context Bundle，并保持 session 之间的 trace continuity。
+
+`05-handoff-protocol.md` 定义 Handoff 的生成细节：source Agent self-report、raw records、structured trace、Handoff Source Bundle、handoff writer、canonical record 和目标 Markdown Context Bundle。本文只定义 routing 和 delegation 如何消费 Handoff Contract。
 
 ## Runtime Orchestration Policy 展开
 
@@ -246,7 +248,9 @@ Runtime 展开 `orchestration_policy` 时遵循以下规则：
 - `required: false` 的编排项失败会记录 trace 和 warning，但不必阻塞 parent action 完成。
 - 目标 Agent 不存在、不可 delegation、权限不满足或预算不足时，Runtime 应记录 orchestration blocked reason。
 
-当编排链需要复杂条件分支、循环、并行 fan-out/fan-in 或跨 session 长时间恢复时，应由 Workflow Adapter 表达。
+当编排链需要复杂条件分支、循环、并行 fan-out/fan-in 或跨 session 长时间恢复时，Runtime 通过持久化 Action Graph、Graph-level policy、Agent metadata / Orchestration Policy、Decision、Gate 和 Handoff 表达这些语义。
+
+用户将这类 Action Graph 保存为 Workflow，或主动创建 Workflow 时，它成为 Workflow 资产；执行能力仍来自同一套 Action Graph 和 Runtime 状态模型。
 
 ## Delegation Request 恢复
 
@@ -268,4 +272,4 @@ Routing 与 Delegation 策略覆盖以下能力：
 - 记录 child session trace links、artifact refs、result summary、unresolved issues 和 failure reason。
 - 对 hidden、disabled、non-delegable 或 permission-mismatched Agent 执行 gate enforcement。
 - 将 Handoff Contract 交给后续 Agent Session 或 human owner。
-- 将复杂条件分支、循环、fan-out/fan-in 和跨 session 长时间恢复交给 Workflow Adapter 表达。
+- 将复杂条件分支、循环、fan-out/fan-in 和跨 session 长时间恢复表达为持久化 Action Graph、Decision、Gate、Handoff 和 Runtime Orchestration Policy。

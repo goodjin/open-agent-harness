@@ -1,4 +1,9 @@
-import { AssistantMessage, type FileDiff, Message as MessageType, Part as PartType } from "@open-agent-harness/sdk/v2/client"
+import {
+  AssistantMessage,
+  type FileDiff,
+  Message as MessageType,
+  Part as PartType,
+} from "@open-agent-harness/sdk/v2/client"
 import type { SessionStatus } from "@open-agent-harness/sdk/v2"
 import { useData } from "../context"
 import { useFileComponent } from "../context/file"
@@ -94,6 +99,17 @@ function partState(part: PartType, showReasoningSummaries: boolean) {
   return
 }
 
+export type SessionTurnFilter = "all" | "thinking" | "input" | "output" | "tool"
+
+function filterPart(part: PartType, filter: SessionTurnFilter, role: MessageType["role"]) {
+  if (filter === "all") return true
+  if (filter === "input") return role === "user"
+  if (role !== "assistant") return false
+  if (filter === "thinking") return part.type === "reasoning"
+  if (filter === "output") return part.type === "text"
+  return part.type === "tool"
+}
+
 function clean(value: string) {
   return value
     .replace(/`([^`]+)`/g, "$1")
@@ -145,6 +161,7 @@ export function SessionTurn(
     showReasoningSummaries?: boolean
     shellToolDefaultOpen?: boolean
     editToolDefaultOpen?: boolean
+    filter?: SessionTurnFilter
     active?: boolean
     status?: SessionStatus
     onUserInteracted?: () => void
@@ -319,6 +336,7 @@ export function SessionTurn(
   })
   const working = createMemo(() => status().type !== "idle" && active())
   const showReasoningSummaries = createMemo(() => props.showReasoningSummaries ?? true)
+  const filter = createMemo(() => props.filter ?? "all")
 
   const assistantCopyPartID = createMemo(() => {
     if (working()) return null
@@ -344,13 +362,18 @@ export function SessionTurn(
   const assistantVisible = createMemo(() =>
     assistantMessages().reduce((count, message) => {
       const parts = list(data.store.part?.[message.id], emptyParts)
-      return count + parts.filter((part) => partState(part, showReasoningSummaries()) === "visible").length
+      return (
+        count +
+        parts.filter((part) => filterPart(part, filter(), "assistant") && partState(part, showReasoningSummaries()) === "visible")
+          .length
+      )
     }, 0),
   )
   const assistantTailVisible = createMemo(() =>
     assistantMessages()
       .flatMap((message) => list(data.store.part?.[message.id], emptyParts))
       .flatMap((part) => {
+        if (!filterPart(part, filter(), "assistant")) return []
         if (partState(part, showReasoningSummaries()) !== "visible") return []
         if (part.type === "text") return ["text" as const]
         return ["other" as const]
@@ -368,6 +391,7 @@ export function SessionTurn(
   const showThinking = createMemo(() => {
     if (!working() || !!error()) return false
     if (status().type === "retry") return false
+    if (status().type === "rate_limited") return false
     if (showReasoningSummaries()) return assistantVisible() === 0
     return true
   })
@@ -398,7 +422,11 @@ export function SessionTurn(
                 <div data-slot="session-turn-message-time">{userTime()}</div>
               </Show>
               <div data-slot="session-turn-message-content" aria-live="off">
-                <Message message={message()!} parts={parts()} actions={props.actions} />
+                <Message
+                  message={message()!}
+                  parts={parts().filter((part) => filterPart(part, filter(), "user"))}
+                  actions={props.actions}
+                />
               </div>
               <Show when={divider()}>
                 <div data-slot="session-turn-compaction">
@@ -418,11 +446,12 @@ export function SessionTurn(
                     showReasoningSummaries={showReasoningSummaries()}
                     shellToolDefaultOpen={props.shellToolDefaultOpen}
                     editToolDefaultOpen={props.editToolDefaultOpen}
+                    filter={filter()}
                     actions={props.actions}
                   />
                 </div>
               </Show>
-              <Show when={showThinking()}>
+              <Show when={filter() !== "input" && filter() !== "output" && filter() !== "tool" && showThinking()}>
                 <div data-slot="session-turn-thinking">
                   <TextShimmer text={i18n.t("ui.sessionTurn.status.thinking")} />
                   <Show when={!showReasoningSummaries()}>
@@ -435,8 +464,10 @@ export function SessionTurn(
                   </Show>
                 </div>
               </Show>
-              <SessionRetry status={status()} show={active()} />
-              <Show when={edited() > 0 && !working()}>
+              <Show when={filter() === "all"}>
+                <SessionRetry status={status()} show={active()} />
+              </Show>
+              <Show when={filter() === "all" && edited() > 0 && !working()}>
                 <div data-slot="session-turn-diffs">
                   <Collapsible open={open()} onOpenChange={(value) => setState("open", value)} variant="ghost">
                     <Collapsible.Trigger>

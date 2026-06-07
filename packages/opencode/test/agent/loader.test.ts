@@ -53,15 +53,30 @@ describe("AgentTemplateLoader", () => {
       expect(agents.find((item) => item.id === "default")?.meta.runner).toBe("protocol")
     })
 
-    test("built-in default fallback keeps custom allowed tool policy", async () => {
+    test("built-in default fallback keeps custom planner tool policy", async () => {
       const registry = new AgentRegistry("/nonexistent/path", "/also/nonexistent")
       const agent = await registry.get("default")
       expect(agent?.meta.permission_mode).toBe("custom")
-      expect(agent?.meta.allowed_tools).toContain("read")
+      expect(agent?.meta.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
+      expect(agent?.meta.inherit_permissions).toBe(false)
       expect(agent?.policy.rules).toContainEqual(
         expect.objectContaining({
           permission: "*",
           action: "deny",
+          source: "agent",
+        }),
+      )
+      expect(agent?.policy.rules).toContainEqual(
+        expect.objectContaining({
+          permission: "task",
+          action: "allow",
+          source: "agent",
+        }),
+      )
+      expect(agent?.policy.rules).toContainEqual(
+        expect.objectContaining({
+          permission: "question",
+          action: "allow",
           source: "agent",
         }),
       )
@@ -107,7 +122,7 @@ describe("AgentTemplateLoader", () => {
         "requirements-clarifier": ["requirements_clarification", "medium", false, false, true, true, false, false],
         "plan-reviewer": ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
-        "workflow-runner": ["workflow_orchestration", "low", true, true, false, true, false, false],
+        "workflow-runner": ["workflow_profile_management", "low", true, true, false, true, false, false],
         "protocol-runner": ["protocol_orchestration", "low", false, true, false, true, false, false],
       } as const
       const agents = await loader.loadAll()
@@ -161,7 +176,7 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.meta.runner).toBe("workflow")
       expect(agent?.meta.capability.purpose).toBe("migration")
       expect(agent?.identity).toContain("many files")
-      expect(agent?.rules).toContain("workflow DAG")
+      expect(agent?.rules).toContain("persistent Action Graph")
     })
 
     test("workflow-runner package template exposes workflow metadata", async () => {
@@ -170,8 +185,8 @@ describe("AgentTemplateLoader", () => {
 
       expect(agent).toBeDefined()
       expect(agent?.meta.runner).toBe("workflow")
-      expect(agent?.meta.capability.purpose).toBe("workflow_orchestration")
-      expect(agent?.identity).toContain("workflow DAG")
+      expect(agent?.meta.capability.purpose).toBe("workflow_profile_management")
+      expect(agent?.identity).toContain("Workflow assets")
       expect(agent?.rules).toContain("workflow.create")
     })
 
@@ -245,6 +260,10 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.meta.description).toBe("Use when reviewing code changes.")
         expect(agent?.meta.entry.primary).toBe(false)
         expect(agent?.meta.capability.purpose).toBe("legacy_skill")
+        expect(agent?.meta.schema_version).toBeUndefined()
+        expect(agent?.meta.instructions).toBeUndefined()
+        expect(agent?.meta.contracts).toBeUndefined()
+        expect(agent?.meta.collaboration).toBeUndefined()
         expect(agent?.identity).toContain("You review code for bugs.")
         expect(agent?.rules).toContain("Read the diff.")
       } finally {
@@ -282,6 +301,9 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.source).toBe("user")
         expect(agent?.meta.description).toBe("Use when planning work from Claude skills.")
         expect(agent?.meta.capability.purpose).toBe("legacy_skill")
+        expect(agent?.identity).toBe("You are the Claude Planner agent converted from a legacy skill.")
+        expect(agent?.rules).toContain("Plan the work.")
+        expect(agent?.identity).not.toBe(agent?.rules)
       } finally {
         await fs.rm(tmp, { recursive: true })
       }
@@ -303,6 +325,74 @@ describe("AgentTemplateLoader", () => {
         const agent = agents.find((item) => item.id === "writer")
         expect(agent?.name).toBe("Agent Writer")
         expect(agent?.meta.description).toBe("Agent writer")
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
+
+    test("loads RFC metadata while keeping legacy identity and rules files", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      try {
+        const dir = path.join(tmp, "metadata-agent")
+        await fs.mkdir(dir)
+        await fs.writeFile(
+          path.join(dir, "meta.json"),
+          JSON.stringify({
+            schema_version: "agent.metadata.v1",
+            agent_version: "1.0.0",
+            id: "metadata-agent",
+            name: "Metadata Agent",
+            persona: "metadata persona",
+            description: "metadata test",
+            logo: {
+              uri: "./logo.svg",
+              alt: "Metadata",
+            },
+            instructions: {
+              files: [
+                {
+                  path: "playbook.md",
+                  role: "system",
+                  required: false,
+                },
+              ],
+              model_messages: [
+                {
+                  on: "start",
+                  position: "after_identity",
+                  content: "do not inject during load",
+                },
+              ],
+            },
+            contracts: {
+              input: [{ schema_ref: "#/$defs/input" }],
+              output: [{ schema_ref: "#/$defs/output" }],
+            },
+            collaboration: {
+              edges: [{ target: "other-agent", relation: "hands_off" }],
+            },
+            completion: {
+              criteria: ["done"],
+            },
+          }),
+        )
+        await fs.writeFile(path.join(dir, "identity.md"), "# Identity\n\nLegacy identity.")
+        await fs.writeFile(path.join(dir, "rules.md"), "# Rules\n\nLegacy rules.")
+
+        const testLoader = new AgentTemplateLoader(tmp, "/nonexistent/fallback")
+        const result = await testLoader.load()
+        const agent = result.templates.find((item) => item.id === "metadata-agent")
+
+        expect(agent?.meta.schema_version).toBe("agent.metadata.v1")
+        expect(agent?.meta.role).toBe("metadata persona")
+        expect(agent?.meta.inherit_permissions).toBe(false)
+        expect(agent?.meta.instructions?.files[0]?.path).toBe("playbook.md")
+        expect(agent?.meta.contracts?.input[0]?.schema_ref).toBe("#/$defs/input")
+        expect(agent?.meta.collaboration?.edges[0]?.target).toBe("other-agent")
+        expect(agent?.identity).toContain("Legacy identity.")
+        expect(agent?.rules).toContain("Legacy rules.")
+        expect(agent?.identity).not.toContain("do not inject during load")
+        expect(result.diagnostics.filter((item) => item.dir === dir)).toEqual([])
       } finally {
         await fs.rm(tmp, { recursive: true })
       }
@@ -500,6 +590,61 @@ describe("AgentTemplateLoader", () => {
         expect(result.templates.find((item) => item.id === "valid-agent")).toBeDefined()
         expect(result.templates.find((item) => item.id === "different")).toBeUndefined()
         expect(result.statuses.filter((item) => !item.valid).length).toBe(1)
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+      }
+    })
+
+    test("warns for metadata diagnostics without blocking load", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      try {
+        const dir = path.join(tmp, "metadata-warnings")
+        await fs.mkdir(dir)
+        await fs.writeFile(
+          path.join(dir, "meta.json"),
+          JSON.stringify({
+            schema_version: "agent.metadata.v1",
+            id: "metadata-warnings",
+            name: "Metadata Warnings",
+            role: "test",
+            description: "metadata warnings",
+            logo: {
+              uri: "ftp://example.com/logo.svg",
+            },
+            instructions: {
+              files: [
+                {
+                  path: "../missing.md",
+                  required: true,
+                },
+              ],
+            },
+            contracts: {
+              input: [{ schema_ref: 1 }],
+              output: [{ schema_ref: "" }],
+            },
+            collaboration: {
+              edges: [{ kind: "handoff" }],
+            },
+          }),
+        )
+        await fs.writeFile(path.join(dir, "identity.md"), "# Identity")
+        await fs.writeFile(path.join(dir, "rules.md"), "# Rules")
+
+        const testLoader = new AgentTemplateLoader(tmp, "/nonexistent/fallback")
+        const result = await testLoader.load()
+        const fields = result.diagnostics.filter((item) => item.dir === dir).map((item) => item.field)
+
+        expect(result.templates.find((item) => item.id === "metadata-warnings")).toBeDefined()
+        expect(result.statuses.find((item) => item.dir === dir)?.valid).toBe(true)
+        expect(fields).toContain("logo.uri")
+        expect(fields).toContain("instructions.files.0.path")
+        expect(fields).toContain("contracts.input.0.schema_ref")
+        expect(fields).toContain("contracts.output.0.schema_ref")
+        expect(fields).toContain("collaboration.edges.0.target")
+        expect(result.diagnostics.find((item) => item.field === "instructions.files.0.path")?.category).toBe(
+          "metadata.instructions",
+        )
       } finally {
         await fs.rm(tmp, { recursive: true })
       }

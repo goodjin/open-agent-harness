@@ -75,6 +75,7 @@ export namespace AgentProtocolExecutor {
         summary: result.output,
         output: stop || failed ? undefined : result.output,
         error: stop || failed ? result.output : undefined,
+        sessionID: session(result.metadata),
         tool_call_ids: ids(result.metadata),
         duration_ms: end - start,
         time: {
@@ -171,5 +172,11 @@ export namespace AgentProtocolExecutor {
     const id = typeof input.callID === "string" ? input.callID : undefined
     const ids = Array.isArray(input.toolCallIDs) ? input.toolCallIDs.filter((item) => typeof item === "string") : []
     return id ? [id, ...ids] : ids
+  }
+
+  function session(input: Record<string, unknown>) {
+    const id = input.childSessionID
+    if (typeof id === "string" && id.length > 0) return id
+    return undefined
   }
 }
