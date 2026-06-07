@@ -116,6 +116,50 @@ function view(message: MessageV2.WithParts): MessageV2.WithParts {
   }
 }
 
+const CommandSource = z.enum(["user", "parent_session", "runtime"])
+
+const TreeBatch = z.object({
+  directory: z.string().optional(),
+  ids: SessionID.zod.array().min(1),
+})
+
+function command(input: {
+  source: z.infer<typeof CommandSource>
+  source_session?: SessionID
+  target_session: SessionID
+  intent: string
+  reason?: string
+  expected_action: string
+  message?: string
+}) {
+  return [
+    "[Session Command]",
+    `source: ${input.source}`,
+    input.source_session ? `source_session: ${input.source_session}` : undefined,
+    `target_session: ${input.target_session}`,
+    `intent: ${input.intent}`,
+    input.reason ? `reason: ${input.reason}` : undefined,
+    `expected_action: ${input.expected_action}`,
+    "",
+    input.message ?? "",
+  ]
+    .filter((item): item is string => typeof item === "string")
+    .join("\n")
+}
+
+async function scoped<T>(directory: string | undefined, fn: () => Promise<T>) {
+  if (!directory) return fn()
+  return WorkspaceContext.provide({
+    workspaceID: undefined,
+    fn: () =>
+      Instance.provide({
+        directory,
+        init: InstanceBootstrap,
+        fn,
+      }),
+  })
+}
+
 export const SessionRoutes = lazy(() =>
   new Hono()
     .get(
@@ -223,6 +267,221 @@ export const SessionRoutes = lazy(() =>
             })
           : Session.descendantsBatch({ ids: body.ids }))
         return c.json(sessions.map(slim))
+      },
+    )
+    .get(
+      "/tree",
+      describeRoute({
+        summary: "Get lightweight session tree",
+        tags: ["Session"],
+        description: "Retrieve a lightweight session tree projection without message bodies or raw session metadata.",
+        operationId: "session.tree",
+        responses: {
+          200: {
+            description: "Session tree projection",
+            content: {
+              "application/json": {
+                schema: resolver(
+                  z.object({
+                    nodes: Session.TreeNode.array(),
+                  }),
+                ),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "query",
+        z.object({
+          root: SessionID.zod,
+          directory: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const query = c.req.valid("query")
+        return c.json({
+          nodes: await scoped(query.directory, () => Session.tree(query.root)),
+        })
+      },
+    )
+    .patch(
+      "/tree/sessions",
+      describeRoute({
+        summary: "Update session tree nodes",
+        tags: ["Session"],
+        description: "Batch update lightweight session tree metadata such as title, agent, and model preference.",
+        operationId: "session.tree.update",
+        responses: {
+          200: {
+            description: "Updated sessions",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ updated: z.number() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "json",
+        TreeBatch.extend({
+          title: z.string().optional(),
+          agent: z.string().optional(),
+          model: z
+            .object({
+              providerID: ProviderID.zod,
+              modelID: ModelID.zod,
+            })
+            .optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        await scoped(body.directory, async () => {
+          await Promise.all(
+            body.ids.map(async (id) => {
+              await Session.get(id)
+              if (body.title !== undefined) await Session.setTitle({ sessionID: id, title: body.title })
+              if (body.agent !== undefined) await Session.setAgent({ sessionID: id, agent: body.agent })
+              if (body.model) await Session.setModel({ sessionID: id, model: body.model })
+            }),
+          )
+        })
+        return c.json({ updated: body.ids.length })
+      },
+    )
+    .post(
+      "/tree/abort",
+      describeRoute({
+        summary: "Abort session tree nodes",
+        tags: ["Session"],
+        description: "Abort selected sessions from the session tree manager.",
+        operationId: "session.tree.abort",
+        responses: {
+          200: {
+            description: "Aborted sessions",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ aborted: z.number() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "json",
+        TreeBatch.extend({
+          source: CommandSource.optional(),
+          source_session: SessionID.zod.optional(),
+          reason: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        await scoped(body.directory, async () => {
+          await Promise.all(
+            body.ids.map(async (id) => {
+              await Session.get(id)
+              SessionPrompt.cancel(id)
+              SessionStatus.set(id, { type: "aborted", message: body.reason })
+            }),
+          )
+        })
+        return c.json({ aborted: body.ids.length })
+      },
+    )
+    .post(
+      "/tree/resume",
+      describeRoute({
+        summary: "Resume session tree nodes",
+        tags: ["Session"],
+        description: "Restore interrupted sessions or send structured resume commands from the session tree manager.",
+        operationId: "session.tree.resume",
+        responses: {
+          200: {
+            description: "Resumed sessions",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ resumed: z.number() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "json",
+        TreeBatch.extend({
+          source: CommandSource.optional(),
+          source_session: SessionID.zod.optional(),
+          include_completed: z.boolean().optional(),
+          mode: z.enum(["restore", "message"]).optional(),
+          reason: z.string().optional(),
+          message: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        const mode = body.mode ?? "restore"
+        const done = new Set(["completed", "idle"])
+        const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+        const resumed = await scoped(body.directory, async () => {
+          const result = await Promise.all(
+            body.ids.map(async (id) => {
+              await Session.get(id)
+              const status = SessionStatus.get(id)
+              if (mode === "restore") {
+                if (!stopped.has(status.type)) return false
+                SessionStatus.set(id, { type: "running" })
+                void SessionPrompt.loop({ sessionID: id }).catch((err) => {
+                  log.warn("session tree restore failed", { sessionID: id, err })
+                  SessionStatus.set(id, { type: "error", message: err instanceof Error ? err.message : String(err) })
+                })
+                return true
+              }
+              if (!body.include_completed && done.has(status.type)) return false
+              const meta = {
+                command: {
+                  source: body.source ?? "user",
+                  source_session: body.source_session,
+                  target_session: id,
+                  intent: "resume_aborted_session",
+                  reason: body.reason,
+                },
+              }
+              void SessionPrompt.prompt({
+                sessionID: id,
+                metadata: meta,
+                parts: [
+                  {
+                    type: "text",
+                    text: command({
+                      source: body.source ?? "user",
+                      source_session: body.source_session,
+                      target_session: id,
+                      intent: "resume_aborted_session",
+                      reason: body.reason,
+                      expected_action:
+                        "Continue from the last recoverable state, report blockers if recovery is not possible.",
+                      message: body.message,
+                    }),
+                  },
+                ],
+              }).catch((err) => {
+                log.warn("session tree resume message failed", { sessionID: id, err })
+                SessionStatus.set(id, { type: "error", message: err instanceof Error ? err.message : String(err) })
+              })
+              SessionStatus.set(id, { type: "running" })
+              return true
+            }),
+          )
+          return result.filter(Boolean).length
+        })
+        return c.json({ resumed })
       },
     )
     .get(

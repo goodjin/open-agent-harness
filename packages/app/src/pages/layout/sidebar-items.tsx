@@ -175,8 +175,12 @@ const treeX = (depth: number | undefined) => (depth ?? 0) * indent + 38
 const row = (dense?: boolean) => (dense ? "24px" : "28px")
 const mid = (dense?: boolean) => (dense ? "12px" : "14px")
 const end = (dense?: boolean) => (dense ? "22px" : "24px")
-const drop = (dense?: boolean) => (dense ? "24px" : "28px")
-const line = { "background-color": "var(--border-base)" }
+const line = { "background-color": "var(--border-strong)" }
+const short = (text: string) => {
+  const chars = Array.from(text)
+  if (chars.length <= 20) return text
+  return `${chars.slice(0, 20).join("")}...`
+}
 const trunk = (dense?: boolean, first?: boolean, last?: boolean) => {
   const top = mid(dense)
   if (first && last) return { top, height: "0px" }
@@ -275,7 +279,9 @@ export type SessionItemProps = {
 
 const SessionRow = (props: {
   session: Session
-  title: Accessor<string>
+  titleLabel: Accessor<string>
+  titleTip: Accessor<string>
+  agentLabel: Accessor<string | undefined>
   childSummary: Accessor<{ completed: number; total: number; working: number } | undefined>
   slug: string
   mobile?: boolean
@@ -309,7 +315,6 @@ const SessionRow = (props: {
         class="shrink-0 size-5 rounded flex items-center justify-center text-icon-weak focus:outline-none focus-visible:bg-surface-base-active"
         classList={{
           "hover:bg-surface-base-hover": !props.expanded?.(),
-          "opacity-0 group-hover/session:opacity-100 group-focus-within/session:opacity-100": props.expanded?.(),
         }}
         aria-expanded={props.expanded?.() ?? false}
         aria-label="Toggle session children"
@@ -349,9 +354,14 @@ const SessionRow = (props: {
           hasError={props.hasError}
           unseenCount={props.unseenCount}
         />
-        <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
-          {props.title()}
-        </span>
+        <Tooltip value={props.titleTip()} placement="top">
+          <span class="text-14-regular text-text-strong grow-1 min-w-0 overflow-hidden text-ellipsis truncate">
+            {props.titleLabel()}
+          </span>
+        </Tooltip>
+        <Show when={props.agentLabel()}>
+          {(agent) => <span class="shrink-0 text-12-regular text-text-weak">({agent()})</span>}
+        </Show>
         <Show when={props.childSummary()}>
           {(summary) => (
             <span class="shrink-0 rounded bg-surface-base px-1.5 py-0.5 text-11-regular tabular-nums text-text-weak">
@@ -452,6 +462,14 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const tint = createMemo(() => {
     return messageAgentColor(sessionStore.message[props.session.id], sessionStore.agent)
   })
+  const agent = createMemo(() => {
+    const list = sessionStore.message[props.session.id]
+    if (!list) return
+    for (let i = list.length - 1; i >= 0; i--) {
+      const item = list[i]
+      if (item.role === "user" && item.agent) return item.agent
+    }
+  })
   const durationLabel = createMemo(() =>
     duration(props.session, sessionStore.message[props.session.id], isWorking(), now()),
   )
@@ -501,6 +519,9 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       .indexOf(props.session.id)
     return displaySessionTitle(props.session, idx === -1 ? undefined : idx)
   })
+  const titleSuffix = createMemo(() => (agent() ? ` (${agent()})` : ""))
+  const titleLabel = createMemo(() => short(title()))
+  const titleTip = createMemo(() => `${title()}${titleSuffix()}`)
   const isWaitingChild = createMemo(() => !isWorking() && !hasError() && !hasPermissions() && !!childSummary()?.working)
   const canExpand = createMemo(() => childSessions().length > 0)
   const expanded = createMemo(() => {
@@ -574,10 +595,18 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     const text = parts.find((part): part is TextPart => part?.type === "text" && !part.synthetic && !part.ignored)
     return text?.text
   }
+  const action = {
+    "opacity-100 pointer-events-auto": !!props.mobile,
+    "opacity-0 pointer-events-none": !props.mobile,
+    "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+    "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
+  }
   const item = (
     <SessionRow
       session={props.session}
-      title={title}
+      titleLabel={titleLabel}
+      titleTip={titleTip}
+      agentLabel={agent}
       childSummary={childSummary}
       slug={props.slug}
       mobile={props.mobile}
@@ -616,11 +645,11 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       >
         <Show when={expanded() && filteredChildren().length > 0}>
           <div
-            class="pointer-events-none absolute z-10 w-px"
+            class="pointer-events-none absolute w-px"
             style={{
               top: end(props.dense),
-              left: `${treeX((props.depth ?? 0) + 1)}px`,
-              height: drop(props.dense),
+              left: `${treeX(props.depth)}px`,
+              bottom: "0",
               ...line,
             }}
           />
@@ -632,7 +661,12 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
           />
           <div
             class="pointer-events-none absolute h-px"
-            style={{ top: mid(props.dense), left: `${treeX(props.depth) - 18}px`, width: "18px", ...line }}
+            style={{
+              top: mid(props.dense),
+              left: `${treeX(Math.max((props.depth ?? 0) - 1, 0))}px`,
+              width: `${indent}px`,
+              ...line,
+            }}
           />
         </Show>
         <div
@@ -643,7 +677,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
           <Show
             when={hoverEnabled()}
             fallback={
-              <Tooltip placement={props.mobile ? "bottom" : "right"} value={title()} gutter={10}>
+              <Tooltip placement={props.mobile ? "bottom" : "right"} value={titleTip()} gutter={10}>
                 {item}
               </Tooltip>
             }
@@ -674,28 +708,22 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
           <div
             class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 pointer-events-auto`}
           >
-            <Tooltip value={language.t("session.copyName")} placement="top">
-              <IconButton
-                icon="copy"
-                variant="ghost"
-                class="size-6 rounded-md"
-                aria-label={language.t("session.copyName")}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  copy()
-                }}
-              />
-            </Tooltip>
-            <div
-              class="transition-opacity"
-              classList={{
-                "opacity-100 pointer-events-auto": !!props.mobile,
-                "opacity-0 pointer-events-none": !props.mobile,
-                "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-                "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-              }}
-            >
+            <div class="transition-opacity" classList={action}>
+              <Tooltip value={language.t("session.copyName")} placement="top">
+                <IconButton
+                  icon="copy"
+                  variant="ghost"
+                  class="size-6 rounded-md"
+                  aria-label={language.t("session.copyName")}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    copy()
+                  }}
+                />
+              </Tooltip>
+            </div>
+            <div class="transition-opacity" classList={action}>
               <Tooltip value={language.t("common.archive")} placement="top">
                 <IconButton
                   icon="archive"

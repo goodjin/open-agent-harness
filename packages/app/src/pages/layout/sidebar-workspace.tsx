@@ -19,6 +19,7 @@ import { useLanguage } from "@/context/language"
 import { type Filter, NewSessionItem, SessionFilterBar, SessionItem, SessionSkeleton } from "./sidebar-items"
 import {
   childMapByParent,
+  childSummaryBySession,
   effectiveSessionExpansion,
   sessionLineage,
   sortedRootSessions,
@@ -257,17 +258,29 @@ const WorkspaceSessionList = (props: {
   language: ReturnType<typeof useLanguage>
 }): JSX.Element => {
   const params = useParams()
+  const globalSync = useGlobalSync()
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
   const lineage = createMemo(() => sessionLineage(props.all(), params.id))
+  const large = createMemo(() => props.all().length > 200)
   const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
+  const view = createMemo(() => {
+    if (large()) return open()
+    return new Set([...props.all().map((session) => session.id), ...open()])
+  })
   const [filter, setFilter] = createSignal<Filter | undefined>()
   const nav = createMemo(() =>
-    visibleSessionTree(props.sessions(), props.all(), props.children(), open()).map((item) => item.session),
+    visibleSessionTree(props.sessions(), props.all(), props.children(), view()).map((item) => item.session),
   )
+  const summary = createMemo(() => {
+    const dir = props.all()[0]?.directory
+    if (!dir) return new Map<string, { completed: number; total: number; working: number }>()
+    const [store] = globalSync.child(dir, { bootstrap: false })
+    return childSummaryBySession(props.all(), props.children(), store.message, store.session_status)
+  })
   const set = (id: string, value: boolean) => setExpanded(id, value)
 
   return (
-    <nav class="flex flex-col gap-1">
+    <nav class="flex flex-col gap-1 max-h-[70vh] overflow-y-auto overflow-x-hidden pr-1">
       <Show when={props.showNew()}>
         <NewSessionItem
           slug={props.slug()}
@@ -295,6 +308,8 @@ const WorkspaceSessionList = (props: {
             filter={filter}
             setExpanded={set}
             children={props.children()}
+            childSummary={summary()}
+            collapseByDefault={large}
             sidebarExpanded={props.ctx.sidebarExpanded}
             sidebarHovering={props.ctx.sidebarHovering}
             nav={props.ctx.nav}
@@ -508,7 +523,7 @@ export const LocalWorkspace = (props: {
   return (
     <div
       ref={(el) => props.ctx.setScrollContainerRef(el, props.mobile)}
-      class="size-full flex flex-col py-2 overflow-y-auto no-scrollbar [overflow-anchor:none]"
+      class="size-full flex flex-col py-2 overflow-y-auto [overflow-anchor:none]"
     >
       <WorkspaceSessionList
         slug={slug}

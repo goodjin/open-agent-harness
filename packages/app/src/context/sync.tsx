@@ -183,6 +183,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const inflightDiff = new Map<string, Promise<void>>()
     const inflightTodo = new Map<string, Promise<void>>()
     const optimistic = new Map<string, Map<string, OptimisticItem>>()
+    const full = new Set<string>()
     const maxDirs = 30
     const seen = new Map<string, Set<string>>()
     const [meta, setMeta] = createStore({
@@ -456,18 +457,21 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               }
             }
 
-            const hasSession = Binary.search(store.session, sessionID, (s) => s.id).found
+            const found = Binary.search(store.session, sessionID, (s) => s.id)
+            const hasSession = found.found
+            const hasInfo = hasSession && full.has(key)
             const cached = store.message[sessionID] !== undefined && meta.limit[key] !== undefined
-            if (cached && hasSession && !opts?.force) return
+            if (cached && hasInfo && !opts?.force) return
 
             const limit = meta.limit[key] ?? messagePageSize
             const sessionReq =
-              hasSession && !opts?.force
+              hasInfo && !opts?.force
                 ? Promise.resolve()
                 : retry(() => client.session.get({ directory, sessionID })).then((session) => {
                     if (!tracked(directory, sessionID)) return
                     const data = session.data
                     if (!data) return
+                    full.add(key)
                     setStore(
                       "session",
                       produce((draft) => {

@@ -14,6 +14,7 @@ import type {
   QuestionRequest,
   Session,
   SessionStatus,
+  SessionTreeNode,
   Todo,
   VcsInfo,
 } from "@open-agent-harness/sdk/v2/client"
@@ -118,12 +119,15 @@ export type DisposeCheck = {
 export type RootLoadArgs = {
   directory: string
   limit: number
+  all?: boolean
   list: (query: { directory: string; roots: true; limit?: number }) => Promise<{ data?: Session[] }>
 }
 
 export type TreeLoadArgs = RootLoadArgs & {
   loaded?: Set<string>
-  descendants: (query: { directory: string; ids: string[] }) => Promise<{ data?: Session[] }>
+  descendants?: (query: { directory: string; ids: string[] }) => Promise<{ data?: Session[] }>
+  tree?: (query: { directory: string; root: string }) => Promise<{ data?: { nodes: SessionTreeNode[] } }>
+  children?: boolean
 }
 
 export type RootLoadResult = {

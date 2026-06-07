@@ -83,6 +83,21 @@ export type SessionStatus =
       type: "running"
     }
   | {
+      type: "queued"
+    }
+  | {
+      type: "starting"
+    }
+  | {
+      type: "rate_limited"
+      providerID: string
+      modelID: string
+      scope: "provider" | "model"
+      active: number
+      limit: number
+      queued: number
+    }
+  | {
       type: "waiting_permission"
     }
   | {
@@ -95,6 +110,32 @@ export type SessionStatus =
   | {
       type: "timeout"
       message: string
+    }
+  | {
+      type: "paused"
+      message?: string
+    }
+  | {
+      type: "aborting"
+      message?: string
+    }
+  | {
+      type: "aborted"
+      message?: string
+    }
+  | {
+      type: "failed"
+      message?: string
+    }
+  | {
+      type: "blocked"
+      message?: string
+    }
+  | {
+      type: "completed"
+    }
+  | {
+      type: "archived"
     }
   | {
       type: "retry"
@@ -512,6 +553,9 @@ export type UserMessage = {
     [key: string]: boolean
   }
   variant?: string
+  metadata?: {
+    [key: string]: unknown
+  }
 }
 
 export type ProviderAuthError = {
@@ -1382,8 +1426,16 @@ export type ProviderConfig = {
           [key: string]: unknown | boolean | undefined
         }
       }
+      /**
+       * Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.
+       */
+      concurrency?: number
     }
   }
+  /**
+   * Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally.
+   */
+  concurrency?: number
   whitelist?: Array<string>
   blacklist?: Array<string>
   options?: {
@@ -1398,7 +1450,7 @@ export type ProviderConfig = {
      */
     setCacheKey?: boolean
     /**
-     * Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.
+     * Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.
      */
     timeout?: number | false
     /**
@@ -1801,6 +1853,7 @@ export type Model = {
     input?: number
     output: number
   }
+  concurrency?: number
   status: "alpha" | "beta" | "deprecated" | "active"
   options: {
     [key: string]: unknown
@@ -1825,6 +1878,7 @@ export type Provider = {
   options: {
     [key: string]: unknown
   }
+  concurrency?: number
   models: {
     [key: string]: Model
   }
@@ -1921,6 +1975,32 @@ export type McpResource = {
   description?: string
   mimeType?: string
   client: string
+}
+
+export type SessionTreeNode = {
+  id: string
+  parent_id?: string
+  root_id: string
+  title: string
+  agent?: string
+  model?: {
+    provider_id: string
+    model_id: string
+  }
+  status: SessionStatus
+  stats: {
+    messages: number
+    tokens_input: number
+    tokens_output: number
+    tool_calls: number
+    files: number
+    additions: number
+    deletions: number
+  }
+  time: {
+    created: number
+    updated: number
+  }
 }
 
 export type TextPartInput = {
@@ -2174,6 +2254,71 @@ export type HarnessArtifact = {
   created_at: number
 }
 
+export type HarnessHandoffSource = {
+  run_id: string
+  session_id?: string
+  assignment_id?: string
+  agent_id?: string
+}
+
+export type HarnessHandoffTarget = {
+  executor?: string
+  capability?: string
+  agent_id?: string
+  owner?: string
+}
+
+export type HarnessHandoffStatus = "completed" | "partial" | "blocked" | "failed"
+
+export type HarnessHandoffFact = {
+  text: string
+  refs?: Array<string>
+  confidence?: "evidenced" | "note" | "assumption"
+}
+
+export type HarnessHandoffArtifact = {
+  ref: string
+  type?: string
+  status?: "available" | "missing" | "redacted"
+  summary?: string
+}
+
+export type HarnessHandoffNext = {
+  goal: string
+  depends_on?: Array<string>
+}
+
+export type HarnessHandoffVisibility = {
+  model?: "summary" | "structured" | "full" | "ref" | "none"
+  user?: "summary" | "structured" | "full" | "ref" | "none"
+  logs?: "summary" | "structured" | "full" | "ref" | "none"
+  trace?: "summary" | "structured" | "full" | "ref" | "none"
+  future_runs?: "summary" | "structured" | "full" | "ref" | "none"
+}
+
+export type HarnessHandoff = {
+  type: "handoff"
+  version: "1"
+  id: string
+  source: HarnessHandoffSource
+  target?: HarnessHandoffTarget
+  status: HarnessHandoffStatus
+  goal: string
+  summary: string
+  facts?: Array<HarnessHandoffFact>
+  notes?: Array<string>
+  artifacts?: Array<HarnessHandoffArtifact>
+  decisions?: Array<string>
+  constraints?: Array<string>
+  risks?: Array<string>
+  unresolved?: Array<string>
+  next?: Array<HarnessHandoffNext>
+  raw_refs?: Array<string>
+  visibility?: HarnessHandoffVisibility
+  created_by?: string
+  created_at: number
+}
+
 export type HarnessDecisionStatus = "pending" | "answered" | "rejected" | "cancelled"
 
 export type HarnessDecision = {
@@ -2211,6 +2356,7 @@ export type HarnessSummary = {
   tasks: Array<HarnessTask>
   assignments: Array<HarnessAssignment>
   artifacts: Array<HarnessArtifact>
+  handoffs: Array<HarnessHandoff>
   decisions: Array<HarnessDecision>
   events: Array<HarnessEvent>
 }
@@ -2225,6 +2371,8 @@ export type HarnessCommand = {
     | "task.cancel"
     | "decision.answer"
     | "verify.rerun"
+    | "handoff.plan"
+    | "handoff.self_report.request"
     | "concept.replace.request"
     | "concept.replace.approve"
     | "concept.replace.reject"
@@ -2408,6 +2556,10 @@ export type AgentManageInfo = {
      * Agent behavior or configuration version
      */
     agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
     /**
      * Agent display logo
      */
@@ -2628,6 +2780,10 @@ export type AgentManageValidateOutput = {
      * Agent behavior or configuration version
      */
     agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
     /**
      * Agent display logo
      */
@@ -2854,6 +3010,10 @@ export type AgentManageSaveInput = {
      */
     agent_version?: string
     /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
+    /**
      * Agent display logo
      */
     logo?: {
@@ -3071,6 +3231,10 @@ export type AgentManagePatchInput = {
      * Agent behavior or configuration version
      */
     agent_version?: string
+    /**
+     * Coarse collaboration role for routing and catalog display
+     */
+    kind?: "planner" | "worker" | "verifier" | "helper"
     /**
      * Agent display logo
      */
@@ -3386,6 +3550,7 @@ export type Agent = {
       note?: string
     }>
   }
+  inheritPermissions?: boolean
   model?: {
     modelID: string
     providerID: string
@@ -4639,6 +4804,7 @@ export type SessionStatusResponse = SessionStatusResponses[keyof SessionStatusRe
 
 export type SessionDescendantsBatchData = {
   body?: {
+    directory?: string
     ids: Array<string>
   }
   path?: never
@@ -4673,6 +4839,179 @@ export type SessionDescendantsBatchResponses = {
 }
 
 export type SessionDescendantsBatchResponse = SessionDescendantsBatchResponses[keyof SessionDescendantsBatchResponses]
+
+export type SessionTreeData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    root: string
+  }
+  url: "/session/tree"
+}
+
+export type SessionTreeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeError = SessionTreeErrors[keyof SessionTreeErrors]
+
+export type SessionTreeResponses = {
+  /**
+   * Session tree projection
+   */
+  200: {
+    nodes: Array<SessionTreeNode>
+  }
+}
+
+export type SessionTreeResponse = SessionTreeResponses[keyof SessionTreeResponses]
+
+export type SessionTreeUpdateData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    title?: string
+    agent?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/sessions"
+}
+
+export type SessionTreeUpdateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeUpdateError = SessionTreeUpdateErrors[keyof SessionTreeUpdateErrors]
+
+export type SessionTreeUpdateResponses = {
+  /**
+   * Updated sessions
+   */
+  200: {
+    updated: number
+  }
+}
+
+export type SessionTreeUpdateResponse = SessionTreeUpdateResponses[keyof SessionTreeUpdateResponses]
+
+export type SessionTreeAbortData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    source?: "user" | "parent_session" | "runtime"
+    source_session?: string
+    reason?: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/abort"
+}
+
+export type SessionTreeAbortErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeAbortError = SessionTreeAbortErrors[keyof SessionTreeAbortErrors]
+
+export type SessionTreeAbortResponses = {
+  /**
+   * Aborted sessions
+   */
+  200: {
+    aborted: number
+  }
+}
+
+export type SessionTreeAbortResponse = SessionTreeAbortResponses[keyof SessionTreeAbortResponses]
+
+export type SessionTreeResumeData = {
+  body?: {
+    directory?: string
+    ids: Array<string>
+    source?: "user" | "parent_session" | "runtime"
+    source_session?: string
+    include_completed?: boolean
+    mode?: "restore" | "message"
+    reason?: string
+    message?: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+  }
+  url: "/session/tree/resume"
+}
+
+export type SessionTreeResumeErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTreeResumeError = SessionTreeResumeErrors[keyof SessionTreeResumeErrors]
+
+export type SessionTreeResumeResponses = {
+  /**
+   * Resumed sessions
+   */
+  200: {
+    resumed: number
+  }
+}
+
+export type SessionTreeResumeResponse = SessionTreeResumeResponses[keyof SessionTreeResumeResponses]
 
 export type SessionGetStatusData = {
   body?: never
@@ -5323,6 +5662,9 @@ export type SessionPromptData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    metadata?: {
+      [key: string]: unknown
+    }
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -5518,6 +5860,9 @@ export type SessionPromptAsyncData = {
     format?: OutputFormat
     system?: string
     variant?: string
+    metadata?: {
+      [key: string]: unknown
+    }
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
@@ -6275,6 +6620,21 @@ export type GetHarnessRunsRunIdArtifactsData = {
 }
 
 export type GetHarnessRunsRunIdArtifactsResponses = {
+  200: unknown
+}
+
+export type GetHarnessRunsRunIdHandoffsData = {
+  body?: never
+  path: {
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/harness/runs/{runID}/handoffs"
+}
+
+export type GetHarnessRunsRunIdHandoffsResponses = {
   200: unknown
 }
 

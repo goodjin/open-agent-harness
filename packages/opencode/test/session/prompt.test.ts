@@ -457,6 +457,61 @@ describe("session.prompt agent variant", () => {
 })
 
 describe("session.prompt agent switch", () => {
+  test("uses session tree model preference when caller omits model", async () => {
+    await using tmp = await tmpdir({
+      git: true,
+      config: {
+        agent: {
+          build: {
+            model: "openai/gpt-5.2",
+          },
+        },
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setModel({
+              sessionID: session.id,
+              model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+            })
+
+            const msg = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [{ type: "text", text: "service message" }],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            expect(msg.info.model).toEqual({
+              providerID: ProviderID.make("opencode"),
+              modelID: ModelID.make("kimi-k2.5-free"),
+            })
+
+            const explicit = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-sonnet-4") },
+              noReply: true,
+              parts: [{ type: "text", text: "explicit model" }],
+            })
+            if (explicit.info.role !== "user") throw new Error("expected user message")
+            expect(explicit.info.model).toEqual({
+              providerID: ProviderID.make("anthropic"),
+              modelID: ModelID.make("claude-sonnet-4"),
+            })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("registry switch changes next prompt agent without dropping messages", async () => {
     await using tmp = await tmpdir({ git: true })
     await agent(tmp.path, "build")

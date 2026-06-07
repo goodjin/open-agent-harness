@@ -69,6 +69,7 @@ import type {
   GetHarnessRunsRunIdDecisionsResponses,
   GetHarnessRunsRunIdEventsResponses,
   GetHarnessRunsRunIdGraphResponses,
+  GetHarnessRunsRunIdHandoffsResponses,
   GetHarnessRunsRunIdProjectionsRebuildResponses,
   GetHarnessRunsRunIdTasksResponses,
   GlobalConfigGetResponses,
@@ -231,6 +232,14 @@ import type {
   SessionSummarizeResponses,
   SessionTodoErrors,
   SessionTodoResponses,
+  SessionTreeAbortErrors,
+  SessionTreeAbortResponses,
+  SessionTreeErrors,
+  SessionTreeResponses,
+  SessionTreeResumeErrors,
+  SessionTreeResumeResponses,
+  SessionTreeUpdateErrors,
+  SessionTreeUpdateResponses,
   SessionUnrevertErrors,
   SessionUnrevertResponses,
   SessionUnshareErrors,
@@ -1529,6 +1538,170 @@ export class Worktree extends HeyApiClient {
   }
 }
 
+export class Tree extends HeyApiClient {
+  /**
+   * Update session tree nodes
+   *
+   * Batch update lightweight session tree metadata such as title, agent, and model preference.
+   */
+  public update<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      title?: string
+      agent?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "title" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "model" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).patch<SessionTreeUpdateResponses, SessionTreeUpdateErrors, ThrowOnError>({
+      url: "/session/tree/sessions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Abort session tree nodes
+   *
+   * Abort selected sessions from the session tree manager.
+   */
+  public abort<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      source?: "user" | "parent_session" | "runtime"
+      source_session?: string
+      reason?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "source" },
+            { in: "body", key: "source_session" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionTreeAbortResponses, SessionTreeAbortErrors, ThrowOnError>({
+      url: "/session/tree/abort",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Resume session tree nodes
+   *
+   * Restore interrupted sessions or send structured resume commands from the session tree manager.
+   */
+  public resume<ThrowOnError extends boolean = false>(
+    parameters?: {
+      query_directory?: string
+      body_directory?: string
+      ids?: Array<string>
+      source?: "user" | "parent_session" | "runtime"
+      source_session?: string
+      include_completed?: boolean
+      mode?: "restore" | "message"
+      reason?: string
+      message?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "ids" },
+            { in: "body", key: "source" },
+            { in: "body", key: "source_session" },
+            { in: "body", key: "include_completed" },
+            { in: "body", key: "mode" },
+            { in: "body", key: "reason" },
+            { in: "body", key: "message" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<SessionTreeResumeResponses, SessionTreeResumeErrors, ThrowOnError>({
+      url: "/session/tree/resume",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Protocol extends HeyApiClient {
   /**
    * Get protocol trace
@@ -1669,7 +1842,8 @@ export class Session3 extends HeyApiClient {
    */
   public descendantsBatch<ThrowOnError extends boolean = false>(
     parameters?: {
-      directory?: string
+      query_directory?: string
+      body_directory?: string
       ids?: Array<string>
     },
     options?: Options<never, ThrowOnError>,
@@ -1679,7 +1853,16 @@ export class Session3 extends HeyApiClient {
       [
         {
           args: [
-            { in: "query", key: "directory" },
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
             { in: "body", key: "ids" },
           ],
         },
@@ -1698,6 +1881,36 @@ export class Session3 extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
+    })
+  }
+
+  /**
+   * Get lightweight session tree
+   *
+   * Retrieve a lightweight session tree projection without message bodies or raw session metadata.
+   */
+  public tree<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      root: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "root" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTreeResponses, SessionTreeErrors, ThrowOnError>({
+      url: "/session/tree",
+      ...options,
+      ...params,
     })
   }
 
@@ -2287,6 +2500,9 @@ export class Session3 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      metadata?: {
+        [key: string]: unknown
+      }
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -2306,6 +2522,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "metadata" },
             { in: "body", key: "parts" },
           ],
         },
@@ -2413,6 +2630,9 @@ export class Session3 extends HeyApiClient {
       format?: OutputFormat
       system?: string
       variant?: string
+      metadata?: {
+        [key: string]: unknown
+      }
       parts?: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
     },
     options?: Options<never, ThrowOnError>,
@@ -2432,6 +2652,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "format" },
             { in: "body", key: "system" },
             { in: "body", key: "variant" },
+            { in: "body", key: "metadata" },
             { in: "body", key: "parts" },
           ],
         },
@@ -2767,6 +2988,11 @@ export class Session3 extends HeyApiClient {
         ...params.headers,
       },
     })
+  }
+
+  private _tree?: Tree
+  get tree2(): Tree {
+    return (this._tree ??= new Tree({ client: this.client }))
   }
 
   private _protocol?: Protocol
@@ -4898,6 +5124,31 @@ export class OpencodeClient extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<GetHarnessRunsRunIdArtifactsResponses, unknown, ThrowOnError>({
       url: "/harness/runs/{runID}/artifacts",
+      ...options,
+      ...params,
+    })
+  }
+
+  public getHarnessRunsRunIdHandoffs<ThrowOnError extends boolean = false>(
+    parameters: {
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<GetHarnessRunsRunIdHandoffsResponses, unknown, ThrowOnError>({
+      url: "/harness/runs/{runID}/handoffs",
       ...options,
       ...params,
     })

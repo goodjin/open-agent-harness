@@ -25,6 +25,7 @@ import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
 import { StatusPopover } from "../status-popover"
 import { SessionInsightBanner } from "@/pages/session/session-insight-banner"
+import { useNavigate } from "@solidjs/router"
 
 const OPEN_APPS = [
   "vscode",
@@ -135,6 +136,7 @@ export function SessionHeader() {
   const server = useServer()
   const platform = usePlatform()
   const language = useLanguage()
+  const navigate = useNavigate()
   const sync = useSync()
   const terminal = useTerminal()
   const { params, tabs, view } = useSessionLayout()
@@ -222,6 +224,10 @@ export function SessionHeader() {
       options()[0] ??
       ({ id: "finder", label: fileManager().label, icon: fileManager().icon } as const),
   )
+  const openTree = () => {
+    if (!params.id) return
+    navigate(`/${params.dir}/session/${params.id}/tree`)
+  }
   const opening = createMemo(() => openRequest.app !== undefined)
   const tint = createMemo(() =>
     messageAgentColor(params.id ? sync.data.message[params.id] : undefined, sync.data.agent),
@@ -421,6 +427,17 @@ export function SessionHeader() {
               <div class="flex items-center gap-1">
                 <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
                   <StatusPopover />
+                </Tooltip>
+                <Tooltip placement="bottom" value={language.t("sessionTree.open")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={openTree}
+                    disabled={!params.id}
+                    aria-label={language.t("sessionTree.open")}
+                  >
+                    <Icon size="small" name="branch" />
+                  </Button>
                 </Tooltip>
                 <TooltipKeybind
                   title={language.t("command.terminal.toggle")}

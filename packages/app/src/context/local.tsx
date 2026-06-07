@@ -53,6 +53,31 @@ const clone = (value: State | undefined) => {
   } satisfies State
 }
 
+const tree = (input: unknown): State | undefined => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return
+  const ctx = (input as { session_tree?: unknown }).session_tree
+  if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return
+  const item = ctx as {
+    agent?: unknown
+    model?: {
+      providerID?: unknown
+      modelID?: unknown
+    }
+  }
+  const model =
+    typeof item.model?.providerID === "string" && typeof item.model.modelID === "string"
+      ? {
+          providerID: item.model.providerID,
+          modelID: item.model.modelID,
+        }
+      : undefined
+  if (typeof item.agent !== "string" && !model) return
+  return {
+    agent: typeof item.agent === "string" ? item.agent : undefined,
+    model,
+  }
+}
+
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
@@ -134,7 +159,8 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
             variant: msg.variant ?? null,
           } satisfies State
         : undefined
-      return saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
+      const info = sync.session.get(session)
+      return tree(info?.dsl_context) ?? saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
     })
 
     const started = createMemo(() => {

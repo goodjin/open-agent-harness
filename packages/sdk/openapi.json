@@ -2526,6 +2526,9 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
                   "ids": {
                     "minItems": 1,
                     "type": "array",
@@ -2546,6 +2549,457 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.descendantsBatch({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/tree": {
+      "get": {
+        "operationId": "session.tree",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "root",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get lightweight session tree",
+        "tags": [
+          "Session"
+        ],
+        "description": "Retrieve a lightweight session tree projection without message bodies or raw session metadata.",
+        "responses": {
+          "200": {
+            "description": "Session tree projection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "nodes": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SessionTreeNode"
+                      }
+                    }
+                  },
+                  "required": [
+                    "nodes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.tree({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/tree/sessions": {
+      "patch": {
+        "operationId": "session.tree.update",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Update session tree nodes",
+        "tags": [
+          "Session"
+        ],
+        "description": "Batch update lightweight session tree metadata such as title, agent, and model preference.",
+        "responses": {
+          "200": {
+            "description": "Updated sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "updated"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
+                  "ids": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    }
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerID",
+                      "modelID"
+                    ]
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.tree.update({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/tree/abort": {
+      "post": {
+        "operationId": "session.tree.abort",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Abort session tree nodes",
+        "tags": [
+          "Session"
+        ],
+        "description": "Abort selected sessions from the session tree manager.",
+        "responses": {
+          "200": {
+            "description": "Aborted sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "aborted": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "aborted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
+                  "ids": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    }
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "parent_session",
+                      "runtime"
+                    ]
+                  },
+                  "source_session": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.tree.abort({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/tree/resume": {
+      "post": {
+        "operationId": "session.tree.resume",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "summary": "Resume session tree nodes",
+        "tags": [
+          "Session"
+        ],
+        "description": "Restore interrupted sessions or send structured resume commands from the session tree manager.",
+        "responses": {
+          "200": {
+            "description": "Resumed sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "resumed": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "resumed"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
+                  "ids": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    }
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "user",
+                      "parent_session",
+                      "runtime"
+                    ]
+                  },
+                  "source_session": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "include_completed": {
+                    "type": "boolean"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "restore",
+                      "message"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ids"
+                ]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.tree.resume({\n  ...\n})"
           }
         ]
       }
@@ -4083,6 +4537,13 @@
                   "variant": {
                     "type": "string"
                   },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
                   "parts": {
                     "type": "array",
                     "items": {
@@ -4539,6 +5000,13 @@
                   },
                   "variant": {
                     "type": "string"
+                  },
+                  "metadata": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
                   },
                   "parts": {
                     "type": "array",
@@ -6236,6 +6704,37 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDArtifacts({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/harness/runs/{runID}/handoffs": {
+      "get": {
+        "operationId": "getHarnessRuns:runIDHandoffs",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "runID",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {}
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.getHarnessRuns:runIDHandoffs({\n  ...\n})"
           }
         ]
       }
@@ -10536,6 +11035,76 @@
             "properties": {
               "type": {
                 "type": "string",
+                "const": "queued"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "starting"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "rate_limited"
+              },
+              "providerID": {
+                "type": "string"
+              },
+              "modelID": {
+                "type": "string"
+              },
+              "scope": {
+                "type": "string",
+                "enum": [
+                  "provider",
+                  "model"
+                ]
+              },
+              "active": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "limit": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "queued": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "type",
+              "providerID",
+              "modelID",
+              "scope",
+              "active",
+              "limit",
+              "queued"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
                 "const": "waiting_permission"
               }
             },
@@ -10585,6 +11154,105 @@
             "required": [
               "type",
               "message"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "paused"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "aborting"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "aborted"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "failed"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "blocked"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "completed"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "archived"
+              }
+            },
+            "required": [
+              "type"
             ]
           },
           {
@@ -12090,6 +12758,13 @@
           },
           "variant": {
             "type": "string"
+          },
+          "metadata": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
           }
         },
         "required": [
@@ -14897,9 +15572,21 @@
                     },
                     "additionalProperties": {}
                   }
+                },
+                "concurrency": {
+                  "description": "Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 }
               }
             }
+          },
+          "concurrency": {
+            "description": "Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "whitelist": {
             "type": "array",
@@ -14931,10 +15618,10 @@
                 "type": "boolean"
               },
               "timeout": {
-                "description": "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+                "description": "Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.",
                 "anyOf": [
                   {
-                    "description": "Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.",
+                    "description": "Timeout in milliseconds for requests to this provider. Default is 60000 (1 minute). Set to false to disable timeout.",
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
@@ -15970,6 +16657,11 @@
               "output"
             ]
           },
+          "concurrency": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -16059,6 +16751,11 @@
               "type": "string"
             },
             "additionalProperties": {}
+          },
+          "concurrency": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "models": {
             "type": "object",
@@ -16405,6 +17102,105 @@
           "name",
           "uri",
           "client"
+        ]
+      },
+      "SessionTreeNode": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "parent_id": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "root_id": {
+            "type": "string",
+            "pattern": "^ses.*"
+          },
+          "title": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "object",
+            "properties": {
+              "provider_id": {
+                "type": "string"
+              },
+              "model_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider_id",
+              "model_id"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/SessionStatus"
+          },
+          "stats": {
+            "type": "object",
+            "properties": {
+              "messages": {
+                "type": "number"
+              },
+              "tokens_input": {
+                "type": "number"
+              },
+              "tokens_output": {
+                "type": "number"
+              },
+              "tool_calls": {
+                "type": "number"
+              },
+              "files": {
+                "type": "number"
+              },
+              "additions": {
+                "type": "number"
+              },
+              "deletions": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "messages",
+              "tokens_input",
+              "tokens_output",
+              "tool_calls",
+              "files",
+              "additions",
+              "deletions"
+            ]
+          },
+          "time": {
+            "type": "object",
+            "properties": {
+              "created": {
+                "type": "number"
+              },
+              "updated": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "created",
+              "updated"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "root_id",
+          "title",
+          "status",
+          "stats",
+          "time"
         ]
       },
       "TextPartInput": {
@@ -17325,6 +18121,316 @@
         ],
         "additionalProperties": false
       },
+      "HarnessHandoffSource": {
+        "type": "object",
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "assignment_id": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffTarget": {
+        "default": {
+          "executor": "agent"
+        },
+        "type": "object",
+        "properties": {
+          "executor": {
+            "default": "agent",
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "agent_id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessHandoffStatus": {
+        "type": "string",
+        "enum": [
+          "completed",
+          "partial",
+          "blocked",
+          "failed"
+        ]
+      },
+      "HarnessHandoffFact": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "confidence": {
+            "default": "evidenced",
+            "type": "string",
+            "enum": [
+              "evidenced",
+              "note",
+              "assumption"
+            ]
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffArtifact": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string"
+          },
+          "type": {
+            "default": "artifact",
+            "type": "string"
+          },
+          "status": {
+            "default": "available",
+            "type": "string",
+            "enum": [
+              "available",
+              "missing",
+              "redacted"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffNext": {
+        "type": "object",
+        "properties": {
+          "goal": {
+            "type": "string"
+          },
+          "depends_on": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "goal"
+        ],
+        "additionalProperties": false
+      },
+      "HarnessHandoffVisibility": {
+        "default": {
+          "model": "summary",
+          "user": "summary",
+          "logs": "full",
+          "trace": "summary",
+          "future_runs": "ref"
+        },
+        "type": "object",
+        "properties": {
+          "model": {
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "structured",
+              "full",
+              "ref",
+              "none"
+            ]
+          },
+          "user": {
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "structured",
+              "full",
+              "ref",
+              "none"
+            ]
+          },
+          "logs": {
+            "default": "full",
+            "type": "string",
+            "enum": [
+              "summary",
+              "structured",
+              "full",
+              "ref",
+              "none"
+            ]
+          },
+          "trace": {
+            "default": "summary",
+            "type": "string",
+            "enum": [
+              "summary",
+              "structured",
+              "full",
+              "ref",
+              "none"
+            ]
+          },
+          "future_runs": {
+            "default": "ref",
+            "type": "string",
+            "enum": [
+              "summary",
+              "structured",
+              "full",
+              "ref",
+              "none"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "HarnessHandoff": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "handoff"
+          },
+          "version": {
+            "type": "string",
+            "const": "1"
+          },
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/HarnessHandoffSource"
+          },
+          "target": {
+            "$ref": "#/components/schemas/HarnessHandoffTarget"
+          },
+          "status": {
+            "$ref": "#/components/schemas/HarnessHandoffStatus"
+          },
+          "goal": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "facts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHandoffFact"
+            }
+          },
+          "notes": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "artifacts": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHandoffArtifact"
+            }
+          },
+          "decisions": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "constraints": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risks": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unresolved": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "next": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHandoffNext"
+            }
+          },
+          "raw_refs": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/HarnessHandoffVisibility"
+          },
+          "created_by": {
+            "default": "runtime",
+            "type": "string"
+          },
+          "created_at": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "version",
+          "id",
+          "source",
+          "status",
+          "goal",
+          "summary",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
       "HarnessDecisionStatus": {
         "default": "pending",
         "type": "string",
@@ -17471,6 +18577,12 @@
               "$ref": "#/components/schemas/HarnessArtifact"
             }
           },
+          "handoffs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HarnessHandoff"
+            }
+          },
           "decisions": {
             "type": "array",
             "items": {
@@ -17489,6 +18601,7 @@
           "tasks",
           "assignments",
           "artifacts",
+          "handoffs",
           "decisions",
           "events"
         ],
@@ -17508,6 +18621,8 @@
               "task.cancel",
               "decision.answer",
               "verify.rerun",
+              "handoff.plan",
+              "handoff.self_report.request",
               "concept.replace.request",
               "concept.replace.approve",
               "concept.replace.reject"
@@ -18277,6 +19392,16 @@
                 "type": "string",
                 "minLength": 1
               },
+              "kind": {
+                "description": "Coarse collaboration role for routing and catalog display",
+                "type": "string",
+                "enum": [
+                  "planner",
+                  "worker",
+                  "verifier",
+                  "helper"
+                ]
+              },
               "logo": {
                 "description": "Agent display logo",
                 "type": "object",
@@ -18712,7 +19837,7 @@
               },
               "inherit_permissions": {
                 "description": "Whether to inherit permissions from parent agent",
-                "default": true,
+                "default": false,
                 "type": "boolean"
               },
               "permission_mode": {
@@ -18783,6 +19908,16 @@
                 "type": "string",
                 "minLength": 1
               },
+              "kind": {
+                "description": "Coarse collaboration role for routing and catalog display",
+                "type": "string",
+                "enum": [
+                  "planner",
+                  "worker",
+                  "verifier",
+                  "helper"
+                ]
+              },
               "logo": {
                 "description": "Agent display logo",
                 "type": "object",
@@ -19218,7 +20353,7 @@
               },
               "inherit_permissions": {
                 "description": "Whether to inherit permissions from parent agent",
-                "default": true,
+                "default": false,
                 "type": "boolean"
               },
               "permission_mode": {
@@ -19307,6 +20442,16 @@
                 "type": "string",
                 "minLength": 1
               },
+              "kind": {
+                "description": "Coarse collaboration role for routing and catalog display",
+                "type": "string",
+                "enum": [
+                  "planner",
+                  "worker",
+                  "verifier",
+                  "helper"
+                ]
+              },
               "logo": {
                 "description": "Agent display logo",
                 "type": "object",
@@ -19742,7 +20887,7 @@
               },
               "inherit_permissions": {
                 "description": "Whether to inherit permissions from parent agent",
-                "default": true,
+                "default": false,
                 "type": "boolean"
               },
               "permission_mode": {
@@ -19801,6 +20946,16 @@
                 "type": "string",
                 "minLength": 1
               },
+              "kind": {
+                "description": "Coarse collaboration role for routing and catalog display",
+                "type": "string",
+                "enum": [
+                  "planner",
+                  "worker",
+                  "verifier",
+                  "helper"
+                ]
+              },
               "logo": {
                 "description": "Agent display logo",
                 "type": "object",
@@ -20236,7 +21391,7 @@
               },
               "inherit_permissions": {
                 "description": "Whether to inherit permissions from parent agent",
-                "default": true,
+                "default": false,
                 "type": "boolean"
               },
               "permission_mode": {
@@ -20687,6 +21842,10 @@
               "rules"
             ],
             "additionalProperties": false
+          },
+          "inheritPermissions": {
+            "default": false,
+            "type": "boolean"
           },
           "model": {
             "type": "object",

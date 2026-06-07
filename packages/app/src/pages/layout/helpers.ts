@@ -102,6 +102,49 @@ export const visibleSessionTree = (
   return roots.flatMap((session) => walk(session, 0))
 }
 
+export const sessionDescendants = (roots: Session[], sessions: Session[], children: Map<string, string[]>) => {
+  const by = new Map(sessions.map((session) => [session.id, session]))
+  const walk = (session: Session): Session[] => [
+    session,
+    ...(children.get(session.id) ?? [])
+      .map((id) => by.get(id))
+      .filter((item): item is Session => !!item && !item.time?.archived)
+      .flatMap(walk),
+  ]
+  return roots.flatMap(walk)
+}
+
+export const childSummaryBySession = (
+  sessions: Session[],
+  children: Map<string, string[]>,
+  messages: Record<string, Message[] | undefined>,
+  status: Record<string, Status | undefined>,
+) => {
+  const by = new Map(sessions.map((session) => [session.id, session]))
+  const memo = new Map<string, { completed: number; total: number; working: number }>()
+  const visit = (id: string): { completed: number; total: number; working: number } => {
+    const cached = memo.get(id)
+    if (cached) return cached
+    const result = (children.get(id) ?? []).reduce(
+      (acc, child) => {
+        const session = by.get(child)
+        if (!session || session.time?.archived) return acc
+        const next = visit(child)
+        return {
+          completed: acc.completed + next.completed + (sessionCompleted(session, messages[child], status[child]) ? 1 : 0),
+          total: acc.total + next.total + 1,
+          working: acc.working + next.working + (sessionWorking(messages[child], status[child]) ? 1 : 0),
+        }
+      },
+      { completed: 0, total: 0, working: 0 },
+    )
+    memo.set(id, result)
+    return result
+  }
+  for (const session of sessions) visit(session.id)
+  return memo
+}
+
 export const effectiveSessionExpansion = (expanded: Record<string, boolean>, lineage: Set<string>) =>
   new Set([
     ...Object.entries(expanded)

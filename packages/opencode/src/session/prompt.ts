@@ -117,6 +117,7 @@ export namespace SessionPrompt {
     format: MessageV2.Format.optional(),
     system: z.string().optional(),
     variant: z.string().optional(),
+    metadata: z.record(z.string(), z.any()).optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -168,7 +169,7 @@ export namespace SessionPrompt {
     const session = await Session.get(input.sessionID)
     await SessionRevert.cleanup(session)
 
-    const message = await createUserMessage(input)
+    const message = await createUserMessage(input, session)
     await Session.touch(input.sessionID)
 
     // this is backwards compatibility for allowing `tools` to be specified when
@@ -838,6 +839,28 @@ export namespace SessionPrompt {
     return Provider.defaultModel()
   }
 
+  function pref(session: Session.Info) {
+    const ctx = session.dsl_context?.session_tree
+    if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return {}
+    const item = ctx as {
+      agent?: unknown
+      model?: {
+        providerID?: unknown
+        modelID?: unknown
+      }
+    }
+    return {
+      agent: typeof item.agent === "string" ? item.agent : undefined,
+      model:
+        typeof item.model?.providerID === "string" && typeof item.model.modelID === "string"
+          ? {
+              providerID: ProviderID.make(item.model.providerID),
+              modelID: ModelID.make(item.model.modelID),
+            }
+          : undefined,
+    }
+  }
+
   /** @internal Exported for testing */
   export async function resolveTools(input: {
     agent: Agent.Info
@@ -968,11 +991,12 @@ export namespace SessionPrompt {
     })
   }
 
-  async function createUserMessage(input: PromptInput) {
-    const agentName = input.agent ?? (await Agent.defaultAgent())
+  async function createUserMessage(input: PromptInput, session: Session.Info) {
+    const sessionPref = pref(session)
+    const agentName = input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
     const agent = agentName ? await Agent.get(agentName) : undefined
 
-    const model = input.model ?? agent?.model ?? (await lastModel(input.sessionID))
+    const model = input.model ?? sessionPref.model ?? agent?.model ?? (await lastModel(input.sessionID))
     const full =
       !input.variant && agent?.variant
         ? await Provider.getModel(model.providerID, model.modelID).catch(() => undefined)
@@ -992,6 +1016,7 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
+      metadata: input.metadata,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1498,7 +1523,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     }
     const agent = await Agent.get(input.agent)
     if (!agent) throw new Error(`Agent not found: ${input.agent}`)
-    const model = input.model ?? agent.model ?? (await lastModel(input.sessionID))
+    const sessionPref = pref(session)
+    const model = input.model ?? sessionPref.model ?? agent.model ?? (await lastModel(input.sessionID))
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
       sessionID: input.sessionID,
@@ -1745,7 +1771,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export async function command(input: CommandInput) {
     log.info("command", input)
     const command = await Command.get(input.command)
-    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
+    const session = await Session.get(input.sessionID)
+    const sessionPref = pref(session)
+    const agentName = command.agent ?? input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
@@ -1803,7 +1831,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
       }
       if (input.model) return Provider.parseModel(input.model)
-      return await lastModel(input.sessionID)
+      return sessionPref.model ?? (await lastModel(input.sessionID))
     })()
 
     try {
@@ -1854,7 +1882,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const userModel = isSubtask
       ? input.model
         ? Provider.parseModel(input.model)
-        : await lastModel(input.sessionID)
+        : sessionPref.model ?? (await lastModel(input.sessionID))
       : taskModel
 
     const result = (await prompt({

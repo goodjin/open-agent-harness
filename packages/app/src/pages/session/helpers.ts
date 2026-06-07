@@ -26,7 +26,7 @@ export const getSessionKey = (dir: string | undefined, id: string | undefined) =
 
 export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Message[]) => {
   const type = status?.type ?? "idle"
-  return type === "running" || type === "retry" || type === "waiting_permission" || type === "waiting_user"
+  return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user"
 }
 
 export const createSessionTabs = (input: TabsInput) => {
