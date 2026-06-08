@@ -299,6 +299,100 @@ describe("session processor lifecycle", () => {
         }),
     })
   })
+
+  test("does not fail when text-start has no delta but non-text events continue", async () => {
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
+      fullStream: (async function* () {
+        yield { type: "start" as const }
+        yield { type: "text-start" as const }
+        yield { type: "reasoning-start" as const, id: "r1" }
+        yield { type: "reasoning-delta" as const, id: "r1", text: "..." }
+        yield { type: "reasoning-end" as const, id: "r1" }
+        yield { type: "text-end" as const }
+        yield { type: "finish" as const }
+      })(),
+    }) as unknown as Awaited<ReturnType<typeof LLM.stream>>)
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-text-block"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            const input = (await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)) as MessageV2.User
+
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "test",
+              agent: "test",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: projectRoot,
+                root: projectRoot,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            })) as MessageV2.Assistant
+
+            const processor = SessionProcessor.create({
+              assistantMessage: assistant,
+              sessionID: session.id,
+              model: {
+                id: "test",
+                providerID: "test",
+                limit: { context: 100_000, output: 32_000 },
+              } as Provider.Model,
+              abort: new AbortController().signal,
+            })
+
+            const result = await processor.process({
+              user: input,
+              sessionID: session.id,
+              model: {} as Provider.Model,
+              agent: {
+                name: "test",
+                mode: "primary",
+                permission: [],
+                options: {},
+              },
+              system: ["system prompt"],
+              abort: new AbortController().signal,
+              messages: [{ role: "user", content: "hello prompt" }],
+              tools: {},
+            } as unknown as LLM.StreamInput)
+
+            const logs = await SessionLog.list({ sessionID: session.id })
+            expect(result).toBe("continue")
+            expect(logs.find((item) => item.type === "llm.error")).toBeUndefined()
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+
+    stream.mockRestore()
+  })
 })
 
 describe("step-finish token propagation via Bus event", () => {

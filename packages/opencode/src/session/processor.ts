@@ -83,6 +83,7 @@ export namespace SessionProcessor {
           try {
             let currentText: MessageV2.TextPart | undefined
             let hadTextDelta = false
+            let hasOther = false
             let noTextDelta = false
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const req = prompt(streamInput)
@@ -125,6 +126,7 @@ export namespace SessionProcessor {
               for await (const value of stream.fullStream) {
                 input.abort.throwIfAborted()
                 stream.touch?.()
+                if (currentText && !["text-start", "text-delta", "text-end"].includes(value.type)) hasOther = true
                 switch (value.type) {
                   case "start":
                     SessionStatus.set(input.sessionID, { type: "running" })
@@ -403,6 +405,7 @@ export namespace SessionProcessor {
 
                   case "text-start":
                     hadTextDelta = false
+                    hasOther = false
                     currentText = {
                       id: PartID.ascending(),
                       messageID: input.assistantMessage.id,
@@ -441,7 +444,7 @@ export namespace SessionProcessor {
                         end: Date.now(),
                       }
                       if (value.providerMetadata) currentText.metadata = value.providerMetadata
-                      if (!hadTextDelta && !currentText.text) noTextDelta = true
+                      if (!hadTextDelta && !currentText.text && !hasOther) noTextDelta = true
                       await Session.updatePart(currentText)
                       await record("debug", "text.end", {
                         partID: currentText.id,
@@ -471,7 +474,7 @@ export namespace SessionProcessor {
             } finally {
               stream.release?.()
             }
-            if (currentText) noTextDelta = true
+            if (currentText && !hadTextDelta && !currentText.text && !hasOther) noTextDelta = true
             if (noTextDelta) {
               throw new MessageV2.APIError(
                 {
