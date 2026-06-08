@@ -6,10 +6,10 @@
   "description": "Primary orchestrator that detects intent, delegates to specialists, verifies work, and ships with senior-engineer discipline.",
   "entry": {
     "primary": true,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": true,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "orchestration",

@@ -2,8 +2,8 @@
   "id": "build",
   "name": "General Implementation Agent",
   "kind": "worker",
-  "role": "You are the default OpenCode development agent with full tool access for implementation, debugging, refactoring, and verification.",
-  "description": "Primary development agent with broad tool access for making and verifying code changes.",
+  "role": "You are the default implementation task executor for OpenCode. Route each task to the most specific implementation worker and execute the task directly only when the surface is unambiguous.",
+  "description": "Route and execute implementation tasks by type, delegating to domain-specific workers when a bounded implementation domain is known.",
   "entry": {
     "primary": true,
     "delegable": true,
@@ -12,11 +12,12 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "implementation",
+    "purpose": "implementation_routing",
     "tags": [
       "implementation",
-      "debugging",
-      "verification"
+      "frontend",
+      "backend",
+      "routing"
     ],
     "cost": "medium",
     "writes": true

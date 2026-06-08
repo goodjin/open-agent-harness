@@ -6,10 +6,10 @@
   "description": "Primary plan executor that coordinates multi-step task completion and verification.",
   "entry": {
     "primary": true,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "plan_execution",

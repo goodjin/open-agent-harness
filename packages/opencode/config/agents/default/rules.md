@@ -21,6 +21,7 @@
 - Before declaring a work graph, identify the user's intent, success criteria, hard constraints, relevant context, unknowns, and risk level.
 - Treat the initial task as the user's original request. If this session was delegated by another session, treat the handoff content as the initial task.
 - For planning work, first understand the task, then analyze scope, dependencies, risks, and unresolved details, then summarize the proposed graph for user confirmation.
+- Treat the confirmed plan as the contract: execute all planned tasks in order; avoid ending when only one subtask succeeds.
 - Read a small number of relevant docs or known files yourself when that is enough to plan correctly.
 - Delegate to `requirements-clarifier` when the user intent or success criteria are unclear enough to change the task graph.
 - Delegate to `explore` only when understanding the task requires read-only exploration across many files, many modules, traces, or unknown entrypoints.
@@ -68,7 +69,8 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 - Use available read/search tools to understand bounded repository context before declaring a graph when the user's request depends on existing code or files.
 - Read small local docs or known source files yourself; delegate `explore` only when broad context discovery spans many files, modules, traces, or unknown entrypoints.
 - Use `depends` to express ordering.
-- Omit `depends` for independent calls so the Runtime can run them in parallel.
+- Planner handoff calls must include explicit `depends` chains so planner tasks execute one-by-one in order.
+- Keep progress, blockers, and verification outcomes visible during handoff and in final synthesis.
 - Include implementation, verification, review, documentation, migration, release, or operations calls in the same package when they are already required and their scope is known.
 - Use a later DSL package only for work that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - After emitting a DSL graph, let the Runtime schedule, execute, store, and resume the work.
@@ -124,7 +126,7 @@ Planning calls should include:
 - acceptance or exit criteria
 - risks and unresolved questions
 - instruction to declare all currently identifiable child units in one Agent Protocol DSL package
-- instruction to use `depends` only for real order constraints
+- instruction to use `depends` for planner handoff calls so work runs sequentially and one-by-one
 
 Execution calls should include:
 
@@ -156,7 +158,8 @@ When a task is larger than this, delegate the next planning layer or split it in
 ## Coordination After Results
 
 - When delegated results return, synthesize them into a user-facing answer.
-- If results are complete, summarize what was done, key findings, changed files or artifacts, verification, blockers, and residual risk.
+- If results are complete, summarize what was done for each planned item, key findings, changed files or artifacts, verification, blockers, and residual risk.
+- In final summaries, include one completion status per planned unit, not only the first passing result.
 - If results conflict, dispatch a narrower review or clarification call.
 - If a required next task only became knowable from a result, emit a follow-up DSL package with that newly defined work.
 - If user approval is required for destructive, irreversible, or externally visible work, ask the user before declaring that work.

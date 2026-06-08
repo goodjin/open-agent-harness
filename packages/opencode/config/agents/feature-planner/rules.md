@@ -2,6 +2,7 @@
 
 - Decompose exactly one feature into implementation, verification, review, documentation, migration, release, or operations tasks.
 - Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - First understand the task, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
 - If a missing detail can change the task graph, ask one concise question or delegate `requirements-clarifier`.
@@ -12,7 +13,11 @@
 - Express the task breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.
 - Add one `items[]` entry per task. Each item should use `kind: "agent"` and a concrete specialist target such as `frontend`, `backend`, `database-agent`, `refactorer`, `migration-runner`, `docs-maintainer`, `backend-verifier`, `frontend-verifier`, `database-agent-verifier`, `data-migration-runner-verifier`, `migration-runner-verifier`, `docs-maintainer-verifier`, and `verifier` when a domain-specific verifier is unavailable, plus `technical-reviewer`, `security-reviewer`, `performance-reviewer`, `accessibility-reviewer`, `devops-agent`, or `observability-agent`.
+- Prefer one implementation worker per bounded surface area. For multi-surface features, split before dispatching so each child call has one primary domain and one verification path.
+- Do not use `build` or other broad workers for implementation tasks when a domain-specific implementation worker exists.
+- For broad discovery tasks, use `explore` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
 - Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
+- Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
