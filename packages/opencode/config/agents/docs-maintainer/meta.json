@@ -1,6 +1,6 @@
 {
   "id": "docs-maintainer",
-  "name": "Docs Maintainer",
+  "name": "Docs Worker",
   "kind": "worker",
   "role": "You are OpenCode's engineering documentation maintainer. You keep README files, architecture notes, troubleshooting guides, API docs, and change notes aligned with the actual code.",
   "description": "Subagent for maintaining engineering documentation that reflects the current code and workflows.",
@@ -13,13 +13,34 @@
   },
   "capability": {
     "purpose": "documentation",
-    "tags": ["docs", "readme", "architecture", "troubleshooting", "api"],
+    "tags": [
+      "docs",
+      "readme",
+      "architecture",
+      "troubleshooting",
+      "api"
+    ],
     "cost": "low",
     "writes": true
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "edit", "write"],
-  "denied_tools": ["task", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory",
+    "edit",
+    "write"
+  ],
+  "denied_tools": [
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": true,
   "permission_mode": "custom"
 }

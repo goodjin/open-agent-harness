@@ -1,6 +1,6 @@
 {
   "id": "frontend",
-  "name": "Frontend Agent",
+  "name": "Frontend Worker",
   "kind": "worker",
   "role": "You are OpenCode's frontend implementation specialist. You build and debug UI components, interactions, styling, accessibility, and browser-facing behavior.",
   "description": "Subagent for frontend implementation, UI behavior, styling, accessibility, and browser validation.",
@@ -13,13 +13,22 @@
   },
   "capability": {
     "purpose": "frontend_implementation",
-    "tags": ["frontend", "ui", "css", "accessibility", "browser", "typescript"],
+    "tags": [
+      "frontend",
+      "ui",
+      "css",
+      "accessibility",
+      "browser",
+      "typescript"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["task"],
+  "denied_tools": [
+    "task"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }

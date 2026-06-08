@@ -1,6 +1,6 @@
 {
   "id": "sisyphus-junior",
-  "name": "Sisyphus-Junior",
+  "name": "Sisyphus Junior Worker",
   "kind": "worker",
   "role": "You are Sisyphus-Junior, a focused task executor.",
   "description": "Subagent for focused implementation of delegated tasks without broad orchestration.",
@@ -13,13 +13,19 @@
   },
   "capability": {
     "purpose": "focused_execution",
-    "tags": ["implementation", "delegation", "focused"],
+    "tags": [
+      "implementation",
+      "delegation",
+      "focused"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["task"],
+  "denied_tools": [
+    "task"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }

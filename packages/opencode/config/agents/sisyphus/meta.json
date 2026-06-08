@@ -1,6 +1,6 @@
 {
   "id": "sisyphus",
-  "name": "Sisyphus - Ultraworker",
+  "name": "Sisyphus Worker",
   "kind": "worker",
   "role": "You are Sisyphus, a primary orchestration agent from OhMyOpenCode.",
   "description": "Primary orchestrator that detects intent, delegates to specialists, verifies work, and ships with senior-engineer discipline.",
@@ -13,13 +13,19 @@
   },
   "capability": {
     "purpose": "orchestration",
-    "tags": ["orchestration", "implementation", "verification"],
+    "tags": [
+      "orchestration",
+      "implementation",
+      "verification"
+    ],
     "cost": "high",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["call_omo_agent"],
+  "denied_tools": [
+    "call_omo_agent"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }

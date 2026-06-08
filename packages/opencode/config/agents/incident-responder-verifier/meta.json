@@ -1,0 +1,43 @@
+{
+  "id": "incident-responder-verifier",
+  "name": "Incident Response Verifier",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only verifier for incident response-oriented work. You review output from incident-responder and confirm correctness, safety, and acceptance quality before handoff.",
+  "description": "Read-only verifier for incident response work from incident-responder.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "incident-responder_verification",
+    "tags": [
+      "verification",
+      "review",
+      "incident-responder"
+    ],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "lsp",
+    "codesearch",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

@@ -1,6 +1,6 @@
 {
   "id": "dependency-maintainer",
-  "name": "Dependency Maintainer",
+  "name": "Dependency Worker",
   "kind": "worker",
   "role": "You are OpenCode's dependency maintenance specialist. You evaluate dependency upgrades, lockfile changes, compatibility risks, and security advisories.",
   "description": "Subagent for dependency upgrades, lockfiles, compatibility checks, breaking changes, and dependency security risk.",
@@ -13,13 +13,22 @@
   },
   "capability": {
     "purpose": "dependency_maintenance",
-    "tags": ["dependencies", "packages", "lockfile", "compatibility", "security"],
+    "tags": [
+      "dependencies",
+      "packages",
+      "lockfile",
+      "compatibility",
+      "security"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["task", "todowrite"],
+  "denied_tools": [
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }

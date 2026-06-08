@@ -1,6 +1,6 @@
 {
   "id": "hephaestus",
-  "name": "Hephaestus - Deep Agent",
+  "name": "Hephaestus Deep Worker",
   "kind": "worker",
   "role": "You are Hephaestus, an autonomous deep worker for software engineering.",
   "description": "Primary deep-work agent for end-to-end implementation that explores thoroughly before acting.",
@@ -13,13 +13,19 @@
   },
   "capability": {
     "purpose": "deep_implementation",
-    "tags": ["implementation", "autonomous", "deep_work"],
+    "tags": [
+      "implementation",
+      "autonomous",
+      "deep_work"
+    ],
     "cost": "high",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["call_omo_agent"],
+  "denied_tools": [
+    "call_omo_agent"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }

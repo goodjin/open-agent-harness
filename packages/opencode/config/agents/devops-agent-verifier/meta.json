@@ -1,0 +1,43 @@
+{
+  "id": "devops-agent-verifier",
+  "name": "DevOps Verifier",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only verifier for devops-oriented work. You review output from devops-agent and confirm correctness, safety, and acceptance quality before handoff.",
+  "description": "Read-only verifier for devops work from devops-agent.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "devops-agent_verification",
+    "tags": [
+      "verification",
+      "review",
+      "devops-agent"
+    ],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "lsp",
+    "codesearch",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

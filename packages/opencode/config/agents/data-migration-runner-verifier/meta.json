@@ -1,0 +1,43 @@
+{
+  "id": "data-migration-runner-verifier",
+  "name": "Data Migration Verifier",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only verifier for data migration-oriented work. You review output from data-migration-runner and confirm correctness, safety, and acceptance quality before handoff.",
+  "description": "Read-only verifier for data migration work from data-migration-runner.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "data-migration-runner_verification",
+    "tags": [
+      "verification",
+      "review",
+      "data-migration-runner"
+    ],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "lsp",
+    "codesearch",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

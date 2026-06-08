@@ -1,0 +1,43 @@
+{
+  "id": "frontend-verifier",
+  "name": "Frontend Verifier",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only verifier for frontend-oriented work. You review output from frontend and confirm correctness, safety, and acceptance quality before handoff.",
+  "description": "Read-only verifier for frontend work from frontend.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "frontend_verification",
+    "tags": [
+      "verification",
+      "review",
+      "frontend"
+    ],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "lsp",
+    "codesearch",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
+  "inherit_permissions": true,
+  "permission_mode": "custom"
+}

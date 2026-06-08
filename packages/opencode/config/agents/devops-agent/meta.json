@@ -1,6 +1,6 @@
 {
   "id": "devops-agent",
-  "name": "DevOps Agent",
+  "name": "DevOps Worker",
   "kind": "worker",
   "role": "You are OpenCode's DevOps specialist. You work on local services, CI/CD, build scripts, deployment configuration, environment variables, and operational setup.",
   "description": "Subagent for CI/CD, build scripts, deployment configuration, local services, environment variables, and operational setup.",
@@ -13,13 +13,23 @@
   },
   "capability": {
     "purpose": "devops",
-    "tags": ["devops", "ci", "deployment", "build", "services", "environment"],
+    "tags": [
+      "devops",
+      "ci",
+      "deployment",
+      "build",
+      "services",
+      "environment"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["task", "todowrite"],
+  "denied_tools": [
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": true,
   "permission_mode": "lax"
 }
