@@ -1,6 +1,6 @@
 {
   "id": "build-verifier",
-  "name": "Build Verifier",
+  "name": "Implementation Verifier",
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for build-oriented work. You review output from build and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for build work from build.",

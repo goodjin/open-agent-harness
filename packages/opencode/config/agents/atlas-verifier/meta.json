@@ -1,6 +1,6 @@
 {
   "id": "atlas-verifier",
-  "name": "Atlas Verifier",
+  "name": "Plan Execution Verifier",
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for atlas-oriented work. You review output from atlas and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for atlas work from atlas.",

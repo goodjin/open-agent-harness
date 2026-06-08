@@ -1,6 +1,6 @@
 {
   "id": "sisyphus-verifier",
-  "name": "Sisyphus Verifier",
+  "name": "Orchestration Verifier",
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for sisyphus-oriented work. You review output from sisyphus and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for sisyphus work from sisyphus.",

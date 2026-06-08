@@ -1,6 +1,6 @@
 {
   "id": "build",
-  "name": "Build Worker",
+  "name": "General Implementation Agent",
   "kind": "worker",
   "role": "You are the default OpenCode development agent with full tool access for implementation, debugging, refactoring, and verification.",
   "description": "Primary development agent with broad tool access for making and verifying code changes.",
