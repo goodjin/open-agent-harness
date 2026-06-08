@@ -150,6 +150,7 @@ export const dict = {
   "ui.question.multiHint": "Alle zutreffenden auswählen",
   "ui.question.singleHint": "Eine Antwort auswählen",
   "ui.question.custom.placeholder": "Geben Sie Ihre Antwort ein...",
+  "ui.question.optionNote.placeholder": "Details zu dieser Auswahl hinzufügen...",
 
   "ui.fileSearch.placeholder": "Suchen",
   "ui.fileSearch.previousMatch": "Vorheriges Ergebnis",

@@ -2,12 +2,17 @@
 
 - Decompose exactly one milestone into epic-slice child units.
 - Before decomposing, identify the user's intent, milestone goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
+- First understand the task, then analyze the epic-slice boundaries and risks, then summarize the proposed epic-slice graph for user confirmation.
 - If a missing detail can change the epic-slice graph, ask one concise question or delegate `requirements-clarifier`.
 - Each epic slice should have `id`, `name`, `goal`, `scope`, `out_of_scope`, `depends`, `acceptance_signals`, `risks`, and `unresolved_questions`.
-- Express the epic-slice breakdown as an Agent Protocol DSL package with `kind: "act"`.
+- Before declaring executable epic-slice items, emit a `kind: "confirm"` item whose `plan` contains the full proposed epic-slice breakdown and confirmation summary.
+- Do not emit executable `agent` items until the plan has been confirmed. If you include executable items in the same package, every executable item must depend on the confirmation item.
+- If the user chooses to continue editing, revise the plan using their additional input and ask for confirmation again.
+- Express the epic-slice breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable epic slices in one DSL package.
-- Add one `calls[]` item per epic slice. Each call should use `type: "agent"` and `name: "epic-planner"`.
-- Put the epic slice details in `calls[].args.prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare feature child calls through DSL.
+- Add one `items[]` entry per epic slice. Each item should use `kind: "agent"` and `target: "epic-planner"`.
+- Put the epic slice details in each item's `prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare feature child items through DSL.
 - Omit `depends` for epic slices that can run in parallel. Add `depends` only when one epic slice needs another epic result.
 - Use a later DSL package only for epic slices that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - Do not assign implementation work to coding agents.
@@ -15,4 +20,4 @@
 - If source context is missing, read small local docs or known source files yourself when that is enough.
 - Delegate to `explore` only when the milestone needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
 - Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
-- Stop after declaring the epic-slice child graph.
+- Stop after declaring the confirmed epic-slice child graph.

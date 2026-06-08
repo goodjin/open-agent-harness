@@ -145,6 +145,7 @@ export const dict = {
   "ui.question.multiHint": "حدد كل ما ينطبق",
   "ui.question.singleHint": "حدد إجابة واحدة",
   "ui.question.custom.placeholder": "اكتب إجابتك...",
+  "ui.question.optionNote.placeholder": "أضف تفاصيل لهذا الخيار...",
 
   "ui.fileSearch.placeholder": "بحث",
   "ui.fileSearch.previousMatch": "المطابقة السابقة",

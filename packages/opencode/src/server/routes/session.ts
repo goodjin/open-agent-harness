@@ -488,7 +488,7 @@ export const SessionRoutes = lazy(() =>
       "/:sessionID/status",
       describeRoute({
         summary: "Get single session status",
-        description: "Retrieve the current status for one session. Status is process-local and defaults to idle.",
+        description: "Retrieve the current persisted runtime status for one session. Missing status defaults to idle.",
         operationId: "session.getStatus",
         responses: {
           200: {

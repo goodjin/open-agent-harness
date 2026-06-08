@@ -144,6 +144,7 @@ export const dict = {
   "ui.question.multiHint": "Выберите все подходящие",
   "ui.question.singleHint": "Выберите один ответ",
   "ui.question.custom.placeholder": "Введите ваш ответ...",
+  "ui.question.optionNote.placeholder": "Добавьте детали для этого варианта...",
 
   "ui.fileSearch.placeholder": "Найти",
   "ui.fileSearch.previousMatch": "Предыдущее",

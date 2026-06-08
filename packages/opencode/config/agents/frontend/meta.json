@@ -1,6 +1,7 @@
 {
   "id": "frontend",
   "name": "Frontend Agent",
+  "kind": "worker",
   "role": "You are OpenCode's frontend implementation specialist. You build and debug UI components, interactions, styling, accessibility, and browser-facing behavior.",
   "description": "Subagent for frontend implementation, UI behavior, styling, accessibility, and browser validation.",
   "entry": {

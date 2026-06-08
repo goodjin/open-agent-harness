@@ -56,6 +56,9 @@ export type Form = {
   allowed: string
   denied: string
   inherit: boolean
+  promptBefore: string
+  promptAfter: string
+  autoAppend: string
 }
 
 type Raw<T> = T | { data: T }
@@ -93,6 +96,25 @@ export const text = (value: string) => {
   const next = value.trim()
   if (!next) return
   return next
+}
+
+const paths = (value: string) =>
+  value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter((item): item is string => item.length > 0)
+
+const files = (item: Meta | undefined, position: "prepend" | "append") =>
+  (item?.instructions?.files ?? [])
+    .filter((file) => (position === "prepend" ? file.position !== "append" : file.position === "append"))
+    .map((file) => file.path)
+
+const file = (form: Form, item: string, position: "prepend" | "append") => {
+  const prev = [...(form.raw?.instructions?.files ?? []), ...(form.base?.instructions?.files ?? [])].find(
+    (part) => part.path === item && (position === "prepend" ? part.position !== "append" : part.position === "append"),
+  )
+  if (prev) return prev
+  return { path: item, position }
 }
 
 const clean = <T extends object>(value: T) =>
@@ -147,6 +169,9 @@ export const blank = (): Form => ({
   allowed: "",
   denied: "",
   inherit: false,
+  promptBefore: "",
+  promptAfter: "",
+  autoAppend: "",
 })
 
 export const fill = (item: AgentManageInfo): Form => ({
@@ -175,6 +200,9 @@ export const fill = (item: AgentManageInfo): Form => ({
   allowed: join(item.meta.allowed_tools),
   denied: join(item.meta.denied_tools),
   inherit: item.meta.inherit_permissions ?? false,
+  promptBefore: join(files(item.meta, "prepend")),
+  promptAfter: join(files(item.meta, "append")),
+  autoAppend: item.meta.auto_append_prompt ?? "",
 })
 
 export const message = (value: unknown) => (value instanceof Error ? value.message : String(value))
@@ -225,6 +253,17 @@ export const meta = (form: Form): Meta => {
   const tags = split(form.tags)
   const allowed = split(form.allowed)
   const denied = split(form.denied)
+  const before = paths(form.promptBefore).map((item) => file(form, item, "prepend"))
+  const after = paths(form.promptAfter).map((item) => file(form, item, "append"))
+  const messages = form.raw?.instructions?.model_messages ?? form.base?.instructions?.model_messages ?? []
+  const instructions = before.length || after.length || messages.length
+    ? {
+        ...(form.base?.instructions ?? {}),
+        ...(form.raw?.instructions ?? {}),
+        files: [...before, ...after],
+        model_messages: messages.length ? messages : undefined,
+      }
+    : undefined
   return {
     ...form.base,
     ...form.raw,
@@ -254,6 +293,8 @@ export const meta = (form: Form): Meta => {
     inherit_permissions: form.inherit,
     allowed_tools: allowed.length ? allowed : undefined,
     denied_tools: denied.length ? denied : undefined,
+    instructions,
+    auto_append_prompt: text(form.autoAppend),
   }
 }
 

@@ -1,6 +1,7 @@
 {
   "id": "librarian",
   "name": "librarian",
+  "kind": "helper",
   "role": "You are THE LIBRARIAN, an open-source documentation and codebase research specialist.",
   "description": "Subagent for official docs, remote repositories, external libraries, and implementation examples.",
   "entry": {

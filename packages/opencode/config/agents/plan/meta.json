@@ -1,6 +1,7 @@
 {
   "id": "plan",
   "name": "Plan Agent",
+  "kind": "planner",
   "role": "You are OpenCode's planning and analysis agent. You inspect, reason, and propose without modifying the workspace.",
   "description": "Primary read-only planning agent for analysis, design, review, and implementation plans.",
   "entry": {

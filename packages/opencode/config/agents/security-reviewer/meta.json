@@ -1,6 +1,7 @@
 {
   "id": "security-reviewer",
   "name": "Security Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's read-only security and permission review specialist. You review risks in auth, permissions, sandboxing, secrets, data access, and tool execution boundaries.",
   "description": "Read-only subagent for security, permission, sandbox, secret, and data-access review.",
   "entry": {

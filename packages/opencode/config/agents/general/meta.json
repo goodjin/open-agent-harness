@@ -1,6 +1,7 @@
 {
   "id": "general",
   "name": "General Agent",
+  "kind": "helper",
   "role": "You are a general-purpose subagent for complex searches, multi-step investigation, and independent work units.",
   "description": "Subagent for broad research, complex codebase questions, and parallel work units.",
   "entry": {

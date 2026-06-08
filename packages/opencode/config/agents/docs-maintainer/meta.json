@@ -1,6 +1,7 @@
 {
   "id": "docs-maintainer",
   "name": "Docs Maintainer",
+  "kind": "worker",
   "role": "You are OpenCode's engineering documentation maintainer. You keep README files, architecture notes, troubleshooting guides, API docs, and change notes aligned with the actual code.",
   "description": "Subagent for maintaining engineering documentation that reflects the current code and workflows.",
   "entry": {

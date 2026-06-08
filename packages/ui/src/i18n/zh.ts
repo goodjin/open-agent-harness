@@ -41,6 +41,9 @@ export const dict = {
   "ui.sessionTurn.steps.hide": "隐藏步骤",
   "ui.sessionTurn.summary.response": "回复",
   "ui.sessionTurn.diff.showMore": "显示更多更改（{{count}}）",
+  "ui.sessionTurn.diff.summary": "本轮变更",
+  "ui.sessionTurn.diff.expand": "展开另外 {{count}} 项",
+  "ui.sessionTurn.diff.collapse": "收起",
 
   "ui.sessionTurn.retry.retrying": "重试中",
   "ui.sessionTurn.retry.inSeconds": "{{seconds}} 秒后",
@@ -68,7 +71,7 @@ export const dict = {
   "ui.messagePart.questions.dismissed": "问题已忽略",
   "ui.messagePart.compaction": "会话已压缩",
   "ui.messagePart.collapsed.ignoredText.title": "已折叠的模型输出",
-  "ui.messagePart.collapsed.reasoning.title": "思考过程",
+  "ui.messagePart.collapsed.reasoning.title": "思考中",
   "ui.messagePart.lineLimit.notice": "显示最后 {{limit}} 行，已折叠前面 {{hidden}} 行。点击展开。",
   "ui.messagePart.context.read.one": "{{count}} 次读取",
   "ui.messagePart.context.read.other": "{{count}} 次读取",
@@ -154,6 +157,7 @@ export const dict = {
   "ui.question.multiHint": "可多选",
   "ui.question.singleHint": "选择一个答案",
   "ui.question.custom.placeholder": "输入你的答案...",
+  "ui.question.optionNote.placeholder": "为这个选项补充说明...",
 
   "ui.fileSearch.placeholder": "查找",
   "ui.fileSearch.previousMatch": "上一个",

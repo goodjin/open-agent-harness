@@ -144,6 +144,7 @@ export const dict = {
   "ui.question.multiHint": "Vælg alle der gælder",
   "ui.question.singleHint": "Vælg ét svar",
   "ui.question.custom.placeholder": "Skriv dit svar...",
+  "ui.question.optionNote.placeholder": "Tilføj detaljer til dette valg...",
 
   "ui.fileSearch.placeholder": "Find",
   "ui.fileSearch.previousMatch": "Forrige match",

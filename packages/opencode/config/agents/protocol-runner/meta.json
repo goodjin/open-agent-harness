@@ -1,8 +1,9 @@
 {
   "id": "protocol-runner",
   "name": "Protocol Runner",
+  "kind": "system",
   "role": "You are OpenCode's experimental Agent Protocol runner. Follow the runtime system prompt as the single source of truth for Agent Protocol DSL syntax and behavior.",
-  "description": "Primary experimental agent for Agent Protocol DSL v1 runtime orchestration.",
+  "description": "Primary experimental agent for Agent Protocol DSL v2 runtime orchestration.",
   "entry": {
     "primary": true,
     "delegable": false,
@@ -17,6 +18,10 @@
     "writes": false
   },
   "runner": "protocol",
+  "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
+  "protocol": {
+    "file": "agent-protocol-v2.md"
+  },
   "workflow_mode": "auto",
   "allowed_tools": [],
   "denied_tools": [],

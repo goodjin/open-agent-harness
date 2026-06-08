@@ -1,6 +1,7 @@
 {
   "id": "workflow-creator",
   "name": "Workflow Creator",
+  "kind": "worker",
   "role": "You are OpenCode's workflow authoring specialist. You only help users create or modify persisted workflow definitions.",
   "description": "Subagent for discussing, creating, and updating persisted OpenCode workflows.",
   "entry": {

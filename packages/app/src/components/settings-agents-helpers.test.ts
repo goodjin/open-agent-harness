@@ -127,6 +127,9 @@ describe("settings agent helpers", () => {
       tags: " code, quality\nrisk ",
       allowed: "grep\nread",
       denied: "write, bash",
+      promptBefore: "docs/context.md\n${workspace.root}/AGENTS.md",
+      promptAfter: "docs/output.md",
+      autoAppend: " Always include evidence. ",
     })
 
     expect(body).toMatchObject({
@@ -157,10 +160,40 @@ describe("settings agent helpers", () => {
         allowed_tools: ["grep", "read"],
         denied_tools: ["write", "bash"],
         inherit_permissions: true,
+        auto_append_prompt: "Always include evidence.",
+        instructions: {
+          files: [
+            { path: "docs/context.md", position: "prepend" },
+            { path: "${workspace.root}/AGENTS.md", position: "prepend" },
+            { path: "docs/output.md", position: "append" },
+          ],
+        },
       },
       identity: "You review changes.",
       rules: "Be specific.",
     })
+  })
+
+  test("fills prompt document fields from instruction metadata", () => {
+    const form = fill(
+      agent({
+        meta: {
+          ...agent().meta,
+          auto_append_prompt: "Final contract.",
+          instructions: {
+            files: [
+              { path: "identity.md", required: true },
+              { path: "pre.md", position: "prepend" },
+              { path: "post.md", position: "append" },
+            ],
+          },
+        },
+      }),
+    )
+
+    expect(form.promptBefore).toBe("identity.md\npre.md")
+    expect(form.promptAfter).toBe("post.md")
+    expect(form.autoAppend).toBe("Final contract.")
   })
 
   test("validates and saves the selected agent override", async () => {

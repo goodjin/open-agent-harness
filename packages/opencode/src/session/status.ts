@@ -3,6 +3,7 @@ import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { Metrics } from "@/observability/metrics"
 import { SessionID } from "./schema"
+import { Storage } from "@/storage/storage"
 import z from "zod"
 
 export namespace SessionStatus {
@@ -108,6 +109,17 @@ export namespace SessionStatus {
     const data: Record<string, Info> = {}
     return data
   })
+
+  const writes = Instance.state(() => new Set<Promise<void>>())
+  const chains = Instance.state(() => new Map<SessionID, Promise<void>>())
+
+  type Saved = {
+    sessionID: SessionID
+    projectID: string
+    directory: string
+    status: Info
+    time: number
+  }
 
   const transitions: Record<Info["type"], Info["type"][]> = {
     idle: [
@@ -225,6 +237,63 @@ export namespace SessionStatus {
     return state()
   }
 
+  export function shouldContinue(status: Info) {
+    return (
+      status.type === "running" ||
+      status.type === "queued" ||
+      status.type === "starting" ||
+      status.type === "rate_limited" ||
+      status.type === "retry"
+    )
+  }
+
+  function save(sessionID: SessionID, status: Info) {
+    const prior = chains().get(sessionID) ?? Promise.resolve()
+    const run = prior
+      .then(() =>
+        status.type === "idle" || status.type === "completed" || status.type === "archived"
+          ? Storage.remove(["session_status", sessionID])
+          : Storage.write(["session_status", sessionID], {
+              sessionID,
+              projectID: Instance.project.id,
+              directory: Instance.directory,
+              status,
+              time: Date.now(),
+            } satisfies Saved),
+      )
+      .catch(() => {})
+      .finally(() => {
+        writes().delete(run)
+        if (chains().get(sessionID) === run) chains().delete(sessionID)
+      })
+    chains().set(sessionID, run)
+    writes().add(run)
+  }
+
+  export async function flush() {
+    const pending = Array.from(writes())
+    await Promise.all(pending)
+  }
+
+  export async function restore() {
+    await flush()
+    const data = state()
+    const keys = await Storage.list(["session_status"])
+    const out: Record<string, Info> = {}
+    for (const key of keys) {
+      const item = await Storage.read<Saved>(key).catch(() => undefined)
+      if (!item) continue
+      if (item.projectID !== Instance.project.id) continue
+      if (item.directory !== Instance.directory) continue
+      const parsed = Info.safeParse(item.status)
+      if (!parsed.success) continue
+      if (parsed.data.type === "idle") continue
+      data[item.sessionID] = parsed.data
+      out[item.sessionID] = parsed.data
+    }
+    return out
+  }
+
   export function set(sessionID: SessionID, status: Info) {
     const current = get(sessionID)
     if (!transitions[current.type].includes(status.type)) {
@@ -244,9 +313,11 @@ export namespace SessionStatus {
         sessionID,
       })
       delete state()[sessionID]
+      save(sessionID, status)
       return
     }
     state()[sessionID] = status
+    save(sessionID, status)
   }
 
   export function dismiss(sessionID: SessionID) {

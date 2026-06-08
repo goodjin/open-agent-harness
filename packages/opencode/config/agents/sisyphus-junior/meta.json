@@ -1,6 +1,7 @@
 {
   "id": "sisyphus-junior",
   "name": "Sisyphus-Junior",
+  "kind": "worker",
   "role": "You are Sisyphus-Junior, a focused task executor.",
   "description": "Subagent for focused implementation of delegated tasks without broad orchestration.",
   "entry": {

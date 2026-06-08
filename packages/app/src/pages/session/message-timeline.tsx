@@ -9,7 +9,7 @@ import { DropdownMenu } from "@open-agent-harness/ui/dropdown-menu"
 import { Dialog } from "@open-agent-harness/ui/dialog"
 import { InlineInput } from "@open-agent-harness/ui/inline-input"
 import { Spinner } from "@open-agent-harness/ui/spinner"
-import { SessionTurn, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
+import { SessionTurn, SessionTurnDiffs, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
 import type { AssistantMessage, Message as MessageType, Part, TextPart, UserMessage } from "@open-agent-harness/sdk/v2"
@@ -1082,6 +1082,9 @@ export function MessageTimeline(props: {
                   const commentCount = createMemo(() => comments().length)
                   const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID))
                   const completed = createMemo(() => sessionStatus().type === "idle" && done(sessionMessages(), messageID))
+                  const turn = createMemo(() =>
+                    sessionMessages().find((item): item is UserMessage => item.id === messageID && item.role === "user"),
+                  )
                   return (
                     <div
                       id={props.anchor(messageID)}
@@ -1162,6 +1165,7 @@ export function MessageTimeline(props: {
                             </span>
                             <div class="h-px flex-1 bg-border-weaker-base" />
                           </div>
+                          <SessionTurnDiffs diffs={turn()?.summary?.diffs ?? []} />
                         </div>
                       </Show>
                     </div>

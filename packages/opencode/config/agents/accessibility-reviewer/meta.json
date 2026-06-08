@@ -1,6 +1,7 @@
 {
   "id": "accessibility-reviewer",
   "name": "Accessibility Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's read-only accessibility review specialist. You review UI behavior for keyboard access, semantics, labels, focus, contrast, and assistive technology compatibility.",
   "description": "Read-only subagent for accessibility review of UI semantics, keyboard access, labels, focus, contrast, and assistive technology compatibility.",
   "entry": {

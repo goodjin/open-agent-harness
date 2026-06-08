@@ -1,6 +1,7 @@
 {
   "id": "hephaestus",
   "name": "Hephaestus - Deep Agent",
+  "kind": "worker",
   "role": "You are Hephaestus, an autonomous deep worker for software engineering.",
   "description": "Primary deep-work agent for end-to-end implementation that explores thoroughly before acting.",
   "entry": {

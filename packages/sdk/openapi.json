@@ -3026,7 +3026,7 @@
           }
         ],
         "summary": "Get single session status",
-        "description": "Retrieve the current status for one session. Status is process-local and defaults to idle.",
+        "description": "Retrieve the current persisted runtime status for one session. Missing status defaults to idle.",
         "responses": {
           "200": {
             "description": "Get single session status",
@@ -11762,7 +11762,7 @@
                 "type": "object",
                 "properties": {
                   "answers": {
-                    "description": "User answers in order of questions (each answer is an array of selected labels)",
+                    "description": "User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)",
                     "type": "array",
                     "items": {
                       "$ref": "#/components/schemas/QuestionAnswer"
@@ -15245,6 +15245,7 @@
         ]
       },
       "QuestionAnswer": {
+        "description": "Selected answers. A selected option may include user-entered details as `label: details`.",
         "type": "array",
         "items": {
           "type": "string"
@@ -19073,6 +19074,9 @@
           "prompt": {
             "type": "string"
           },
+          "auto_append_prompt": {
+            "type": "string"
+          },
           "tools": {
             "description": "@deprecated Use 'permission' field instead",
             "type": "object",
@@ -22323,7 +22327,9 @@
                   "planner",
                   "worker",
                   "verifier",
-                  "helper"
+                  "helper",
+                  "system",
+                  "skill"
                 ]
               },
               "logo": {
@@ -22380,6 +22386,14 @@
                           "type": "string",
                           "minLength": 1
                         },
+                        "position": {
+                          "description": "Where to place the instruction content",
+                          "type": "string",
+                          "enum": [
+                            "prepend",
+                            "append"
+                          ]
+                        },
                         "required": {
                           "description": "Whether the file is required",
                           "default": false,
@@ -22424,6 +22438,11 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "auto_append_prompt": {
+                "description": "Prompt text appended at the end of every model request for this agent",
+                "type": "string",
+                "minLength": 1
               },
               "contracts": {
                 "description": "Input and output contracts",
@@ -22599,6 +22618,21 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
+              },
+              "protocol": {
+                "description": "Protocol runner prompt configuration",
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "description": "Protocol prompt file path relative to the agent directory",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
               },
               "id": {
                 "description": "Unique identifier for the agent",
@@ -22839,7 +22873,9 @@
                   "planner",
                   "worker",
                   "verifier",
-                  "helper"
+                  "helper",
+                  "system",
+                  "skill"
                 ]
               },
               "logo": {
@@ -22896,6 +22932,14 @@
                           "type": "string",
                           "minLength": 1
                         },
+                        "position": {
+                          "description": "Where to place the instruction content",
+                          "type": "string",
+                          "enum": [
+                            "prepend",
+                            "append"
+                          ]
+                        },
                         "required": {
                           "description": "Whether the file is required",
                           "default": false,
@@ -22940,6 +22984,11 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "auto_append_prompt": {
+                "description": "Prompt text appended at the end of every model request for this agent",
+                "type": "string",
+                "minLength": 1
               },
               "contracts": {
                 "description": "Input and output contracts",
@@ -23115,6 +23164,21 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
+              },
+              "protocol": {
+                "description": "Protocol runner prompt configuration",
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "description": "Protocol prompt file path relative to the agent directory",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
               },
               "id": {
                 "description": "Unique identifier for the agent",
@@ -23373,7 +23437,9 @@
                   "planner",
                   "worker",
                   "verifier",
-                  "helper"
+                  "helper",
+                  "system",
+                  "skill"
                 ]
               },
               "logo": {
@@ -23430,6 +23496,14 @@
                           "type": "string",
                           "minLength": 1
                         },
+                        "position": {
+                          "description": "Where to place the instruction content",
+                          "type": "string",
+                          "enum": [
+                            "prepend",
+                            "append"
+                          ]
+                        },
                         "required": {
                           "description": "Whether the file is required",
                           "default": false,
@@ -23474,6 +23548,11 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "auto_append_prompt": {
+                "description": "Prompt text appended at the end of every model request for this agent",
+                "type": "string",
+                "minLength": 1
               },
               "contracts": {
                 "description": "Input and output contracts",
@@ -23649,6 +23728,21 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
+              },
+              "protocol": {
+                "description": "Protocol runner prompt configuration",
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "description": "Protocol prompt file path relative to the agent directory",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
               },
               "id": {
                 "description": "Unique identifier for the agent",
@@ -23877,7 +23971,9 @@
                   "planner",
                   "worker",
                   "verifier",
-                  "helper"
+                  "helper",
+                  "system",
+                  "skill"
                 ]
               },
               "logo": {
@@ -23934,6 +24030,14 @@
                           "type": "string",
                           "minLength": 1
                         },
+                        "position": {
+                          "description": "Where to place the instruction content",
+                          "type": "string",
+                          "enum": [
+                            "prepend",
+                            "append"
+                          ]
+                        },
                         "required": {
                           "description": "Whether the file is required",
                           "default": false,
@@ -23978,6 +24082,11 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "auto_append_prompt": {
+                "description": "Prompt text appended at the end of every model request for this agent",
+                "type": "string",
+                "minLength": 1
               },
               "contracts": {
                 "description": "Input and output contracts",
@@ -24153,6 +24262,21 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
+              },
+              "protocol": {
+                "description": "Protocol runner prompt configuration",
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "description": "Protocol prompt file path relative to the agent directory",
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "additionalProperties": false
               },
               "id": {
                 "description": "Unique identifier for the agent",
@@ -24608,6 +24732,17 @@
           "description": {
             "type": "string"
           },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "planner",
+              "worker",
+              "verifier",
+              "helper",
+              "system",
+              "skill"
+            ]
+          },
           "mode": {
             "type": "string",
             "enum": [
@@ -24769,6 +24904,24 @@
           },
           "inheritPermissions": {
             "type": "boolean"
+          },
+          "autoAppendPrompt": {
+            "type": "string"
+          },
+          "protocol": {
+            "type": "object",
+            "properties": {
+              "file": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "file",
+              "prompt"
+            ]
           },
           "model": {
             "type": "object",

@@ -145,6 +145,7 @@ export const dict = {
   "ui.question.multiHint": "해당하는 항목 모두 선택",
   "ui.question.singleHint": "하나의 답변을 선택",
   "ui.question.custom.placeholder": "답변 입력...",
+  "ui.question.optionNote.placeholder": "이 선택에 대한 세부 정보를 입력...",
 
   "ui.fileSearch.placeholder": "찾기",
   "ui.fileSearch.previousMatch": "이전 항목",

@@ -38,6 +38,9 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.steps.hide": "Hide steps",
   "ui.sessionTurn.summary.response": "Response",
   "ui.sessionTurn.diff.showMore": "Show more changes ({{count}})",
+  "ui.sessionTurn.diff.summary": "Turn changes",
+  "ui.sessionTurn.diff.expand": "Show {{count}} more",
+  "ui.sessionTurn.diff.collapse": "Show fewer",
 
   "ui.sessionTurn.retry.retrying": "retrying",
   "ui.sessionTurn.retry.inSeconds": "in {{seconds}}s",
@@ -70,7 +73,7 @@ export const dict: Record<string, string> = {
   "ui.messagePart.questions.dismissed": "Questions dismissed",
   "ui.messagePart.compaction": "Session compacted",
   "ui.messagePart.collapsed.ignoredText.title": "Hidden model output",
-  "ui.messagePart.collapsed.reasoning.title": "Reasoning summary",
+  "ui.messagePart.collapsed.reasoning.title": "Thinking",
   "ui.messagePart.lineLimit.notice": "Showing last {{limit}} lines. {{hidden}} earlier lines hidden. Click to expand.",
   "ui.messagePart.context.read.one": "{{count}} read",
   "ui.messagePart.context.read.other": "{{count}} reads",
@@ -164,4 +167,5 @@ export const dict: Record<string, string> = {
   "ui.question.multiHint": "Select all answers that apply",
   "ui.question.singleHint": "Select one answer",
   "ui.question.custom.placeholder": "Type your answer...",
+  "ui.question.optionNote.placeholder": "Add details for this choice...",
 }

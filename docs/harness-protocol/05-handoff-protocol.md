@@ -198,6 +198,162 @@ Runtime 处理：
 | `continue` | 唤醒指定 owner 继续 |
 | `ignore` | 仅保存和投影，不触发执行 |
 
+## 父子会话通知与结果回收
+
+父会话和子会话之间不直接通信。父会话要通知子会话时，只能表达通信意图；Runtime 负责校验权限、选择目标、构造 Context Bundle，并通过受控 Runtime 工具或内部 command 把通知送到目标子会话。
+
+这个动作仍然使用 `sync` 语义。它不是新的通信原语。
+
+父到子的通知形态：
+
+```json
+{
+  "kind": "sync",
+  "status": "info | progress | blocked",
+  "source": {
+    "session_id": "parent_session",
+    "agent": "orchestrator"
+  },
+  "target": {
+    "session_id": "child_session",
+    "agent": "developer"
+  },
+  "subject": "Runtime protocol document update",
+  "summary": "Parent session added a new lifecycle constraint. Re-check your current task against the updated criteria.",
+  "details": [],
+  "evidence": ["projection://run/run_123/lifecycle"],
+  "needs": [],
+  "next": {
+    "owner": "target",
+    "action": "continue"
+  }
+}
+```
+
+Runtime 处理：
+
+- 校验 parent session 是否有权通知目标 child session。
+- 判断通知是否会改变 child Assignment 的目标、scope、criteria、budget 或 context。
+- 如果通知只同步背景，写入 child context note，并让 child 在下一轮模型调用中看到。
+- 如果通知改变任务合同，写入 assignment update、Event、Projection，并让 child 明确看到更新后的 contract。
+- 如果 child 当前 `running`，Runtime 不强行打断；通知进入 pending inbox，下一次安全点注入。
+- 如果 child 当前 `idle`、`ready`、`waiting_user`、`waiting_permission` 或 `blocked`，Runtime 可以按 policy 唤醒或更新等待原因。
+
+Runtime 应主动回复父会话。父会话发出通知后，不应只能看到“工具调用成功”。Runtime response 应说明通知是否送达、目标会话当前状态、通知是否立即生效，以及下一步怎么回收结果。
+
+父会话可见回复形态：
+
+```json
+{
+  "type": "runtime.parent_reply",
+  "status": "accepted",
+  "summary": "Notification queued for 2 child sessions. One child is running and will receive it at the next safe point; one child is idle and has been resumed.",
+  "targets": [
+    {
+      "session_id": "child_a",
+      "status": "running",
+      "delivery": "queued",
+      "reason": "Child has an active model/tool attempt."
+    },
+    {
+      "session_id": "child_b",
+      "status": "idle",
+      "delivery": "delivered",
+      "reason": "Child was idle and could receive the context update."
+    }
+  ],
+  "collection": {
+    "id": "collect_child_results_001",
+    "targets": ["child_a", "child_b"],
+    "timeout_ms": 300000,
+    "on_timeout": "inspect_status_and_summarize"
+  }
+}
+```
+
+### 多子会话结果回收
+
+当父会话通知多个子会话，或等待多个子会话结果时，Runtime 应创建 result collection。collection 是 Runtime 的 fan-in 控制对象，用来汇总子会话结果、状态和未决事项。
+
+Collection record 形态：
+
+```json
+{
+  "id": "collect_child_results_001",
+  "run_id": "run_123",
+  "parent_session_id": "parent_session",
+  "targets": [
+    {
+      "session_id": "child_a",
+      "assignment_id": "assign_a",
+      "required": true
+    },
+    {
+      "session_id": "child_b",
+      "assignment_id": "assign_b",
+      "required": false
+    }
+  ],
+  "timeout_ms": 300000,
+  "started_at": "2026-06-07T10:00:00Z",
+  "status": "collecting",
+  "result_policy": {
+    "reply_mode": "aggregate",
+    "include_partial": true,
+    "on_timeout": "inspect_status_and_summarize"
+  }
+}
+```
+
+Collection 汇总回复应包含：
+
+- 已完成子会话的 ResultRecord、Artifact refs、criteria 和 risks。
+- partial 子会话的可用结果和 unresolved。
+- blocked 子会话的 blocked reason 和 needs。
+- failed 子会话的 error、retryable 和 evidence。
+- interrupted 子会话的 last safe point 和 recovery suggestion。
+- running / idle / waiting 子会话的当前状态和 Runtime 建议。
+
+超时不等于失败。timeout 只表示 collection 到达等待上限。Runtime 到达 timeout 后，应读取每个目标 child session 的当前 Projection，再给父会话一个状态汇总。
+
+Timeout 汇总形态：
+
+```json
+{
+  "type": "runtime.parent_reply",
+  "status": "timeout_summary",
+  "summary": "Collection timed out after 300000 ms. One child completed, one child is still running, and one child is blocked on permission.",
+  "completed": [
+    {
+      "session_id": "child_a",
+      "result": "result://session/child_a"
+    }
+  ],
+  "still_running": [
+    {
+      "session_id": "child_b",
+      "status": "running",
+      "current": "Running focused tests.",
+      "last_update": "2026-06-07T10:04:10Z"
+    }
+  ],
+  "blocked": [
+    {
+      "session_id": "child_c",
+      "status": "waiting_permission",
+      "blocked_reason": "Needs approval to run browser verification."
+    }
+  ],
+  "next": {
+    "owner": "parent",
+    "action": "decide",
+    "options": ["wait_more", "continue_with_partial", "cancel_remaining", "request_permission"]
+  }
+}
+```
+
+Runtime 不应在 timeout 时自动把 still-running child 标记为 failed。只有 child executor 明确失败、failure policy 耗尽，或 owner 做出取消 / abort 决策后，才进入 failed、cancelled 或 aborted 路径。
+
 ## 内容生成责任
 
 需要区分触发者和内容生成者。用户说“交给 review agent 看一下”只是触发意图，不会直接生成 review assignment 的完整通信内容。

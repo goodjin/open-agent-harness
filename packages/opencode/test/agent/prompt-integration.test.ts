@@ -95,6 +95,59 @@ describe("agent prompt integration", () => {
     })
   })
 
+  test("protocol runner loads protocol prompt from metadata file", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const root = path.join(tmp.path, ".opencode", "agents", "protocol-doc-agent")
+    await fs.mkdir(root, { recursive: true })
+    await Bun.write(
+      path.join(root, "meta.json"),
+      JSON.stringify({
+        id: "protocol-doc-agent",
+        name: "Protocol Doc Agent",
+        role: "Use the configured protocol document.",
+        description: "Protocol doc test agent.",
+        runner: "protocol",
+        protocol: {
+          file: "protocol.md",
+        },
+      }),
+    )
+    await Bun.write(path.join(root, "identity.md"), "# Identity\n\nProtocol identity.")
+    await Bun.write(path.join(root, "rules.md"), "# Rules\n\nProtocol rules.")
+    await Bun.write(path.join(root, "protocol.md"), "# Protocol V2\n\nUse `items`.")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("agent-prompt-protocol-doc"),
+          fn: async () => {
+            resetRegistry()
+            const agent = await Agent.get("protocol-doc-agent")
+            expect(agent?.protocol?.file).toBe("protocol.md")
+            expect(agent?.protocol?.prompt).toBe("# Protocol V2\n\nUse `items`.")
+          },
+        }),
+    })
+  })
+
+  test("package protocol runner exposes auto append prompt", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("agent-prompt-protocol-auto-append"),
+          fn: async () => {
+            resetRegistry()
+            const agent = await Agent.get("protocol-runner")
+            expect(agent?.autoAppendPrompt).toContain("AgentProtocolOutput")
+          },
+        }),
+    })
+  })
+
   test("workflow runner prompt instructs workflow json generation", async () => {
     await using tmp = await tmpdir({ git: true })
 
@@ -164,6 +217,39 @@ describe("agent prompt integration", () => {
     expect(system.indexOf("Instructions from: /workspace/AGENTS.md")).toBeLessThan(
       system.indexOf("Runtime user system prompt."),
     )
+  })
+
+  test("auto append prompt is appended after all system prompt parts", () => {
+    const sessionID = SessionID.make("session-agent-auto-append")
+    const agent = {
+      name: "custom",
+      mode: "primary",
+      entry: ent,
+      capability: cap,
+      options: {},
+      permission: [],
+      prompt: "Custom role contract.",
+      autoAppendPrompt: "Final appended contract.",
+    } satisfies Agent.Info
+    const user = {
+      id: MessageID.make("user-agent-auto-append"),
+      sessionID,
+      role: "user",
+      time: { created: Date.now() },
+      agent: agent.name,
+      model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+      system: "Runtime user system prompt.",
+    } satisfies MessageV2.User
+    const system = LLM.compose({
+      agent,
+      user,
+      isCodex: false,
+      model: { providerID: ProviderID.make("openai"), api: { id: "gpt-5.2" } } as Provider.Model,
+      system: ["Project instruction."],
+    })[0]
+
+    expect(system.indexOf("Runtime user system prompt.")).toBeLessThan(system.indexOf("Final appended contract."))
+    expect(system.trim().endsWith("Final appended contract.")).toBe(true)
   })
 
   test("compaction and title fall back to default prompt when only default exists", async () => {

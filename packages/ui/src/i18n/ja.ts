@@ -144,6 +144,7 @@ export const dict = {
   "ui.question.multiHint": "該当するものをすべて選択",
   "ui.question.singleHint": "1 つ選択",
   "ui.question.custom.placeholder": "回答を入力...",
+  "ui.question.optionNote.placeholder": "この選択の詳細を入力...",
 
   "ui.fileSearch.placeholder": "検索",
   "ui.fileSearch.previousMatch": "前の一致",

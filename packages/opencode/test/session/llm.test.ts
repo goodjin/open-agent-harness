@@ -59,9 +59,9 @@ describe("session.llm.hasToolCalls", () => {
     })[0]
 
     expect(system).toContain("Default agent prompt.")
-    expect(system).toContain("Agent Protocol DSL v1")
+    expect(system).toContain("Agent Protocol DSL v2")
     expect(system).toContain("AgentProtocolOutput")
-    expect(system).toContain("The native `AgentProtocolOutput` arguments are the flat protocol package itself")
+    expect(system).toContain("The model-visible contract is the native `AgentProtocolOutput` tool schema.")
     expect(system).toContain("Final protocol reminder:")
   })
 
@@ -92,52 +92,69 @@ describe("session.llm.hasToolCalls", () => {
       isCodex: false,
     })[0]
 
-    expect(system).toContain("Agent Protocol DSL v1")
+    expect(system).toContain("Agent Protocol DSL v2")
     expect(system).toContain("Do not call low-level tools directly")
-    expect(system).toContain("Input contract:")
-    expect(system).toContain("Decision rule:")
-    expect(system).toContain("Output contract:")
-    expect(system).toContain("Runtime turn input:")
     expect(system).toContain("AgentProtocolOutput")
     expect(system).toContain("Every turn must end by making this native tool call")
-    expect(system).toContain('call `AgentProtocolOutput` with `kind: "answer"`')
+    expect(system).toContain('"kind": "answer"')
     expect(system).toContain("message")
     expect(system).toContain("Available Protocol Tools")
-    expect(system).toContain("They are not a field named `input` in the `AgentProtocolOutput` call")
-    expect(system).toContain("The native `AgentProtocolOutput` arguments are the flat protocol package itself")
-    expect(system).toContain("Never wrap the protocol package inside `{ input: ... }`")
-    expect(system).toContain("never stringify the whole package into one field")
     expect(system).toContain("## read")
-    expect(system).toContain('kind: "act"')
-    expect(system).toContain("type`, `name")
+    expect(system).toContain("items")
+    expect(system).toContain("kind")
+    expect(system).toContain("target")
     expect(system).toContain("args")
-    expect(system).toContain("calls")
-    expect(system).toContain("calls[].id")
-    expect(system).toContain("calls[].type")
-    expect(system).toContain("calls[].name")
     expect(system).toContain("depends")
     expect(system).toContain("result")
-    expect(system).toContain("Provider-specific textual invocation syntax")
-    expect(system).toContain("Never answer in plain text instead of calling `AgentProtocolOutput`")
-    expect(system).toContain("Never print JSON for the protocol")
-    expect(system).toContain("Flat field semantics:")
-    expect(system).toContain("Tool target requirements:")
-    expect(system).toContain("never use `auto`")
-    expect(system).toContain("The runtime executes exactly what you declare")
     expect(system).toContain("native `AgentProtocolOutput` tool schema")
     expect(system).toContain("Final protocol reminder:")
     expect(system).toContain("Never wrap the protocol package in an `input` field")
     expect(
-      system.trim().endsWith('For runtime work use `kind: "act"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.'),
+      system.trim().endsWith('For runtime work use `items`; each item uses `{ id, kind, target, args, depends, result }` or `{ id, kind: "agent", target, prompt }`.'),
     ).toBe(true)
     expect(system).not.toContain("AgentProtocolOutput.input.type")
-    expect(system).not.toContain("version")
     expect(system).not.toContain("actions")
     expect(system).not.toContain("executor")
     expect(system).not.toContain("tool/args")
     expect(system).not.toContain("say")
     expect(system).not.toContain("calls[].kind")
     expect(system).not.toContain("after")
+  })
+
+  test("uses protocol prompt loaded from agent metadata", () => {
+    const system = LLM.compose({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+        protocol: {
+          file: "protocol.md",
+          prompt: "# Custom Protocol Contract\n\nUse `items` for protocol actions.",
+        },
+      } satisfies Agent.Info,
+      model: {} as never,
+      system: [],
+      user: {
+        id: MessageID.make("user-protocol-doc-compose"),
+        sessionID: SessionID.make("session-protocol-doc-compose"),
+        role: "user",
+        time: { created: Date.now() },
+        agent: "protocol-runner",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+      } satisfies MessageV2.User,
+      runtimeTools: {
+        prompt: "# Available Protocol Tools\n\n## read\ninput_schema:",
+      } as never,
+      isCodex: false,
+    })[0]
+
+    expect(system).toContain("# Custom Protocol Contract")
+    expect(system).toContain("Use `items` for protocol actions.")
+    expect(system).not.toContain("Agent Protocol DSL v1")
   })
 
   test("wraps protocol runner messages as conversation turns", () => {
@@ -991,10 +1008,19 @@ describe("session.llm.stream", () => {
         const tools = capture.body.tools as Array<{ function?: { name?: string } }> | undefined
         expect(tools?.map((item) => item.function?.name)).toEqual(["AgentProtocolOutput"])
         expect(calls).toHaveLength(1)
-        expect(JSON.stringify(calls[0])).toContain("Protocol violation recovered")
-        expect(JSON.stringify(calls[0])).toContain("\"name\":\"read\"")
-        expect(JSON.stringify(calls[0])).toContain("\"type\":\"tool\"")
-        expect(JSON.stringify(calls[0])).toContain("\"filePath\":\"package.json\"")
+        expect(calls[0]).toEqual({
+          version: "2",
+          items: [
+            {
+              id: "recovered_read",
+              kind: "tool",
+              target: "read",
+              title: "Recovered read",
+              args: { filePath: "package.json" },
+              result: "summary",
+            },
+          ],
+        })
       },
     })
   })

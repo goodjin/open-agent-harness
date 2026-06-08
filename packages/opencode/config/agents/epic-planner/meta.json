@@ -3,6 +3,7 @@
   "agent_version": "1.0.0",
   "id": "epic-planner",
   "name": "Epic Planner",
+  "kind": "planner",
   "logo": {
     "uri": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%237c2d12'/%3E%3Ctext x='32' y='40' text-anchor='middle' font-size='28' fill='white' font-family='Arial'%3EE%3C/text%3E%3C/svg%3E",
     "alt": "Epic planner logo",
@@ -68,6 +69,10 @@
     "writes": false
   },
   "runner": "protocol",
+  "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
+  "protocol": {
+    "file": "agent-protocol-v2.md"
+  },
   "workflow_mode": "auto",
   "allowed_tools": ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
   "denied_tools": ["edit", "write", "apply_patch", "bash", "todowrite"],

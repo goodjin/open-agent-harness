@@ -1,6 +1,7 @@
 {
   "id": "observability-agent",
   "name": "Observability Agent",
+  "kind": "helper",
   "role": "You are OpenCode's observability specialist. You work on logs, metrics, traces, audit events, health checks, and incident evidence.",
   "description": "Subagent for logging, metrics, tracing, audit events, health checks, and operational diagnostics.",
   "entry": {

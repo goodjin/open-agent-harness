@@ -1,6 +1,7 @@
 {
   "id": "compaction",
   "name": "Compaction Agent",
+  "kind": "system",
   "role": "Summarize conversation history so another agent can continue the session accurately.",
   "description": "Creates compact continuation summaries for long sessions.",
   "entry": {

@@ -3,8 +3,7 @@ import { Icon } from "@open-agent-harness/ui/icon"
 import { IconButton } from "@open-agent-harness/ui/icon-button"
 import { createMemo, createResource, createSignal, For, Show } from "solid-js"
 import { useNavigate } from "@solidjs/router"
-import { useDialog } from "@open-agent-harness/ui/context/dialog"
-import { DialogSettings } from "@/components/dialog-settings"
+import { requestSettingsPanel } from "@/components/dialog-settings"
 import { load } from "@/components/settings-agents-helpers"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { useLanguage } from "@/context/language"
@@ -33,7 +32,6 @@ const stop = (fn: () => void) => (event: MouseEvent) => {
 }
 
 export function SessionInsightBanner() {
-  const dialog = useDialog()
   const global = useGlobalSDK()
   const language = useLanguage()
   const local = useLocal()
@@ -68,7 +66,7 @@ export function SessionInsightBanner() {
   })
 
   const openAgent = () => {
-    dialog.show(() => <DialogSettings defaultTab="agents" agent={item()?.id ?? agent()} />)
+    requestSettingsPanel({ defaultTab: "agents", agent: item()?.id ?? agent() })
   }
 
   const openParent = () => {

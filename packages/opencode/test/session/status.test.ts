@@ -382,13 +382,14 @@ describe("session state machine", () => {
     })
   })
 
-  test("status is volatile across instance restart", async () => {
+  test("restores persisted status across instance restart", async () => {
     const sessionID = "test-session-restart" as SessionID
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        SessionStatus.set(sessionID, { type: "running" })
-        expect(SessionStatus.get(sessionID).type).toBe("running")
+        SessionStatus.set(sessionID, { type: "blocked", message: "needs user decision" })
+        await SessionStatus.flush()
+        expect(SessionStatus.get(sessionID)).toEqual({ type: "blocked", message: "needs user decision" })
       },
     })
 
@@ -397,9 +398,21 @@ describe("session state machine", () => {
     await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        expect(SessionStatus.get(sessionID).type).toBe("idle")
+        await SessionStatus.restore()
+        expect(SessionStatus.get(sessionID)).toEqual({ type: "blocked", message: "needs user decision" })
+        SessionStatus.set(sessionID, { type: "idle" })
+        await SessionStatus.flush()
       },
     })
+  })
+
+  test("marks only active statuses for automatic continuation", async () => {
+    expect(SessionStatus.shouldContinue({ type: "running" })).toBe(true)
+    expect(SessionStatus.shouldContinue({ type: "retry", attempt: 1, message: "rate limited", next: Date.now() })).toBe(true)
+    expect(SessionStatus.shouldContinue({ type: "rate_limited", providerID: "p", modelID: "m", scope: "model", active: 1, limit: 1, queued: 1 })).toBe(true)
+    expect(SessionStatus.shouldContinue({ type: "blocked", message: "needs input" })).toBe(false)
+    expect(SessionStatus.shouldContinue({ type: "error", message: "quota exceeded" })).toBe(false)
+    expect(SessionStatus.shouldContinue({ type: "waiting_permission" })).toBe(false)
   })
 
   test("error state preserves message", async () => {

@@ -36,76 +36,22 @@ export namespace LLM {
     "Final protocol reminder:",
     "Strictly follow the Agent Protocol output requirements for this request.",
     "Call `AgentProtocolOutput` exactly once.",
-    "Use the current flat shape only: `{ kind, message, calls }`.",
-    "Never wrap the protocol package in an `input` field; the native tool arguments themselves are exactly `{ kind, message, calls }`.",
-    'For runtime work use `kind: "act"` and a `calls` array; each call uses `{ id, type, name, args, depends, result }`.',
+    "Use the current items shape only: `{ version: \"2\", items }`.",
+    "Never wrap the protocol package in an `input` field; the native tool arguments themselves are exactly `{ version, items }`.",
+    'For runtime work use `items`; common items are `{ id, kind: "tool", target, args, depends, result }`, `{ id, kind: "agent", target, prompt, depends, result }`, `{ id, kind: "ask", prompt, mode, options }`, and `{ id, kind: "confirm", prompt, plan }`.',
   ].join("\n")
   const PROTOCOL_TURN_REMINDER = [
     "Based on all turns above, decide the next step.",
     "Strictly follow the Agent Protocol output requirements for this request.",
   ].join("\n")
   const PROTOCOL = [
-    "# Agent Protocol DSL v1",
+    "# Agent Protocol DSL v2",
     "",
     "You are running as a protocol runner. Do not call low-level tools directly for ordinary work.",
     "You have exactly one native tool available: `AgentProtocolOutput`.",
-    "Call `AgentProtocolOutput` exactly once every assistant turn to submit the next flat protocol package.",
+    "Call `AgentProtocolOutput` exactly once every assistant turn to submit the next protocol package.",
     "Every turn must end by making this native tool call. There are no exceptions.",
-    'If you only need to answer the user, call `AgentProtocolOutput` with `kind: "answer"` and put the answer in `message`.',
-    "",
-    "Input contract:",
-    '- Conversation input is a sequence of turns. Treat each `<turn role="...">...</turn>` as one prior user, assistant, or runtime turn.',
-    "- User turn input: ordinary user text, optionally with prior conversation context. It does not contain runtime results by itself.",
-    '- Runtime turn input: a `<turn role="runtime" source="agent-protocol">...</turn>` contains structured Markdown observations produced by the protocol runtime.',
-    "- Available tool input: the stable system prefix includes an `Available Protocol Tools` catalog. Use it to choose concrete tool ids and JSON argument schemas.",
-    "- These input terms describe the conversation and tool catalog. They are not a field named `input` in the `AgentProtocolOutput` call.",
-    "",
-    "Decision rule:",
-    "- Always reason from the input turns, then decide the next protocol kind yourself.",
-    '- Use `kind: "act"` when runtime tool calls are needed: project inspection, file reads, command execution, summarization from repo state, code review, or edits.',
-    '- Use `kind: "answer"` when you have enough information to show a user-facing answer.',
-    '- Use `kind: "done"` only when the current turn is complete and there is no user-facing content to add.',
-    "",
-    "Output contract:",
-    "- Do not write the protocol package as text, Markdown, XML, code fences, or provider-specific invocation syntax.",
-    "- Submit the protocol package only by calling the native `AgentProtocolOutput` tool.",
-    "- The native `AgentProtocolOutput` arguments are the flat protocol package itself: `{ kind, message, calls }`.",
-    "- Never wrap the protocol package inside `{ input: ... }`, and never stringify the whole package into one field.",
-    "- Never answer in plain text instead of calling `AgentProtocolOutput`.",
-    "- Never print JSON for the protocol; JSON belongs only inside the native tool call arguments.",
-    "- For runtime work, use `calls`: each item has required `id`, `type`, `name`, and optional `args`, `depends`, `result`, `title`.",
-    "- A single tool call is still represented as a one-item `calls` array.",
-    '- For `kind: "answer"` or `kind: "done"`, do not include `calls`; put user-visible Markdown in `message`.',
-    "- You must never output fake tool output or fake runtime summaries.",
-    "",
-    "Forbidden output:",
-    "- Provider-specific textual invocation syntax such as `minimax:tool_call`, `[TOOL_CALL]`, `tool_call`, XML invoke tags, or `tool =>`.",
-    "- More than one `AgentProtocolOutput` call in a single assistant message.",
-    "- Any tool result, runtime result, or final conclusion before the runtime has returned an observation.",
-    "",
-    "Flat field semantics:",
-    "- `kind`: `act`, `answer`, or `done`.",
-    "- `message`: user-visible Markdown for `answer` or `done`, or brief progress text for `act`.",
-    "- `calls`: for `act`, an array of runtime calls.",
-    "- `calls[].id`: required stable call id used by logs, graph nodes, and other calls' `depends` field.",
-    "- `calls[].type`: `tool` or `agent`.",
-    "- `calls[].name`: for `tool`, one concrete tool id from the Available Protocol Tools catalog; never use `auto`. For `agent`, use a concrete agent id or `auto`.",
-    "- `calls[].args`: for `tool`, the exact JSON argument object required by the selected tool schema; for `agent`, the delegation input.",
-    '- For subagent delegation, always use `type: "agent"`; do not use `type: "tool"` with `name: "task"`.',
-    "- `depends`: optional call id or call id array that must finish first.",
-    "- `result`: optional result policy: `summary`, `full`, `structured`, `on_failure`, `on_demand`, or `adaptive`; default is `summary`.",
-    "",
-    "Tool target requirements:",
-    "- Use the Available Protocol Tools catalog below for tool ids, descriptions, and input schemas.",
-    "- Choose concrete tool ids and arguments from the catalog; encode them only inside `calls`.",
-    "- Do not invent tool names or parameters outside the listed schemas.",
-    "- If a needed repository tool is not listed, it is unavailable for this agent; delegate that work to a suitable agent instead.",
-    "",
-    "Planning rules:",
-    "- Do not create vague tool calls with `name: auto`; name the concrete tool and provide its `args`.",
-    "- Use `calls` for every runtime action, even when there is only one call.",
-    "- If you do not know exact files yet, use a listed discovery tool such as `glob` or `grep`; if no such tool is listed, delegate focused context gathering to an agent such as `explore`.",
-    "- The runtime executes exactly what you declare. It will not infer project type, framework, file names, or search patterns from natural language.",
+    'If you only need to answer the user, submit `{ "version": "2", "items": [{ "id": "answer", "kind": "answer", "message": "..." }] }`.',
     "",
     "The model-visible contract is the native `AgentProtocolOutput` tool schema.",
   ].join("\n")
@@ -146,8 +92,9 @@ export namespace LLM {
     },
   ) {
     const protocol = input.agent.runner === "protocol" || input.structuredOutput === true
+    const doc = input.agent.protocol?.prompt || PROTOCOL
     const prompt = protocol
-      ? [input.agent.prompt, PROTOCOL, input.runtimeTools?.prompt].filter((item) => item).join("\n\n")
+      ? [input.agent.prompt, doc, input.runtimeTools?.prompt].filter((item) => item).join("\n\n")
       : input.agent.prompt
     const parts = [
       // use agent prompt otherwise provider prompt
@@ -158,6 +105,7 @@ export namespace LLM {
       // any custom prompt from last user message
       ...(input.user.system ? [input.user.system] : []),
       ...(protocol ? [PROTOCOL_REMINDER] : []),
+      ...(input.agent.autoAppendPrompt ? [input.agent.autoAppendPrompt] : []),
     ].filter((x) => x)
     return [parts.join("\n")]
   }
@@ -262,7 +210,7 @@ export namespace LLM {
                 }),
                 execute: async (args) => ({
                   title: "Invalid Protocol Tool Call",
-                  output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in a calls[] item with type "tool", name "${args.tool}", and args matching that tool. ${args.error}`,
+                  output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in an items[] entry with kind "tool", target "${args.tool}", and args matching that tool. ${args.error}`,
                   metadata: { protocol: true, violation: "direct_tool_call", tool: args.tool },
                 }),
               }),
@@ -409,13 +357,12 @@ export namespace LLM {
     const found = runtime?.catalog.find((item) => item.id === name)
     if (!found) return
     return {
-      kind: "act",
-      message: `Protocol violation recovered: the model attempted a direct \`${tool}\` native tool call. Converted it to an Agent Protocol action and continued.`,
-      calls: [
+      version: "2",
+      items: [
         {
           id: `recovered_${safe(name)}`,
-          type: "tool",
-          name: found.id,
+          kind: "tool",
+          target: found.id,
           title: `Recovered ${name}`,
           args: object(input),
           result: "summary",

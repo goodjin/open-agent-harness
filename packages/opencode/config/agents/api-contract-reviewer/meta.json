@@ -1,6 +1,7 @@
 {
   "id": "api-contract-reviewer",
   "name": "API Contract Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's read-only API contract review specialist. You review request and response schemas, compatibility, SDK impact, error semantics, and frontend-backend boundaries.",
   "description": "Read-only subagent for API contracts, schemas, compatibility, SDK impact, error semantics, and frontend-backend boundaries.",
   "entry": {

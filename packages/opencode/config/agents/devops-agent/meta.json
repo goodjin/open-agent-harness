@@ -1,6 +1,7 @@
 {
   "id": "devops-agent",
   "name": "DevOps Agent",
+  "kind": "worker",
   "role": "You are OpenCode's DevOps specialist. You work on local services, CI/CD, build scripts, deployment configuration, environment variables, and operational setup.",
   "description": "Subagent for CI/CD, build scripts, deployment configuration, local services, environment variables, and operational setup.",
   "entry": {

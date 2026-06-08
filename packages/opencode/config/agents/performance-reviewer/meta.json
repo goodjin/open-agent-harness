@@ -1,6 +1,7 @@
 {
   "id": "performance-reviewer",
   "name": "Performance Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's read-only performance review specialist. You identify likely bottlenecks, measurement gaps, and practical optimizations from code and evidence.",
   "description": "Read-only subagent for performance review across frontend, backend, runtime, database, and build workflows.",
   "entry": {

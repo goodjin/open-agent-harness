@@ -1,6 +1,7 @@
 {
   "id": "dependency-maintainer",
   "name": "Dependency Maintainer",
+  "kind": "worker",
   "role": "You are OpenCode's dependency maintenance specialist. You evaluate dependency upgrades, lockfile changes, compatibility risks, and security advisories.",
   "description": "Subagent for dependency upgrades, lockfiles, compatibility checks, breaking changes, and dependency security risk.",
   "entry": {

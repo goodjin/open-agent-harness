@@ -148,6 +148,7 @@ export const dict: Record<Keys, string> = {
   "ui.question.multiHint": "Velg alle som gjelder",
   "ui.question.singleHint": "Velg ett svar",
   "ui.question.custom.placeholder": "Skriv svaret ditt...",
+  "ui.question.optionNote.placeholder": "Legg til detaljer for dette valget...",
 
   "ui.fileSearch.placeholder": "Finn",
   "ui.fileSearch.previousMatch": "Forrige treff",

@@ -24,6 +24,7 @@ import { defer } from "@/util/defer"
 import { SessionDelegation } from "./delegation"
 import { Storage } from "@/storage/storage"
 import { Truncate } from "@/tool/truncation"
+import { Question } from "@/question"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -99,10 +100,15 @@ export namespace SessionRunner {
       .flatMap((part) => (part.type === "text" ? [part.text] : []))
       .join("\n")
     const native = await nativeOutput(chat.message.id)
-    const parsed = native
-      ? { ok: true as const, value: native }
-      : { ok: false as const, error: { code: "missing_block" as const, message: "No native AgentProtocolOutput tool call found." } }
-    const invalid = await invalidOutput(chat.message.id)
+    const parsed = native ?? {
+      ok: false as const,
+      error: { code: "missing_block" as const, message: "No native AgentProtocolOutput tool call found." },
+    }
+    const invalid = parsed.ok
+      ? await invalidOutput(chat.message.id)
+      : parsed.error.code === "missing_block"
+        ? await invalidOutput(chat.message.id)
+        : { error: parsed.error.message, output: "" }
     const partial = chat.message.finish === "length"
     const fixed = undefined
     const valid = parsed.ok && !partial
@@ -188,7 +194,7 @@ export namespace SessionRunner {
           system: [
             ...stream.system,
             [
-              "Your previous response violated Agent Protocol DSL v1.",
+              "Your previous response violated Agent Protocol DSL v2.",
               invalid
                 ? [
                     `Your ${LLM.PROTOCOL_OUTPUT_TOOL} tool call was malformed and could not be parsed as valid JSON.`,
@@ -205,12 +211,12 @@ export namespace SessionRunner {
                     ? "You output multiple Agent Protocol packages in one response."
                     : "You did not output a valid `agent.protocol.output` package.",
               `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-              "Keep the package small: output only the next necessary call set, preferably no more than 8 calls.",
+              "Keep the package small: output only the next necessary item set, preferably no more than 8 items.",
               "If more work is needed after this package executes, wait for the runtime observation and continue in the next turn.",
               "Do not output minimax:tool_call, [TOOL_CALL], XML invoke tags, fake tool results, fenced JSON, or plain Markdown-only answers.",
-              "If execution is needed, use `kind: \"act\"` with concrete `calls`, tool names from Available Protocol Tools, and valid `args` JSON.",
-              "If no execution is needed, use `kind: \"answer\"` and put the Markdown answer in `message`.",
-              "Strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
+              "If execution is needed, use `{ version: \"2\", items }` with concrete tool, agent, ask, confirm, or wait items and valid JSON.",
+              "If no execution is needed, use an `answer` item and put the Markdown answer in `message`.",
+              "Strictly follow the current protocol shape: `{ version: \"2\", items }`.",
             ].join("\n"),
           ],
           toolChoice: { type: "tool", toolName: LLM.PROTOCOL_OUTPUT_TOOL },
@@ -331,7 +337,7 @@ export namespace SessionRunner {
       })
     }
     const parsedValue = valid ? parsed.value : fixed!
-    const msg = native ? parsedValue.declaration.message?.trim() : ""
+    const msg = native?.ok ? parsedValue.declaration.message?.trim() : ""
     if (msg && parsedValue.declaration.intent === "execute") {
       await Session.updatePart({
         id: PartID.ascending(),
@@ -422,6 +428,12 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
+      if (revision(run)) {
+        await final({
+          stream,
+          run,
+        }, 0)
+      }
     }
     return "stop"
   }
@@ -478,6 +490,13 @@ export namespace SessionRunner {
                 abort: input.stream.abort,
                 model: input.stream.model,
               })
+            : action.executor.type === "human"
+              ? human({
+                  action,
+                  runID,
+                  sessionID: input.sessionID,
+                  messageID: input.chat.message.id,
+                })
             : Promise.resolve(undefined),
     })
     await completeRun({
@@ -671,19 +690,19 @@ export namespace SessionRunner {
       "This is not an execution turn. The runtime has already executed every available call.",
       `Use only the conversation turns below, then decide the final protocol response.`,
       `You must call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-      'Use `kind: "answer"` when there is user-visible final content, and put the final Markdown answer in `message`.',
-      'Use `kind: "done"` when there is nothing else useful to add.',
+      'Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.',
+      'Use a `done` item when there is nothing else useful to add.',
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
-      "Only use `kind: \"act\"` with `calls` if another runtime call is truly required.",
+      "Only use tool, agent, ask, confirm, or wait items if another runtime call is truly required.",
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       "The full conversation history is preserved. Resolve references like \"these errors\", \"continue\", or \"fix them\" from the earlier turns.",
-      "Strictly follow the current flat protocol shape: `{ kind, message, calls }` with calls shaped as `{ id, type, name, args, depends, result }`.",
+      "Strictly follow the current protocol shape: `{ version: \"2\", items }`.",
       missing > 0
         ? [
             "",
             "Protocol retry warning:",
             `Your previous final response did not call the native ${LLM.PROTOCOL_OUTPUT_TOOL} tool.`,
-            `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with \`kind: "answer"\`, \`kind: "done"\`, or a strictly necessary \`kind: "act"\`.`,
+            `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with an \`answer\` item, a \`done\` item, or strictly necessary runtime items.`,
           ].join("\n")
         : "",
       retry > 0
@@ -722,16 +741,16 @@ export namespace SessionRunner {
       messages: await history(input.stream, SessionID.make(input.stream.sessionID)),
     })
     const parsed = await protocolOutput(msg.id)
-    if (parsed) {
+    if (parsed?.ok) {
       const sessionID = SessionID.make(input.stream.sessionID)
-      if (parsed.declaration.intent === "execute") {
+      if (parsed.value.declaration.intent === "execute") {
         await intro({
           messageID: msg.id,
           sessionID,
-          parsed,
+          parsed: parsed.value,
           recovered: false,
         })
-        const reason = cycle(input.run, parsed.declaration, retry)
+        const reason = cycle(input.run, parsed.value.declaration, retry)
         if (reason) {
           await loop({
             message: msg,
@@ -741,7 +760,7 @@ export namespace SessionRunner {
           })
           return
         }
-        const run = await execute({ chat: processor, stream: input.stream, sessionID, parsed, recovered: false })
+        const run = await execute({ chat: processor, stream: input.stream, sessionID, parsed: parsed.value, recovered: false })
         const raw = await Session.updatePart({
           id: PartID.ascending(),
           messageID: processor.message.id,
@@ -804,16 +823,36 @@ export namespace SessionRunner {
             },
             time: { start: Date.now(), end: Date.now() },
           })
+          if (revision(run)) {
+            await final({
+              stream: input.stream,
+              run,
+            }, retry + 1)
+          }
         }
       } else {
         await response({
           chat: processor,
           sessionID,
-          parsed,
+          parsed: parsed.value,
         })
       }
     } else {
       const text = await textOf(msg.id)
+      if (parsed && missing < 1) {
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.retry",
+          data: { runID: input.run.run_id, reason: "invalid_protocol_tool_call", error: parsed.error },
+        })
+        msg.finish = "stop"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        await final(input, retry, missing + 1)
+        return
+      }
       if (text.trim().length > 0 && missing < 1) {
         const parts = await MessageV2.parts(msg.id)
         await Promise.all(
@@ -1072,7 +1111,7 @@ export namespace SessionRunner {
     return nativeOutput(messageID)
   }
 
-  async function nativeOutput(messageID: MessageID): Promise<AgentProtocolParser.Parsed | undefined> {
+  async function nativeOutput(messageID: MessageID): Promise<AgentProtocolParser.Result | undefined> {
     const parts = await MessageV2.parts(messageID)
     const part = parts.find(
       (item): item is MessageV2.ToolPart =>
@@ -1084,12 +1123,21 @@ export namespace SessionRunner {
     if (!input) return
     try {
       return {
-        declaration: AgentProtocol.parse(input),
-        sections: {},
-        raw: JSON.stringify(input),
+        ok: true,
+        value: {
+          declaration: AgentProtocol.parse(input),
+          sections: {},
+          raw: JSON.stringify(input),
+        },
       }
-    } catch {
-      return
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          code: "invalid_schema",
+          message: err instanceof globalThis.Error ? err.message : "Agent protocol tool input schema validation failed.",
+        },
+      }
     }
   }
 
@@ -1272,8 +1320,166 @@ export namespace SessionRunner {
     )
   }
 
+  function revision(run: AgentProtocol.Result) {
+    return run.status === "blocked" && run.actions.some((item) => item.operation === "confirm" && item.status === "blocked")
+  }
+
   function pseudo(text: string) {
     return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(text)
+  }
+
+  async function human(input: {
+    action: AgentProtocol.Action
+    runID: string
+    sessionID: SessionID
+    messageID: MessageID
+  }): Promise<AgentProtocolExecutor.ToolResult> {
+    if (input.action.operation === "confirm") return confirm(input)
+    return inquire(input)
+  }
+
+  async function inquire(input: {
+    action: AgentProtocol.Action
+    runID: string
+    sessionID: SessionID
+    messageID: MessageID
+  }): Promise<AgentProtocolExecutor.ToolResult> {
+    const data = object(input.action.input)
+    const options = Array.isArray(data.options)
+      ? data.options.flatMap((item) => {
+          const opt = object(item)
+          const label = typeof opt.label === "string" ? opt.label.trim() : ""
+          if (!label) return []
+          return [{
+            label,
+            description: typeof opt.description === "string" ? opt.description : label,
+          }]
+        })
+      : []
+    const answers = await Question.ask({
+      sessionID: input.sessionID,
+      questions: [{
+        question: typeof data.prompt === "string" ? data.prompt : input.action.title,
+        header: input.action.title.slice(0, 30),
+        options,
+        multiple: data.mode === "multi",
+        custom: data.allow_custom !== false,
+      }],
+      tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+    })
+    return {
+      title: input.action.title,
+      output: `User answered: ${(answers[0] ?? []).join(", ") || "Unanswered"}`,
+      metadata: { answers },
+    }
+  }
+
+  async function confirm(input: {
+    action: AgentProtocol.Action
+    runID: string
+    sessionID: SessionID
+    messageID: MessageID
+  }): Promise<AgentProtocolExecutor.ToolResult> {
+    const data = object(input.action.input)
+    const plan = typeof data.plan === "string" ? data.plan : ""
+    const prompt = typeof data.prompt === "string" ? data.prompt : "Please confirm this plan before execution."
+    await storeConfirm({
+      action: input.action,
+      messageID: input.messageID,
+      plan,
+      runID: input.runID,
+      sessionID: input.sessionID,
+      status: "pending",
+    })
+    const answers = await Question.ask({
+      sessionID: input.sessionID,
+      questions: [{
+        question: [prompt, "", plan].filter((item) => item.trim().length > 0).join("\n"),
+        header: "Confirm plan",
+        options: [
+          { label: "Confirm", description: "Approve this plan and continue execution." },
+          { label: "Continue editing", description: "Send feedback so the planner can revise the plan." },
+        ],
+        multiple: false,
+        custom: false,
+      }],
+      tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+    })
+    const answer = answers[0]?.[0] ?? ""
+    const ok = /^confirm\b/i.test(answer)
+    const note = answer.includes(":") ? answer.slice(answer.indexOf(":") + 1).trim() : ""
+    await storeConfirm({
+      action: input.action,
+      messageID: input.messageID,
+      note,
+      plan,
+      runID: input.runID,
+      sessionID: input.sessionID,
+      status: ok ? "confirmed" : "revision_requested",
+    })
+    if (ok) {
+      return {
+        title: input.action.title,
+        output: ["Plan confirmed by user.", note ? `User note: ${note}` : ""].filter((item) => item.length > 0).join("\n"),
+        metadata: { confirmed: true, note },
+      }
+    }
+    return {
+      title: input.action.title,
+      output: [
+        "User requested changes to the plan.",
+        note ? `Requested changes: ${note}` : "",
+        "Revise the plan and ask for confirmation again before executing downstream work.",
+      ].filter((item) => item.length > 0).join("\n"),
+      metadata: { blocked: true, confirmed: false, note, revision: true },
+    }
+  }
+
+  async function storeConfirm(input: {
+    action: AgentProtocol.Action
+    messageID: MessageID
+    note?: string
+    plan: string
+    runID: string
+    sessionID: SessionID
+    status: "pending" | "confirmed" | "revision_requested"
+  }) {
+    const item = {
+      type: "agent.protocol.confirmation",
+      version: "1",
+      run_id: input.runID,
+      action_id: input.action.id,
+      action_title: input.action.title,
+      message_id: input.messageID,
+      plan: input.plan,
+      note: input.note,
+      status: input.status,
+      updated_at: Date.now(),
+    }
+    await Storage.write(["session_protocol_confirmation", input.sessionID, input.runID, input.action.id], item)
+    const session = await Session.get(input.sessionID)
+    const ctx = object(session.dsl_context)
+    const prev = object(ctx.protocol)
+    const vals = Array.isArray(prev.confirmations) ? prev.confirmations : []
+    await Session.setDslContext({
+      sessionID: input.sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          confirmations: [
+            ...vals.filter((val) => {
+              const rec = object(val)
+              return rec.run_id !== input.runID || rec.action_id !== input.action.id
+            }),
+            {
+              ...item,
+              plan_ref: ["session_protocol_confirmation", input.sessionID, input.runID, input.action.id].join("/"),
+            },
+          ],
+        },
+      },
+    })
   }
 
   async function delegate(input: {
@@ -1485,6 +1691,7 @@ export namespace SessionRunner {
   function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {
     return [
       `Please handle this delegated task: ${action.title}.`,
+      "Treat the task block below as your initial task for this session.",
       "",
       "When you are done, return the result for the parent session. Include what you did, important findings, changed files, test results, blockers, and whether the task goal is complete.",
       policy(action.result_policy),
@@ -1619,6 +1826,11 @@ export namespace SessionRunner {
       const item = value[key]
       if (typeof item === "string" && item.trim()) return item
     }
+  }
+
+  function object(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return {} as Record<string, unknown>
+    return input as Record<string, unknown>
   }
 
   async function tool(input: {

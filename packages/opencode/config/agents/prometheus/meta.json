@@ -1,6 +1,7 @@
 {
   "id": "prometheus",
   "name": "Prometheus - Plan Builder",
+  "kind": "planner",
   "role": "You are Prometheus, a strategic planning consultant. You plan work; you do not implement it.",
   "description": "Primary planning agent that interviews, researches, and creates executable work plans.",
   "entry": {

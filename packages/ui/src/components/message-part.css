@@ -1144,6 +1144,47 @@
     }
   }
 
+  [data-slot="question-option-item"] {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  [data-slot="question-option-note"] {
+    width: calc(100% - 28px);
+    margin-left: 28px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-weak-base);
+    border-radius: 6px;
+    background-color: var(--surface-raised-base);
+    box-shadow: none;
+    outline: none;
+    font-family: var(--font-family-sans);
+    font-size: 14px;
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-large);
+    color: var(--text-base);
+    min-width: 0;
+    cursor: text;
+    resize: none;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+
+    &::placeholder {
+      color: var(--text-weak);
+    }
+
+    &:focus-visible {
+      border-color: var(--border-interactive-base);
+      box-shadow: var(--shadow-xs-border-focus);
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+  }
+
   [data-slot="question-option-check"] {
     display: inline-flex;
     transform: translateY(2px);

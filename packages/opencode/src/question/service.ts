@@ -45,11 +45,11 @@ export const Request = z
   .meta({ ref: "QuestionRequest" })
 export type Request = z.infer<typeof Request>
 
-export const Answer = z.array(z.string()).meta({ ref: "QuestionAnswer" })
+export const Answer = z.array(z.string()).describe("Selected answers. A selected option may include user-entered details as `label: details`.").meta({ ref: "QuestionAnswer" })
 export type Answer = z.infer<typeof Answer>
 
 export const Reply = z.object({
-  answers: z.array(Answer).describe("User answers in order of questions (each answer is an array of selected labels)"),
+  answers: z.array(Answer).describe("User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)"),
 })
 export type Reply = z.infer<typeof Reply>
 

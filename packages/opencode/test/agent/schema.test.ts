@@ -103,6 +103,40 @@ describe("AgentTemplate.Meta", () => {
       expect(result.data.role).toBe("coding")
       expect(result.data.description).toBe("A coder agent")
     })
+
+    test("auto_append_prompt is optional and trimmed", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+        auto_append_prompt: " Follow the final output contract. ",
+      })
+      expect(result.success).toBe(true)
+      if (!result.success) return
+
+      expect(result.data.auto_append_prompt).toBe("Follow the final output contract.")
+    })
+
+    test("instruction file position is optional and validated", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        id: "reviewer",
+        name: "Reviewer",
+        role: "Review code",
+        description: "Reviews code",
+        instructions: {
+          files: [
+            { path: "context.md" },
+            { path: "after.md", position: "append" },
+          ],
+        },
+      })
+      expect(result.success).toBe(true)
+      if (!result.success) return
+
+      expect(result.data.instructions?.files[0]?.position).toBeUndefined()
+      expect(result.data.instructions?.files[1]?.position).toBe("append")
+    })
   })
 
   describe("model_preference field validation", () => {
@@ -494,6 +528,35 @@ describe("AgentTemplate.Meta", () => {
       })
 
       expect(result.runner).toBe("chat")
+    })
+
+    test("protocol file metadata is optional and strict", () => {
+      const base = {
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+        runner: "protocol",
+      }
+      const result = AgentTemplate.Meta.safeParse({
+        ...base,
+        protocol: {
+          file: "protocol.md",
+        },
+      })
+
+      expect(result.success).toBe(true)
+      if (!result.success) return
+      expect(result.data.protocol?.file).toBe("protocol.md")
+      expect(
+        AgentTemplate.Meta.safeParse({
+          ...base,
+          protocol: {
+            file: "protocol.md",
+            extra: true,
+          },
+        }).success,
+      ).toBe(false)
     })
   })
 

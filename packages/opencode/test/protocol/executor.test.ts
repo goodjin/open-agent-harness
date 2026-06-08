@@ -152,4 +152,45 @@ describe("agent protocol executor", () => {
     expect(result.status).toBe("blocked")
     expect(result.actions[0]?.error).toContain("No delegable agent")
   })
+
+  test("executes human confirmation actions through the injected handler", async () => {
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        type: "agent.protocol",
+        version: "1",
+        intent: "execute",
+        persist: false,
+        title: "Confirm",
+        execution: { strategy: "sequential" },
+        payload: {
+          type: "action_graph",
+          actions: [
+            {
+              type: "action",
+              id: "confirm_plan",
+              title: "Confirm plan",
+              operation: "confirm",
+              executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+              input: { prompt: "Approve?", plan: "Do the work." },
+              depends_on: [],
+              context_refs: [],
+              result_policy: "summary",
+            },
+          ],
+        },
+      },
+      execute: async (action) => ({
+        title: action.title,
+        output: `confirmed ${String(action.input?.plan)}`,
+        metadata: { confirmed: true },
+      }),
+    })
+
+    expect(result.status).toBe("completed")
+    expect(result.actions[0]).toMatchObject({
+      id: "confirm_plan",
+      status: "completed",
+      output: "confirmed Do the work.",
+    })
+  })
 })

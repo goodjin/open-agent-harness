@@ -1939,7 +1939,7 @@ export class Session3 extends HeyApiClient {
   /**
    * Get single session status
    *
-   * Retrieve the current status for one session. Status is process-local and defaults to idle.
+   * Retrieve the current persisted runtime status for one session. Missing status defaults to idle.
    */
   public getStatus<ThrowOnError extends boolean = false>(
     parameters: {

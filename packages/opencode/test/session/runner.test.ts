@@ -870,6 +870,21 @@ describe("SessionRunner", () => {
                 agent: {
                   name: "protocol-runner",
                   runner: "protocol",
+                  entry: {
+                    primary: true,
+                    delegable: false,
+                    mentionable: true,
+                    default: false,
+                    hidden: false,
+                  },
+                  capability: {
+                    purpose: "protocol_orchestration",
+                    tags: [],
+                    cost: "low",
+                    writes: false,
+                  },
+                  permission: [{ permission: "*", pattern: "*", action: "allow" }],
+                  inheritPermissions: false,
                 } as never,
                 system: [],
                 abort: new AbortController().signal,
@@ -921,26 +936,31 @@ describe("SessionRunner", () => {
       limit: { context: 200_000 },
     } as never
     const data = {
-      kind: "act",
-      message: "Protocol violation recovered: direct read was converted.",
-      calls: [
+      version: "2",
+      items: [
         {
           id: "read_package",
-          type: "tool",
-          name: "read",
+          kind: "tool",
+          target: "read",
           args: { filePath: "package.json" },
           result: "summary",
         },
       ],
     }
     const reply = {
-      kind: "answer",
-      message: "Read package successfully.",
+      version: "2",
+      items: [
+        {
+          id: "reply",
+          kind: "answer",
+          message: "Read package successfully.",
+        },
+      ],
     }
     let calls = 0
     const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      const input = calls === 1 ? { input: JSON.stringify(data) } : reply
+      const input = calls === 1 ? data : reply
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -1033,18 +1053,38 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "read package" }],
                 tools: {},
+                runtimeTools: {
+                  catalog: [
+                    {
+                      id: "read",
+                      description: "Read file",
+                      schema: {
+                        type: "object",
+                        properties: {
+                          filePath: { type: "string" },
+                        },
+                        required: ["filePath"],
+                      },
+                    },
+                  ],
+                  prompt: "# Available Protocol Tools\n\n## read",
+                  execute: async () => ({
+                    title: "package.json",
+                    output: JSON.stringify({ name: "native-protocol" }),
+                    metadata: {},
+                  }),
+                } as never,
               })
               const messages = await Session.messages({ sessionID: session.id })
               const sessionAfter = await Session.get(session.id)
               const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { output?: string; tool_call_ids: string[] }[] }[]
+                runs?: { status: string; actions: { output?: string; summary?: string; tool_call_ids: string[] }[] }[]
               } | undefined
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
               expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("native-protocol")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Protocol violation recovered")))).toBe(true)
+              expect(protocol?.runs?.[0]?.actions[0]?.summary ?? protocol?.runs?.[0]?.actions[0]?.output).toContain("native-protocol")
               expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Read package successfully.")))).toBe(true)
             },
           }),
@@ -1219,6 +1259,136 @@ describe("SessionRunner", () => {
               expect(JSON.stringify(inputs[1]?.system)).toContain("model did not strictly follow")
               expect(JSON.stringify(inputs[1]?.system)).toContain("JSON Parse error")
               expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Retried with valid protocol output.")))).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("protocol runner reports invalid native AgentProtocolOutput schema instead of missing tool", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const inputs: LLM.StreamInput[] = []
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
+      calls++
+      inputs.push(input)
+      const body = calls === 1
+        ? {
+            version: "2",
+            items: [{ id: "bad_tool", kind: "tool" }],
+          }
+        : {
+            version: "2",
+            items: [{ id: "answer", kind: "answer", message: "Recovered." }],
+          }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "answer with protocol" }],
+                tools: {},
+              })
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const messages = await Session.messages({ sessionID: session.id })
+              const retry = logs.find((item) => item.type === "protocol.retry")
+              const err = retry?.data.error as { message?: string } | undefined
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(retry?.data.reason).toBe("invalid_protocol_tool_call")
+              expect(err?.message).toContain("target")
+              expect(err?.message).not.toContain("No native AgentProtocolOutput tool call found")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("tool call was malformed")
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Recovered.")))).toBe(true)
             },
           }),
       })

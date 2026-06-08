@@ -26,6 +26,7 @@ export namespace Agent {
     .object({
       name: z.string(),
       description: z.string().optional(),
+      kind: TemplateSchema.Kind.optional(),
       mode: z.enum(["subagent", "primary", "all"]),
       entry: TemplateSchema.Entry,
       capability: TemplateSchema.Capability,
@@ -38,6 +39,13 @@ export namespace Agent {
       permission: PermissionNext.Ruleset,
       policy: PermissionNext.PolicyModel.optional(),
       inheritPermissions: z.boolean().optional(),
+      autoAppendPrompt: z.string().optional(),
+      protocol: z
+        .object({
+          file: z.string(),
+          prompt: z.string(),
+        })
+        .optional(),
       model: z
         .object({
           modelID: ModelID.zod,
@@ -70,11 +78,16 @@ export namespace Agent {
     meta: TemplateSchema.Meta
     identity: string
     rules: string
+    protocol?: {
+      file: string
+      prompt: string
+    }
   }): Promise<Info> {
     const policy = await buildPolicy(template.meta)
     return {
       name: template.id,
       description: template.meta.description,
+      kind: template.meta.kind,
       mode: TemplateSchema.mode(template.meta),
       entry: template.meta.entry,
       capability: template.meta.capability,
@@ -83,6 +96,8 @@ export namespace Agent {
       permission: Policy.toLegacy(policy),
       policy,
       inheritPermissions: template.meta.inherit_permissions,
+      autoAppendPrompt: template.meta.auto_append_prompt,
+      protocol: template.protocol,
       options: {},
       prompt: prompt(template),
       model: template.meta.model_preference
@@ -102,6 +117,7 @@ export namespace Agent {
       ({
         name,
         description: cfg.description,
+        kind: undefined,
         mode: cfg.mode ?? "all",
         entry: cfg.mode ? TemplateSchema.EntryDefaults[cfg.mode] : TemplateSchema.EntryDefaults.all,
         capability: TemplateSchema.CapabilityDefaults,
@@ -109,6 +125,8 @@ export namespace Agent {
         permission: [],
         policy: { rules: [] },
         inheritPermissions: false,
+        autoAppendPrompt: undefined,
+        protocol: undefined,
         options: {},
       } satisfies Info)
     const mode = cfg.mode ?? next.mode
@@ -142,6 +160,8 @@ export namespace Agent {
       permission: Policy.toLegacy(policy),
       policy,
       inheritPermissions: next.inheritPermissions,
+      autoAppendPrompt: cfg.auto_append_prompt ?? next.autoAppendPrompt,
+      protocol: next.protocol,
     }
   }
 

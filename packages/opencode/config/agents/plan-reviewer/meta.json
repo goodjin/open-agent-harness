@@ -1,6 +1,7 @@
 {
   "id": "plan-reviewer",
   "name": "Plan Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's practical work-plan reviewer.",
   "description": "Subagent that reviews plans for executable tasks, valid references, and true blockers.",
   "entry": {

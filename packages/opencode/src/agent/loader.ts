@@ -70,6 +70,10 @@ export interface AgentTemplate {
   meta: Schema.Meta
   identity: string
   rules: string
+  protocol?: {
+    file: string
+    prompt: string
+  }
 }
 
 export interface AgentTemplateDiagnostic {
@@ -240,7 +244,20 @@ export class AgentTemplateLoader {
     const docs = await Promise.all(
       meta.map(async (file) => {
         const root = path.dirname(file)
-        return [file, path.join(root, "identity.md"), path.join(root, "rules.md")]
+        const raw = await Bun.file(file).json().catch(() => undefined)
+        const cfg = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+        const protocol = cfg.protocol && typeof cfg.protocol === "object" && !Array.isArray(cfg.protocol)
+          ? (cfg.protocol as Record<string, unknown>).file
+          : undefined
+        const docs = [
+          file,
+          path.join(root, "identity.md"),
+          path.join(root, "rules.md"),
+        ]
+        if (typeof protocol === "string") {
+          docs.push(path.join(root, protocol), path.join(path.dirname(path.dirname(root)), "protocol", protocol))
+        }
+        return docs
       }),
     )
     return [...docs.flat(), ...skills.flat()]
@@ -335,6 +352,12 @@ export class AgentTemplateLoader {
     }
   }
 
+  private async protocolFile(dir: string, file: string) {
+    const local = path.join(dir, file)
+    if (await this.exists(local)) return local
+    return path.join(path.dirname(path.dirname(dir)), "protocol", file)
+  }
+
   private async audit(input: { dir: string; source: "package" | "user"; meta: Schema.Meta }) {
     const meta = input.meta
     if (meta.logo?.uri && !this.url(meta.logo.uri)) {
@@ -372,6 +395,16 @@ export class AgentTemplateLoader {
         }
       }),
     )
+
+    if (meta.protocol?.file && this.unsafe(meta.protocol.file)) {
+      this.warn({
+        dir: input.dir,
+        source: input.source,
+        field: "protocol.file",
+        category: "metadata.protocol",
+        message: `protocol file '${meta.protocol.file}' must stay within the agent directory`,
+      })
+    }
 
     ;(["input", "output"] as const).forEach((side) => {
       meta.contracts?.[side].forEach((item, index) => {
@@ -429,6 +462,7 @@ export class AgentTemplateLoader {
         const meta = Schema.Meta.parse({
           id,
           name: this.title(id),
+          kind: "skill",
           role: `You are the ${this.title(id)} agent converted from a legacy skill.`,
           description: desc,
           mode: "subagent",
@@ -493,6 +527,12 @@ export class AgentTemplateLoader {
         meta: result.data,
         identity: await this.read(identityPath, agentId, "identity.md"),
         rules: await this.read(rulesPath, agentId, "rules.md"),
+        protocol: result.data.protocol
+          ? {
+              file: result.data.protocol.file,
+              prompt: await this.read(await this.protocolFile(agentDir, result.data.protocol.file), agentId, result.data.protocol.file),
+            }
+          : undefined,
       }
       return { template, status: { dir: agentDir, source, id: template.id, valid: true, errors: [] } }
     } catch (err) {
@@ -512,6 +552,15 @@ export class AgentTemplateLoader {
     } catch {
       log.debug(`${name} not found for agent`, { agent })
       return ""
+    }
+  }
+
+  private async exists(file: string) {
+    try {
+      await fs.access(file)
+      return true
+    } catch {
+      return false
     }
   }
 

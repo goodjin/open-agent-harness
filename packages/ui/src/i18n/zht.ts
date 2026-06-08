@@ -149,6 +149,7 @@ export const dict = {
   "ui.question.multiHint": "可多選",
   "ui.question.singleHint": "選擇一個答案",
   "ui.question.custom.placeholder": "輸入你的答案...",
+  "ui.question.optionNote.placeholder": "為這個選項補充說明...",
 
   "ui.fileSearch.placeholder": "搜尋",
   "ui.fileSearch.previousMatch": "上一個",

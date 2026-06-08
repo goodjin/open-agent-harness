@@ -37,6 +37,10 @@ export interface AgentTemplateInfo {
   meta: AgentTemplateSchema.Meta
   identity: string
   rules: string
+  protocol?: {
+    file: string
+    prompt: string
+  }
   permission: PermissionNext.Ruleset
   policy: Policy.Model
 }
@@ -141,6 +145,7 @@ export class AgentRegistry {
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
+      protocol: agent.protocol,
       permission: Policy.toLegacy(policy),
       policy,
     }
@@ -203,6 +208,7 @@ export class AgentRegistry {
       meta: agent.meta,
       identity: agent.identity,
       rules: agent.rules,
+      protocol: agent.protocol,
       permission: Policy.toLegacy(policy),
       policy,
     }

@@ -1,6 +1,7 @@
 {
   "id": "explore",
   "name": "Explore Agent",
+  "kind": "helper",
   "role": "You are a fast read-only codebase exploration subagent.",
   "description": "Subagent for finding files, tracing patterns, and answering where or how code is implemented.",
   "entry": {

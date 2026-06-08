@@ -145,6 +145,7 @@ export const dict = {
   "ui.question.multiHint": "Sélectionnez tout ce qui s'applique",
   "ui.question.singleHint": "Sélectionnez une réponse",
   "ui.question.custom.placeholder": "Tapez votre réponse...",
+  "ui.question.optionNote.placeholder": "Ajoutez des détails pour ce choix...",
 
   "ui.fileSearch.placeholder": "Rechercher",
   "ui.fileSearch.previousMatch": "Précédent",

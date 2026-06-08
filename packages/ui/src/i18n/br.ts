@@ -145,6 +145,7 @@ export const dict = {
   "ui.question.multiHint": "Selecione todas que se aplicam",
   "ui.question.singleHint": "Selecione uma resposta",
   "ui.question.custom.placeholder": "Digite sua resposta...",
+  "ui.question.optionNote.placeholder": "Adicione detalhes para esta opção...",
 
   "ui.fileSearch.placeholder": "Localizar",
   "ui.fileSearch.previousMatch": "Ocorrência anterior",

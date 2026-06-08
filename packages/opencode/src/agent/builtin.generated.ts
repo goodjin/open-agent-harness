@@ -67,6 +67,7 @@ export const BUILTIN_AGENTS = [
     "meta": {
       "id": "agent-creator",
       "name": "Agent Creator",
+      "kind": "system",
       "role": "You are OpenCode's agent authoring specialist. You help users turn natural language requirements into saved agent templates.",
       "description": "Subagent for creating project or user agents from natural language descriptions.",
       "entry": {
@@ -301,6 +302,7 @@ export const BUILTIN_AGENTS = [
     "meta": {
       "id": "compaction",
       "name": "Compaction Agent",
+      "kind": "system",
       "role": "Summarize conversation history so another agent can continue the session accurately.",
       "description": "Creates compact continuation summaries for long sessions.",
       "entry": {
@@ -583,6 +585,7 @@ export const BUILTIN_AGENTS = [
       },
       "hidden": false,
       "runner": "protocol",
+      "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
       "workflow_mode": "auto",
       "allowed_tools": [
         "task",
@@ -855,6 +858,7 @@ export const BUILTIN_AGENTS = [
       },
       "hidden": false,
       "runner": "protocol",
+      "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
       "workflow_mode": "auto",
       "allowed_tools": [
         "task",
@@ -1045,6 +1049,7 @@ export const BUILTIN_AGENTS = [
       },
       "hidden": false,
       "runner": "protocol",
+      "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
       "workflow_mode": "auto",
       "allowed_tools": [
         "task",
@@ -1430,6 +1435,7 @@ export const BUILTIN_AGENTS = [
       },
       "hidden": false,
       "runner": "protocol",
+      "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
       "workflow_mode": "auto",
       "allowed_tools": [
         "task",
@@ -1764,7 +1770,7 @@ export const BUILTIN_AGENTS = [
       "id": "protocol-runner",
       "name": "Protocol Runner",
       "role": "You are OpenCode's experimental Agent Protocol runner. Follow the runtime system prompt as the single source of truth for Agent Protocol DSL syntax and behavior.",
-      "description": "Primary experimental agent for Agent Protocol DSL v1 runtime orchestration.",
+      "description": "Primary experimental agent for Agent Protocol DSL v2 runtime orchestration.",
       "entry": {
         "primary": true,
         "delegable": false,
@@ -1784,6 +1790,7 @@ export const BUILTIN_AGENTS = [
       },
       "hidden": false,
       "runner": "protocol",
+      "auto_append_prompt": "Strictly follow the protocol output requirements. You must use a tool call, you must call the only registered native tool `AgentProtocolOutput`, and you must not output plain text only.",
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
@@ -2074,6 +2081,7 @@ export const BUILTIN_AGENTS = [
     "meta": {
       "id": "summary",
       "name": "Summary Agent",
+      "kind": "system",
       "role": "Create concise session summaries that preserve the user's goal, decisions, and current state.",
       "description": "Hidden system agent for creating session summaries.",
       "entry": {
@@ -2171,6 +2179,7 @@ export const BUILTIN_AGENTS = [
     "meta": {
       "id": "title",
       "name": "Title Agent",
+      "kind": "system",
       "role": "Generate concise conversation titles.",
       "description": "Creates short titles for sessions from the first user prompt.",
       "entry": {
@@ -2383,6 +2392,7 @@ export const BUILTIN_AGENTS = [
     "meta": {
       "id": "workflow-runner",
       "name": "Workflow Runner",
+      "kind": "system",
       "role": "You are OpenCode's Workflow Runner. You create, save, update, and start Workflow assets, where each Workflow is a reusable Action Graph Profile materialized by the runtime into a persistent Action Graph run.",
       "description": "Primary agent for managing Workflow assets and launching Workflow runs through the unified Action Graph runtime.",
       "entry": {

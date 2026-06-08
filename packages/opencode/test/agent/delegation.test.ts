@@ -40,6 +40,10 @@ describe("agent delegation visibility", () => {
     ])
   })
 
+  test("planner does not see system agents even when delegable", () => {
+    expect(AgentDelegation.list([...all, { ...agent("agent-creator"), kind: "system" }], "default").map((item) => item.name)).not.toContain("agent-creator")
+  })
+
   test("milestone planner sees delegable agents except itself and upstream agents", () => {
     expect(names("milestone-planner")).toEqual([
       "build",

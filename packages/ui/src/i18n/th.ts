@@ -146,6 +146,7 @@ export const dict = {
   "ui.question.multiHint": "เลือกทั้งหมดที่ใช้",
   "ui.question.singleHint": "เลือกหนึ่งคำตอบ",
   "ui.question.custom.placeholder": "พิมพ์คำตอบของคุณ...",
+  "ui.question.optionNote.placeholder": "เพิ่มรายละเอียดสำหรับตัวเลือกนี้...",
 
   "ui.fileSearch.placeholder": "ค้นหา",
   "ui.fileSearch.previousMatch": "ก่อนหน้า",

@@ -151,6 +151,7 @@ export const dict = {
   "ui.question.multiHint": "Geçerli tüm cevapları seçin",
   "ui.question.singleHint": "Bir cevap seçin",
   "ui.question.custom.placeholder": "Cevabınızı yazın...",
+  "ui.question.optionNote.placeholder": "Bu seçim için ayrıntı ekleyin...",
 
   "ui.fileSearch.placeholder": "Bul",
   "ui.fileSearch.previousMatch": "Önceki",

@@ -58,6 +58,7 @@ import { attached, inline, kind } from "./message-file"
 import { limitTextLines } from "./message-line-limit"
 import { partView, type PartView } from "./message-part-view"
 import { protocolMeta, protocolText } from "./message-part-protocol"
+import { heading, thinkingText } from "./session-turn-helpers"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -1213,7 +1214,11 @@ function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { ki
   const text = createMemo(() => hiddenOutputText(props.part))
   const title = createMemo(() =>
     props.view.reason === "reasoning"
-      ? i18n.t("ui.messagePart.collapsed.reasoning.title")
+      ? thinkingText(
+          i18n.t("ui.sessionTurn.status.thinking"),
+          i18n.t("ui.sessionTurn.status.thinkingWithTopic"),
+          props.part.type === "reasoning" ? heading(props.part.text) : undefined,
+        )
       : i18n.t("ui.messagePart.collapsed.ignoredText.title"),
   )
 

@@ -435,6 +435,30 @@ export const SettingsAgents: Component<{ selected?: string }> = (props) => {
                 />
               </Section>
 
+              <Section title="Prompt">
+                <Field
+                  label="Documents before prompt"
+                  value={form.promptBefore}
+                  multiline
+                  class="min-h-32"
+                  onChange={(value) => setForm("promptBefore", value)}
+                />
+                <Field
+                  label="Documents after prompt"
+                  value={form.promptAfter}
+                  multiline
+                  class="min-h-32"
+                  onChange={(value) => setForm("promptAfter", value)}
+                />
+                <Field
+                  label="Auto append prompt"
+                  value={form.autoAppend}
+                  multiline
+                  class="min-h-32 sm:col-span-2"
+                  onChange={(value) => setForm("autoAppend", value)}
+                />
+              </Section>
+
               <Section title="Runtime">
                 <SelectField
                   label="Mode"

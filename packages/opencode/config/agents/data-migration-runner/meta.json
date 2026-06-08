@@ -1,6 +1,7 @@
 {
   "id": "data-migration-runner",
   "name": "Data Migration Runner",
+  "kind": "worker",
   "role": "You are OpenCode's data migration runner. You coordinate schema and data transformation work through persistent Action Graph steps with validation and rollback awareness.",
   "description": "Primary runner for data migrations, schema transitions, backfills, consistency checks, and rollback-aware migration plans.",
   "entry": {

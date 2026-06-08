@@ -16,7 +16,7 @@ export namespace AgentTemplate {
   export type Runner = z.infer<typeof Runner>
 
   // Kind describes the agent's coarse collaboration role.
-  export const Kind = z.enum(["planner", "worker", "verifier", "helper"])
+  export const Kind = z.enum(["planner", "worker", "verifier", "helper", "system", "skill"])
   export type Kind = z.infer<typeof Kind>
 
   export const Entry = z
@@ -165,6 +165,7 @@ export namespace AgentTemplate {
             .object({
               path: Text.describe("Instruction file path"),
               role: Text.optional().describe("Instruction message role"),
+              position: z.enum(["prepend", "append"]).optional().describe("Where to place the instruction content"),
               required: z.boolean().default(false).describe("Whether the file is required"),
             })
             .strict(),
@@ -231,6 +232,13 @@ export namespace AgentTemplate {
   export const Lifecycle = Dict
   export type Lifecycle = z.infer<typeof Lifecycle>
 
+  export const Protocol = z
+    .object({
+      file: Text.describe("Protocol prompt file path relative to the agent directory"),
+    })
+    .strict()
+  export type Protocol = z.infer<typeof Protocol>
+
   function normalize(input: unknown) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return input
     const meta = { ...input } as Record<string, unknown>
@@ -251,12 +259,14 @@ export namespace AgentTemplate {
       kind: Kind.optional().describe("Coarse collaboration role for routing and catalog display"),
       logo: Logo.optional().describe("Agent display logo"),
       instructions: Instructions.optional().describe("Runtime instruction inputs"),
+      auto_append_prompt: Text.optional().describe("Prompt text appended at the end of every model request for this agent"),
       contracts: Contracts.optional().describe("Input and output contracts"),
       collaboration: Collaboration.optional().describe("Agent collaboration policy"),
       runtime_boundary: RuntimeBoundary.optional().describe("Runtime boundary declaration"),
       completion: Completion.optional().describe("Completion contract"),
       observability: Observability.optional().describe("Observability policy"),
       lifecycle: Lifecycle.optional().describe("Lifecycle metadata"),
+      protocol: Protocol.optional().describe("Protocol runner prompt configuration"),
 
       // Required fields - must be non-empty strings
       id: Text.describe("Unique identifier for the agent"),
@@ -346,5 +356,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
 }

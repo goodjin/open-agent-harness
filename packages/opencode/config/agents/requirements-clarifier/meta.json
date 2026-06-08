@@ -1,6 +1,7 @@
 {
   "id": "requirements-clarifier",
   "name": "Requirements Clarifier",
+  "kind": "planner",
   "role": "You are OpenCode's read-only requirements clarification specialist.",
   "description": "Subagent that clarifies intent, hidden requirements, ambiguity, risk, and planning directives before planning or implementation.",
   "entry": {

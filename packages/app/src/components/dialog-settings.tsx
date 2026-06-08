@@ -1,6 +1,6 @@
 import { Component } from "solid-js"
 import { Dialog } from "@open-agent-harness/ui/dialog"
-import { IconButton } from "@open-agent-harness/ui/icon-button"
+import { Button } from "@open-agent-harness/ui/button"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import { Icon } from "@open-agent-harness/ui/icon"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
@@ -12,21 +12,35 @@ import { SettingsProviders } from "./settings-providers"
 import { SettingsModels } from "./settings-models"
 import { SettingsAgents } from "./settings-agents"
 
-export const DialogSettings: Component<{ defaultTab?: string; agent?: string }> = (props) => {
-  const dialog = useDialog()
+export const SETTINGS_PANEL_EVENT = "open-agent-harness:settings"
+
+export type SettingsPanelDetail = {
+  defaultTab?: string
+  agent?: string
+}
+
+export function requestSettingsPanel(detail: SettingsPanelDetail = {}) {
+  window.dispatchEvent(new CustomEvent<SettingsPanelDetail>(SETTINGS_PANEL_EVENT, { detail }))
+}
+
+export const SettingsPanel: Component<SettingsPanelDetail & { onClose: () => void }> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
 
   return (
-    <Dialog size="x-large" transition>
-      <IconButton
-        icon="circle-x"
-        variant="ghost"
-        class="absolute right-3 top-3 z-20"
-        aria-label={language.t("common.close")}
-        onClick={() => dialog.close()}
-      />
-      <Tabs orientation="vertical" variant="settings" defaultValue={props.defaultTab ?? "general"} class="h-full settings-dialog">
+    <div class="flex h-full min-w-0 flex-col bg-background-base">
+      <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border-weak-base px-3">
+        <Button size="large" variant="ghost" icon="arrow-left" onClick={props.onClose}>
+          Back
+        </Button>
+        <span class="truncate text-14-medium text-text-strong">{language.t("command.settings.open")}</span>
+      </div>
+      <Tabs
+        orientation="vertical"
+        variant="settings"
+        defaultValue={props.defaultTab ?? "general"}
+        class="min-h-0 flex-1 settings-dialog"
+      >
         <Tabs.List>
           <div class="flex flex-col justify-between h-full w-full">
             <div class="flex flex-col gap-3 w-full pt-3">
@@ -86,6 +100,16 @@ export const DialogSettings: Component<{ defaultTab?: string; agent?: string }> 
           <SettingsAgents selected={props.agent} />
         </Tabs.Content>
       </Tabs>
+    </div>
+  )
+}
+
+export const DialogSettings: Component<{ defaultTab?: string; agent?: string }> = (props) => {
+  const dialog = useDialog()
+
+  return (
+    <Dialog size="x-large" transition>
+      <SettingsPanel defaultTab={props.defaultTab} agent={props.agent} onClose={() => dialog.close()} />
     </Dialog>
   )
 }

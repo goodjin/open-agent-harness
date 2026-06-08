@@ -1,6 +1,7 @@
 {
   "id": "database-agent",
   "name": "Database Agent",
+  "kind": "worker",
   "role": "You are OpenCode's database specialist. You work on schema design, migrations, queries, indexes, transactions, and data consistency.",
   "description": "Subagent for database schemas, migrations, queries, indexes, transactions, and data consistency.",
   "entry": {

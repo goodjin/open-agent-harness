@@ -16,6 +16,118 @@ const action = {
 }
 
 describe("agent protocol schema", () => {
+  test("accepts v2 items shape and normalizes tool agent and answer items", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "inspect", kind: "tool", target: "grep", args: { pattern: "Protocol" }, result: "full" },
+        { id: "delegate", kind: "agent", target: "backend", prompt: "Inspect runner behavior.", depends: ["inspect"] },
+        { id: "reply", kind: "answer", message: "Inspection is complete.", depends: ["delegate"] },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.message).toBe("Inspection is complete.")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions.map((item) => [item.id, item.executor.type, item.executor.target, item.depends_on])).toEqual([
+      ["inspect", "tool", "grep", []],
+      ["delegate", "agent", "backend", ["inspect"]],
+    ])
+    expect(out.payload.actions[0]?.input).toEqual({ pattern: "Protocol" })
+    expect(out.payload.actions[0]?.result_policy).toBe("full")
+    expect(out.payload.actions[1]?.input).toEqual({ prompt: "Inspect runner behavior." })
+  })
+
+  test("ignores extra v2 protocol fields when required fields are valid", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      kind: "answer",
+      ignored: true,
+      items: [
+        {
+          id: "summary",
+          kind: "answer",
+          message: "Done.",
+          extra: "ignored",
+        },
+      ],
+    })
+
+    expect(out.intent).toBe("respond")
+    expect(out.message).toBe("Done.")
+    expect(out.payload.type).toBe("message")
+  })
+
+  test("accepts v2 ask item and maps it to a human action", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "choose_scope",
+          kind: "ask",
+          prompt: "Which scope should I optimize?",
+          mode: "multi",
+          options: [
+            { id: "schema", label: "Schema" },
+            { id: "prompt", label: "Prompt" },
+          ],
+          min_selected: 1,
+          max_selected: 2,
+        },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "choose_scope",
+      title: "choose_scope",
+      operation: "ask",
+      executor: { type: "human", target: "user", capabilities: ["multi"] },
+      input: {
+        prompt: "Which scope should I optimize?",
+        mode: "multi",
+        options: [
+          { id: "schema", label: "Schema" },
+          { id: "prompt", label: "Prompt" },
+        ],
+        min_selected: 1,
+        max_selected: 2,
+      },
+    })
+  })
+
+  test("accepts v2 confirm item and maps it to a human confirmation action", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "confirm_plan",
+          kind: "confirm",
+          title: "Confirm plan",
+          prompt: "Confirm this plan before execution.",
+          plan: "1. Inspect the runner.\n2. Patch the schema.",
+        },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "confirm_plan",
+      title: "Confirm plan",
+      operation: "confirm",
+      executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+      input: {
+        prompt: "Confirm this plan before execution.",
+        plan: "1. Inspect the runner.\n2. Patch the schema.",
+      },
+    })
+  })
+
   test("accepts flat act shape and normalizes it to one runtime action", () => {
     const out = AgentProtocol.parse({
       kind: "act",

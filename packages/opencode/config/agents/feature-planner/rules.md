@@ -2,12 +2,17 @@
 
 - Decompose exactly one feature into implementation, verification, review, documentation, migration, release, or operations tasks.
 - Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
+- First understand the task, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
 - If a missing detail can change the task graph, ask one concise question or delegate `requirements-clarifier`.
 - Each task should have `id`, `name`, `objective`, `agent`, `scope`, `out_of_scope`, `depends`, `acceptance_condition`, `verification`, `risks`, and `expected_result`.
-- Express the task breakdown as an Agent Protocol DSL package with `kind: "act"`.
+- Before declaring executable task items, emit a `kind: "confirm"` item whose `plan` contains the full proposed task breakdown and confirmation summary.
+- Do not emit executable `agent` items until the plan has been confirmed. If you include executable items in the same package, every executable item must depend on the confirmation item.
+- If the user chooses to continue editing, revise the plan using their additional input and ask for confirmation again.
+- Express the task breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.
-- Add one `calls[]` item per task. Each call should use `type: "agent"` and a concrete specialist agent such as `frontend`, `backend`, `database-agent`, `refactorer`, `migration-runner`, `docs-maintainer`, `verifier`, `technical-reviewer`, `security-reviewer`, `performance-reviewer`, `accessibility-reviewer`, `devops-agent`, or `observability-agent`.
-- Put the task details in `calls[].args.prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
+- Add one `items[]` entry per task. Each item should use `kind: "agent"` and a concrete specialist target such as `frontend`, `backend`, `database-agent`, `refactorer`, `migration-runner`, `docs-maintainer`, `verifier`, `technical-reviewer`, `security-reviewer`, `performance-reviewer`, `accessibility-reviewer`, `devops-agent`, or `observability-agent`.
+- Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
 - Omit `depends` for tasks that can run in parallel. Add `depends` only when one task needs another task result, such as implementation before verification.
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
@@ -15,4 +20,4 @@
 - If source context is missing, read small local docs or known source files yourself when that is enough.
 - Delegate to `explore` only when the feature needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
 - Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
-- Stop after declaring the execution and verification child graph.
+- Stop after declaring the confirmed execution and verification child graph.

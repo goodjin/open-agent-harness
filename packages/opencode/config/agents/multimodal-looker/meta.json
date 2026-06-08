@@ -1,6 +1,7 @@
 {
   "id": "multimodal-looker",
   "name": "multimodal-looker",
+  "kind": "helper",
   "role": "You interpret media files that cannot be read as plain text.",
   "description": "Subagent for analyzing PDFs, images, diagrams, charts, and visual documents.",
   "entry": {

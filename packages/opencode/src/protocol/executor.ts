@@ -38,28 +38,6 @@ export namespace AgentProtocolExecutor {
     const actions = input.declaration.payload.type === "action_graph" ? input.declaration.payload.actions : []
     for (const item of actions) {
       const start = Date.now()
-      const blocked = block(item)
-      if (blocked) {
-        const end = Date.now()
-        done.push({
-          id: item.id,
-          title: item.title,
-          operation: item.operation,
-          executor: item.executor,
-          input: item.input,
-          status: "blocked",
-          summary: blocked,
-          error: blocked,
-          tool_call_ids: [],
-          duration_ms: end - start,
-          time: {
-            started: start,
-            completed: end,
-          },
-        })
-        break
-      }
-
       const prompt = item.prompt_ref?.startsWith("md:") ? input.sections?.[item.prompt_ref.slice(3)] : undefined
       const result = (await input.execute?.(item, prompt)) ?? defaults(item, prompt, input.agents ?? [])
       const failed = result.metadata.failed === true
@@ -115,11 +93,6 @@ export namespace AgentProtocolExecutor {
         duration_ms: end - started,
       },
     }
-  }
-
-  function block(action: AgentProtocol.Action) {
-    if (action.executor.type === "human") return "Human executor is not implemented in protocol v1."
-    return
   }
 
   export function select(action: AgentProtocol.Action, agents: Agent[]) {

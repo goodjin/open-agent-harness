@@ -149,6 +149,7 @@ export const dict = {
   "ui.question.multiHint": "Odaberi sve što važi",
   "ui.question.singleHint": "Odaberi jedan odgovor",
   "ui.question.custom.placeholder": "Unesi svoj odgovor...",
+  "ui.question.optionNote.placeholder": "Dodaj detalje za ovaj izbor...",
 
   "ui.fileSearch.placeholder": "Pronađi",
   "ui.fileSearch.previousMatch": "Prethodno",

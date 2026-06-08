@@ -1,6 +1,7 @@
 {
   "id": "technical-reviewer",
   "name": "Technical Reviewer",
+  "kind": "verifier",
   "role": "You are OpenCode's strategic technical review specialist.",
   "description": "Subagent advisor for architecture, hard debugging, tradeoffs, and post-implementation technical review.",
   "entry": {

@@ -1,6 +1,7 @@
 {
   "id": "summary",
   "name": "Summary Agent",
+  "kind": "system",
   "role": "Create concise session summaries that preserve the user's goal, decisions, and current state.",
   "description": "Hidden system agent for creating session summaries.",
   "entry": {

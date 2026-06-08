@@ -103,6 +103,107 @@ export namespace AgentProtocol {
 
   const Policy = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"])
   const Depends = z.union([Text, z.array(Text)]).default([])
+  const V2Depends = z.array(Text).default([])
+  const V2Option = z
+    .object({
+      id: Text,
+      label: Text,
+      description: Text.optional(),
+      disabled: z.boolean().optional(),
+    })
+  const V2Field = z
+    .object({
+      id: Text,
+      label: Text,
+      type: z.enum(["text", "textarea", "single", "multi", "confirm", "number"]),
+      required: z.boolean().optional(),
+      options: z.array(V2Option).optional(),
+      default: z.unknown().optional(),
+      validation: JsonRecord.optional(),
+    })
+  const V2Tool = z
+    .object({
+      id: Text,
+      kind: z.literal("tool"),
+      title: Text.optional(),
+      target: Text,
+      args: JsonRecord.default({}),
+      depends: V2Depends,
+      result: Policy.default("summary"),
+    })
+  const V2Agent = z
+    .object({
+      id: Text,
+      kind: z.literal("agent"),
+      title: Text.optional(),
+      target: Text,
+      prompt: Text,
+      capabilities: z.array(Text).default([]),
+      context_refs: z.array(Ref).default([]),
+      depends: V2Depends,
+      result: Policy.default("summary"),
+    })
+  const V2Ask = z
+    .object({
+      id: Text,
+      kind: z.literal("ask"),
+      title: Text.optional(),
+      prompt: Text,
+      mode: z.enum(["text", "single", "multi", "confirm", "form"]),
+      required: z.boolean().optional(),
+      default: z.unknown().optional(),
+      options: z.array(V2Option).optional(),
+      fields: z.array(V2Field).optional(),
+      allow_custom: z.boolean().optional(),
+      min_selected: z.number().int().nonnegative().optional(),
+      max_selected: z.number().int().positive().optional(),
+      depends: V2Depends,
+      result: Policy.default("summary"),
+    })
+  const V2Confirm = z
+    .object({
+      id: Text,
+      kind: z.literal("confirm"),
+      title: Text.optional(),
+      prompt: Text,
+      plan: Text,
+      depends: V2Depends,
+      result: Policy.default("summary"),
+    })
+  const V2Wait = z
+    .object({
+      id: Text,
+      kind: z.literal("wait"),
+      title: Text.optional(),
+      target: Text,
+      reason: Text.optional(),
+      depends: V2Depends,
+      result: Policy.default("summary"),
+    })
+  const V2Answer = z
+    .object({
+      id: Text,
+      kind: z.literal("answer"),
+      title: Text.optional(),
+      message: Text,
+      depends: V2Depends,
+    })
+  const V2Done = z
+    .object({
+      id: Text,
+      kind: z.literal("done"),
+      title: Text.optional(),
+      message: z.string().default(""),
+      depends: V2Depends,
+    })
+  const V2Item = z.discriminatedUnion("kind", [V2Tool, V2Agent, V2Ask, V2Confirm, V2Wait, V2Answer, V2Done])
+  const V2 = z
+    .object({
+      version: z.literal("2"),
+      title: Text.optional(),
+      strategy: z.enum(["sequential", "dag"]).default("sequential"),
+      items: z.array(V2Item).min(1),
+    })
   const FlatCall = z
     .object({
       id: Text,
@@ -113,7 +214,6 @@ export namespace AgentProtocol {
       depends: Depends,
       result: Policy.default("summary"),
     })
-    .strict()
 
   const LegacyCall = FlatCall.extend({
     type: z.enum(["tool", "agent"]).optional(),
@@ -133,26 +233,94 @@ export namespace AgentProtocol {
       message: z.string().default(""),
       calls: z.array(FlatCall).min(1),
     })
-    .strict()
 
   const FlatAnswer = z
     .object({
       kind: z.literal("answer"),
       message: z.string().default(""),
     })
-    .strict()
 
   const FlatDone = z
     .object({
       kind: z.literal("done"),
       message: z.string().default(""),
     })
-    .strict()
 
   export const Structured = z.discriminatedUnion("kind", [FlatAct, FlatAnswer, FlatDone])
   export const OutputSchema = {
     type: "object",
     properties: {
+      version: {
+        type: "string",
+        enum: ["2"],
+        default: "2",
+      },
+      title: {
+        type: "string",
+        minLength: 1,
+      },
+      strategy: {
+        type: "string",
+        enum: ["sequential", "dag"],
+        default: "sequential",
+      },
+      items: {
+        type: "array",
+        minItems: 1,
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", minLength: 1 },
+            kind: { type: "string", enum: ["tool", "agent", "ask", "confirm", "answer", "done", "wait"] },
+            title: { type: "string", minLength: 1 },
+            target: { type: "string", minLength: 1 },
+            prompt: { type: "string", minLength: 1 },
+            plan: { type: "string", minLength: 1 },
+            message: { type: "string", minLength: 1 },
+            mode: { type: "string", enum: ["text", "single", "multi", "confirm", "form"] },
+            args: { type: "object", additionalProperties: true, default: {} },
+            capabilities: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
+            context_refs: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
+            depends: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
+            result: {
+              type: "string",
+              enum: ["summary", "structured", "full", "on_failure", "on_demand", "adaptive"],
+              default: "summary",
+            },
+            required: { type: "boolean" },
+            default: {},
+            options: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  id: { type: "string", minLength: 1 },
+                  label: { type: "string", minLength: 1 },
+                  description: { type: "string", minLength: 1 },
+                  disabled: { type: "boolean" },
+                },
+                required: ["id", "label"],
+                additionalProperties: false,
+              },
+            },
+            fields: { type: "array", items: { type: "object", additionalProperties: true } },
+            allow_custom: { type: "boolean" },
+            min_selected: { type: "integer", minimum: 0 },
+            max_selected: { type: "integer", minimum: 1 },
+            reason: { type: "string", minLength: 1 },
+          },
+          required: ["id", "kind"],
+          additionalProperties: false,
+          allOf: [
+            { if: { properties: { kind: { const: "tool" } } }, then: { required: ["target"] } },
+            { if: { properties: { kind: { const: "agent" } } }, then: { required: ["target", "prompt"] } },
+            { if: { properties: { kind: { const: "ask" } } }, then: { required: ["prompt", "mode"] } },
+            { if: { properties: { kind: { const: "confirm" } } }, then: { required: ["prompt", "plan"] } },
+            { if: { properties: { kind: { const: "answer" } } }, then: { required: ["message"] } },
+            { if: { properties: { kind: { const: "wait" } } }, then: { required: ["target"] } },
+          ],
+        },
+      },
       kind: {
         type: "string",
         enum: ["act", "answer", "done"],
@@ -207,8 +375,19 @@ export namespace AgentProtocol {
         },
       },
     },
-    required: ["kind"],
+    required: [],
     allOf: [
+      {
+        if: {
+          required: ["items"],
+        },
+        then: {
+          required: ["version", "items"],
+          not: {
+            required: ["kind"],
+          },
+        },
+      },
       {
         if: {
           properties: {
@@ -345,6 +524,9 @@ export namespace AgentProtocol {
   export type Result = z.infer<typeof Result>
 
   export function parse(input: unknown) {
+    if (input && typeof input === "object" && !Array.isArray(input) && (input as { version?: unknown }).version === "2") {
+      V2.parse(input)
+    }
     return Declaration.parse(input)
   }
 
@@ -417,6 +599,8 @@ export namespace AgentProtocol {
   }
 
   function flat(input: globalThis.Record<string, unknown>) {
+    const v2 = V2.safeParse(input)
+    if (v2.success) return v2Parsed(v2.data)
     const parsed = Structured.safeParse(input)
     if (parsed.success) return flatParsed(parsed.data)
     const legacy = Legacy.safeParse(input)
@@ -458,6 +642,116 @@ export namespace AgentProtocol {
       message: "say" in parsed ? parsed.message || parsed.say : parsed.message,
       execution: { strategy: "sequential" },
       payload: { type: "message" },
+    }
+  }
+
+  function v2Parsed(parsed: z.infer<typeof V2>) {
+    const terminal = parsed.items.find((item) => item.kind === "answer" || item.kind === "done")
+    const actions = parsed.items.filter((item) => item.kind !== "answer" && item.kind !== "done")
+    if (actions.length === 0) {
+      return {
+        type: "agent.protocol.output",
+        version: "1",
+        intent: terminal?.kind === "answer" ? "respond" : "stop",
+        persist: false,
+        title: parsed.title ?? terminal?.title,
+        message: terminal && "message" in terminal ? terminal.message : "",
+        execution: { strategy: parsed.strategy },
+        payload: { type: "message" },
+      }
+    }
+    return {
+      type: "agent.protocol.output",
+      version: "1",
+      intent: "execute",
+      persist: false,
+      title: parsed.title ?? actions[0]?.title ?? actions[0]?.id,
+      message: terminal && "message" in terminal ? terminal.message : undefined,
+      execution: { strategy: parsed.strategy },
+      payload: {
+        type: "action_graph",
+        actions: actions.map((item) => action(item)),
+      },
+    }
+  }
+
+  function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Answer> | z.infer<typeof V2Done>>) {
+    if (input.kind === "tool") {
+      return {
+        type: "action",
+        id: input.id,
+        title: input.title ?? input.id,
+        operation: input.target,
+        executor: { type: "tool", target: input.target, capabilities: [] },
+        input: input.args,
+        depends_on: input.depends,
+        context_refs: [],
+        result_policy: input.result,
+      }
+    }
+    if (input.kind === "agent") {
+      return {
+        type: "action",
+        id: input.id,
+        title: input.title ?? input.id,
+        operation: input.target === "auto" ? "agent" : input.target,
+        executor: { type: "agent", target: input.target, capabilities: input.capabilities },
+        input: { prompt: input.prompt },
+        depends_on: input.depends,
+        context_refs: input.context_refs,
+        result_policy: input.result,
+      }
+    }
+    if (input.kind === "wait") {
+      return {
+        type: "action",
+        id: input.id,
+        title: input.title ?? input.id,
+        operation: input.target,
+        executor: { type: "runtime", target: "wait", capabilities: [] },
+        input: { target: input.target, reason: input.reason },
+        depends_on: input.depends,
+        context_refs: [],
+        result_policy: input.result,
+      }
+    }
+    if (input.kind === "confirm") {
+      return {
+        type: "action",
+        id: input.id,
+        title: input.title ?? input.id,
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { prompt: input.prompt, plan: input.plan },
+        depends_on: input.depends,
+        context_refs: [],
+        result_policy: input.result,
+      }
+    }
+    return {
+      type: "action",
+      id: input.id,
+      title: input.title ?? input.id,
+      operation: "ask",
+      executor: { type: "human", target: "user", capabilities: [input.mode] },
+      input: ask(input),
+      depends_on: input.depends,
+      context_refs: [],
+      result_policy: input.result,
+    }
+  }
+
+  function ask(input: z.infer<typeof V2Ask>) {
+    return {
+      prompt: input.prompt,
+      mode: input.mode,
+      required: input.required,
+      default: input.default,
+      options: input.options,
+      fields: input.fields,
+      allow_custom: input.allow_custom,
+      min_selected: input.min_selected,
+      max_selected: input.max_selected,
     }
   }
 

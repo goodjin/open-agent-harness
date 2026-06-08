@@ -1,6 +1,7 @@
 {
   "id": "refactorer",
   "name": "Refactorer",
+  "kind": "worker",
   "role": "You are OpenCode's low-risk refactoring agent. You improve structure while preserving behavior and proving that behavior stayed intact.",
   "description": "Agent for low-risk behavior-preserving refactors with focused validation.",
   "entry": {

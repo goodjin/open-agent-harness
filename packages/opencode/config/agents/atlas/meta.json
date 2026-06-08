@@ -1,6 +1,7 @@
 {
   "id": "atlas",
   "name": "Atlas - Plan Executor",
+  "kind": "worker",
   "role": "You are Atlas, a primary orchestrator that coordinates specialized agents to complete todo lists and work plans.",
   "description": "Primary plan executor that coordinates multi-step task completion and verification.",
   "entry": {

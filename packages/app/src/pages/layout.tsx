@@ -58,7 +58,7 @@ import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import { useTheme, type ColorScheme } from "@open-agent-harness/ui/theme"
 import { DialogSelectProvider } from "@/components/dialog-select-provider"
 import { DialogSelectServer } from "@/components/dialog-select-server"
-import { DialogSettings } from "@/components/dialog-settings"
+import { SETTINGS_PANEL_EVENT, SettingsPanel, type SettingsPanelDetail } from "@/components/dialog-settings"
 import { useCommand, type CommandOption } from "@/context/command"
 import { ConstrainDragXAxis, getDraggableId } from "@/utils/solid-dnd"
 import { DialogSelectDirectory } from "@/components/dialog-select-directory"
@@ -149,6 +149,7 @@ export default function Layout(props: ParentProps) {
     sizing: false,
     peek: undefined as string | undefined,
     peeked: false,
+    settings: undefined as SettingsPanelDetail | undefined,
   })
 
   const editor = createInlineEditorController()
@@ -200,13 +201,16 @@ export default function Layout(props: ParentProps) {
 
   onMount(() => {
     const stop = () => setState("sizing", false)
+    const settings = (event: Event) => openSettings((event as CustomEvent<SettingsPanelDetail>).detail ?? {})
     window.addEventListener("pointerup", stop)
     window.addEventListener("pointercancel", stop)
     window.addEventListener("blur", stop)
+    window.addEventListener(SETTINGS_PANEL_EVENT, settings)
     onCleanup(() => {
       window.removeEventListener("pointerup", stop)
       window.removeEventListener("pointercancel", stop)
       window.removeEventListener("blur", stop)
+      window.removeEventListener(SETTINGS_PANEL_EVENT, settings)
     })
   })
 
@@ -1184,8 +1188,8 @@ export default function Layout(props: ParentProps) {
     dialog.show(() => <DialogSelectServer />)
   }
 
-  function openSettings() {
-    dialog.show(() => <DialogSettings />)
+  function openSettings(detail: SettingsPanelDetail = {}) {
+    setState("settings", detail)
   }
 
   function projectRoot(directory: string) {
@@ -2383,7 +2387,27 @@ export default function Layout(props: ParentProps) {
                 }}
               >
                 <Show when={!autoselecting()} fallback={<div class="size-full" />}>
-                  {props.children}
+                  <div class="flex size-full min-w-0">
+                    <div
+                      class="min-w-0 flex-1"
+                      classList={{
+                        "hidden lg:block": !!state.settings,
+                      }}
+                    >
+                      {props.children}
+                    </div>
+                    <Show when={state.settings}>
+                      {(settings) => (
+                        <aside class="h-full min-w-0 flex-1 border-l border-border-weak-base bg-background-base lg:max-w-[780px]">
+                          <SettingsPanel
+                            defaultTab={settings().defaultTab}
+                            agent={settings().agent}
+                            onClose={() => setState("settings", undefined)}
+                          />
+                        </aside>
+                      )}
+                    </Show>
+                  </div>
                 </Show>
               </main>
             </div>

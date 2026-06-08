@@ -14,6 +14,7 @@ type Mode = "all" | "primary" | "subagent"
 
 type Item = {
   name: string
+  kind?: AgentTemplate.Kind
   mode?: Mode
   hidden?: boolean
   entry?: {
@@ -70,6 +71,7 @@ export namespace AgentDelegation {
   const chain = new Set(Object.keys(deny))
 
   export function visible(item: Item, agent: string) {
+    if (item.kind === "system") return false
     if (!AgentEntry.delegable(item)) return false
     return !new Set([agent, ...(deny[agent] ?? [])]).has(item.name)
   }

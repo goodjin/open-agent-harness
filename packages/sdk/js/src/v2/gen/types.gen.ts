@@ -211,6 +211,9 @@ export type EventQuestionAsked = {
   properties: QuestionRequest
 }
 
+/**
+ * Selected answers. A selected option may include user-entered details as `label: details`.
+ */
 export type QuestionAnswer = Array<string>
 
 export type EventQuestionReplied = {
@@ -1301,6 +1304,7 @@ export type AgentConfig = {
   temperature?: number
   top_p?: number
   prompt?: string
+  auto_append_prompt?: string
   /**
    * @deprecated Use 'permission' field instead
    */
@@ -2329,7 +2333,7 @@ export type AgentManageInfo = {
     /**
      * Coarse collaboration role for routing and catalog display
      */
-    kind?: "planner" | "worker" | "verifier" | "helper"
+    kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
     /**
      * Agent display logo
      */
@@ -2365,6 +2369,10 @@ export type AgentManageInfo = {
          */
         role?: string
         /**
+         * Where to place the instruction content
+         */
+        position?: "prepend" | "append"
+        /**
          * Whether the file is required
          */
         required?: boolean
@@ -2384,6 +2392,10 @@ export type AgentManageInfo = {
         content: string
       }>
     }
+    /**
+     * Prompt text appended at the end of every model request for this agent
+     */
+    auto_append_prompt?: string
     /**
      * Input and output contracts
      */
@@ -2451,6 +2463,15 @@ export type AgentManageInfo = {
      */
     lifecycle?: {
       [key: string]: unknown
+    }
+    /**
+     * Protocol runner prompt configuration
+     */
+    protocol?: {
+      /**
+       * Protocol prompt file path relative to the agent directory
+       */
+      file: string
     }
     /**
      * Unique identifier for the agent
@@ -2553,7 +2574,7 @@ export type AgentManageValidateOutput = {
     /**
      * Coarse collaboration role for routing and catalog display
      */
-    kind?: "planner" | "worker" | "verifier" | "helper"
+    kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
     /**
      * Agent display logo
      */
@@ -2589,6 +2610,10 @@ export type AgentManageValidateOutput = {
          */
         role?: string
         /**
+         * Where to place the instruction content
+         */
+        position?: "prepend" | "append"
+        /**
          * Whether the file is required
          */
         required?: boolean
@@ -2608,6 +2633,10 @@ export type AgentManageValidateOutput = {
         content: string
       }>
     }
+    /**
+     * Prompt text appended at the end of every model request for this agent
+     */
+    auto_append_prompt?: string
     /**
      * Input and output contracts
      */
@@ -2675,6 +2704,15 @@ export type AgentManageValidateOutput = {
      */
     lifecycle?: {
       [key: string]: unknown
+    }
+    /**
+     * Protocol runner prompt configuration
+     */
+    protocol?: {
+      /**
+       * Protocol prompt file path relative to the agent directory
+       */
+      file: string
     }
     /**
      * Unique identifier for the agent
@@ -2782,7 +2820,7 @@ export type AgentManageSaveInput = {
     /**
      * Coarse collaboration role for routing and catalog display
      */
-    kind?: "planner" | "worker" | "verifier" | "helper"
+    kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
     /**
      * Agent display logo
      */
@@ -2818,6 +2856,10 @@ export type AgentManageSaveInput = {
          */
         role?: string
         /**
+         * Where to place the instruction content
+         */
+        position?: "prepend" | "append"
+        /**
          * Whether the file is required
          */
         required?: boolean
@@ -2837,6 +2879,10 @@ export type AgentManageSaveInput = {
         content: string
       }>
     }
+    /**
+     * Prompt text appended at the end of every model request for this agent
+     */
+    auto_append_prompt?: string
     /**
      * Input and output contracts
      */
@@ -2904,6 +2950,15 @@ export type AgentManageSaveInput = {
      */
     lifecycle?: {
       [key: string]: unknown
+    }
+    /**
+     * Protocol runner prompt configuration
+     */
+    protocol?: {
+      /**
+       * Protocol prompt file path relative to the agent directory
+       */
+      file: string
     }
     /**
      * Unique identifier for the agent
@@ -3004,7 +3059,7 @@ export type AgentManagePatchInput = {
     /**
      * Coarse collaboration role for routing and catalog display
      */
-    kind?: "planner" | "worker" | "verifier" | "helper"
+    kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
     /**
      * Agent display logo
      */
@@ -3040,6 +3095,10 @@ export type AgentManagePatchInput = {
          */
         role?: string
         /**
+         * Where to place the instruction content
+         */
+        position?: "prepend" | "append"
+        /**
          * Whether the file is required
          */
         required?: boolean
@@ -3059,6 +3118,10 @@ export type AgentManagePatchInput = {
         content: string
       }>
     }
+    /**
+     * Prompt text appended at the end of every model request for this agent
+     */
+    auto_append_prompt?: string
     /**
      * Input and output contracts
      */
@@ -3126,6 +3189,15 @@ export type AgentManagePatchInput = {
      */
     lifecycle?: {
       [key: string]: unknown
+    }
+    /**
+     * Protocol runner prompt configuration
+     */
+    protocol?: {
+      /**
+       * Protocol prompt file path relative to the agent directory
+       */
+      file: string
     }
     /**
      * Unique identifier for the agent
@@ -3289,6 +3361,7 @@ export type Command = {
 export type Agent = {
   name: string
   description?: string
+  kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
   mode: "subagent" | "primary" | "all"
   entry: {
     primary?: boolean
@@ -3321,6 +3394,11 @@ export type Agent = {
     }>
   }
   inheritPermissions?: boolean
+  autoAppendPrompt?: string
+  protocol?: {
+    file: string
+    prompt: string
+  }
   model?: {
     modelID: string
     providerID: string
@@ -7929,7 +8007,7 @@ export type QuestionListResponse = QuestionListResponses[keyof QuestionListRespo
 export type QuestionReplyData = {
   body?: {
     /**
-     * User answers in order of questions (each answer is an array of selected labels)
+     * User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)
      */
     answers: Array<QuestionAnswer>
   }

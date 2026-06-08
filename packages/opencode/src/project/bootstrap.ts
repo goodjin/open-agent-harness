@@ -14,6 +14,9 @@ import { Truncate } from "../tool/truncation"
 import { runPromiseInstance } from "@/effect/runtime"
 import { SessionDelegation } from "@/session/delegation"
 import { SessionRecovery } from "@/session/recovery"
+import { SessionStatus } from "@/session/status"
+import { SessionPrompt } from "@/session/prompt"
+import type { SessionID } from "@/session/schema"
 
 export async function InstanceBootstrap() {
   Log.Default.info("bootstrapping", { directory: Instance.directory })
@@ -26,6 +29,19 @@ export async function InstanceBootstrap() {
   Snapshot.init()
   Truncate.init()
   SessionDelegation.init()
+  const restored = await SessionStatus.restore()
+  for (const [id, status] of Object.entries(restored)) {
+    if (!SessionStatus.shouldContinue(status)) continue
+    const sessionID = id as SessionID
+    SessionStatus.set(sessionID, { type: "running" })
+    void SessionPrompt.loop({ sessionID }).catch((err) => {
+      Log.Default.warn("session auto-continue failed", {
+        sessionID: id,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      SessionStatus.set(sessionID, { type: "error", message: err instanceof Error ? err.message : String(err) })
+    })
+  }
   SessionRecovery.mark().catch((err) => {
     Log.Default.warn("session recovery scan failed", {
       error: err instanceof Error ? err.message : String(err),
