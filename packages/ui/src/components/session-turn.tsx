@@ -542,7 +542,13 @@ export function SessionTurn(
                 </div>
               </Show>
               <Show when={filter() === "all"}>
-                <SessionRetry status={status()} show={active()} />
+                <SessionRetry
+                  status={status()}
+                  show={active()}
+                  sessionID={props.sessionID}
+                  messageID={props.messageID}
+                  actions={props.actions}
+                />
               </Show>
               <Show when={error()}>
                 <Card variant="error" class="error-card">

@@ -103,6 +103,7 @@ export namespace SessionRetry {
 
   export function timeout(error: ReturnType<NamedError["toObject"]>) {
     if (!MessageV2.APIError.isInstance(error)) return false
+    if (error.data.metadata?.code === "TextStreamNoDelta") return true
     if (error.data.metadata?.code === "TimeoutError") return true
     return /timed out|timeout/i.test(error.data.message)
   }

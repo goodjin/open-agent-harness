@@ -82,6 +82,8 @@ export namespace SessionProcessor {
           let failure: unknown
           try {
             let currentText: MessageV2.TextPart | undefined
+            let hadTextDelta = false
+            let noTextDelta = false
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
             const req = prompt(streamInput)
             await record("info", "llm.start", {
@@ -400,6 +402,7 @@ export namespace SessionProcessor {
                     break
 
                   case "text-start":
+                    hadTextDelta = false
                     currentText = {
                       id: PartID.ascending(),
                       messageID: input.assistantMessage.id,
@@ -417,6 +420,7 @@ export namespace SessionProcessor {
 
                   case "text-delta":
                     if (currentText) {
+                      hadTextDelta = true
                       currentText.text += value.text
                       if (value.providerMetadata) currentText.metadata = value.providerMetadata
                       await Session.updatePartDelta({
@@ -437,6 +441,7 @@ export namespace SessionProcessor {
                         end: Date.now(),
                       }
                       if (value.providerMetadata) currentText.metadata = value.providerMetadata
+                      if (!hadTextDelta && !currentText.text) noTextDelta = true
                       await Session.updatePart(currentText)
                       await record("debug", "text.end", {
                         partID: currentText.id,
@@ -466,6 +471,21 @@ export namespace SessionProcessor {
             } finally {
               stream.release?.()
             }
+            if (currentText) noTextDelta = true
+            if (noTextDelta) {
+              throw new MessageV2.APIError(
+                {
+                  message:
+                    "The model stream started text output but did not emit any text delta. This usually means a truncated or malformed stream.",
+                  isRetryable: true,
+                  metadata: {
+                    code: "TextStreamNoDelta",
+                    reason: "text-start without text-delta",
+                  },
+                },
+                { cause: new Error("text stream missing delta events") },
+              )
+            }
           } catch (e: any) {
             log.error("process", {
               error: e,
@@ -483,7 +503,8 @@ export namespace SessionProcessor {
               if (retry !== undefined) {
                 const timed = SessionRetry.timeout(error)
                 if (timed && attempt >= SessionRetry.TIMEOUT_MAX_ATTEMPTS) {
-                  const message = "The operation timed out after retrying."
+                  const reason = "message" in error.data ? error.data.message : error.name
+                  const message = `The operation timed out after retrying. ${reason}`
                   input.assistantMessage.error = error
                   await record("error", "llm.timeout", {
                     error: "message" in error.data ? error.data.message : error.name,

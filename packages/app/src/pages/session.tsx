@@ -1751,7 +1751,43 @@ export default function Page() {
     })
   }
 
-  const actions = { fork, revert, context: addShellContext, prompt: sendShellPrompt }
+  const retry = (_input: { sessionID: string; messageID: string }) => {
+    const body = {
+      directory: sdk.directory,
+      ids: [_input.sessionID],
+      source_session: _input.sessionID,
+      mode: "restore" as const,
+    }
+    return sdk
+      .request("/session/tree/resume", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      .then((res) => {
+        if (!res.ok) return Promise.reject(new Error(`request failed: ${res.status}`))
+        return syncCurrentSession(_input.sessionID, { force: true })
+      })
+      .catch(fail)
+  }
+
+  const continueAction = (input: { sessionID: string; messageID: string; text: string }) => {
+    const text = input.text.trim()
+    if (!text) return
+    return sendShellPrompt({
+      sessionID: input.sessionID,
+      text,
+    })
+  }
+
+  const actions = {
+    fork,
+    revert,
+    retry,
+    continue: continueAction,
+    context: addShellContext,
+    prompt: sendShellPrompt,
+  }
 
   createEffect(() => {
     const sessionID = params.id

@@ -190,7 +190,9 @@ export type SessionAction = (input: { sessionID: string; messageID: string }) =>
 export type UserActions = {
   fork?: SessionAction
   revert?: SessionAction
+  retry?: SessionAction
   context?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
+  continue?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
   prompt?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
 }
 

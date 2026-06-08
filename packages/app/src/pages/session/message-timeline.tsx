@@ -46,8 +46,40 @@ const idle = { type: "idle" as const }
 const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
 
+const text = (input: unknown) => (typeof input === "string" ? input : undefined)
+
+type DelegationState = {
+  total: number
+  done: number
+  active: { id: string; label: string }[]
+  completed: { id: string; label: string }[]
+}
+
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
+
+const delegationItem = (input: unknown): input is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+  record(input) &&
+  typeof input.parent_message_id === "string" &&
+  typeof input.child_session_id === "string"
+
+const delegationRows = (input: unknown, messageID: string) => {
+  if (!Array.isArray(input)) return []
+  const rows = input
+    .filter((item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+      delegationItem(item) && item.parent_message_id === messageID,
+    )
+    .reduce(
+      (acc: Map<string, { id: string; label: string }>, item) => {
+        if (acc.has(item.child_session_id)) return acc
+        const label = text(item.action_title) || `子会话 ${String(item.child_session_id)}`
+        acc.set(item.child_session_id, { id: item.child_session_id, label })
+        return acc
+      },
+      new Map<string, { id: string; label: string }>(),
+    )
+  return Array.from(rows.values())
+}
 
 const pendingDelegation = (input: unknown, messageID: string) => {
   if (!record(input)) return false
@@ -56,6 +88,34 @@ const pendingDelegation = (input: unknown, messageID: string) => {
   const pending = protocol.pending_delegations
   if (!record(pending)) return false
   return Object.values(pending).some((item) => record(item) && item.parent_message_id === messageID)
+}
+
+const delegationProgress = (input: unknown, messageID: string): DelegationState => {
+  if (!record(input)) return { total: 0, done: 0, active: [], completed: [] }
+  const protocol = input.protocol
+  if (!record(protocol)) return { total: 0, done: 0, active: [], completed: [] }
+
+  const active = Object.values(record(protocol.pending_delegations) ? protocol.pending_delegations : {})
+    .filter((item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+      delegationItem(item) && item.parent_message_id === messageID,
+    )
+    .map((item) => ({
+      id: String(item.child_session_id),
+      label: text(item.action_title) || `子会话 ${String(item.child_session_id)}`,
+    }))
+
+  const completed = delegationRows(protocol.completed_delegations, messageID)
+
+  const completedIds = completed.map((item) => item.id)
+  const totalItems = new Set(active.map((item) => item.id).concat(completedIds))
+  for (const item of completed) totalItems.add(item.id)
+
+  return {
+    total: totalItems.size,
+    done: completed.length,
+    active,
+    completed,
+  }
 }
 
 const done = (messages: MessageType[], id: string) => {
@@ -75,7 +135,9 @@ const done = (messages: MessageType[], id: string) => {
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
+  retry?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   context?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
+  continue?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
   prompt?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
 }
 
@@ -1081,6 +1143,7 @@ export function MessageTimeline(props: {
                   })
                   const commentCount = createMemo(() => comments().length)
                   const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID))
+                  const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID))
                   const completed = createMemo(() => sessionStatus().type === "idle" && done(sessionMessages(), messageID))
                   const turn = createMemo(() =>
                     sessionMessages().find((item): item is UserMessage => item.id === messageID && item.role === "user"),
@@ -1150,7 +1213,7 @@ export function MessageTimeline(props: {
                           container: "w-full px-4 md:px-5",
                         }}
                       />
-                      <Show when={props.filter === "all" && completed()}>
+                      <Show when={props.filter === "all" && (completed() || delegation().total > 0)}>
                         <div class="px-4 md:px-5 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
                             <div class="h-px flex-1 bg-border-weaker-base" />
@@ -1162,9 +1225,22 @@ export function MessageTimeline(props: {
                                 <Spinner class="size-3 text-text-interactive-base" />
                               </Show>
                               <span>{delegated() ? delegationLabel : completeLabel}</span>
+                              <Show when={delegation().total > 0}>
+                                <span class="shrink-0">（{delegation().done}/{delegation().total}）</span>
+                              </Show>
                             </span>
                             <div class="h-px flex-1 bg-border-weaker-base" />
                           </div>
+                          <Show when={delegation().active.length > 0}>
+                            <div class="pt-2 text-11-regular text-text-weak">
+                              <span class="font-semibold">正在处理:</span>
+                              <span class="inline-flex flex-wrap gap-1 pl-1">
+                                <For each={delegation().active}>
+                                  {(item) => <span class="rounded-md border border-border-weaker-base px-2 py-0.5">{item.label}</span>}
+                                </For>
+                              </span>
+                            </div>
+                          </Show>
                           <SessionTurnDiffs diffs={turn()?.summary?.diffs ?? []} />
                         </div>
                       </Show>
