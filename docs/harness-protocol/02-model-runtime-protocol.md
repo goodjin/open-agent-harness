@@ -8,6 +8,7 @@ Agent Protocol DSL 是 Open Agent Harness 中模型与 Runtime 的交互协议�
 
 该协议覆盖以下场景：
 
+- task summary proposal
 - tool orchestration
 - Agent delegation
 - Runtime internal action
@@ -69,14 +70,52 @@ Action Graph 通过 `calls[]` 表达 node，通过 `depends_on` 表达 dependenc
 
 ## 协议输出
 
-模型到 Runtime 的输出有三种顶层 `kind`：
+模型到 Runtime 的输出有四种顶层 `kind`：
 
 ```ts
 type ProtocolOutput =
+  | TaskSummary
   | Act
   | Answer
   | Done
 ```
+
+### Task Summary
+
+`task_summary` 用于执行前提炼任务内容。它不启动执行，只让 Runtime 记录一份可确认的 Task Contract 草案。
+
+当用户输入较长、目标含糊、需要确认范围，或 UI 配置要求“先总结任务内容再开始”时，模型应先输出 `task_summary`。Runtime 提取 `task` 作为右侧任务栏和后续 Run / Action Graph 的任务内容，并等待用户确认、修改或取消。
+
+```json
+{
+  "kind": "task_summary",
+  "message": "我会先确认任务内容，再开始执行。",
+  "task": {
+    "title": "优化会话生命周期协议和 UI 状态展示",
+    "summary": "补充父子会话状态展示、任务结果持久化、done 结果绑定和右侧任务栏规范。",
+    "goal": "让 Runtime 能明确显示子会话状态、持久化子会话结果，并在主会话中汇总这些结果。",
+    "scope": [
+      "docs/harness-protocol",
+      "docs/harness-implementation/session-lifecycle-v1"
+    ],
+    "criteria": [
+      "协议定义 task_summary 和 done result。",
+      "UI 规范包含底部子会话状态框和右侧任务栏。",
+      "实现计划包含获取结果、结果绑定和自动汇总。"
+    ],
+    "risks": [],
+    "requires_confirmation": true
+  }
+}
+```
+
+Runtime 处理：
+
+- `task_summary` 不进入执行队列。
+- Runtime 将 `task` 保存为 pending Task Contract，并展示给用户确认。
+- 用户确认后，Runtime 才接受后续 `act` declaration。
+- 用户修改后，Runtime 使用修改后的 Task Contract 构造 Run / Action Graph。
+- 如果用户配置允许自动确认，Runtime 可以把 `task_summary` 作为 task content 直接进入执行，但需要在 Event 和 Projection 中记录来源。
 
 ### Act
 
@@ -148,14 +187,42 @@ type ProtocolOutput =
 
 ### Done
 
-`done` 结束当前 turn，可以包含用户可见 closing message。
+`done` 结束当前任务周期。任务完成时，模型应输出可持久化的 `result`，Runtime 将它保存为与当前 Task 绑定的 ResultRecord。
 
 ```json
 {
   "kind": "done",
-  "message": "The requested check is complete."
+  "message": "The requested check is complete.",
+  "result": {
+    "status": "completed",
+    "summary": "Updated the protocol and implementation plan for session lifecycle UI and result handling.",
+    "artifacts": [
+      "artifact://run_123/protocol_update"
+    ],
+    "changes": [
+      "change://run_123/session_lifecycle_docs"
+    ],
+    "criteria": [
+      {
+        "text": "Protocol defines done result persistence.",
+        "status": "satisfied",
+        "evidence": ["artifact://run_123/protocol_update"]
+      }
+    ],
+    "unresolved": [],
+    "risks": [],
+    "next": []
+  }
 }
 ```
+
+Runtime 处理：
+
+- 只有 Session 的任务状态达到 `completed`，Runtime 才把 `done.result` 作为可获取结果。
+- Runtime 将 `done.result` 持久化为 ResultRecord，并绑定 `task_id`、`session_id`、`assignment_id`、`action_id` 和 `run_id`。
+- 一个 Session 里可有多个 Task；一个 Task 默认只能有一个 canonical ResultRecord。后续重复 `done` 不应生成重复结果；如果内容有更新，应创建 result revision 或显式 replacement event。
+- 如果该 Task 已完成但没有 ResultRecord，Runtime 可以向该 Task 对应 Session 发送结果生成 prompt，要求它基于当前 Trace、Artifact 和任务 criteria 输出 `done.result`。
+- 同时执行多个任务时，`session.result.get` 与父会话自动汇总都按 task 维度读取 canonical ResultRecord，不重新扫描完整 transcript。
 
 ## 字段定义
 
@@ -163,9 +230,11 @@ type ProtocolOutput =
 
 ### 顶层字段
 
-- `kind`：必填。取值为 `act`、`answer` 或 `done`。
+- `kind`：必填。取值为 `task_summary`、`act`、`answer` 或 `done`。
 - `message`：可选。用户可见 Markdown、进度说明或最终回答。`answer` 应提供 `message`。
-- `calls`：`act` 必填。`answer` 和 `done` 省略。
+- `task`：`task_summary` 必填。包含 title、summary、goal、scope、criteria 和确认策略。
+- `result`：`done` 在任务完成时应提供。Runtime 将它归一化为 ResultRecord，并与当前 `task_id` 关联。
+- `calls`：`act` 必填。`task_summary`、`answer` 和 `done` 省略。
 - `title`：可选。Action Graph 的短标题，用于 Run、UI graph 和 Trace。
 - `goal`：可选。Run 或 Action Graph 的目标摘要、约束和完成标准。
 - `criteria`：可选 string array。整个 Action Graph 的完成标准。
@@ -418,6 +487,10 @@ Observation 包含：
 - summaries
 - artifact refs
 - failure 或 blocked reason
+- criteria 满足情况
+- result refs
+- change set refs
+- unresolved issues 和 risks
 - next instruction
 
 Runtime-to-model 内容分为两类：
@@ -470,6 +543,80 @@ Found two issues: undo/redo state is not wired through, and the table dropdown c
 
 Runtime 也会为 logs、UI、trace export、recovery 和程序化处理存储 machine-checkable JSON records。模型可见 transcript 面向理解和下一步生成优化。
 
+### 生命周期 Observation
+
+Runtime 返回给模型的 Observation 应说明当前 Action、Assignment 和 Agent Session 的生命周期状态。模型不需要从完整 transcript 猜测“任务到底做完没有”；它应该直接读取 Runtime 投影出的状态、结果、阻塞原因和下一步动作。
+
+Observation 应区分两类状态：
+
+- `task_status`：Action 或 Task 是否完成、失败、阻塞、部分完成或等待输入。
+- `session_status`：执行该任务的 Agent Session 当前是否 running、idle、waiting_user、waiting_permission、blocked、interrupted、failed 或 completed。
+
+示例：
+
+```json
+{
+  "run_id": "run_123",
+  "action_id": "review_toolbar",
+  "assignment_id": "assign_review_toolbar",
+  "session_id": "ses_review_toolbar",
+  "task_status": "completed",
+  "session_status": "completed",
+  "outcome": "success",
+  "summary": "Toolbar review completed and produced a structured findings report.",
+  "criteria": [
+    {
+      "text": "Find correctness and regression risks in toolbar behavior.",
+      "status": "satisfied",
+      "evidence": ["artifact://run_123/review_report"]
+    }
+  ],
+  "results": ["result://session/ses_review_toolbar"],
+  "artifacts": ["artifact://run_123/review_report"],
+  "changes": ["change://run_123/review_toolbar"],
+  "unresolved": [],
+  "risks": ["Layering fix still needs browser verification."],
+  "next": {
+    "owner": "runtime",
+    "action": "schedule_repair"
+  }
+}
+```
+
+`task_status` 和 `session_status` 不能合并。常见差异：
+
+| 场景 | `task_status` | `session_status` | Runtime 含义 |
+|---|---|---|---|
+| 子会话完成并返回结果 | `completed` | `completed` | 可进入 parent fan-in 或下游 Action。 |
+| 会话空闲但父任务还没汇总 | `running` 或 `partial` | `idle` | Runtime 还要消费 result、评估 gate 或等待其他分支。 |
+| 会话被系统重启打断 | `interrupted` | `interrupted` | 先做恢复评估，不直接判失败。 |
+| 等用户确认权限 | `waiting_permission` | `waiting_permission` | 创建 pending permission decision。 |
+| 子任务已产出部分可用结果 | `partial` | `partial` 或 `idle` | 按 policy 决定接收、继续、repair 或 handoff。 |
+| 依赖失败导致无法执行 | `blocked` | `blocked` | 暴露 blocked reason 和 needs。 |
+
+当 Runtime 给模型提供 all-idle summary 时，应包含 run-level 判断依据：
+
+```json
+{
+  "run_id": "run_123",
+  "run_status": "idle",
+  "summary": "No session is currently executing. Two actions are completed, one ready action still needs scheduling, and one gate is waiting for review.",
+  "counts": {
+    "actions_total": 4,
+    "actions_completed": 2,
+    "actions_ready": 1,
+    "sessions_idle": 3,
+    "pending_decisions": 1
+  },
+  "next": {
+    "owner": "runtime",
+    "action": "schedule_ready_action"
+  }
+}
+```
+
+模型收到这类 Observation 后，应围绕 Runtime 给出的 `next` 继续声明后续 Action 或返回综合回答；不应把 `session_status: "idle"` 当成任务完成。
+
 ### Result Observation 压缩规则
 
 Runtime 默认把大内容保存在 Artifact、raw record 或 runtime ref 中，只把可推理所需的摘要和引用放入模型上下文。
@@ -477,6 +624,8 @@ Runtime 默认把大内容保存在 Artifact、raw record 或 runtime ref 中，
 默认返回：
 
 - status、goal 和一句到三句 summary。
+- task_status、session_status 和 outcome。
+- criteria 满足情况、result refs 和 change set refs。
 - evidenced facts，每条带 `Ref:` 或 artifact ref。
 - artifact refs 和简短说明。
 - risks、unresolved、blocked reason 和 next instruction。
@@ -492,6 +641,28 @@ Runtime 默认把大内容保存在 Artifact、raw record 或 runtime ref 中，
 - 与当前决策无关的 child session 细节。
 
 模型需要精确细节时，应声明 `expand_ref`、`context` 或读取类 call。Runtime 决定是否展开、展开多少、是否只返回 excerpt，以及是否需要 permission 或 budget gate。
+
+### 结果与变更的模型使用规则
+
+模型在生成下一轮协议输出或 final answer 时，应优先使用 Runtime 的 Result Record、Change Set、Artifact refs 和 criteria 状态。
+
+规则：
+
+- 只有 Runtime 标记为 `completed` 且 required criteria 为 `satisfied` 的 Action，才能作为完成事实写入最终回答。
+- `partial` 可以作为可用进展，但要带上 unresolved、risks 和未满足 criteria。
+- `blocked` 要写清 `blocked_reason.class`、需要谁处理、需要什么输入或权限。
+- `failed` 要写清 `error.class`、可重试性和证据 ref；不要只说“失败了”。
+- `interrupted` 要写成恢复问题，说明最后安全点、可能副作用和 Runtime 建议。
+- `changes` 只描述 Change Set 中已记录的变更；文件、artifact、projection、decision、permission 和 context 变化要分开。
+- 如果 Observation 只有 `idle`，模型不能推断任务完成；需要读取 `next`、Action Graph 和 pending decisions。
+
+Final answer handoff 应包含：
+
+- 完成了哪些 required Action。
+- 产生了哪些 Result Record、Artifact 和 Change Set。
+- 哪些 criteria 满足、部分满足或未检查。
+- 哪些任务失败、阻塞或中断，以及原因。
+- Runtime 建议的下一步动作。
 
 ## 词汇与抽象边界
 

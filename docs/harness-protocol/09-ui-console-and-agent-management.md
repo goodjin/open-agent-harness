@@ -51,10 +51,16 @@ Command 类型：
 - `run.pause`
 - `run.resume`
 - `run.abort`
+- `task.summary.confirm`
+- `task.summary.revise`
+- `task.summary.cancel`
 - `task.retry`
 - `task.cancel`
 - `action.retry`
 - `assignment.cancel`
+- `session.pause`
+- `session.resume`
+- `session.result.get`
 - `decision.answer`
 - `permission.approve`
 - `permission.reject`
@@ -100,6 +106,8 @@ Session Workbench 展示：
 - root session
 - child session
 - descendant session
+- bottom child-session status panel
+- right task bar
 - Workflow asset management session
 - review / test / debug / research 等 specialist session
 - waiting_user、waiting_permission、blocked、partial、failed 等状态标记
@@ -112,8 +120,72 @@ Session Workbench 展示：
 - 从 parent session 跳转到 child session，也可以从 child session 回到 parent run projection。
 - 查看某个 Agent Session 的上下文来源，包括 Projection、Memory、Artifact、Trace 和语义解释提示。
 - 将某个 session 的 Artifact、summary 或 unresolved issues 作为 Handoff 输入交给后续 Agent Session。
+- 在等待子会话结果时，通过底部状态框查看每个子会话的当前状态和结果入口。
+- 在右侧任务栏查看当前会话关联的任务内容、执行状态和持久化结果。
 
 Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，是把输入提交给 Runtime；Runtime 再根据该 session 的 authority、Assignment、Context Bundle 和当前 Projection 构造下一次模型调用。
+
+### 子会话状态框
+
+当父会话等待一个或多个子会话结果时，Session Workbench 底部应显示 child-session status panel。该 panel 读取 Runtime Projection，不从聊天文本推断状态。
+
+每个子会话一行：
+
+- 状态图标。
+- 会话标题。
+- 状态名称。
+- 最近更新时间或简短 current summary。
+- 操作按钮。
+
+操作按钮：
+
+| 操作 | 可用条件 | Command / Runtime 行为 |
+|---|---|---|
+| 暂停 | child session `running`、`ready` 或 `idle` | `session.pause`，Runtime 写入 pause / cancellation-safe state。 |
+| 恢复 | child session `paused`、`idle`、`interrupted` 或可恢复的 `blocked` | `session.resume`，Runtime 根据 Projection 构造下一轮输入。 |
+| 获取结果 | child task status 为 `completed` | `session.result.get`，返回与 child task 绑定的 canonical ResultRecord。 |
+| 查看结果 | child task 有 canonical ResultRecord | 打开 result modal，展示该 task 的 summary、criteria、artifacts、changes、risks、unresolved 和 refs。 |
+| 打开会话 | 任意状态 | 进入 child session workbench。 |
+
+状态图标语义：
+
+| Status | 图标语义 |
+|---|---|
+| `running` | 活跃执行。 |
+| `idle` | 等待 fan-in、通知或下一步调度。 |
+| `paused` | 已暂停，可恢复。 |
+| `waiting_user` | 等待用户输入。 |
+| `waiting_permission` | 等待权限审批。 |
+| `blocked` | 有明确阻塞原因。 |
+| `partial` | 有可用部分结果。 |
+| `interrupted` | 需要恢复判断。 |
+| `failed` | 已失败。 |
+| `completed` | 已完成，可获取结果。 |
+
+`session.result.get` 与会话结束自动回复使用同一份结果。Runtime 不应为 UI 获取动作重复生成结果；如果目标 Task completed 但没有 ResultRecord，Runtime 先请求该 Task 对应 Session 输出 `done.result`，再持久化并返回。
+
+### 右侧任务栏
+
+Session Workbench 右侧应提供 task bar，用于记录当前会话的任务序列。
+
+任务栏字段：
+
+- task id。
+- task title。
+- task content / summary。
+- source：user input、model `task_summary`、user revised summary 或 Runtime generated。
+- status：draft、ready、running、waiting_user、waiting_permission、blocked、partial、completed、failed、interrupted、cancelled。
+- owner session。
+- child sessions。
+- criteria。
+- result ref。
+- latest update。
+
+任务内容默认来自用户输入。模型也可以在执行前通过 `kind: "task_summary"` 输出任务摘要；Runtime 将其作为 pending task content 展示给用户确认。用户确认后，任务栏使用确认后的内容；用户修改后，任务栏保存 revised content，并以它作为后续 Run / Action Graph 的任务合同来源。
+
+任务栏支持一个会话内多个任务的切换与历史回看，默认展示当前 task。用户可以点开历史任务查看对应状态和结果。
+
+当某个任务有 ResultRecord 时，该任务的任务栏展示结果入口。点击后打开 result modal。Result modal 展示该任务的 canonical result；如有 revision，可展示历史版本，但父会话汇总默认只读取该任务的 canonical revision。
 
 ## Agent Manager
 

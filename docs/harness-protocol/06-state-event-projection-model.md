@@ -228,7 +228,7 @@ Action、Assignment、Artifact、Gate 和环境恢复使用共享事件类型：
 - result collection status
 - parent reply summary
 - task summary confirmation
-- session result index
+- task result index
 - open decision queue
 - gate status
 - artifact index
@@ -376,18 +376,19 @@ Task / Action 的终态由 criteria、gate、result 和 evidence 决定，不由
 
 ### 结果记录
 
-每个终态或 `partial` 的 Session、Assignment 和 Action 都应写入 Result Record。Result Record 是 Runtime 后续判断、UI 展示、handoff、恢复和 final answer 的输入。
+每个终态或 `partial` 的 Session、Assignment 和 Action 都应写入 Result Record。Result Record 是 Runtime 后续判断、UI 展示、handoff、恢复和 final answer 的输入。运行时要按任务记录结果。
 
-Result Record 与 Session 绑定。一个 Session 默认只有一个 canonical ResultRecord；重复生成会造成父会话汇总不稳定，因此 Runtime 应通过 `session_id`、`assignment_id`、`action_id` 和 result revision 管理更新。UI 的“获取结果”和会话结束时的自动回复使用同一份 ResultRecord。
+Result Record 与 Task 绑定。一个 Task 默认只有一个 canonical ResultRecord；重复生成会造成父会话汇总不稳定，因此 Runtime 应通过 `task_id`、`session_id`、`assignment_id`、`action_id` 和 result revision 管理更新。UI 的“获取结果”和会话结束时的自动回复使用同一份 ResultRecord。
 
 Result Record 字段：
 
 ```json
 {
   "id": "result_session_review_toolbar",
-  "scope": "session",
+  "scope": "task",
   "run_id": "run_123",
   "session_id": "ses_review_toolbar",
+  "task_id": "task_review_toolbar_1",
   "assignment_id": "assign_review_toolbar",
   "action_id": "review_toolbar",
   "status": "completed",
@@ -426,8 +427,9 @@ Result Record 字段：
 | 字段 | 含义 |
 |---|---|
 | `status` | Canonical status，供 Projection 和调度使用。 |
-| `revision` | 同一 Session 结果的修订序号。 |
-| `canonical` | 是否为该 Session 当前可消费的主结果。 |
+| `task_id` | 当前结果的任务级标识。 |
+| `revision` | 同一 Task 结果的修订序号。 |
+| `canonical` | 是否为该 Task 当前可消费的主结果。 |
 | `outcome` | 面向结果分类，可取 `success`、`partial_success`、`failure`、`blocked`、`cancelled`、`interrupted`、`skipped`。 |
 | `summary` | 一到三句结果摘要，面向用户和后续模型。 |
 | `criteria` | 每条完成标准的满足情况，可取 `satisfied`、`partial`、`unsatisfied`、`not_checked`。 |
@@ -443,11 +445,12 @@ Result Record 字段：
 
 结果获取规则：
 
-- 只有任务状态为 `completed` 的 Session 可以被用户或父会话主动“获取结果”。
-- 如果 completed Session 已有 canonical ResultRecord，Runtime 直接返回该结果，不重新生成。
-- 如果 completed Session 没有 ResultRecord，Runtime 写入 `session.result_requested`，向该 Session 发送结果生成 prompt，要求输出 `done.result`。
-- Runtime 收到 `done.result` 后写入 `session.result_recorded`，并更新 session result index。
-- 如果结果需要修订，Runtime 写入 `session.result_revised`，保留历史 revision，并只把最新 canonical revision 提供给父会话汇总。
+- 默认先用当前 active 的 Task；若当前无 active Task，则用该 Session 最新的 completed Task。
+- 只有任务状态为 `completed` 的 Task 可以被用户或父会话主动“获取结果”。
+- 如果目标 Task 已有 canonical ResultRecord，Runtime 直接返回该结果，不重新生成。
+- 如果目标任务 completed 但没有 ResultRecord，Runtime 写入 `session.result_requested`，向该 Task 对应 Session 发送结果生成 prompt，要求输出 `done.result`。
+- Runtime 收到 `done.result` 后写入 `session.result_recorded`，并更新 task result index。
+- 如果结果需要修订，Runtime 写入 `session.result_revised`，保留历史 revision，并只把该 Task 的最新 canonical revision 提供给父会话汇总。
 
 错误与阻塞应使用可分类字段：
 

@@ -51,7 +51,7 @@ v1 只做当前 Harness runtime 和 UI 可落地的最小闭环：
 | `SessionNotification` | run-scoped `notifications/` 或 event payload | 记录 parent -> child 的 Runtime-mediated sync 通知。 |
 | `ResultCollection` | run-scoped `collections/` 或 projection payload | 记录多个 child session 的 fan-in、timeout 和汇总策略。 |
 | `TaskSummary` | run-scoped `task-summaries/` 或 task record field | 记录模型 `task_summary`、用户确认和修订后的任务内容。 |
-| `SessionResultIndex` | projection payload | 记录 session -> canonical ResultRecord 的绑定关系和 revision。 |
+| `TaskResultIndex` | projection payload | 记录 task -> canonical ResultRecord 的绑定关系和 revision。 |
 
 `ResultRecord` 和 `ChangeSet` 不替代 Artifact。Artifact 保存产物；ResultRecord 解释产物是否满足任务；ChangeSet 解释本轮改变了什么。
 
@@ -89,12 +89,12 @@ TaskSummary 建议 record：
 
 Result 绑定规则：
 
-- `done.result` 是 Session canonical result 的来源。
-- `session.result.get` 和会话结束自动回复使用同一份 ResultRecord。
-- `ResultRecord` 绑定 `session_id`，并进入 `SessionResultIndex`。
-- completed Session 已有 canonical result 时，Runtime 直接返回，不重新生成。
-- completed Session 没有 result 时，Runtime 给该 Session 发送 result prompt，要求输出 `done.result`。
-- 父会话自动汇总时，只读取 canonical ResultRecord，不重新扫描 transcript。
+- `done.result` 是 Task canonical result 的来源。
+- `session.result.get` 与会话结束自动回复按 task 维度使用同一份 ResultRecord。
+- `ResultRecord` 绑定 `task_id` 和 `session_id`，并进入 `TaskResultIndex`。
+- completed Task 已有 canonical result 时，Runtime 直接返回，不重新生成。
+- completed Task 没有 result 时，Runtime 给该 Task 对应 Session 发送 result prompt，要求输出 `done.result`。
+- 父会话自动汇总时，只按 child 任务读取 canonical ResultRecord，不重新扫描 transcript。
 
 Result prompt 示例：
 
@@ -248,6 +248,7 @@ Session Workbench 底部 child-session status panel：
 
 - 展示 task title、task summary、source、status、criteria、owner session、child sessions、result ref。
 - 用户输入默认作为 task content。
+- 支持会话内多任务的切换，默认展示当前 task。
 - `task_summary` 生成 pending task content，用户确认后才开始执行。
 - 用户修改 task summary 后保存 revised content。
 - 有 canonical result 时展示 result entry，点击打开 result modal。
@@ -284,7 +285,7 @@ Runtime 在以下动作中使用生命周期状态：
 | 调度 ready Action | `Action.status`、`depends_on`、resource locks、budget | 找出可执行节点，创建 Assignment 或 executor invocation。 |
 | 创建 Agent Session | `Assignment.status`、authority、Context Bundle | 写 `session.created`，初始化 `AgentSession.status = ready`。 |
 | 监控执行 | attempt handle、timeout、`session_status` | 超时或 handle 丢失时写 `interrupted`。 |
-| 处理 child session fan-in | child ResultRecord、parent Action criteria | 汇总完成、partial、failed、blocked，决定 parent 是否继续。 |
+| 处理 child session fan-in | child Task ResultRecord、parent Action criteria | 汇总完成、partial、failed、blocked，决定 parent 是否继续。 |
 | 构造模型上下文 | ResultRecord、ChangeSet、ArtifactIndex、visibility | 给模型传摘要和 refs，不传完整 transcript。 |
 | 生成 Runtime Observation | `task_status`、`session_status`、outcome、criteria、next | 明确下一步是继续、回答、repair、review、ask_user 还是 block。 |
 | Handoff | ResultRecord、ChangeSet、unresolved、risks、Trace refs | 构造下游 Session 的 Context Bundle。 |
@@ -408,16 +409,16 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 改动：
 
 - 扩展 `packages/opencode/src/harness/schema.ts` 的 `Status`、`TaskStatus`、`ActionStatus`、`Assignment.status`、`AgentSessionRecord.status`。
-- 新增 `ResultRecord`、`ChangeSet`、`ProgressProjection`、`LifecycleProjection`、`RecoveryPlan`、`TaskSummary`、`SessionResultIndex` schema。
+- 新增 `ResultRecord`、`ChangeSet`、`ProgressProjection`、`LifecycleProjection`、`RecoveryPlan`、`TaskSummary`、`TaskResultIndex` schema。
 - 在 `HarnessStore` 增加 results、changes、lifecycle projections 的 put/list/get 方法。
-- 在 `HarnessStore` 增加 task summaries 和 session result index 的 put/list/get 方法。
+- 在 `HarnessStore` 增加 task summaries 和 task result index 的 put/list/get 方法。
 
 验收：
 
 - schema parse 覆盖所有新增状态。
 - store 可以写入、读取、列出 ResultRecord 和 ChangeSet。
 - store 可以写入、读取、确认和修订 TaskSummary。
-- SessionResultIndex 能按 session id 返回 canonical ResultRecord。
+- TaskResultIndex 能按 task id 返回 canonical ResultRecord。
 - 旧状态值仍能通过兼容解析或迁移路径读取。
 
 ### Phase 2: Runtime Reducer And Projection
@@ -429,7 +430,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - 在 `HarnessRuntime` 增加 `transition()` 或 `lifecycle()` helper。
 - 扩展当前 `refresh()` 和 `project()`，从 tasks/actions/assignments/sessions/results/decisions 汇总 Run 状态。
 - 写入 `run-progress`、`lifecycle`、`recovery` projections。
-- 写入 `task-summary` 和 `session-result-index` projections。
+- 写入 `task-summary` 和 `task-result-index` projections。
 
 验收：
 
@@ -437,7 +438,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - required action failed 时，Run 进入 `failed`。
 - waiting permission / waiting user 优先级高于 idle。
 - interrupted session 会生成 RecoveryPlan。
-- completed session 没有结果时，可以触发 `session.result_requested`。
+- completed task 没有结果时，可以触发 `session.result_requested`。
 
 ### Phase 3: Agent Assignment And Protocol Compatibility
 
@@ -450,7 +451,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - child 返回后写 ResultRecord，并把 Session / Assignment / Action 转为 completed、partial、blocked 或 failed。
 - 现有 `session/runner.ts` 的 protocol run 投影继续写入 `dsl_context.protocol.runs`，但增加 `task_status`、`session_status`、`result_ref`、`change_refs`、`blocked_reason`。
 - 支持模型输出 `task_summary`，Runtime 保存 pending task content。
-- 支持模型输出 `done.result`，Runtime 绑定 SessionResultIndex。
+- 支持模型输出 `done.result`，Runtime 绑定 TaskResultIndex。
 
 验收：
 
@@ -495,7 +496,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - Session Workbench 底部增加 child-session status panel。
 - 右侧增加 task bar，展示 TaskSummary、criteria、status、result ref 和 child sessions。
 - 增加 result modal，展示 canonical ResultRecord 和 revisions。
-- `get result` 按钮调用 `session.result.get`，只在 completed child 上启用。
+- `get result` 按钮调用 `session.result.get`，只在 completed child task 上启用。
 
 验收：
 
@@ -541,7 +542,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - `test/harness/session-notification.test.ts`
 - `test/harness/result-collection.test.ts`
 - `test/harness/task-summary.test.ts`
-- `test/harness/session-result-index.test.ts`
+- `test/harness/task-result-index.test.ts`
 
 覆盖场景：
 
@@ -554,8 +555,9 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - 多 child collection 聚合回复。
 - timeout 后检查 child 当前状态，不直接标记 failed。
 - `task_summary` 等待用户确认后再执行。
-- completed session result get 使用已绑定 ResultRecord，避免重复生成。
-- completed session 无结果时触发 result prompt 并保存 `done.result`。
+- completed task result get 使用已绑定 ResultRecord，避免重复生成。
+- session 中历史任务应按 task id 独立读取结果，不应互相覆盖。
+- completed task 无结果时触发 result prompt 并保存 `done.result`。
 - UI/API projection shape。
 
 ## 最小交付
@@ -567,7 +569,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - Runtime lifecycle reducer。
 - run projection 汇总。
 - parent notification 和 result collection 的基础 API。
-- TaskSummary 和 SessionResultIndex。
+- TaskSummary 和 TaskResultIndex。
 - Harness Console 展示 ProgressProjection、ResultRecord、ChangeSet。
 - Session Workbench 底部 child status panel 和右侧 task bar。
 
