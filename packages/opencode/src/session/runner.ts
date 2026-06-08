@@ -446,6 +446,7 @@ export namespace SessionRunner {
     recovered: boolean
   }) {
     const runID = Identifier.ascending("log").replace(/^log_/, "apr_")
+    const plan = input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
     const runtime = input.stream.runtimeTools ?? await RuntimeTools.build({
       agent: input.stream.agent,
       model: input.stream.model,
@@ -491,14 +492,19 @@ export namespace SessionRunner {
                 model: input.stream.model,
               })
             : action.executor.type === "human"
-              ? human({
-                  action,
-                  runID,
-                  sessionID: input.sessionID,
-                  messageID: input.chat.message.id,
-                })
+                  ? human({
+                      action,
+                      runID,
+                      sessionID: input.sessionID,
+                      messageID: input.chat.message.id,
+                    })
             : Promise.resolve(undefined),
     })
+    await verifierGate({
+      actions: plan,
+      run,
+    })
+    await summarizeContinue(run)
     await completeRun({
       agent: input.stream.agent.name,
       messageID: input.chat.message.id,
@@ -565,6 +571,215 @@ export namespace SessionRunner {
       },
     })
     return run
+  }
+
+  async function verifierGate(input: {
+    actions: AgentProtocol.Action[]
+    run: AgentProtocol.Result
+  }) {
+    if (input.actions.length === 0) return
+    const depsByID = new Map<string, readonly string[]>()
+    const kindByAction = new Map<string, string | undefined>()
+    const kindByAgent = new Map<string, string | undefined>()
+    for (const action of input.actions) {
+      if (action.executor.type === "agent") {
+        depsByID.set(action.id, action.depends_on)
+        const current = kindByAgent.get(action.executor.target)
+        const kind = current ?? (kindByAgent.set(action.executor.target, (await Agent.get(action.executor.target))?.kind).get(action.executor.target))
+        kindByAction.set(action.id, kind)
+      }
+    }
+    if (kindByAction.size === 0) return
+
+    const resultByID = new Map(input.run.actions.map((item) => [item.id, item] as const))
+
+    for (const [id, action] of resultByID) {
+      if (action.executor.type !== "agent") continue
+      if (kindByAction.get(id) !== "verifier") continue
+      if (action.status !== "failed" && action.status !== "blocked") continue
+      const deps = depsByID.get(id) ?? []
+      const workerID = deps.find((item) => kindByAction.get(item) === "worker")
+      const target = workerID ?? deps.find((item) => {
+        const result = resultByID.get(item)
+        return result?.executor.type === "agent" && typeof result.sessionID === "string"
+      })
+      if (!target) continue
+      const worker = resultByID.get(target)
+      if (!worker?.sessionID || !action.sessionID) continue
+
+      const handoff = await verifyLoop({
+        action,
+        verifierID: id,
+        verifierSession: SessionID.make(action.sessionID),
+        workerSession: SessionID.make(worker.sessionID),
+        report: action.output ?? action.summary,
+      })
+      if (!handoff) continue
+      action.status = handoff.status
+      action.summary = handoff.summary
+      if (handoff.output) action.output = handoff.output
+      if (handoff.error) action.error = handoff.error
+    }
+
+    input.run.status =
+      input.run.actions.some((item) => item.status === "failed")
+        ? "failed"
+        : input.run.actions.some((item) => item.status === "blocked")
+          ? "blocked"
+          : "completed"
+    input.run.summary = input.run.actions.map((item) => `${item.title}: ${item.status}`).join("\n")
+  }
+
+  async function verifyLoop(input: {
+    action: AgentProtocol.ResultAction
+    verifierID: string
+    verifierSession: SessionID
+    workerSession: SessionID
+    report: string
+  }) {
+    let output = input.report ?? ""
+    let status = input.action.status
+    let error: string | undefined
+
+    for (let i = 0; i < 2 && (status === "failed" || status === "blocked"); i++) {
+      try {
+        await continueSession(input.workerSession, [
+          `Verifier ${input.verifierID} found issues:`,
+          output,
+          "",
+          "Please continue from the current state, apply fixes, and report results for re-verification.",
+        ].join("\n"))
+
+        const retry = await continueSession(input.verifierSession, [
+          `Please re-verify the worker task for action ${input.verifierID} after the worker's fix.`,
+          "Return a clear PASS when done, otherwise include concrete unresolved issues.",
+          "",
+          `Previous report:\n${output}`,
+        ].join("\n"))
+
+        output = await assistantText(input.verifierSession, retry.info.id)
+      } catch (err) {
+        status = "blocked"
+        error = err instanceof Error ? err.message : "Failed to complete verifier handoff."
+        break
+      }
+
+      if (!output) {
+        status = "blocked"
+        error = "Unable to get verifier retry output."
+        break
+      }
+      status = verifyPass(output) ? "completed" : "blocked"
+      if (status === "completed") {
+        error = undefined
+      }
+    }
+
+    if (status === "blocked" && !error) {
+      error = `Verifier ${input.verifierID} still reports unresolved issues.`
+    }
+
+    return {
+      status,
+      summary: status === "completed"
+        ? `Verifier ${input.verifierID} passed after runtime handoff.`
+        : `Verifier ${input.verifierID} did not pass after runtime handoff.`,
+      output,
+      error,
+    }
+  }
+
+  async function continueSession(sessionID: SessionID, prompt: string) {
+    const delegated = await delegatedAgent(sessionID)
+    return SessionPrompt.prompt({
+      sessionID,
+      agent: delegated,
+      parts: [
+        {
+          type: "text",
+          text: prompt,
+        },
+      ],
+    })
+  }
+
+  function verifyPass(input: string) {
+    const text = input.toLowerCase()
+    if (/(fail|failed|失败|不通过|未通过|fix|need|问题|缺陷|错误|blocked|abort)/.test(text)) return false
+    return /\b(pass|passed|approve|approved|通过|ok|good|accept|passed|通过验证|无问题|all good)\b/.test(text)
+  }
+
+  function summarizeContinue(run: AgentProtocol.Result) {
+    const rows = run.actions
+      .filter((item) => item.executor.type === "tool" && item.executor.target === "session_continue")
+      .map((item) => {
+        const parsed = parseContinue(item.output)
+        const status = parsed?.status
+          ? typeof statusValue(parsed.status) === "string"
+            ? statusValue(parsed.status)
+            : "unknown"
+          : item.status
+        return {
+          id: item.id,
+          child: parsed?.child_session_id,
+          status,
+          finish: parsed?.finish,
+          text: parsed?.reply,
+        }
+      })
+      .filter((item) => item.child || item.text)
+    if (rows.length === 0) return
+    run.summary = [
+      run.summary,
+      "",
+      "Session continue replies:",
+      ...rows.map((item) => {
+        const status = typeof item.status === "string" ? item.status : "unknown"
+        const done = item.text ? item.text.replace(/\n+/g, " ").slice(0, 220) : "(no textual reply)"
+        return `- ${item.id} (${item.child ?? "child"}): ${status}${item.finish ? `, ${item.finish}` : ""} - ${done}`
+      }),
+    ].join("\n")
+  }
+
+  function statusValue(input: unknown) {
+    if (typeof input === "string") return input
+    if (input && typeof input === "object" && !Array.isArray(input) && "type" in input && typeof input.type === "string") return input.type
+    return
+  }
+
+  function parseContinue(input?: string) {
+    if (typeof input !== "string") return
+    try {
+      const data = JSON.parse(input) as {
+        kind?: string
+        child_session_id?: string
+        status?: unknown
+        finish?: string
+        reply?: string
+      }
+      if (data.kind !== "session_continue_result") return
+      return data
+    } catch {
+      return
+    }
+  }
+
+  async function assistantText(sessionID: SessionID, messageID: MessageID) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    const msg = msgs.find((item) => item.info.id === messageID) ?? msgs.findLast((item) => item.info.role === "assistant")
+    return msg?.parts
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+      .trim()
+      || ""
+  }
+
+  async function delegatedAgent(sessionID: SessionID) {
+    const session = await Session.get(sessionID)
+    const delegated = object(object(session.dsl_context).protocol).delegation
+    if (!delegated || typeof delegated !== "object" || Array.isArray(delegated)) return "default"
+    const item = object(delegated)
+    return text(item.agent) || "default"
   }
 
   async function completeRun(input: {

@@ -277,12 +277,31 @@ export namespace SessionPrompt {
     return
   }
 
-  function finish(sessionID: SessionID) {
+  function finish(sessionID: SessionID, after: MessageID | undefined) {
     const s = state()
-    delete s[sessionID]
     const status = SessionStatus.get(sessionID)
-    if (status.type === "error" || status.type === "timeout") return
+    const entry = s[sessionID]
+    if (!entry) return
+
+    if (status.type === "error" || status.type === "timeout") {
+      entry.callbacks.forEach((item) => item.reject(status))
+      delete s[sessionID]
+      return
+    }
+
     SessionStatus.set(sessionID, { type: "idle" })
+
+    if (entry.callbacks.length === 0) {
+      delete s[sessionID]
+      return
+    }
+
+    void resumeAfter(sessionID, after).catch((error) => {
+      const callbacks = s[sessionID]?.callbacks
+      if (!callbacks || callbacks.length === 0) return
+      callbacks.forEach((item) => item.reject(error))
+      delete s[sessionID]
+    })
   }
 
   export const LoopInput = z.object({
@@ -298,13 +317,16 @@ export namespace SessionPrompt {
 
     const abort = resume_existing ? resume(sessionID) : start(sessionID)
     if (!abort) {
+      const entry = state()[sessionID]
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
         callbacks.push({ resolve, reject })
       })
     }
 
-    using _ = defer(() => finish(sessionID))
+    let lastUserID: MessageID | undefined
+
+    using _ = defer(() => finish(sessionID, lastUserID))
 
     // Structured output state
     // Note: On session resumption, state is reset but outputFormat is preserved
@@ -337,6 +359,7 @@ export namespace SessionPrompt {
       }
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+      lastUserID = lastUser.id
       if (
         lastAssistant?.finish &&
         !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
@@ -777,6 +800,23 @@ export namespace SessionPrompt {
       .flatMap((item) => item.parts)
       .filter((part) => part.type === "compaction" && part.auto && part.overflow === true).length
     return count >= MAX_AUTO_OVERFLOW_COMPACTIONS
+  }
+
+  async function resumeAfter(sessionID: SessionID, after: MessageID | undefined) {
+    const entry = state()[sessionID]
+    if (!entry) return
+
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch(() => [])
+    const user = msgs.findLast((item) => item.info.role === "user")
+
+    if (!user || (after && user.info.id <= after)) {
+      const callbacks = entry.callbacks
+      callbacks.forEach((item) => item.reject(new Error("Session loop ended before pending user was processed.")))
+      return
+    }
+
+    if (entry.callbacks.length === 0) return
+    await loop({ sessionID, resume_existing: true })
   }
 
   async function stopCompact(input: { sessionID: SessionID; assistant: MessageV2.Assistant }) {

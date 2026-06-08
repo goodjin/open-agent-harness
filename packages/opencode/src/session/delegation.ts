@@ -196,10 +196,13 @@ export namespace SessionDelegation {
       const fresh = statusof(item) !== status || text(item.output) !== output
       const active = await pending(item)
       const done = await delivered(item)
+      const load = async () => assignment(await Session.get(input.sessionID))
+      const next = await load()
+      if (!next) return false
       if (!active && done) {
         if (fresh) await store(input.sessionID, item, body, input.messageID)
-        const next = assignment(await Session.get(input.sessionID))
-        if (next && typeof next.notified_at !== "number") await notified(input.sessionID, next)
+        const alreadyNotified = typeof next.notified_at === "number"
+        if (!alreadyNotified) await notified(input.sessionID, next)
         return false
       }
       if (fresh) {
@@ -207,10 +210,10 @@ export namespace SessionDelegation {
         await logmeta(body)
         await store(input.sessionID, item, body, input.messageID)
       }
-      const next = assignment(await Session.get(input.sessionID))
-      if (!next || typeof next.notified_at === "number") return false
+      const freshNext = await load()
+      if (!freshNext) return false
       await notify(body)
-      await notified(input.sessionID, next)
+      await notified(input.sessionID, freshNext)
       return true
     } finally {
       ctx.busy.delete(input.sessionID)
@@ -415,7 +418,7 @@ export namespace SessionDelegation {
   async function notify(body: ReturnType<typeof completed>) {
     const { SessionPrompt } = await import("./prompt")
     const stat = await progress(body)
-    await SessionPrompt.prompt({
+    void SessionPrompt.prompt({
       sessionID: SessionID.make(body.parent_session_id as string),
       agent: body.parent_agent,
       parts: [
@@ -437,6 +440,8 @@ export namespace SessionDelegation {
           ].join("\n"),
         },
       ],
+    }).catch((error) => {
+      log.warn("session delegation notify failed", { error, sessionID: body.parent_session_id })
     })
   }
 

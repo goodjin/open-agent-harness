@@ -334,15 +334,28 @@ export namespace RuntimeTools {
           const prompt = required(req.prompt, "prompt")
           await allowed(input.session.id, child)
           const result = await continueSession(child, prompt)
+          const reply = assistantText(result)
+          const status = SessionStatus.get(child)
           return {
             title: "Session continued",
-            metadata: { child_session_id: child, message_id: result.info.id },
-            output: JSON.stringify({
+            metadata: {
               child_session_id: child,
-              status: SessionStatus.get(child),
               message_id: result.info.id,
+              status,
               finish: result.info.role === "assistant" ? result.info.finish : undefined,
-            }, null, 2),
+            },
+            output: JSON.stringify(
+              {
+                kind: "session_continue_result",
+                child_session_id: child,
+                status,
+                message_id: result.info.id,
+                finish: result.info.role === "assistant" ? result.info.finish : undefined,
+                reply: reply || "No textual reply was produced from the child session.",
+              },
+              null,
+              2,
+            ),
           }
         },
       )
@@ -643,6 +656,13 @@ export namespace RuntimeTools {
 
   function childID(input: unknown) {
     return SessionID.make(required(input, "child_session_id"))
+  }
+
+  function assistantText(result: MessageV2.WithParts) {
+    return result.parts
+      .flatMap((part) => (part.type === "text" ? [part.text] : []))
+      .join("\n")
+      .trim()
   }
 
   function required(input: unknown, key: string) {
