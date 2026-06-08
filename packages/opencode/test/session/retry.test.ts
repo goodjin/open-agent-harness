@@ -126,6 +126,22 @@ describe("session.retry.retryable", () => {
     expect(SessionRetry.retryable(error)).toBeUndefined()
   })
 
+  test("does not treat TextStreamNoDelta as timeout", () => {
+    const error = new MessageV2.APIError({
+      message: "The model stream started text output but did not emit any text delta. This usually means a truncated or malformed stream.",
+      isRetryable: true,
+      metadata: {
+        code: "TextStreamNoDelta",
+        reason: "text-start without text-delta",
+      },
+    }).toObject() as MessageV2.APIError
+
+    expect(SessionRetry.retryable(error)).toBe(
+      "The model stream started text output but did not emit any text delta. This usually means a truncated or malformed stream.",
+    )
+    expect(SessionRetry.timeout(error)).toBe(false)
+  })
+
   test("maps timeout API errors", () => {
     const error = new MessageV2.APIError({
       message: "The operation timed out.",
