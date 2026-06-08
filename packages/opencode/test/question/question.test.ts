@@ -312,6 +312,45 @@ test("ask - restores prior status after reject", async () => {
   })
 })
 
+test("ask - works from timeout state and restores timeout after reply", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = SessionID.make("ses_question_status_timeout")
+      SessionStatus.set(sessionID, { type: "running" })
+      SessionStatus.set(sessionID, { type: "timeout", message: "no progress" })
+
+      const ask = Question.ask({
+        sessionID,
+        questions: [
+          {
+            question: "How should we proceed?",
+            header: "Choice",
+            options: [{ label: "Retry", description: "Continue running" }],
+          },
+        ],
+      })
+
+      const pending = await Question.list()
+      expect(SessionStatus.get(sessionID).type).toBe("waiting_user")
+
+      await Question.reply({
+        requestID: pending[0].id,
+        answers: [["Retry"]],
+      })
+      await ask
+
+      const status = SessionStatus.get(sessionID)
+      expect(status.type).toBe("timeout")
+      if (status.type === "timeout") {
+        expect(status.message).toBe("no progress")
+      }
+      SessionStatus.set(sessionID, { type: "idle" })
+    },
+  })
+})
+
 test("reply - does nothing for unknown requestID", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({

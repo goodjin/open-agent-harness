@@ -226,6 +226,28 @@ describe("session state machine", () => {
     })
   })
 
+  test("timeout to waiting_user transition", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-timeout-waiting-user" as SessionID
+        SessionStatus.set(sessionID, { type: "running" })
+        SessionStatus.set(sessionID, { type: "timeout", message: "timed out" })
+
+        let receivedStatus: SessionStatus.Info | undefined
+        const unsub = Bus.subscribe(SessionStatus.Event.Status, (event) => {
+          receivedStatus = event.properties.status
+        })
+
+        SessionStatus.set(sessionID, { type: "waiting_user" })
+        await new Promise((resolve) => setTimeout(resolve, 10))
+        unsub()
+
+        expect(receivedStatus?.type).toBe("waiting_user")
+      },
+    })
+  })
+
   test("VAL-SESSION-008: Error to idle transition (recovery)", async () => {
     await Instance.provide({
       directory: projectRoot,
