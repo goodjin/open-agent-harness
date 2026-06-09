@@ -42,6 +42,7 @@ export namespace AgentProtocolExecutor {
       const result = (await input.execute?.(item, prompt)) ?? defaults(item, prompt, input.agents ?? [])
       const failed = result.metadata.failed === true
       const stop = result.metadata.blocked === true
+      const skipped = result.metadata.skipped === true
       const end = Date.now()
       done.push({
         id: item.id,
@@ -49,7 +50,9 @@ export namespace AgentProtocolExecutor {
         operation: item.operation,
         executor: item.executor,
         input: item.input,
-        status: stop ? "blocked" : failed ? "failed" : "completed",
+        depends_on: item.depends_on,
+        verification: item.verification,
+        status: stop ? "blocked" : failed ? "failed" : skipped ? "skipped" : "completed",
         summary: result.output,
         output: stop || failed ? undefined : result.output,
         error: stop || failed ? result.output : undefined,

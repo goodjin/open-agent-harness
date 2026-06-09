@@ -12,6 +12,10 @@ import { SessionRunner } from "../../src/session/runner"
 import { SessionLog } from "../../src/session/log"
 import { LLM } from "../../src/session/llm"
 import { SessionPrompt } from "../../src/session/prompt"
+import { Question } from "../../src/question"
+import { Provider } from "../../src/provider/provider"
+import { SessionStatus } from "../../src/session/status"
+import { SessionDelegation } from "../../src/session/delegation"
 import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
@@ -153,6 +157,7 @@ describe("SessionRunner", () => {
           status: "completed",
           executor: { type: "tool", target: "bash", capabilities: ["repo"] },
           input: {},
+          depends_on: [],
           summary: "large command completed",
           output: text,
           tool_call_ids: [],
@@ -1095,6 +1100,286 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("recovers unfinished native protocol output and restores pending confirm", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const hook = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                finish: "tool-calls",
+                time: { created: Date.now(), completed: Date.now() },
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                sessionID: session.id,
+                messageID: assistant.id,
+                type: "tool",
+                callID: "call_protocol_resume",
+                tool: LLM.PROTOCOL_OUTPUT_TOOL,
+                state: {
+                  status: "completed",
+                  input: {
+                    version: "2",
+                    items: [
+                      {
+                        id: "confirm_plan",
+                        kind: "confirm",
+                        title: "Confirm plan",
+                        prompt: "Confirm this plan before execution.",
+                        plan: "1. Inspect alignment guides.\n2. Patch snapping behavior.",
+                      },
+                    ],
+                  },
+                  title: "Agent Protocol Output",
+                  output: "Agent Protocol package received.",
+                  metadata: { protocol: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } satisfies MessageV2.ToolPart)
+
+              expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
+              for (let i = 0; i < 20 && (await Question.list()).length === 0; i++) await Bun.sleep(10)
+              const questions = await Question.list()
+              const logs = await SessionLog.list({ sessionID: session.id })
+
+              expect(questions).toHaveLength(1)
+              expect(questions[0]?.questions[0]?.header).toBe("Confirm plan")
+              expect(questions[0]?.questions[0]?.question).toContain("Inspect alignment guides")
+              expect(logs.some((item) => item.type === "protocol.recovery.started")).toBe(true)
+              await Question.reject(questions[0]!.id)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("does not replay interrupted non-idempotent tool protocol output", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const hook = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                finish: "tool-calls",
+                time: { created: Date.now(), completed: Date.now() },
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                sessionID: session.id,
+                messageID: assistant.id,
+                type: "tool",
+                callID: "call_protocol_tool_resume",
+                tool: LLM.PROTOCOL_OUTPUT_TOOL,
+                state: {
+                  status: "completed",
+                  input: {
+                    version: "2",
+                    items: [{ id: "read_package", kind: "tool", target: "read", args: { filePath: "package.json" } }],
+                  },
+                  title: "Agent Protocol Output",
+                  output: "Agent Protocol package received.",
+                  metadata: { protocol: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } satisfies MessageV2.ToolPart)
+
+              expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
+              for (let i = 0; i < 20 && SessionStatus.get(session.id).type !== "blocked"; i++) await Bun.sleep(10)
+              const parts = await MessageV2.parts(assistant.id)
+
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_recovery_hint")).toBe(true)
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context")).toBe(false)
+              expect(SessionStatus.get(session.id).type).toBe("blocked")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("recovers agent protocol output without duplicating an existing active child", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const hook = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                finish: "tool-calls",
+                time: { created: Date.now(), completed: Date.now() },
+              })) as MessageV2.Assistant
+              const body = {
+                version: "2",
+                items: [{ id: "plan_snap", kind: "agent", target: "feature-planner", prompt: "Plan snap guides." }],
+              }
+              await Session.updatePart({
+                id: PartID.ascending(),
+                sessionID: session.id,
+                messageID: assistant.id,
+                type: "tool",
+                callID: "call_protocol_agent_resume",
+                tool: LLM.PROTOCOL_OUTPUT_TOOL,
+                state: {
+                  status: "completed",
+                  input: body,
+                  title: "Agent Protocol Output",
+                  output: "Agent Protocol package received.",
+                  metadata: { protocol: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } satisfies MessageV2.ToolPart)
+              const declaration = AgentProtocol.parse(body)
+              if (declaration.payload.type !== "action_graph") throw new Error("expected action graph")
+              const child = await Session.create({ parentID: session.id, title: "Protocol: plan_snap (@feature-planner)" })
+              SessionStatus.set(child.id, { type: "running" })
+              await SessionDelegation.assign({
+                action: declaration.payload.actions[0]!,
+                agent: "feature-planner",
+                childID: child.id,
+                messageID: assistant.id,
+                parentAgent: "protocol-runner",
+                runID: "apr_existing_child",
+                sessionID: session.id,
+              })
+
+              expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
+              for (let i = 0; i < 20; i++) {
+                const parts = await MessageV2.parts(assistant.id)
+                if (parts.some((part) => part.type === "text" && part.text.includes("no duplicate child"))) break
+                await Bun.sleep(10)
+              }
+              const children = await Session.children(session.id)
+              const parts = await MessageV2.parts(assistant.id)
+
+              expect(children).toHaveLength(1)
+              expect(parts.some((part) => part.type === "text" && part.text.includes("no duplicate child"))).toBe(true)
+              expect(SessionStatus.get(child.id).type).toBe("running")
+              SessionStatus.set(child.id, { type: "idle" })
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
   test("protocol runner retries malformed native AgentProtocolOutput after plain progress text", async () => {
     await using tmp = await tmpdir()
     const model = {
@@ -1398,6 +1683,318 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner retries verifier packages that do not depend on workers", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const inputs: LLM.StreamInput[] = []
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
+      calls++
+      inputs.push(input)
+      const body = calls === 1
+        ? {
+            version: "2",
+            items: [
+              { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change." },
+              { id: "verify", kind: "agent", target: "backend-verifier", prompt: "Verify backend change." },
+            ],
+          }
+        : {
+            version: "2",
+            items: [{ id: "answer", kind: "answer", message: "Regenerated without executing the bad package." }],
+          }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "implement and verify backend" }],
+                tools: {},
+              })
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const children = await Session.children(session.id)
+              const messages = await Session.messages({ sessionID: session.id })
+              const retry = logs.find((item) => item.type === "protocol.retry")
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(children).toHaveLength(0)
+              expect(retry?.data.reason).toBe("invalid_verifier_dependency")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("invalid verifier dependencies")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("backend-verifier")
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Regenerated without executing")))).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("protocol runner defers verifier until worker delegation completes", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change." },
+        { id: "verify", kind: "agent", target: "backend-verifier", prompt: "Verify backend change.", depends: ["impl"] },
+      ],
+    }
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
+      fullStream: (async function* () {
+        yield { type: "start" }
+        yield { type: "start-step" }
+        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+        yield {
+          type: "tool-call",
+          toolCallId: "call_protocol",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: body,
+        }
+        yield {
+          type: "tool-result",
+          toolCallId: "call_protocol",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: body,
+          output: {
+            output: "Agent Protocol package received.",
+            title: "Agent Protocol Output",
+            metadata: { protocol: true },
+          },
+        }
+        yield {
+          type: "finish-step",
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        }
+        yield { type: "finish" }
+      })(),
+    }) as never)
+    const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      inputs.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: [
+          "kind: success",
+          "task_background: assigned by protocol test",
+          "task_content: implement backend change",
+          "completion_summary: done",
+          "changed_files: none",
+          "verification: not run",
+          "blockers: none",
+        ].join("\n"),
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "implement and verify backend" }],
+                tools: {},
+              })
+              const children = await Session.children(session.id)
+              const sessionAfter = await Session.get(session.id)
+              const protocol = sessionAfter.dsl_context?.protocol as {
+                runs?: { status: string; actions: { id: string; status: string; error?: string; output?: string }[] }[]
+              } | undefined
+
+              expect(result).toBe("stop")
+              expect(children).toHaveLength(1)
+              expect(children[0]?.title).toContain("@backend")
+              expect(inputs[0]?.agent).toBe("backend")
+              expect(inputs.some((item) => item.agent === "backend-verifier")).toBe(false)
+              expect(protocol?.runs?.[0]?.status).toBe("blocked")
+              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "verify")?.error).toContain("waiting for completed worker summaries")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
   test("protocol runner executes agent calls in child sessions", async () => {
     await using tmp = await tmpdir()
     const model = {
@@ -1408,13 +2005,13 @@ describe("SessionRunner", () => {
     } as never
     const data = {
       kind: "act",
-      message: "Delegate review.",
+      message: "Delegate backend work.",
       calls: [
         {
-          id: "review_toolbar_buttons",
+          id: "update_toolbar_backend",
           type: "agent",
-          name: "technical-reviewer",
-          args: { prompt: "Review toolbar button handlers" },
+          name: "backend",
+          args: { prompt: "Update toolbar button handlers" },
           result: "summary",
         },
       ],
@@ -1593,7 +2190,7 @@ describe("SessionRunner", () => {
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
               expect(children[0]?.parentID).toBe(session.id)
-              expect(children[0]?.title).toContain("Protocol: review_toolbar_buttons")
+              expect(children[0]?.title).toContain("Protocol: update_toolbar_backend")
               const child = await Session.get(children[0]!.id)
               expect(JSON.stringify(child.dsl_context)).toContain("agent.delegation.assignment")
               expect(JSON.stringify(child.dsl_context)).toContain('"parent_session_id"')
@@ -1601,14 +2198,14 @@ describe("SessionRunner", () => {
               expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_summary" && part.text.includes("The parent session will resume automatically"))).toBe(true)
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(done).toBeGreaterThanOrEqual(2)
-              expect(inputs[0]?.agent).toBe("technical-reviewer")
+              expect(inputs[0]?.agent).toBe("backend")
               expect(inputs[0]?.model).toEqual({
                 providerID: ProviderID.make("openai"),
                 modelID: ModelID.make("gpt-5.2"),
               })
               expect(inputs[1]?.agent).toBe("protocol-runner")
               expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(true)
-              expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes('"action_id": "review_toolbar_buttons"'))).toBe(true)
+              expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes('"action_id": "update_toolbar_backend"'))).toBe(true)
               expect(inputs[0]?.parts?.some((part) => part.type === "agent")).toBe(false)
               const text = inputs[0]?.parts?.map((part) => part.type === "text" ? part.text : "").join("\n")
               expect(text).not.toContain("<agent-protocol-call>")
@@ -4542,9 +5139,9 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("verifier dependency inference: schema leaves depends_on empty for runtime to infer", () => {
+  test("verifier dependency validation: schema leaves empty depends_on for runtime rejection", () => {
     // A V2 protocol with no depends reaches the runtime untouched so the
-    // runtime inference can auto-link the verifier to its base-name worker.
+    // runtime can reject the package before execution and ask the model to regenerate it.
     const decl = AgentProtocol.parse({
       version: "2",
       items: [
@@ -4557,10 +5154,9 @@ describe("SessionRunner", () => {
     expect(verify?.depends_on).toEqual([])
   })
 
-  test("verifier dependency inference: 'none' sentinel survives the parser", () => {
-    // The planner can explicitly opt out of auto-inference by setting
-    // depends_on to ["none"]. The schema strips the sentinel before validation
-    // and the runtime reads back the empty depends_on to mean "no dependency".
+  test("verifier dependency validation: 'none' sentinel is stripped before runtime rejection", () => {
+    // The schema strips the legacy sentinel before validation. For verifier
+    // items, the runtime now treats the resulting empty depends_on as invalid.
     const decl = AgentProtocol.parse({
       version: "2",
       items: [

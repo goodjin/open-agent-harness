@@ -1,5 +1,23 @@
 type Status = "ready" | "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled"
 
+type Log = {
+  id: string
+  sessionID?: string
+  messageID?: string
+  level?: string
+  type: string
+  data: Record<string, unknown>
+  time: number
+}
+
+export type GraphVerification = {
+  role?: "test" | "review"
+  worker?: string
+  required?: boolean
+  reason?: string
+  system?: boolean
+}
+
 export type GraphNode = {
   id: string
   title: string
@@ -8,6 +26,7 @@ export type GraphNode = {
   deps: string[]
   after: string[]
   executor: string
+  verification?: GraphVerification
   sessionID?: string
   attempt?: number
   output?: string
@@ -61,6 +80,9 @@ export type GraphRun = {
   }
   variables?: Record<string, unknown>
   metadata?: Record<string, unknown>
+  declaration?: unknown
+  items?: unknown[]
+  raw?: string
   time?: {
     started?: number
     updated?: number
@@ -90,8 +112,32 @@ function dict(input: unknown) {
   return input
 }
 
+function verify(input: unknown): GraphVerification | undefined {
+  const data = dict(input)
+  const role = data.role === "test" || data.role === "review" ? data.role : undefined
+  const worker = str(data.worker) || undefined
+  const reason = str(data.reason) || undefined
+  if (!role && !worker && !reason) return
+  return {
+    role,
+    worker,
+    required: typeof data.required === "boolean" ? data.required : undefined,
+    reason,
+    system: typeof data.system === "boolean" ? data.system : undefined,
+  }
+}
+
 function unique(input: string[]) {
   return [...new Set(input)]
+}
+
+function parse(input: unknown) {
+  if (typeof input !== "string") return
+  try {
+    return JSON.parse(input)
+  } catch {
+    return
+  }
 }
 
 function state(input: unknown): Status | "blocked" {
@@ -199,6 +245,121 @@ function protocols(input: unknown) {
   return runs.filter(record).filter((run) => str(run.runID) && str(run.title) && Array.isArray(run.actions))
 }
 
+function rawitems(input: unknown, declaration: unknown) {
+  const data = dict(input)
+  if (Array.isArray(data.items)) return data.items
+  if (Array.isArray(data.calls)) return data.calls
+  const payload = dict(dict(declaration).payload)
+  if (Array.isArray(payload.actions)) return payload.actions
+  if (payload.type === "message") {
+    const decl = dict(declaration)
+    return [
+      {
+        id: "response",
+        kind: str(decl.outcome, str(decl.intent, "message")),
+        title: str(decl.title, str(decl.intent, "Response")),
+        message: str(decl.message),
+        depends: [],
+      },
+    ]
+  }
+  return []
+}
+
+function item(input: unknown): GraphNode {
+  const data = dict(input)
+  const exec = dict(data.executor)
+  const kind = str(data.kind, str(data.operation, str(data.type, "item")))
+  const target = str(data.target) || str(data.name) || str(data.tool) || str(exec.target)
+  return {
+    id: str(data.id, target || kind),
+    title: str(data.title, str(data.id, target || kind)),
+    type: kind,
+    status: status(data.status),
+    deps: unique([...list(data.depends), ...list(data.depends_on), ...list(data.after)]),
+    after: [],
+    executor: exec.type ? `${str(exec.type, "runtime")}:${str(exec.target, "auto")}` : target ? `${kind}:${target}` : kind,
+    verification: verify(data.verification),
+    output: str(data.summary) || str(data.message) || undefined,
+    error: str(data.error) || undefined,
+    time: record(data.time) ? (data.time as GraphNode["time"]) : undefined,
+    raw: input,
+  }
+}
+
+function logstatus(type: string): Status | "blocked" | undefined {
+  if (type === "protocol.action.completed") return "completed"
+  if (type === "protocol.action.failed") return "failed"
+  if (type === "protocol.action.blocked") return "blocked"
+  if (type === "protocol.action.skipped") return "skipped"
+}
+
+function logruns(input: Log[]): GraphRun[] {
+  const map = new Map<string, Log[]>()
+  for (const log of input) {
+    if (!log.type.startsWith("protocol.")) continue
+    const id = str(log.data.runID)
+    if (!id) continue
+    map.set(id, [...(map.get(id) ?? []), log])
+  }
+  return [...map.entries()]
+    .flatMap(([id, rows]) => {
+      const sorted = rows.slice().sort((a, b) => a.time - b.time || a.id.localeCompare(b.id))
+      const valid = sorted.find((row) => row.type === "protocol.validated")
+      if (!valid) return []
+      const done = sorted.find((row) => row.type === "protocol.completed" || row.type === "protocol.failed")
+      const declaration = valid.data.declaration
+      const raw = str(valid.data.raw) || undefined
+      const items = rawitems(parse(raw), declaration)
+      const by = new Map(
+        sorted.flatMap((row) => {
+          const action = str(row.data.actionID)
+          return action ? [[action, row] as const] : []
+        }),
+      )
+      const nodes = items.map(item).map((node) => {
+        const row = by.get(node.id)
+        const value = row ? logstatus(row.type) ?? state(row.data.status) : node.status
+        const exec = dict(row?.data.executor)
+        return {
+          ...node,
+          status: value === "blocked" ? "failed" : value,
+          executor: exec.type ? `${str(exec.type, "runtime")}:${str(exec.target, "auto")}` : node.executor,
+          verification: verify(row?.data.verification) ?? node.verification,
+          time: node.time ?? (record(row?.data.time) ? (row?.data.time as GraphNode["time"]) : undefined),
+        }
+      })
+      const out = new Map<string, string[]>()
+      for (const node of nodes) for (const dep of node.deps) out.set(dep, unique([...(out.get(dep) ?? []), node.id]))
+      const all = nodes.map((node) => ({ ...node, after: out.get(node.id) ?? [] }))
+      const result = dict(done?.data.result)
+      const run = {
+        id,
+        title: str(dict(declaration).title, str(result.title, "AgentProtocolOutput")),
+        source: "protocol" as const,
+        status: done?.type === "protocol.failed" ? "failed" : done ? state(result.status ?? "completed") : "running",
+        total: all.length,
+        completed: all.filter((node) => node.status === "completed").length,
+        nodes: all,
+        declaration,
+        items,
+        raw,
+        metadata: {
+          recovered: valid.data.recovered,
+          messageID: valid.messageID,
+          logID: valid.id,
+          metrics: dict(done?.data.metrics),
+        },
+        time: {
+          started: valid.time,
+          updated: sorted.at(-1)?.time,
+          completed: done?.time,
+        },
+      } satisfies GraphRun
+      return [run]
+    })
+}
+
 function action(input: Record<string, unknown>): GraphNode {
   const exec = dict(input.executor)
   return {
@@ -209,6 +370,7 @@ function action(input: Record<string, unknown>): GraphNode {
     deps: list(input.depends_on),
     after: [],
     executor: `${str(exec.type, "runtime")}:${str(exec.target, "auto")}`,
+    verification: verify(input.verification),
     sessionID: str(input.sessionID) || child(input),
     output: str(input.summary) || undefined,
     error: str(input.error) || undefined,
@@ -236,12 +398,57 @@ function protocol(run: Record<string, unknown>): GraphRun {
     completed: num(run.completed, nodes.filter((node) => node.status === "completed").length),
     nodes: nodes.map((node) => ({ ...node, after: out.get(node.id) ?? [] })),
     metadata: record(run.metrics) ? run.metrics : undefined,
+    declaration: run.declaration,
+    items: Array.isArray(run.items) ? run.items : undefined,
+    raw: str(run.raw) || undefined,
     time: record(run.time) ? (run.time as GraphRun["time"]) : undefined,
   }
 }
 
-export function graphRuns(input: unknown): GraphRun[] {
-  return [...workflows(input).map(workflow), ...protocols(input).map(protocol)].sort((a, b) => {
+function nodes(prev: GraphNode[] | undefined, next: GraphNode[]) {
+  if (next.length === 0) return prev ?? []
+  const map = new Map((prev ?? []).map((node) => [node.id, node]))
+  return next.map((node) => {
+    const old = map.get(node.id)
+    return {
+      ...old,
+      ...node,
+      deps: node.deps.length > 0 ? node.deps : old?.deps ?? [],
+      after: node.after.length > 0 ? node.after : old?.after ?? [],
+      verification: node.verification ?? old?.verification,
+      raw: node.raw ?? old?.raw,
+    }
+  })
+}
+
+function merge(a: GraphRun[], b: GraphRun[]) {
+  const map = new Map<string, GraphRun>()
+  for (const run of [...a, ...b]) {
+    const prev = map.get(run.id)
+    map.set(run.id, {
+      ...prev,
+      ...run,
+      total: Math.max(prev?.total ?? 0, run.total),
+      completed: Math.max(prev?.completed ?? 0, run.completed),
+      nodes: nodes(prev?.nodes, run.nodes),
+      metadata: {
+        ...(record(prev?.metadata) ? prev?.metadata : {}),
+        ...(record(run.metadata) ? run.metadata : {}),
+      },
+      declaration: run.declaration ?? prev?.declaration,
+      items: run.items ?? prev?.items,
+      raw: run.raw ?? prev?.raw,
+      time: {
+        ...(record(prev?.time) ? prev?.time : {}),
+        ...(record(run.time) ? run.time : {}),
+      },
+    })
+  }
+  return [...map.values()]
+}
+
+export function graphRuns(input: unknown, records: Log[] = []): GraphRun[] {
+  return [...workflows(input).map(workflow), ...merge(logruns(records), protocols(input).map(protocol))].sort((a, b) => {
     const left = a.time?.started ?? 0
     const right = b.time?.started ?? 0
     if (left !== right) return left - right

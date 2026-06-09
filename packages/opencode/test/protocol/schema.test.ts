@@ -30,13 +30,40 @@ describe("agent protocol schema", () => {
     expect(out.message).toBe("Inspection is complete.")
     expect(out.payload.type).toBe("action_graph")
     if (out.payload.type !== "action_graph") return
-    expect(out.payload.actions.map((item) => [item.id, item.executor.type, item.executor.target, item.depends_on])).toEqual([
+    expect(
+      out.payload.actions.map((item) => [item.id, item.executor.type, item.executor.target, item.depends_on]),
+    ).toEqual([
       ["inspect", "tool", "grep", []],
       ["delegate", "agent", "backend", ["inspect"]],
     ])
     expect(out.payload.actions[0]?.input).toEqual({ pattern: "Protocol" })
     expect(out.payload.actions[0]?.result_policy).toBe("full")
     expect(out.payload.actions[1]?.input).toEqual({ prompt: "Inspect runner behavior." })
+  })
+
+  test("preserves verifier metadata from v2 agent items", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "worker", kind: "agent", target: "backend", prompt: "Patch the API." },
+        {
+          id: "worker_review",
+          kind: "agent",
+          target: "backend-verifier",
+          prompt: "Review the backend patch.",
+          depends: ["worker"],
+          verification: { role: "review", worker: "worker", required: true },
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[1]?.verification).toEqual({
+      role: "review",
+      worker: "worker",
+      required: true,
+    })
   })
 
   test("ignores extra v2 protocol fields when required fields are valid", () => {
@@ -59,13 +86,13 @@ describe("agent protocol schema", () => {
     expect(out.payload.type).toBe("message")
   })
 
-  test("accepts v2 ask item and maps it to a human action", () => {
+  test("accepts v2 input item and maps it to a human input action", () => {
     const out = AgentProtocol.parse({
       version: "2",
       items: [
         {
           id: "choose_scope",
-          kind: "ask",
+          kind: "input",
           prompt: "Which scope should I optimize?",
           mode: "multi",
           options: [
@@ -84,7 +111,7 @@ describe("agent protocol schema", () => {
     expect(out.payload.actions[0]).toMatchObject({
       id: "choose_scope",
       title: "choose_scope",
-      operation: "ask",
+      operation: "input",
       executor: { type: "human", target: "user", capabilities: ["multi"] },
       input: {
         prompt: "Which scope should I optimize?",
@@ -97,6 +124,61 @@ describe("agent protocol schema", () => {
         max_selected: 2,
       },
     })
+  })
+
+  test("keeps legacy v2 ask compatible without exposing it publicly", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "legacy_question",
+          kind: "ask",
+          prompt: "Which legacy scope?",
+          mode: "single",
+          options: [{ id: "one", label: "One" }],
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "legacy_question",
+      operation: "input",
+      executor: { type: "human", target: "user", capabilities: ["single"] },
+    })
+  })
+
+  test("keeps legacy v2 wait compatible for explicit runtime rejection", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "legacy_wait",
+          kind: "wait",
+          target: "child_done",
+          reason: "Wait for a historical event target.",
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "legacy_wait",
+      operation: "child_done",
+      executor: { type: "runtime", target: "wait", capabilities: [] },
+      input: { target: "child_done", reason: "Wait for a historical event target." },
+    })
+  })
+
+  test("public v2 output schema exposes input but not deprecated ask or wait", () => {
+    const item = AgentProtocol.OutputSchema.properties.items.items.properties.kind
+    expect(item.enum).toContain("input")
+    expect(item.enum).not.toContain("ask")
+    expect(item.enum).not.toContain("wait")
+    const mode = AgentProtocol.OutputSchema.properties.items.items.properties.mode
+    expect(mode.enum).not.toContain("confirm")
   })
 
   test("accepts v2 confirm item and maps it to a human confirmation action", () => {
@@ -132,9 +214,7 @@ describe("agent protocol schema", () => {
     const out = AgentProtocol.parse({
       kind: "act",
       message: "I need to inspect files.",
-      calls: [
-        { id: "inspect", type: "tool", name: "grep", args: { pattern: "SessionRunner" }, result: "full" },
-      ],
+      calls: [{ id: "inspect", type: "tool", name: "grep", args: { pattern: "SessionRunner" }, result: "full" }],
     })
 
     expect(out.intent).toBe("execute")
@@ -160,7 +240,14 @@ describe("agent protocol schema", () => {
       message: "I will inspect the project files.",
       calls: [
         { id: "find", type: "tool", name: "glob", args: { pattern: "*.json" } },
-        { id: "read", type: "tool", name: "read", args: { filePath: "package.json" }, depends: "find", result: "summary" },
+        {
+          id: "read",
+          type: "tool",
+          name: "read",
+          args: { filePath: "package.json" },
+          depends: "find",
+          result: "summary",
+        },
       ],
     })
 
@@ -295,7 +382,13 @@ describe("agent protocol schema", () => {
       kind: "act",
       message: "I will delegate the review.",
       calls: [
-        { id: "review", type: "agent", name: "auto", args: { description: "Review the changed code" }, result: "summary" },
+        {
+          id: "review",
+          type: "agent",
+          name: "auto",
+          args: { description: "Review the changed code" },
+          result: "summary",
+        },
       ],
     })
 
@@ -372,6 +465,46 @@ describe("agent protocol schema", () => {
     expect(done.intent).toBe("stop")
     expect(done.message).toBe("No more work is needed.")
     expect(done.payload.type).toBe("message")
+  })
+
+  test("accepts v2 terminal result kinds", () => {
+    const success = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "done",
+          kind: "success",
+          message: "Worker completed.",
+          summary: "Task background: user request.\nCompletion summary: changed code.",
+          changed_files: ["src/a.ts"],
+        },
+      ],
+    })
+    expect(success.intent).toBe("stop")
+    expect(success.outcome).toBe("success")
+    expect(success.message).toContain("Worker completed.")
+    expect(success.message).toContain("Changed files: src/a.ts")
+
+    const reply = AgentProtocol.parse({
+      version: "2",
+      items: [{ id: "reply", kind: "reply", message: "Need more context." }],
+    })
+    expect(reply.intent).toBe("respond")
+    expect(reply.outcome).toBe("reply")
+
+    const failure = AgentProtocol.parse({
+      version: "2",
+      items: [{ id: "fail", kind: "failure", message: "Could not complete." }],
+    })
+    expect(failure.intent).toBe("stop")
+    expect(failure.outcome).toBe("failure")
+
+    const error = AgentProtocol.parse({
+      kind: "error",
+      message: "Runtime crashed.",
+    })
+    expect(error.intent).toBe("stop")
+    expect(error.outcome).toBe("error")
   })
 
   test("accepts legacy flat field names for compatibility", () => {

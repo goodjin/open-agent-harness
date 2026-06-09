@@ -4,6 +4,20 @@ export namespace AgentProtocol {
   const Text = z.string().trim().min(1)
   const Ref = Text
   const JsonRecord = z.record(z.string(), z.unknown())
+  export const VerificationRole = z.enum(["test", "review"])
+  export type VerificationRole = z.infer<typeof VerificationRole>
+
+  export const Verification = z
+    .object({
+      role: VerificationRole.optional(),
+      worker: Text.optional(),
+      required: z.boolean().optional(),
+      reason: Text.optional(),
+      system: z.boolean().optional(),
+      allow_skip_on_no_change: z.boolean().optional(),
+    })
+    .strict()
+  export type Verification = z.infer<typeof Verification>
 
   export const Executor = z
     .object({
@@ -27,7 +41,10 @@ export namespace AgentProtocol {
       depends_on: z.array(Text).default([]),
       context_refs: z.array(Ref).default([]),
       prompt_ref: Ref.optional(),
-      result_policy: z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"]).default("summary"),
+      verification: Verification.optional(),
+      result_policy: z
+        .enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"])
+        .default("summary"),
     })
     .strict()
   export type Action = z.infer<typeof Action>
@@ -63,6 +80,7 @@ export namespace AgentProtocol {
       persist: z.boolean().default(false),
       title: Text.optional(),
       message: z.string().optional(),
+      outcome: z.enum(["success", "failure", "error", "reply"]).optional(),
       response_ref: Ref.optional(),
       execution: z
         .object({
@@ -104,116 +122,148 @@ export namespace AgentProtocol {
   const Policy = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"])
   const Depends = z.union([Text, z.array(Text)]).default([])
   const V2Depends = z.array(Text).default([])
-  const V2Option = z
-    .object({
-      id: Text,
-      label: Text,
-      description: Text.optional(),
-      disabled: z.boolean().optional(),
-    })
-  const V2Field = z
-    .object({
-      id: Text,
-      label: Text,
-      type: z.enum(["text", "textarea", "single", "multi", "confirm", "number"]),
-      required: z.boolean().optional(),
-      options: z.array(V2Option).optional(),
-      default: z.unknown().optional(),
-      validation: JsonRecord.optional(),
-    })
-  const V2Tool = z
-    .object({
-      id: Text,
-      kind: z.literal("tool"),
-      title: Text.optional(),
-      target: Text,
-      args: JsonRecord.default({}),
-      depends: V2Depends,
-      result: Policy.default("summary"),
-    })
-  const V2Agent = z
-    .object({
-      id: Text,
-      kind: z.literal("agent"),
-      title: Text.optional(),
-      target: Text,
-      prompt: Text,
-      capabilities: z.array(Text).default([]),
-      context_refs: z.array(Ref).default([]),
-      depends: V2Depends,
-      result: Policy.default("summary"),
-    })
-  const V2Ask = z
-    .object({
-      id: Text,
-      kind: z.literal("ask"),
-      title: Text.optional(),
-      prompt: Text,
-      mode: z.enum(["text", "single", "multi", "confirm", "form"]),
-      required: z.boolean().optional(),
-      default: z.unknown().optional(),
-      options: z.array(V2Option).optional(),
-      fields: z.array(V2Field).optional(),
-      allow_custom: z.boolean().optional(),
-      min_selected: z.number().int().nonnegative().optional(),
-      max_selected: z.number().int().positive().optional(),
-      depends: V2Depends,
-      result: Policy.default("summary"),
-    })
-  const V2Confirm = z
-    .object({
-      id: Text,
-      kind: z.literal("confirm"),
-      title: Text.optional(),
-      prompt: Text,
-      plan: Text,
-      depends: V2Depends,
-      result: Policy.default("summary"),
-    })
-  const V2Wait = z
-    .object({
-      id: Text,
-      kind: z.literal("wait"),
-      title: Text.optional(),
-      target: Text,
-      reason: Text.optional(),
-      depends: V2Depends,
-      result: Policy.default("summary"),
-    })
-  const V2Answer = z
-    .object({
-      id: Text,
-      kind: z.literal("answer"),
-      title: Text.optional(),
-      message: Text,
-      depends: V2Depends,
-    })
-  const V2Done = z
-    .object({
-      id: Text,
-      kind: z.literal("done"),
-      title: Text.optional(),
-      message: z.string().default(""),
-      depends: V2Depends,
-    })
-  const V2Item = z.discriminatedUnion("kind", [V2Tool, V2Agent, V2Ask, V2Confirm, V2Wait, V2Answer, V2Done])
-  const V2 = z
-    .object({
-      version: z.literal("2"),
-      title: Text.optional(),
-      strategy: z.enum(["sequential", "dag"]).default("sequential"),
-      items: z.array(V2Item).min(1),
-    })
-  const FlatCall = z
-    .object({
-      id: Text,
-      type: z.enum(["tool", "agent"]),
-      title: Text.optional(),
-      name: Text,
-      args: JsonRecord.default({}),
-      depends: Depends,
-      result: Policy.default("summary"),
-    })
+  const V2Option = z.object({
+    id: Text,
+    label: Text,
+    description: Text.optional(),
+    disabled: z.boolean().optional(),
+  })
+  const V2Field = z.object({
+    id: Text,
+    label: Text,
+    type: z.enum(["text", "textarea", "single", "multi", "confirm", "number"]),
+    required: z.boolean().optional(),
+    options: z.array(V2Option).optional(),
+    default: z.unknown().optional(),
+    validation: JsonRecord.optional(),
+  })
+  const V2Tool = z.object({
+    id: Text,
+    kind: z.literal("tool"),
+    title: Text.optional(),
+    target: Text,
+    args: JsonRecord.default({}),
+    depends: V2Depends,
+    result: Policy.default("summary"),
+  })
+  const V2Agent = z.object({
+    id: Text,
+    kind: z.literal("agent"),
+    title: Text.optional(),
+    target: Text,
+    prompt: Text,
+    capabilities: z.array(Text).default([]),
+    context_refs: z.array(Ref).default([]),
+    depends: V2Depends,
+    verification: Verification.optional(),
+    result: Policy.default("summary"),
+  })
+  const V2Ask = z.object({
+    id: Text,
+    kind: z.literal("ask"),
+    title: Text.optional(),
+    prompt: Text,
+    mode: z.enum(["text", "single", "multi", "confirm", "form"]),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    options: z.array(V2Option).optional(),
+    fields: z.array(V2Field).optional(),
+    allow_custom: z.boolean().optional(),
+    min_selected: z.number().int().nonnegative().optional(),
+    max_selected: z.number().int().positive().optional(),
+    depends: V2Depends,
+    result: Policy.default("summary"),
+  })
+  const V2Input = z.object({
+    id: Text,
+    kind: z.literal("input"),
+    title: Text.optional(),
+    prompt: Text,
+    mode: z.enum(["text", "single", "multi", "form"]),
+    required: z.boolean().optional(),
+    default: z.unknown().optional(),
+    options: z.array(V2Option).optional(),
+    fields: z.array(V2Field).optional(),
+    allow_custom: z.boolean().optional(),
+    min_selected: z.number().int().nonnegative().optional(),
+    max_selected: z.number().int().positive().optional(),
+    depends: V2Depends,
+    result: Policy.default("summary"),
+  })
+  const V2Confirm = z.object({
+    id: Text,
+    kind: z.literal("confirm"),
+    title: Text.optional(),
+    prompt: Text,
+    plan: Text,
+    depends: V2Depends,
+    result: Policy.default("summary"),
+  })
+  const V2Wait = z.object({
+    id: Text,
+    kind: z.literal("wait"),
+    title: Text.optional(),
+    target: Text,
+    reason: Text.optional(),
+    depends: V2Depends,
+    result: Policy.default("summary"),
+  })
+  const V2Answer = z.object({
+    id: Text,
+    kind: z.literal("answer"),
+    title: Text.optional(),
+    message: Text,
+    depends: V2Depends,
+  })
+  const V2Done = z.object({
+    id: Text,
+    kind: z.literal("done"),
+    title: Text.optional(),
+    message: z.string().default(""),
+    depends: V2Depends,
+  })
+  const ResultFields = {
+    id: Text,
+    title: Text.optional(),
+    message: z.string().default(""),
+    summary: z.string().optional(),
+    changed_files: z.array(Text).default([]),
+    depends: V2Depends,
+  }
+  const V2Success = z.object({ ...ResultFields, kind: z.literal("success") })
+  const V2Failure = z.object({ ...ResultFields, kind: z.literal("failure") })
+  const V2Error = z.object({ ...ResultFields, kind: z.literal("error") })
+  const V2Reply = z.object({ ...ResultFields, kind: z.literal("reply") })
+  const V2Terminal = z.discriminatedUnion("kind", [V2Answer, V2Done, V2Success, V2Failure, V2Error, V2Reply])
+  const V2Item = z.discriminatedUnion("kind", [
+    V2Tool,
+    V2Agent,
+    V2Input,
+    V2Ask,
+    V2Confirm,
+    V2Wait,
+    V2Answer,
+    V2Done,
+    V2Success,
+    V2Failure,
+    V2Error,
+    V2Reply,
+  ])
+  const V2 = z.object({
+    version: z.literal("2"),
+    title: Text.optional(),
+    strategy: z.enum(["sequential", "dag"]).default("sequential"),
+    items: z.array(V2Item).min(1),
+  })
+  const FlatCall = z.object({
+    id: Text,
+    type: z.enum(["tool", "agent"]),
+    title: Text.optional(),
+    name: Text,
+    args: JsonRecord.default({}),
+    depends: Depends,
+    result: Policy.default("summary"),
+  })
 
   const LegacyCall = FlatCall.extend({
     type: z.enum(["tool", "agent"]).optional(),
@@ -227,26 +277,55 @@ export namespace AgentProtocol {
     }
   })
 
-  const FlatAct = z
-    .object({
-      kind: z.literal("act"),
-      message: z.string().default(""),
-      calls: z.array(FlatCall).min(1),
-    })
+  const FlatAct = z.object({
+    kind: z.literal("act"),
+    message: z.string().default(""),
+    calls: z.array(FlatCall).min(1),
+  })
 
-  const FlatAnswer = z
-    .object({
-      kind: z.literal("answer"),
-      message: z.string().default(""),
-    })
+  const FlatAnswer = z.object({
+    kind: z.literal("answer"),
+    message: z.string().default(""),
+  })
 
-  const FlatDone = z
-    .object({
-      kind: z.literal("done"),
-      message: z.string().default(""),
-    })
+  const FlatDone = z.object({
+    kind: z.literal("done"),
+    message: z.string().default(""),
+  })
+  const FlatSuccess = z.object({
+    kind: z.literal("success"),
+    message: z.string().default(""),
+    summary: z.string().optional(),
+    changed_files: z.array(Text).default([]),
+  })
+  const FlatFailure = z.object({
+    kind: z.literal("failure"),
+    message: z.string().default(""),
+    summary: z.string().optional(),
+    changed_files: z.array(Text).default([]),
+  })
+  const FlatError = z.object({
+    kind: z.literal("error"),
+    message: z.string().default(""),
+    summary: z.string().optional(),
+    changed_files: z.array(Text).default([]),
+  })
+  const FlatReply = z.object({
+    kind: z.literal("reply"),
+    message: z.string().default(""),
+    summary: z.string().optional(),
+    changed_files: z.array(Text).default([]),
+  })
 
-  export const Structured = z.discriminatedUnion("kind", [FlatAct, FlatAnswer, FlatDone])
+  export const Structured = z.discriminatedUnion("kind", [
+    FlatAct,
+    FlatAnswer,
+    FlatDone,
+    FlatSuccess,
+    FlatFailure,
+    FlatError,
+    FlatReply,
+  ])
   export const OutputSchema = {
     type: "object",
     properties: {
@@ -271,13 +350,30 @@ export namespace AgentProtocol {
           type: "object",
           properties: {
             id: { type: "string", minLength: 1 },
-            kind: { type: "string", enum: ["tool", "agent", "ask", "confirm", "answer", "done", "wait"] },
+            kind: {
+              type: "string",
+              enum: ["tool", "agent", "input", "confirm", "answer", "done", "success", "failure", "error", "reply"],
+            },
             title: { type: "string", minLength: 1 },
             target: { type: "string", minLength: 1 },
             prompt: { type: "string", minLength: 1 },
             plan: { type: "string", minLength: 1 },
             message: { type: "string", minLength: 1 },
-            mode: { type: "string", enum: ["text", "single", "multi", "confirm", "form"] },
+            summary: { type: "string" },
+            changed_files: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
+            verification: {
+              type: "object",
+              properties: {
+                role: { type: "string", enum: ["test", "review"] },
+                worker: { type: "string", minLength: 1 },
+                required: { type: "boolean" },
+                reason: { type: "string", minLength: 1 },
+                system: { type: "boolean" },
+                allow_skip_on_no_change: { type: "boolean" },
+              },
+              additionalProperties: false,
+            },
+            mode: { type: "string", enum: ["text", "single", "multi", "form"] },
             args: { type: "object", additionalProperties: true, default: {} },
             capabilities: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
             context_refs: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
@@ -307,23 +403,21 @@ export namespace AgentProtocol {
             allow_custom: { type: "boolean" },
             min_selected: { type: "integer", minimum: 0 },
             max_selected: { type: "integer", minimum: 1 },
-            reason: { type: "string", minLength: 1 },
           },
           required: ["id", "kind"],
           additionalProperties: false,
           allOf: [
             { if: { properties: { kind: { const: "tool" } } }, then: { required: ["target"] } },
             { if: { properties: { kind: { const: "agent" } } }, then: { required: ["target", "prompt"] } },
-            { if: { properties: { kind: { const: "ask" } } }, then: { required: ["prompt", "mode"] } },
+            { if: { properties: { kind: { const: "input" } } }, then: { required: ["prompt", "mode"] } },
             { if: { properties: { kind: { const: "confirm" } } }, then: { required: ["prompt", "plan"] } },
-            { if: { properties: { kind: { const: "answer" } } }, then: { required: ["message"] } },
-            { if: { properties: { kind: { const: "wait" } } }, then: { required: ["target"] } },
+            { if: { properties: { kind: { enum: ["answer", "reply"] } } }, then: { required: ["message"] } },
           ],
         },
       },
       kind: {
         type: "string",
-        enum: ["act", "answer", "done"],
+        enum: ["act", "answer", "done", "success", "failure", "error", "reply"],
       },
       message: {
         type: "string",
@@ -405,7 +499,7 @@ export namespace AgentProtocol {
         if: {
           properties: {
             kind: {
-              enum: ["answer", "done"],
+              enum: ["answer", "done", "success", "failure", "error", "reply"],
             },
           },
           required: ["kind"],
@@ -478,6 +572,8 @@ export namespace AgentProtocol {
       operation: Text,
       executor: Executor,
       input: JsonRecord.optional(),
+      depends_on: z.array(Text).default([]),
+      verification: Verification.optional(),
       status: Status,
       summary: z.string().default(""),
       output: z.string().optional(),
@@ -525,7 +621,12 @@ export namespace AgentProtocol {
   export type Result = z.infer<typeof Result>
 
   export function parse(input: unknown) {
-    if (input && typeof input === "object" && !Array.isArray(input) && (input as { version?: unknown }).version === "2") {
+    if (
+      input &&
+      typeof input === "object" &&
+      !Array.isArray(input) &&
+      (input as { version?: unknown }).version === "2"
+    ) {
       V2.parse(input)
     }
     return Declaration.parse(input)
@@ -592,25 +693,27 @@ export namespace AgentProtocol {
   function escape(input: string) {
     let quoted = false
     let slash = false
-    return [...input].map((char) => {
-      if (slash) {
-        slash = false
+    return [...input]
+      .map((char) => {
+        if (slash) {
+          slash = false
+          return char
+        }
+        if (char === "\\") {
+          slash = true
+          return char
+        }
+        if (char === '"') {
+          quoted = !quoted
+          return char
+        }
+        if (!quoted) return char
+        if (char === "\n") return "\\n"
+        if (char === "\r") return "\\r"
+        if (char === "\t") return "\\t"
         return char
-      }
-      if (char === "\\") {
-        slash = true
-        return char
-      }
-      if (char === '"') {
-        quoted = !quoted
-        return char
-      }
-      if (!quoted) return char
-      if (char === "\n") return "\\n"
-      if (char === "\r") return "\\r"
-      if (char === "\t") return "\\t"
-      return char
-    }).join("")
+      })
+      .join("")
   }
 
   function between(input: string) {
@@ -666,25 +769,29 @@ export namespace AgentProtocol {
     return {
       type: "agent.protocol.output",
       version: "1",
-      intent: parsed.kind === "answer" ? "respond" : "stop",
+      intent: response(parsed.kind) ? "respond" : "stop",
       persist: false,
-      message: "say" in parsed ? parsed.message || parsed.say : parsed.message,
+      message: message(parsed),
+      outcome: outcome(parsed.kind),
       execution: { strategy: "sequential" },
       payload: { type: "message" },
     }
   }
 
   function v2Parsed(parsed: z.infer<typeof V2>) {
-    const terminal = parsed.items.find((item) => item.kind === "answer" || item.kind === "done")
-    const actions = parsed.items.filter((item) => item.kind !== "answer" && item.kind !== "done")
+    const terminal = parsed.items.find((item): item is z.infer<typeof V2Terminal> => done(item.kind))
+    const actions = parsed.items.filter(
+      (item): item is Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>> => !done(item.kind),
+    )
     if (actions.length === 0) {
       return {
         type: "agent.protocol.output",
         version: "1",
-        intent: terminal?.kind === "answer" ? "respond" : "stop",
+        intent: terminal && response(terminal.kind) ? "respond" : "stop",
         persist: false,
         title: parsed.title ?? terminal?.title,
-        message: terminal && "message" in terminal ? terminal.message : "",
+        message: terminal ? message(terminal) : "",
+        outcome: terminal ? outcome(terminal.kind) : "success",
         execution: { strategy: parsed.strategy },
         payload: { type: "message" },
       }
@@ -695,7 +802,8 @@ export namespace AgentProtocol {
       intent: "execute",
       persist: false,
       title: parsed.title ?? actions[0]?.title ?? actions[0]?.id,
-      message: terminal && "message" in terminal ? terminal.message : undefined,
+      message: terminal ? message(terminal) : undefined,
+      outcome: terminal ? outcome(terminal.kind) : undefined,
       execution: { strategy: parsed.strategy },
       payload: {
         type: "action_graph",
@@ -704,7 +812,7 @@ export namespace AgentProtocol {
     }
   }
 
-  function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Answer> | z.infer<typeof V2Done>>) {
+  function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>>) {
     if (input.kind === "tool") {
       return {
         type: "action",
@@ -728,6 +836,7 @@ export namespace AgentProtocol {
         input: { prompt: input.prompt },
         depends_on: input.depends,
         context_refs: input.context_refs,
+        verification: input.verification,
         result_policy: input.result,
       }
     }
@@ -761,7 +870,7 @@ export namespace AgentProtocol {
       type: "action",
       id: input.id,
       title: input.title ?? input.id,
-      operation: "ask",
+      operation: "input",
       executor: { type: "human", target: "user", capabilities: [input.mode] },
       input: ask(input),
       depends_on: input.depends,
@@ -770,7 +879,7 @@ export namespace AgentProtocol {
     }
   }
 
-  function ask(input: z.infer<typeof V2Ask>) {
+  function ask(input: z.infer<typeof V2Ask> | z.infer<typeof V2Input>) {
     return {
       prompt: input.prompt,
       mode: input.mode,
@@ -789,6 +898,39 @@ export namespace AgentProtocol {
     if (Array.isArray(input)) return input
     if (input.length === 0) return []
     return [input]
+  }
+
+  function done(input: string) {
+    return (
+      input === "answer" ||
+      input === "done" ||
+      input === "success" ||
+      input === "failure" ||
+      input === "error" ||
+      input === "reply"
+    )
+  }
+
+  function response(input: string) {
+    return input === "answer" || input === "reply"
+  }
+
+  function outcome(input: string) {
+    if (input === "failure" || input === "error" || input === "reply") return input
+    return "success"
+  }
+
+  function message(input: {
+    kind: string
+    message?: string
+    summary?: string
+    changed_files?: string[]
+    say?: string
+  }) {
+    const msg = input.message || input.say || ""
+    const sum = input.summary?.trim()
+    const files = input.changed_files?.length ? `Changed files: ${input.changed_files.join(", ")}` : ""
+    return [msg, sum, files].filter((item): item is string => typeof item === "string" && item.length > 0).join("\n\n")
   }
 
   function name(input: z.infer<typeof LegacyCall> | z.infer<typeof FlatCall> | undefined) {

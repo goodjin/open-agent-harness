@@ -121,6 +121,49 @@ describe("agent protocol executor", () => {
     expect(result.metrics.internal_tool_calls).toBe(2)
   })
 
+  test("marks skipped actions without failing the run", async () => {
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        type: "agent.protocol",
+        version: "1",
+        intent: "execute",
+        persist: false,
+        title: "Verify",
+        execution: { strategy: "sequential" },
+        payload: {
+          type: "action_graph",
+          actions: [
+            {
+              type: "action",
+              id: "test_patch",
+              title: "Test patch",
+              operation: "verification_test",
+              executor: { type: "agent", target: "backend-verifier", capabilities: ["test"] },
+              depends_on: ["backend_patch"],
+              context_refs: [],
+              verification: { role: "test", worker: "backend_patch", required: true },
+              result_policy: "structured",
+            },
+          ],
+        },
+      },
+      execute: async (action) => ({
+        title: action.title,
+        output: "Verification test skipped.",
+        metadata: { skipped: true },
+      }),
+    })
+
+    expect(result.status).toBe("completed")
+    expect(result.actions[0]).toMatchObject({
+      id: "test_patch",
+      status: "skipped",
+      output: "Verification test skipped.",
+      depends_on: ["backend_patch"],
+      verification: { role: "test", worker: "backend_patch", required: true },
+    })
+  })
+
   test("blocks agent actions when no delegable agent matches", async () => {
     const result = await AgentProtocolExecutor.run({
       declaration: {

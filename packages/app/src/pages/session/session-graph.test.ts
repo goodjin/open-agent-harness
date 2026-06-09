@@ -82,6 +82,8 @@ describe("graphRuns", () => {
                 status: "completed",
                 executor: { type: "agent", target: "verifier" },
                 sessionID: "ses_verify",
+                depends_on: ["inspect"],
+                verification: { role: "review", worker: "inspect", required: true },
                 time: { started: 3, completed: 4 },
               },
             ],
@@ -105,8 +107,82 @@ describe("graphRuns", () => {
         id: "verify",
         title: "Verify patch",
         executor: "agent:verifier",
+        deps: ["inspect"],
+        verification: { role: "review", worker: "inspect", required: true },
         sessionID: "ses_verify",
       }),
+    ])
+  })
+
+  test("adds AgentProtocolOutput records from protocol logs", () => {
+    const raw = {
+      version: "2",
+      title: "Implement feature",
+      strategy: "dag",
+      items: [
+        { id: "inspect", kind: "agent", title: "Inspect", target: "researcher", prompt: "Inspect code", depends: [] },
+        { id: "verify", kind: "agent", title: "Verify", target: "verifier", prompt: "Verify code", depends: ["inspect"] },
+      ],
+    }
+    const runs = graphRuns(
+      {
+        protocol: {
+          runs: [
+            {
+              runID: "apr_1",
+              title: "Implement feature",
+              status: "completed",
+              total: 2,
+              completed: 2,
+              actions: [
+                {
+                  id: "inspect",
+                  title: "Inspect",
+                  operation: "delegate",
+                  status: "completed",
+                  executor: { type: "agent", target: "researcher" },
+                },
+                {
+                  id: "verify",
+                  title: "Verify",
+                  operation: "delegate",
+                  status: "completed",
+                  executor: { type: "agent", target: "verifier" },
+                },
+              ],
+            },
+          ],
+        },
+      },
+      [
+        {
+          id: "log_1",
+          sessionID: "ses_1",
+          messageID: "msg_1",
+          level: "info",
+          type: "protocol.validated",
+          time: 10,
+          data: {
+            runID: "apr_1",
+            raw: JSON.stringify(raw),
+            declaration: {
+              title: "Implement feature",
+              payload: {
+                type: "action_graph",
+                actions: [],
+              },
+            },
+          },
+        },
+      ],
+    )
+
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.items).toEqual(raw.items)
+    expect(runs[0]?.raw).toBe(JSON.stringify(raw))
+    expect(runs[0]?.nodes).toEqual([
+      expect.objectContaining({ id: "inspect", status: "completed", executor: "agent:researcher" }),
+      expect.objectContaining({ id: "verify", status: "completed", deps: ["inspect"], executor: "agent:verifier" }),
     ])
   })
 

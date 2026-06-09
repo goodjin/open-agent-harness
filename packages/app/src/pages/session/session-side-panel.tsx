@@ -20,6 +20,7 @@ import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useLocal } from "@/context/local"
+import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
@@ -27,7 +28,7 @@ import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex } from 
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { graphLayout, graphRuns, type GraphRun } from "@/pages/session/session-graph"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import type { SessionStatus } from "@open-agent-harness/sdk/v2/client"
+import type { SessionLogResponse, SessionStatus } from "@open-agent-harness/sdk/v2/client"
 
 type WorkflowStatus = "ready" | "pending" | "running" | "completed" | "failed" | "skipped" | "cancelled" | "error"
 
@@ -88,6 +89,10 @@ function GraphPanel(props: {
       </Show>
     </span>
   )
+  const role = (input: "test" | "review" | undefined) => {
+    if (input === "test") return "Test"
+    if (input === "review") return "Review"
+  }
   const stateFor = (run: GraphRun): GraphRun["status"] | WorkflowStatus => {
     const states = run.nodes.flatMap((node) => {
       const value = sessionStatus(props.status(node.sessionID))
@@ -114,6 +119,11 @@ function GraphPanel(props: {
     setFocus(layout().nodes.find((node) => state(node) === "running")?.id ?? layout().nodes[0]?.id)
   })
   const node = createMemo(() => layout().nodes.find((item) => item.id === focus()))
+  const checks = createMemo(() => {
+    const item = node()
+    if (!item) return []
+    return layout().nodes.filter((next) => next.verification?.worker === item.id)
+  })
   const choose = (id: string) => {
     const item = layout().nodes.find((node) => node.id === id)
     if (!item) return
@@ -248,8 +258,15 @@ function GraphPanel(props: {
                     >
                       <div class="flex min-w-0 items-center justify-between gap-2">
                         <div class={`text-11-medium ${tone(phase())}`}>{label(phase())}</div>
-                        <Show when={item.sessionID}>
-                          <div class="text-11-regular text-text-interactive-base">Session</div>
+                        <Show
+                          when={role(item.verification?.role)}
+                          fallback={
+                            <Show when={item.sessionID}>
+                              <div class="text-11-regular text-text-interactive-base">Session</div>
+                            </Show>
+                          }
+                        >
+                          {(value) => <div class="text-11-medium text-text-interactive-base">{value()}</div>}
                         </Show>
                       </div>
                       <div class="mt-1 truncate text-12-medium text-text-base">{item.title}</div>
@@ -283,6 +300,22 @@ function GraphPanel(props: {
                 <div class="mt-3 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1">
                   <div class="text-text-weak">Executor</div>
                   <div class="min-w-0 break-all">{item().executor}</div>
+                  <Show when={role(item().verification?.role)}>
+                    {(value) => (
+                      <>
+                        <div class="text-text-weak">Check role</div>
+                        <div class="min-w-0 break-words">{value()}</div>
+                      </>
+                    )}
+                  </Show>
+                  <Show when={item().verification?.worker}>
+                    {(worker) => (
+                      <>
+                        <div class="text-text-weak">Checks worker</div>
+                        <div class="min-w-0 break-all">{worker()}</div>
+                      </>
+                    )}
+                  </Show>
                   <Show when={item().deps.length > 0}>
                     <div class="text-text-weak">Depends on</div>
                     <div class="min-w-0 break-words">{item().deps.join(", ")}</div>
@@ -300,6 +333,30 @@ function GraphPanel(props: {
                     )}
                   </Show>
                 </div>
+                <Show when={checks().length > 0}>
+                  <div class="mt-3 border-t border-border-weaker-base pt-3">
+                    <div class="mb-2 text-11-medium uppercase text-text-weak">Checks</div>
+                    <div class="flex flex-col gap-2">
+                      <For each={checks()}>
+                        {(check) => (
+                          <button
+                            type="button"
+                            class="flex min-w-0 items-center justify-between gap-3 border border-border-weaker-base bg-background-stronger px-2 py-2 text-left hover:border-border-strong"
+                            onClick={() => choose(check.id)}
+                          >
+                            <div class="min-w-0">
+                              <div class="truncate text-12-medium text-text-base">{check.title}</div>
+                              <div class="mt-0.5 truncate text-11-regular text-text-weak">
+                                {role(check.verification?.role) ?? "Check"} · {check.executor}
+                              </div>
+                            </div>
+                            <div class={`shrink-0 text-11-medium ${tone(state(check))}`}>{badge(state(check))}</div>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
                 <Show when={item().output || item().error}>
                   <div class="mt-3">
                     <div class="mb-1 text-11-medium text-text-weak">{item().error ? "Error" : "Output"}</div>
@@ -319,6 +376,30 @@ function GraphPanel(props: {
             {JSON.stringify({ ...props.run.metadata, variables: props.run.variables }, null, 2)}
           </pre>
         </details>
+
+        <Show when={props.run.items?.length}>
+          <details open class="border border-border-weaker-base bg-background-base">
+            <summary class="cursor-pointer list-none px-3 py-2 text-12-medium text-text-base">
+              AgentProtocolOutput items
+            </summary>
+            <pre class="max-h-96 overflow-auto border-t border-border-weaker-base px-3 py-3 whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+              {JSON.stringify(props.run.items, null, 2)}
+            </pre>
+          </details>
+        </Show>
+
+        <Show when={props.run.raw}>
+          {(raw) => (
+            <details class="border border-border-weaker-base bg-background-base">
+              <summary class="cursor-pointer list-none px-3 py-2 text-12-medium text-text-base">
+                Raw AgentProtocolOutput
+              </summary>
+              <pre class="max-h-96 overflow-auto border-t border-border-weaker-base px-3 py-3 whitespace-pre-wrap break-words font-mono text-11-regular text-text-muted">
+                {raw()}
+              </pre>
+            </details>
+          )}
+        </Show>
       </div>
     </div>
   )
@@ -335,6 +416,7 @@ export function SessionSidePanel(props: {
   const file = useFile()
   const language = useLanguage()
   const local = useLocal()
+  const sdk = useSDK()
   const command = useCommand()
   const dialog = useDialog()
   const navigate = useNavigate()
@@ -354,7 +436,9 @@ export function SessionSidePanel(props: {
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
-  const runs = createMemo(() => graphRuns(info()?.dsl_context))
+  const [log, setLog] = createStore({ rows: [] as SessionLogResponse })
+  let seq = 0
+  const runs = createMemo(() => graphRuns(info()?.dsl_context, log.rows))
   const [selected, setSelected] = createSignal<string>()
   createEffect(() => {
     const all = runs()
@@ -369,6 +453,7 @@ export function SessionSidePanel(props: {
   const run = createMemo(() => runs().find((item) => item.id === selected()) ?? runs()[runs().length - 1])
   const ready = createMemo(() => runs().length > 0 || local.agent.current()?.runner === "protocol")
   const graphTab = createMemo(() => isDesktop() && ready())
+  const graphName = createMemo(() => runs().some((item) => item.source === "protocol") || local.agent.current()?.runner === "protocol" ? "Protocol" : "Graph")
   const diffsReady = createMemo(() => {
     const id = params.id
     if (!id) return true
@@ -422,6 +507,32 @@ export function SessionSidePanel(props: {
     const state = file.tree.state("")
     if (!state?.loaded) return false
     return file.tree.children("").length === 0
+  })
+
+  const load = (id: string, run: number) =>
+    sdk.client.session.log({ sessionID: id, limit: 5000 }).then((res) => {
+      if (run !== seq) return
+      setLog("rows", res.data ?? [])
+    }).catch(() => {
+      if (run !== seq) return
+      setLog("rows", [])
+    })
+
+  createEffect(() => {
+    const id = params.id
+    const run = ++seq
+    setLog("rows", [])
+    if (!id) return
+    void load(id, run)
+  })
+
+  createEffect(() => {
+    const unsub = sdk.event.on("session.log.created", (event) => {
+      const item = event.properties.info
+      if (item.sessionID !== params.id) return
+      setLog("rows", (rows) => rows.some((row) => row.id === item.id) ? rows : [...rows, item])
+    })
+    onCleanup(unsub)
   })
 
   const normalizeTab = (tab: string) => {
@@ -597,7 +708,7 @@ export function SessionSidePanel(props: {
                       <Show when={graphTab()}>
                         <Tabs.Trigger value="graph">
                           <div class="flex items-center gap-1.5">
-                            <div>Graph</div>
+                            <div>{graphName()}</div>
                             <Show when={run()}>
                               {(item) => (
                                 <div>

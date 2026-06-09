@@ -74,6 +74,23 @@ export namespace AgentTemplate {
     writes: true,
   } as const satisfies Capability
 
+  export const VerificationRole = z.enum(["test", "review"])
+  export type VerificationRole = z.infer<typeof VerificationRole>
+
+  export const Verification = z
+    .object({
+      required: z.array(VerificationRole).default([]),
+      on_write: z.array(VerificationRole).default(["review"]),
+      high_risk: z.array(VerificationRole).default(["test", "review"]),
+      test_verifier: Text.optional(),
+      review_verifier: Text.optional(),
+      test_commands: z.array(Text).default([]),
+      risk: z.enum(["low", "medium", "high"]).optional(),
+      skip_test_on_no_change: z.boolean().default(true),
+    })
+    .strict()
+  export type Verification = z.infer<typeof Verification>
+
   export const WorkflowDefaults = {
     auto: {
       autonomous: true,
@@ -264,6 +281,7 @@ export namespace AgentTemplate {
       collaboration: Collaboration.optional().describe("Agent collaboration policy"),
       runtime_boundary: RuntimeBoundary.optional().describe("Runtime boundary declaration"),
       completion: Completion.optional().describe("Completion contract"),
+      verification: Verification.optional().describe("Worker verification policy"),
       observability: Observability.optional().describe("Observability policy"),
       lifecycle: Lifecycle.optional().describe("Lifecycle metadata"),
       protocol: Protocol.optional().describe("Protocol runner prompt configuration"),
