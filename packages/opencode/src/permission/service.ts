@@ -264,7 +264,14 @@ export class PermissionService extends ServiceMap.Service<PermissionService, Per
 
         const deferred = yield* Deferred.make<void, RejectedError | CorrectedError>()
         const current = SessionStatus.get(request.sessionID)
-        if (current.type !== "waiting_permission") status.set(key(info.sessionID, info.directory ?? Instance.directory), current)
+        if (current.type !== "waiting_permission") {
+          // Treat terminal states (timeout/error) as idle so the session can recover
+          // once the user replies. Otherwise the prior would be restored on reply and
+          // every follow-up ask would re-enter the same terminal state.
+          const prior =
+            current.type === "timeout" || current.type === "error" ? { type: "idle" as const } : current
+          status.set(key(info.sessionID, info.directory ?? Instance.directory), prior)
+        }
         SessionStatus.set(request.sessionID, { type: "waiting_permission" })
         pending.set(id, { info, deferred })
         void Bus.publish(Event.Asked, info)

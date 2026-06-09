@@ -18,11 +18,9 @@ export namespace LLMConcurrency {
     abort: () => void
   }
 
-  type Release = (() => void) & {
-    touch: () => void
-  }
+  export type Release = () => void
 
-  const noop = Object.assign(() => {}, { touch: () => {} })
+  const noop: Release = () => {}
 
   const active = new Map<string, number>()
   const queue: Item[] = []
@@ -101,7 +99,6 @@ export namespace LLMConcurrency {
     provider: Provider.Info
     sessionID: SessionID
     abort: AbortSignal
-    timeout: number | false
   }): Promise<Release> {
     const limits = limit(input.model, input.provider)
     if (limits.length === 0) return noop
@@ -109,7 +106,7 @@ export namespace LLMConcurrency {
     const current = blocked(limits)
     if (!current) {
       enter(limits)
-      return lease(limits, input.sessionID, input.timeout)
+      return lease(limits)
     }
 
     const item: Item = {
@@ -126,6 +123,16 @@ export namespace LLMConcurrency {
       item.abort = () => {
         const idx = queue.indexOf(item)
         if (idx !== -1) queue.splice(idx, 1)
+        // The slot was never acquired, but `publish` already set the
+        // session status to `rate_limited` when the item was enqueued.
+        // Reset it so aborted-while-queued sessions don't show a stale
+        // "waiting for concurrency slot" notification forever. Only
+        // touch the status if it is still `rate_limited` to avoid
+        // clobbering a transition that happened in the meantime.
+        const current = SessionStatus.get(input.sessionID)
+        if (current.type === "rate_limited") {
+          SessionStatus.set(input.sessionID, { type: "idle" })
+        }
         item.fail(input.abort.reason ?? new Error("Aborted"))
       }
       queue.push(item)
@@ -136,42 +143,16 @@ export namespace LLMConcurrency {
     })
 
     SessionStatus.set(input.sessionID, { type: "running" })
-    return lease(limits, input.sessionID, input.timeout)
+    return lease(limits)
   }
 
-  function lease(limits: Limit[], sessionID: SessionID, timeout: number | false): Release {
+  function lease(limits: Limit[]): Release {
     let done = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const clear = () => {
-      if (timer) clearTimeout(timer)
-      timer = undefined
-    }
-    const arm = () => {
-      if (typeof timeout !== "number" || timeout <= 0) return
-      timer = setTimeout(() => {
-        if (done) return
-        done = true
-        release(limits)
-        SessionStatus.set(sessionID, {
-          type: "timeout",
-          message: `LLM request made no progress for ${timeout}ms; released concurrency slot.`,
-        })
-      }, timeout)
-    }
-    arm()
-
-    const fn = () => {
+    return () => {
       if (done) return
       done = true
-      clear()
       release(limits)
     }
-    fn.touch = () => {
-      if (done) return
-      clear()
-      arm()
-    }
-    return fn
   }
 
   function release(limits: Limit[]) {

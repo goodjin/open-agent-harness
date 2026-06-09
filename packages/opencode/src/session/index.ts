@@ -10,6 +10,7 @@ import { Flag } from "../flag/flag"
 import { Installation } from "../installation"
 
 import {
+  ConflictError,
   Database,
   NotFoundError,
   ForbiddenError,
@@ -660,6 +661,7 @@ export namespace Session {
     z.object({
       sessionID: SessionID.zod,
       agent: z.string(),
+      confirm: z.boolean().optional(),
     }),
     async (input) => {
       return Database.use((db) => {
@@ -672,6 +674,12 @@ export namespace Session {
         if (old.directory !== Instance.directory) {
           throw new ForbiddenError({
             message: `Session ${input.sessionID} does not belong to the current directory`,
+          })
+        }
+        const currentAgent = (old.dsl_context?.session_tree as { agent?: string } | undefined)?.agent
+        if (currentAgent !== undefined && currentAgent !== input.agent && input.confirm !== true) {
+          throw new ConflictError({
+            message: `Session ${input.sessionID} has bound agent "${currentAgent}". Pass confirm=true to overwrite it with "${input.agent}".`,
           })
         }
         const ctx = {

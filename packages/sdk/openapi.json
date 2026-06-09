@@ -2705,6 +2705,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -2729,6 +2739,9 @@
                   },
                   "agent": {
                     "type": "string"
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   },
                   "model": {
                     "type": "object",
@@ -12439,6 +12452,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -21007,6 +21030,30 @@
           "status",
           "stats",
           "time"
+        ]
+      },
+      "ConflictError": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "const": "ConflictError"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "name",
+          "data"
         ]
       },
       "TextPartInput": {

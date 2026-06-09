@@ -133,7 +133,14 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         }
         pending.set(id, { info, deferred })
         const current = SessionStatus.get(input.sessionID)
-        if (current.type !== "waiting_user") status.set(input.sessionID, current)
+        if (current.type !== "waiting_user") {
+          // Treat terminal states (timeout/error) as idle so the session can recover
+          // once the user replies. Otherwise the prior would be restored on reply and
+          // every follow-up ask would re-enter the same terminal state.
+          const prior =
+            current.type === "timeout" || current.type === "error" ? { type: "idle" as const } : current
+          status.set(input.sessionID, prior)
+        }
         SessionStatus.set(input.sessionID, { type: "waiting_user" })
         Bus.publish(Event.Asked, info)
 

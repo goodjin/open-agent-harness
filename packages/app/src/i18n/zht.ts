@@ -526,6 +526,7 @@ export const dict = {
   "session.followupDock.edit": "編輯",
   "session.followupDock.collapse": "收合佇列訊息",
   "session.followupDock.expand": "展開佇列訊息",
+  "session.followupDock.target": "回覆至 {{target}}",
   "session.revertDock.summary.one": "{{count}} 則已回復訊息",
   "session.revertDock.summary.other": "{{count}} 則已回復訊息",
   "session.revertDock.collapse": "收合已回復訊息",

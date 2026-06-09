@@ -536,6 +536,7 @@ export const dict = {
   "session.followupDock.edit": "Rediger",
   "session.followupDock.collapse": "Skjul meldinger i kø",
   "session.followupDock.expand": "Utvid meldinger i kø",
+  "session.followupDock.target": "Svarer til {{target}}",
   "session.revertDock.summary.one": "{{count}} tilbakestilt melding",
   "session.revertDock.summary.other": "{{count}} tilbakestilte meldinger",
   "session.revertDock.collapse": "Skjul tilbakestilte meldinger",

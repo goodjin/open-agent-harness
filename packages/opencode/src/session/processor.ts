@@ -125,7 +125,6 @@ export namespace SessionProcessor {
             try {
               for await (const value of stream.fullStream) {
                 input.abort.throwIfAborted()
-                stream.touch?.()
                 if (currentText && !["text-start", "text-delta", "text-end"].includes(value.type)) hasOther = true
                 switch (value.type) {
                   case "start":

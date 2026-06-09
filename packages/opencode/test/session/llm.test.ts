@@ -110,7 +110,11 @@ describe("session.llm.hasToolCalls", () => {
     expect(system).toContain("Final protocol reminder:")
     expect(system).toContain("Never wrap the protocol package in an `input` field")
     expect(
-      system.trim().endsWith('For runtime work use `items`; each item uses `{ id, kind, target, args, depends, result }` or `{ id, kind: "agent", target, prompt }`.'),
+      system
+        .trim()
+        .endsWith(
+          'For runtime work use `items`; common items are `{ id, kind: "tool", target, args, depends, result }`, `{ id, kind: "agent", target, prompt, depends, result }`, `{ id, kind: "input", prompt, mode, options }`, and `{ id, kind: "confirm", prompt, plan }`.',
+        ),
     ).toBe(true)
     expect(system).not.toContain("AgentProtocolOutput.input.type")
     expect(system).not.toContain("actions")

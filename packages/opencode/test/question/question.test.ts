@@ -312,7 +312,7 @@ test("ask - restores prior status after reject", async () => {
   })
 })
 
-test("ask - works from timeout state and restores timeout after reply", async () => {
+test("ask - from timeout state treats prior as idle so the session can recover", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({
     directory: tmp.path,
@@ -341,11 +341,10 @@ test("ask - works from timeout state and restores timeout after reply", async ()
       })
       await ask
 
-      const status = SessionStatus.get(sessionID)
-      expect(status.type).toBe("timeout")
-      if (status.type === "timeout") {
-        expect(status.message).toBe("no progress")
-      }
+      // The reply is the user's "retry" action. It must reset the session to a
+      // normal state instead of restoring the prior terminal status, otherwise
+      // every follow-up ask would re-enter the same terminal state.
+      expect(SessionStatus.get(sessionID).type).toBe("idle")
       SessionStatus.set(sessionID, { type: "idle" })
     },
   })

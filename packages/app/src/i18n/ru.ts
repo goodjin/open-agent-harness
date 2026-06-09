@@ -533,6 +533,7 @@ export const dict = {
   "session.followupDock.edit": "Редактировать",
   "session.followupDock.collapse": "Свернуть сообщения в очереди",
   "session.followupDock.expand": "Развернуть сообщения в очереди",
+  "session.followupDock.target": "Ответ для {{target}}",
   "session.revertDock.summary.one": "{{count}} сообщение возвращено",
   "session.revertDock.summary.other": "{{count}} сообщений возвращено",
   "session.revertDock.collapse": "Свернуть возвращённые сообщения",

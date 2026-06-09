@@ -32,6 +32,13 @@ export const ForbiddenError = NamedError.create(
   }),
 )
 
+export const ConflictError = NamedError.create(
+  "ConflictError",
+  z.object({
+    message: z.string(),
+  }),
+)
+
 const log = Log.create({ service: "db" })
 
 export namespace Database {

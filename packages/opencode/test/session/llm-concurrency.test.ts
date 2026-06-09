@@ -21,7 +21,7 @@ function wait(ms: number) {
 }
 
 describe("LLMConcurrency", () => {
-  test("releases a slot when the lease timeout expires", async () => {
+  test("releases a slot when the active lease is released", async () => {
     await Instance.provide({
       directory: __dirname,
       fn: async () => {
@@ -30,7 +30,6 @@ describe("LLMConcurrency", () => {
           provider,
           sessionID: SessionID.make("ses_lease_one"),
           abort: new AbortController().signal,
-          timeout: 10,
         })
         let ran = false
         const two = LLMConcurrency.acquire({
@@ -38,60 +37,110 @@ describe("LLMConcurrency", () => {
           provider,
           sessionID: SessionID.make("ses_lease_two"),
           abort: new AbortController().signal,
-          timeout: false,
         }).then((release) => {
           ran = true
           release()
         })
 
         expect(ran).toBe(false)
-        await wait(25)
-        expect(ran).toBe(true)
+        // Lease-level inactivity is no longer treated as timeout; the slot only
+        // frees up when the holder explicitly releases (i.e. HTTP stream ends
+        // or the request is aborted at the fetch layer).
         one()
         await two
+        expect(ran).toBe(true)
       },
     })
   })
 
-  test("clears the lease timeout on normal release", async () => {
+  test("does not release a slot just because no progress was reported", async () => {
     await Instance.provide({
       directory: __dirname,
       fn: async () => {
-        const id = SessionID.make("ses_lease_release")
+        const id = SessionID.make("ses_lease_idle")
+        SessionStatus.set(id, { type: "running" })
         const release = await LLMConcurrency.acquire({
           model,
           provider,
           sessionID: id,
           abort: new AbortController().signal,
-          timeout: 10,
         })
 
+        // Inactivity must not release the slot or flip the session to
+        // `timeout`. The HTTP fetch layer owns the only real timeout (it
+        // aborts the request and throws TimeoutError, which processor.ts
+        // maps to the `timeout` session status).
+        await wait(40)
+        // Lease is still owned by the holder — the second request blocks.
+        let queued = false
+        const second = LLMConcurrency.acquire({
+          model,
+          provider,
+          sessionID: SessionID.make("ses_lease_idle_queued"),
+          abort: new AbortController().signal,
+        }).then((r) => {
+          queued = true
+          r()
+        })
+        await wait(10)
+        expect(queued).toBe(false)
         release()
-        await wait(25)
-
-        expect(SessionStatus.get(id).type).toBe("idle")
+        await second
+        expect(queued).toBe(true)
       },
     })
   })
 
-  test("extends the lease when progress is reported", async () => {
+  test("resets a queued session to idle when its acquire is aborted", async () => {
+    const wide = {
+      id: "lease-provider-wide",
+      concurrency: 5,
+    } as Provider.Info
+    const wideModel = {
+      id: "lease-model-wide",
+      providerID: "lease-provider-wide",
+      concurrency: 5,
+    } as Provider.Model
     await Instance.provide({
       directory: __dirname,
       fn: async () => {
-        const id = SessionID.make("ses_lease_touch")
-        const release = await LLMConcurrency.acquire({
-          model,
-          provider,
+        const id = SessionID.make("ses_lease_abort")
+        SessionStatus.set(id, { type: "running" })
+
+        // Fill all 5 slots, then queue one.
+        const holders: Array<() => void> = []
+        for (let i = 0; i < 5; i++) {
+          holders.push(
+            await LLMConcurrency.acquire({
+              model: wideModel,
+              provider: wide,
+              sessionID: SessionID.make("ses_lease_abort_a_" + i),
+              abort: new AbortController().signal,
+            }),
+          )
+        }
+
+        const ctrl = new AbortController()
+        const queued = LLMConcurrency.acquire({
+          model: wideModel,
+          provider: wide,
           sessionID: id,
-          abort: new AbortController().signal,
-          timeout: 20,
+          abort: ctrl.signal,
         })
 
         await wait(10)
-        release.touch()
-        await wait(15)
+        // Status is set to `rate_limited` by `publish` while waiting.
+        expect(SessionStatus.get(id).type).toBe("rate_limited")
+
+        // Abort the queued acquire. The slot was never taken, but the
+        // session status must not stay frozen at `rate_limited` forever
+        // — that was the source of the persistent "waiting for concurrency
+        // slot" notification in the sidebar.
+        ctrl.abort(new Error("user canceled"))
+        await expect(queued).rejects.toThrow("user canceled")
         expect(SessionStatus.get(id).type).toBe("idle")
-        release()
+
+        for (const r of holders) r()
       },
     })
   })

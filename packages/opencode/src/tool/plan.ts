@@ -3,6 +3,7 @@ import path from "path"
 import { Tool } from "./tool"
 import { Question } from "../question"
 import { Session } from "../session"
+import { getRegistry } from "../agent/registry"
 import { MessageV2 } from "../session/message-v2"
 import { Provider } from "../provider/provider"
 import { Instance } from "../project/instance"
@@ -20,18 +21,46 @@ export const PlanExitTool = Tool.define("plan_exit", {
   description: EXIT_DESCRIPTION,
   parameters: z.object({}),
   async execute(_params, ctx) {
+    type Worker = { id: string; label: string; description: string }
+    const registry = getRegistry()
     const session = await Session.get(ctx.sessionID)
     const plan = path.relative(Instance.worktree, Session.plan(session))
+    const all = await registry.list()
+    const workers = (
+      await Promise.all(
+        all.map(async (entry) => {
+          const full = await registry.get(entry.id)
+          if (!full || full.meta.kind !== "worker") return undefined
+          if (!full.meta.entry.mentionable || full.meta.entry.hidden || full.meta.hidden) return undefined
+          if (["atlas", "sisyphus"].includes(full.id)) return undefined
+          return {
+            id: full.id,
+            label: full.name,
+            description: full.meta.description,
+          }
+        }),
+      )
+    )
+      .filter((item): item is Worker => item != null)
+      .sort((a, b) => a.label.localeCompare(b.label))
+
+    if (workers.length === 0) {
+      throw new Error("No implementation worker available to switch to from plan mode.")
+    }
+
     const answers = await Question.ask({
       sessionID: ctx.sessionID,
       questions: [
         {
-          question: `Plan at ${plan} is complete. Would you like to switch to the build agent and start implementing?`,
-          header: "Build Agent",
+          question: `Plan at ${plan} is complete. Which implementation worker should continue now?`,
+          header: "Execution Worker",
           custom: false,
           options: [
-            { label: "Yes", description: "Switch to build agent and start implementing the plan" },
-            { label: "No", description: "Stay with plan agent to continue refining the plan" },
+            ...workers.map(({ id, label, description }) => ({
+              label: id,
+              description: `${label}: ${description}`,
+            })),
+            { label: "No", description: "Stay with the plan mode to continue refining the plan" },
           ],
         },
       ],
@@ -40,6 +69,8 @@ export const PlanExitTool = Tool.define("plan_exit", {
 
     const answer = answers[0]?.[0]
     if (answer === "No") throw new Question.RejectedError()
+    const worker = workers.find(({ id }) => id === answer)?.id
+    if (!worker) throw new Error("No target worker selected")
 
     const model = await getLastModel(ctx.sessionID)
 
@@ -50,7 +81,7 @@ export const PlanExitTool = Tool.define("plan_exit", {
       time: {
         created: Date.now(),
       },
-      agent: "build",
+      agent: worker,
       model,
     }
     await Session.updateMessage(userMsg)
@@ -59,14 +90,16 @@ export const PlanExitTool = Tool.define("plan_exit", {
       messageID: userMsg.id,
       sessionID: ctx.sessionID,
       type: "text",
-      text: `The plan at ${plan} has been approved, you can now edit files. Execute the plan`,
+      text: `The plan at ${plan} has been approved. Continue implementation in ${worker}.`,
       synthetic: true,
     } satisfies MessageV2.TextPart)
 
     return {
-      title: "Switching to build agent",
-      output: "User approved switching to build agent. Wait for further instructions.",
-      metadata: {},
+      title: `Switching to ${worker}`,
+      output: `User approved switching to ${worker}. Wait for further instructions.`,
+      metadata: {
+        targetAgent: worker,
+      },
     }
   },
 })
@@ -88,7 +121,7 @@ export const PlanEnterTool = Tool.define("plan_enter", {
           custom: false,
           options: [
             { label: "Yes", description: "Switch to plan agent for research and planning" },
-            { label: "No", description: "Stay with build agent to continue making changes" },
+            { label: "No", description: "Stay with execution mode to continue planning-related work" },
           ],
         },
       ],

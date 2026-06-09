@@ -227,4 +227,56 @@ describe("Session tree projection", () => {
         }),
     })
   })
+
+  test("rejects agent change without confirm when a bound agent already exists", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "agent-conflict" })
+            const app = Server.Default()
+
+            // initial assignment: confirm not required (no prior bound agent)
+            const first = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: [session.id], agent: "build" }),
+            })
+            expect(first.status).toBe(200)
+
+            // attempt to overwrite without confirm: must 409
+            const conflict = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: [session.id], agent: "plan" }),
+            })
+            expect(conflict.status).toBe(409)
+            const conflictBody = (await conflict.json()) as { data?: { message?: string }; message?: string }
+            const conflictMsg = conflictBody.data?.message ?? conflictBody.message ?? ""
+            expect(conflictMsg).toContain("build")
+            expect(conflictMsg).toContain("plan")
+
+            // attempt to overwrite with the same agent: must 200 (no-op overwrite)
+            const same = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: [session.id], agent: "build" }),
+            })
+            expect(same.status).toBe(200)
+
+            // attempt to overwrite with a different agent + confirm=true: must 200
+            const confirmed = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ids: [session.id], agent: "plan", confirm: true }),
+            })
+            expect(confirmed.status).toBe(200)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
 })

@@ -1573,6 +1573,7 @@ export class Tree extends HeyApiClient {
       ids?: Array<string>
       title?: string
       agent?: string
+      confirm?: boolean
       model?: {
         providerID: string
         modelID: string
@@ -1598,6 +1599,7 @@ export class Tree extends HeyApiClient {
             { in: "body", key: "ids" },
             { in: "body", key: "title" },
             { in: "body", key: "agent" },
+            { in: "body", key: "confirm" },
             { in: "body", key: "model" },
           ],
         },

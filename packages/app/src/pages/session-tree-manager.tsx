@@ -154,7 +154,14 @@ export default function SessionTreeManager() {
     includeDone: false,
     resumeMode: "restore" as ResumeMode,
     resumeMessage: "",
+    agentConflict: undefined as AgentConflict | undefined,
   })
+
+  type AgentConflict = {
+    current: string
+    next: string
+    body: Record<string, unknown>
+  }
 
   const status = createMemo(() => [
     allStatus,
@@ -277,7 +284,11 @@ export default function SessionTreeManager() {
     setStore("selected", {})
   }
 
-  const post = async (path: string, body: Record<string, unknown>) => {
+  const post = async (
+    path: string,
+    body: Record<string, unknown>,
+    options?: { onConflict?: (info: { current: string; message: string }) => void },
+  ) => {
     const ids = picked()
     if (ids.length === 0) return
     setStore("busy", true)
@@ -287,7 +298,17 @@ export default function SessionTreeManager() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ directory: sdk.directory, ids, ...body }),
       })
-      if (!res.ok) throw new Error(await res.text())
+      if (!res.ok) {
+        const text = await res.text()
+        if (res.status === 409 && options?.onConflict) {
+          const data = parseConflict(text)
+          if (data) {
+            options.onConflict(data)
+            return
+          }
+        }
+        throw new Error(text)
+      }
       await load()
       if (params.id && ids.includes(params.id)) await sync.session.sync(params.id, { force: true }).catch(() => undefined)
       showToast({
@@ -301,14 +322,39 @@ export default function SessionTreeManager() {
     }
   }
 
-  const update = () => {
+  function parseConflict(text: string): { current: string; message: string } | undefined {
+    try {
+      const data = JSON.parse(text) as { data?: { message?: string }; message?: string }
+      const msg = data?.data?.message ?? data?.message ?? text
+      const match = /has bound agent "([^"]*)"/.exec(msg)
+      return { current: match?.[1] ?? "", message: msg }
+    } catch {
+      return undefined
+    }
+  }
+
+  const update = (confirm = false) => {
     const body: Record<string, unknown> = {}
     if (store.title.trim()) body.title = store.title.trim()
     if (store.agent) body.agent = store.agent
     if (store.providerID.trim() && store.modelID.trim()) {
       body.model = { providerID: store.providerID.trim(), modelID: store.modelID.trim() }
     }
-    void post("/session/tree/sessions", body)
+    if (Object.keys(body).length === 0) return
+    if (body.agent !== undefined) body.confirm = confirm
+    const next = String(body.agent ?? "")
+    void post(
+      "/session/tree/sessions",
+      body,
+      confirm
+        ? undefined
+        : {
+            onConflict: ({ current }) => {
+              setStore("agentConflict", { current: current || next, next, body })
+              dialog.show(() => <DialogAgentConflict />)
+            },
+          },
+    )
   }
 
   const abort = () => void post("/session/tree/abort", { source_session: params.id })
@@ -327,6 +373,47 @@ export default function SessionTreeManager() {
     dialog.show(() => <DialogResume />)
   }
   const open = (id: string) => navigate(`/${params.dir}/session/${id}`)
+
+  function DialogAgentConflict() {
+    const conflict = store.agentConflict
+    if (!conflict) return null
+    return (
+      <Dialog
+        title={language.t("sessionTree.confirmAgent.title")}
+        fit
+      >
+        <div class="flex flex-col gap-4 px-5 pb-4 min-w-[360px]">
+          <div class="text-12-regular text-text-weak">
+            {language.t("sessionTree.confirmAgent.description")}
+          </div>
+          <div class="flex flex-col gap-1 text-12-regular">
+            <div class="text-text-weak">
+              {language.t("sessionTree.confirmAgent.current", { current: conflict.current || "—" })}
+            </div>
+            <div class="text-text-strong">
+              {language.t("sessionTree.confirmAgent.next", { next: conflict.next })}
+            </div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+              {language.t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              size="large"
+              onClick={() => {
+                dialog.close()
+                setStore("agentConflict", undefined)
+                update(true)
+              }}
+            >
+              {language.t("sessionTree.confirmAgent.confirm")}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    )
+  }
 
   function DialogResume() {
     return (

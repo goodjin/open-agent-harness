@@ -2007,6 +2007,13 @@ export type SessionTreeNode = {
   }
 }
 
+export type ConflictError = {
+  name: "ConflictError"
+  data: {
+    message: string
+  }
+}
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -4732,6 +4739,7 @@ export type SessionTreeUpdateData = {
     ids: Array<string>
     title?: string
     agent?: string
+    confirm?: boolean
     model?: {
       providerID: string
       modelID: string
@@ -4757,6 +4765,10 @@ export type SessionTreeUpdateErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type SessionTreeUpdateError = SessionTreeUpdateErrors[keyof SessionTreeUpdateErrors]
@@ -8307,6 +8319,10 @@ export type AgentManageCreateErrors = {
    * Forbidden
    */
   403: ForbiddenError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type AgentManageCreateError = AgentManageCreateErrors[keyof AgentManageCreateErrors]

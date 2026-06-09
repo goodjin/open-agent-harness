@@ -6,6 +6,7 @@ import z from "zod"
 import { Session } from "../../session"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
+import { SessionRunner } from "../../session/runner"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
 import { SessionLog } from "../../session/log"
@@ -322,7 +323,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 403, 404),
+          ...errors(400, 403, 404, 409),
         },
       }),
       validator(
@@ -330,6 +331,7 @@ export const SessionRoutes = lazy(() =>
         TreeBatch.extend({
           title: z.string().optional(),
           agent: z.string().optional(),
+          confirm: z.boolean().optional(),
           model: z
             .object({
               providerID: ProviderID.zod,
@@ -345,7 +347,8 @@ export const SessionRoutes = lazy(() =>
             body.ids.map(async (id) => {
               await Session.get(id)
               if (body.title !== undefined) await Session.setTitle({ sessionID: id, title: body.title })
-              if (body.agent !== undefined) await Session.setAgent({ sessionID: id, agent: body.agent })
+              if (body.agent !== undefined)
+                await Session.setAgent({ sessionID: id, agent: body.agent, confirm: body.confirm })
               if (body.model) await Session.setModel({ sessionID: id, model: body.model })
             }),
           )
@@ -1160,6 +1163,9 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const query = c.req.valid("query")
         const sessionID = c.req.valid("param").sessionID
+        void SessionRunner.recover({ sessionID }).catch((err) =>
+          log.warn("session protocol recovery scheduling failed", { sessionID, err }),
+        )
         if (query.limit === undefined) {
           await Session.get(sessionID)
           const messages = await Session.messages({ sessionID })

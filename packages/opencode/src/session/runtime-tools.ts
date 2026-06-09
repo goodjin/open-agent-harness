@@ -11,7 +11,7 @@ import { ProviderTransform } from "@/provider/transform"
 import { Session } from "@/session"
 import { SessionDelegation } from "@/session/delegation"
 import { MessageV2 } from "@/session/message-v2"
-import { PartID, SessionID } from "@/session/schema"
+import { MessageID, PartID, SessionID } from "@/session/schema"
 import { SessionProcessor } from "@/session/processor"
 import { SessionStatus } from "@/session/status"
 import { ToolRegistry } from "@/tool/registry"
@@ -35,6 +35,29 @@ type McpResult = {
       }
   )[]
   metadata?: Record<string, unknown>
+}
+
+const resumeInstructions = {
+  format: [
+    "The previous assistant output was interrupted or malformed.",
+    "Continue from the last partial result and finish this delegated session in the expected format.",
+    "If output format is constrained, keep the same schema and output the missing section directly.",
+  ].join("\n"),
+  error: [
+    "The previous assistant run reached an error condition.",
+    "Resume the delegated session, recover the task state, and continue to the expected next step.",
+    "Keep recovery actionable and keep the same result format.",
+  ].join("\n"),
+  stopped: [
+    "The previous assistant run stopped before it completed expected work.",
+    "Continue from the last checkpoint and finish this delegated task immediately.",
+    "Do not return a summary-only completion yet.",
+  ].join("\n"),
+  empty: [
+    "The previous assistant run did not produce a usable final answer.",
+    "Continue the delegated session and produce the expected result format.",
+    "Do not repeat prior setup unless it is required to recover context.",
+  ].join("\n"),
 }
 
 export namespace RuntimeTools {
@@ -92,7 +115,12 @@ export namespace RuntimeTools {
       },
     })
 
-    const add = (id: string, description: string, schema: unknown, execute: (args: unknown, options: ToolCallOptions) => Promise<unknown>) => {
+    const add = (
+      id: string,
+      description: string,
+      schema: unknown,
+      execute: (args: unknown, options: ToolCallOptions) => Promise<unknown>,
+    ) => {
       if (input.tools?.[id] === false) return
       if (listed(id)) catalog.push({ id, description: ProtocolToolCatalog.describe({ id, description }), schema })
       tools[id] = tool({
@@ -103,10 +131,7 @@ export namespace RuntimeTools {
       })
     }
 
-    const disabled = PermissionNext.disabled(
-      (await ToolRegistry.ids()),
-      rules,
-    )
+    const disabled = PermissionNext.disabled(await ToolRegistry.ids(), rules)
     for (const item of await ToolRegistry.tools(
       { modelID: ModelID.make(input.model.api.id), providerID: input.model.providerID },
       agent,
@@ -117,18 +142,21 @@ export namespace RuntimeTools {
         const context = ctx(args, options)
         const start = Date.now()
         const span = Trace.begin("tool.call", { tool: item.id, sessionID: input.session.id })
-        const result = await item.execute(args, context).then(
-          (value) => {
-            Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "completed" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "completed" }, start)
-            return value
-          },
-          (err: unknown) => {
-            Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "error" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "error" }, start)
-            throw err
-          },
-        ).finally(() => Trace.end(span.id))
+        const result = await item
+          .execute(args, context)
+          .then(
+            (value) => {
+              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "completed" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "completed" }, start)
+              return value
+            },
+            (err: unknown) => {
+              Metrics.emit("opencode_tool_call_total", { tool: item.id, status: "error" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: item.id, status: "error" }, start)
+              throw err
+            },
+          )
+          .finally(() => Trace.end(span.id))
         return {
           ...result,
           attachments: result.attachments?.map((attachment) => ({
@@ -158,18 +186,20 @@ export namespace RuntimeTools {
 
         const start = Date.now()
         const span = Trace.begin("tool.call", { tool: key, sessionID: input.session.id })
-        const result = await (execute(args, options) as Promise<McpResult>).then(
-          (value) => {
-            Metrics.emit("opencode_tool_call_total", { tool: key, status: "completed" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "completed" }, start)
-            return value
-          },
-          (err: unknown) => {
-            Metrics.emit("opencode_tool_call_total", { tool: key, status: "error" })
-            Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "error" }, start)
-            throw err
-          },
-        ).finally(() => Trace.end(span.id))
+        const result = await (execute(args, options) as Promise<McpResult>)
+          .then(
+            (value) => {
+              Metrics.emit("opencode_tool_call_total", { tool: key, status: "completed" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "completed" }, start)
+              return value
+            },
+            (err: unknown) => {
+              Metrics.emit("opencode_tool_call_total", { tool: key, status: "error" })
+              Metrics.time("opencode_tool_call_duration_ms", { tool: key, status: "error" }, start)
+              throw err
+            },
+          )
+          .finally(() => Trace.end(span.id))
 
         const text: string[] = []
         const attachments: Omit<MessageV2.FilePart, "id" | "sessionID" | "messageID">[] = []
@@ -312,15 +342,22 @@ export namespace RuntimeTools {
 
       add(
         "session_continue",
-        "Continue one delegated child session under the current orchestration session with an additional instruction.",
+        "Continue delegated child sessions under the current orchestration session with additional instructions.",
         {
           type: "object",
           additionalProperties: false,
-          required: ["child_session_id", "prompt"],
+          required: ["prompt"],
           properties: {
             child_session_id: {
               type: "string",
-              description: "Child session id to continue.",
+              description: "Deprecated. Use child_session_ids for multi-session input.",
+            },
+            child_session_ids: {
+              type: "array",
+              items: {
+                type: "string",
+              },
+              description: "Optional list of child session ids to continue, processed in order.",
             },
             prompt: {
               type: "string",
@@ -330,28 +367,33 @@ export namespace RuntimeTools {
         },
         async (args) => {
           const req = object(args)
-          const child = childID(req.child_session_id)
           const prompt = required(req.prompt, "prompt")
-          await allowed(input.session.id, child)
-          const result = await continueSession(child, prompt)
-          const reply = assistantText(result)
-          const status = SessionStatus.get(child)
+          const ids = await continueIDs(req, input.session.id)
+          const results: ContinueResult[] = []
+          for (const id of ids) {
+            results.push(...(await continueSessionTree(id, prompt)))
+          }
+          const latest = results.at(-1) ?? resultFromInput(input.session.id, prompt)
           return {
             title: "Session continued",
             metadata: {
-              child_session_id: child,
-              message_id: result.info.id,
-              status,
-              finish: result.info.role === "assistant" ? result.info.finish : undefined,
+              child_session_ids: ids,
+              child_session_id: latest.child,
+              reason: latest.reason,
+              message_id: latest.message_id,
+              status: latest.status,
+              finish: latest.finish,
             },
             output: JSON.stringify(
               {
                 kind: "session_continue_result",
-                child_session_id: child,
-                status,
-                message_id: result.info.id,
-                finish: result.info.role === "assistant" ? result.info.finish : undefined,
-                reply: reply || "No textual reply was produced from the child session.",
+                child_session_id: latest.child,
+                reason: latest.reason,
+                status: latest.status,
+                message_id: latest.message_id,
+                finish: latest.finish,
+                reply: latest.reply,
+                results,
               },
               null,
               2,
@@ -402,7 +444,8 @@ export namespace RuntimeTools {
       input === "blocked" ||
       input === "failed" ||
       input === "waiting_user"
-    ) return input
+    )
+      return input
   }
 
   function sessionTool(id: string) {
@@ -410,14 +453,13 @@ export namespace RuntimeTools {
   }
 
   async function agents(agent: Agent.Info) {
-    return AgentDelegation.list(await Agent.list(), agent.name)
-      .map((item) => ({
-        id: item.name,
-        kind: item.kind,
-        purpose: item.capability.purpose,
-        tags: item.capability.tags,
-        description: item.description,
-      }))
+    return AgentDelegation.list(await Agent.list(), agent.name).map((item) => ({
+      id: item.name,
+      kind: item.kind,
+      purpose: item.capability.purpose,
+      tags: item.capability.tags,
+      description: item.description,
+    }))
   }
 
   function prompt(
@@ -444,7 +486,7 @@ export namespace RuntimeTools {
         "",
         "These are Agent Protocol delegation targets, not native/provider tools.",
         "The only native tool you can call is `AgentProtocolOutput`.",
-        "To delegate work, call `AgentProtocolOutput` exactly once with `{ version: \"2\", items }`.",
+        'To delegate work, call `AgentProtocolOutput` exactly once with `{ version: "2", items }`.',
         "- Before delegating execution, confirm that the task is clear, internally consistent, and actionable.",
         "- If the task is ambiguous, incomplete, contradictory, or risky, ask the user first. Multi-turn clarification is allowed.",
         "- Use `items` for all delegated runtime actions, even when there is only one item.",
@@ -455,7 +497,7 @@ export namespace RuntimeTools {
         "- Shape each agent item as `{ id, kind, target, prompt, depends, result }`.",
         "- Use `depends` only for real dependencies and omit it for independent calls that can run in parallel.",
         "- Use `result` for result policy.",
-        "- Use `items[].kind: \"confirm\"` with `{ id, kind, prompt, plan }` when a planner needs user approval before execution.",
+        '- Use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }` when a planner needs user approval before execution.',
         "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
         "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
         "- Do not call repository tools directly from this agent. Delegate file reading, search, edits, commands, validation, and review to specialist agents.",
@@ -466,14 +508,20 @@ export namespace RuntimeTools {
         "```",
         "",
         agents.length
-          ? agents.map((item) => [
-              `## ${item.id}`,
-              "",
-              item.kind ? `kind: ${item.kind}` : "",
-              `purpose: ${item.purpose}`,
-              item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
-              item.description ?? "",
-            ].filter((line) => line.length > 0).join("\n")).join("\n\n")
+          ? agents
+              .map((item) =>
+                [
+                  `## ${item.id}`,
+                  "",
+                  item.kind ? `kind: ${item.kind}` : "",
+                  `purpose: ${item.purpose}`,
+                  item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
+                  item.description ?? "",
+                ]
+                  .filter((line) => line.length > 0)
+                  .join("\n"),
+              )
+              .join("\n\n")
           : "No delegable agents are currently available.",
       ].join("\n")
     }
@@ -482,7 +530,7 @@ export namespace RuntimeTools {
       "",
       "These are catalog entries for Agent Protocol DSL v2 items, not native/provider tools.",
       "The only native tool you can call is `AgentProtocolOutput`.",
-      "To use one catalog entry, call `AgentProtocolOutput` exactly once with `{ version: \"2\", items }`.",
+      'To use one catalog entry, call `AgentProtocolOutput` exactly once with `{ version: "2", items }`.',
       "- Before declaring runtime work, confirm that the task is clear, internally consistent, and actionable.",
       "- If requirements are ambiguous, incomplete, contradictory, or risky, ask the user first. Multi-turn clarification is allowed.",
       "- Use `items` for all runtime actions, even when there is only one item.",
@@ -493,12 +541,13 @@ export namespace RuntimeTools {
       "- Shape each tool item as `{ id, kind, target, args, depends, result }`.",
       "- Use `depends` for simple dependencies and `result` for result policy.",
       "- Do not invent parameters outside the tool's input schema.",
-      "- Do not use `target: \"auto\"` for tool items.",
+      '- Do not use `target: "auto"` for tool items.',
       "- If a tool id is not listed below, it is unavailable for this agent.",
       "- If repository read, search, command, edit, validation, or review tools are not listed, delegate that work to a suitable agent instead of naming an unavailable tool.",
       "- Do not call listed tool ids directly as native/provider tools.",
-      "- For delegation, do not use a tool item. Use `items[].kind: \"agent\"` with `target: \"auto\"` or a concrete agent id.",
-      "- For plan approval, use `items[].kind: \"confirm\"` with `{ id, kind, prompt, plan }`; executable items should depend on that confirmation.",
+      '- For delegation, do not use a tool item. Use `items[].kind: "agent"` with `target: "auto"` or a concrete agent id.',
+      '- For user choices or additional information, use `items[].kind: "input"` with `{ id, kind, prompt, mode, options, fields }`; the runtime returns the answer to the model before more work is declared.',
+      '- For plan approval, use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }`; executable items should depend on that confirmation.',
       "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
       "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
       "",
@@ -507,18 +556,24 @@ export namespace RuntimeTools {
       "",
       "# Available Protocol Agents",
       "",
-      "Use these with `items[].kind: \"agent\"`, not as tool names.",
-      "For auto routing, set `target: \"auto\"` and put the goal in `prompt`; optional `capabilities` can hint at the desired purpose.",
+      'Use these with `items[].kind: "agent"`, not as tool names.',
+      'For auto routing, set `target: "auto"` and put the goal in `prompt`; optional `capabilities` can hint at the desired purpose.',
       "",
       agents.length
-        ? agents.map((item) => [
-            `## ${item.id}`,
-            "",
-            item.kind ? `kind: ${item.kind}` : "",
-            `purpose: ${item.purpose}`,
-            item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
-            item.description ?? "",
-          ].filter((line) => line.length > 0).join("\n")).join("\n\n")
+        ? agents
+            .map((item) =>
+              [
+                `## ${item.id}`,
+                "",
+                item.kind ? `kind: ${item.kind}` : "",
+                `purpose: ${item.purpose}`,
+                item.tags.length ? `tags: ${item.tags.join(", ")}` : "",
+                item.description ?? "",
+              ]
+                .filter((line) => line.length > 0)
+                .join("\n"),
+            )
+            .join("\n\n")
         : "No delegable agents are currently available.",
     ].join("\n")
   }
@@ -539,7 +594,7 @@ export namespace RuntimeTools {
       return [
         "Example:",
         "```json",
-        '{ "version": "2", "items": [{ "id": "ask_scope", "kind": "ask", "prompt": "Which scope should be planned first?", "mode": "single", "options": [{ "id": "current", "label": "Current slice", "description": "Plan only the delegated slice. The user can add details after selecting it." }, { "id": "broader", "label": "Broader scope", "description": "Include adjacent work in the plan. The user can add details after selecting it." }] }] }',
+        '{ "version": "2", "items": [{ "id": "choose_scope", "kind": "input", "prompt": "Which scope should be planned first?", "mode": "single", "options": [{ "id": "current", "label": "Current slice", "description": "Plan only the delegated slice. The user can add details after selecting it." }, { "id": "broader", "label": "Broader scope", "description": "Include adjacent work in the plan. The user can add details after selecting it." }] }] }',
         "```",
         "",
       ].join("\n")
@@ -565,10 +620,13 @@ export namespace RuntimeTools {
       id: item.id,
       status: SessionStatus.get(item.id),
     }))
-    const status = rows.reduce((acc, item) => {
-      acc[item.status.type] = (acc[item.status.type] ?? 0) + 1
-      return acc
-    }, {} as Record<string, number>)
+    const status = rows.reduce(
+      (acc, item) => {
+        acc[item.status.type] = (acc[item.status.type] ?? 0) + 1
+        return acc
+      },
+      {} as Record<string, number>,
+    )
     const byStatus = rows.reduce((acc, item) => {
       const key = item.status.type
       const list = acc.get(key)
@@ -582,13 +640,19 @@ export namespace RuntimeTools {
     const lines = [
       `Session tree has ${rows.length} sessions.`,
       `Root session: ${root.id}.`,
-      `Status counts: ${Object.entries(status).map(([key, val]) => `${key}=${val}`).join(", ")}.`,
+      `Status counts: ${Object.entries(status)
+        .map(([key, val]) => `${key}=${val}`)
+        .join(", ")}.`,
       "",
       ...Array.from(byStatus.entries()).flatMap(([key, list]) => [
         `${key} (${list.length}):`,
-        list.map((item) => item.status.type === key && Object.keys(item.status).length === 1
-          ? item.id
-          : `${item.id} ${JSON.stringify(item.status)}`).join(", "),
+        list
+          .map((item) =>
+            item.status.type === key && Object.keys(item.status).length === 1
+              ? item.id
+              : `${item.id} ${JSON.stringify(item.status)}`,
+          )
+          .join(", "),
         "",
       ]),
     ]
@@ -599,7 +663,11 @@ export namespace RuntimeTools {
     }
   }
 
-  async function sessionResult(parent: Session.Info["id"], child: Session.Info["id"], opts: { messages: boolean; output: boolean }) {
+  async function sessionResult(
+    parent: Session.Info["id"],
+    child: Session.Info["id"],
+    opts: { messages: boolean; output: boolean },
+  ) {
     const session = await Session.get(child)
     const delegations = await SessionDelegation.query({ sessionID: parent, childID: child, output: opts.output })
     const messages = opts.messages
@@ -610,7 +678,11 @@ export namespace RuntimeTools {
           finish: item.info.role === "assistant" ? item.info.finish : undefined,
           created_at: item.info.time.created,
           completed_at: item.info.role === "assistant" ? item.info.time.completed : undefined,
-          text: item.parts.filter((part) => part.type === "text").map((part) => part.text).join("\n\n").slice(0, 4000),
+          text: item.parts
+            .filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n\n")
+            .slice(0, 4000),
         }))
       : undefined
     return {
@@ -633,6 +705,169 @@ export namespace RuntimeTools {
       sessionID: child,
       agent: agentOf(await Session.get(child)),
       parts: [{ type: "text", text: prompt }],
+    })
+  }
+
+  type ContinueResult = {
+    child: Session.Info["id"]
+    message_id: MessageID
+    status: SessionStatus.Info
+    finish?: MessageV2.Assistant["finish"]
+    reply: string
+    reason: "normal" | "stopped" | "error" | "format" | "empty"
+  }
+  type Asst = MessageV2.WithParts & { info: MessageV2.Assistant }
+
+  function resultFromInput(id: Session.Info["id"], input: string): ContinueResult {
+    return {
+      child: id,
+      status: SessionStatus.get(id),
+      message_id: MessageID.ascending(),
+      reply: input,
+      finish: "error",
+      reason: "error",
+    }
+  }
+
+  async function continueSessionTree(session: Session.Info["id"], prompt: string) {
+    const done = await completedResult(session)
+    if (done) return [done]
+
+    const rows: ContinueResult[] = []
+    const children = await childSessions(session)
+    for (const child of children) {
+      rows.push(...(await continueSessionTree(child.id, prompt)))
+    }
+
+    const resumed = await continueSelf(session, prompt)
+    rows.push(resumed)
+    return rows
+  }
+
+  async function continueIDs(input: Record<string, unknown>, parent: Session.Info["id"]) {
+    const raw = reqArray(input.child_session_ids) ?? []
+    const one = reqString(input.child_session_id)
+    const list = raw.length > 0 ? raw : one ? [one] : []
+    const ids = Array.from(new Set(list)).map((item) => childID(item))
+    if (ids.length === 0) throw new Error(`Missing required field: child_session_id`)
+    for (const id of ids) {
+      await allowed(parent, id)
+    }
+    return ids
+  }
+
+  async function childSessions(parent: Session.Info["id"]) {
+    return (await Session.descendants(parent)).filter((item) => item.parentID === parent)
+  }
+
+  async function completedResult(session: Session.Info["id"]): Promise<ContinueResult | undefined> {
+    const msg = await latestResult(session)
+    if (!msg) return
+    return {
+      child: session,
+      message_id: msg.info.id,
+      status: SessionStatus.get(session),
+      finish: msg.info.finish,
+      reply: assistantText(msg) || "No textual reply was produced from the child session.",
+      reason: "normal" as const,
+    }
+  }
+
+  async function continueSelf(session: Session.Info["id"], prompt: string): Promise<ContinueResult> {
+    const status = SessionStatus.get(session)
+    if (stopped(status.type)) {
+      const resumed = await resumeSession(session)
+      return formatResult(session, resumed, "stopped")
+    }
+
+    const last = await latestAssistant(session)
+    const kind = interruption(last)
+    const next = await continueSession(session, continuationPrompt(prompt, kind))
+    return formatResult(session, next, kind)
+  }
+
+  function interruption(input: Asst | undefined) {
+    if (!input) return "empty" as const
+    if (input.info.error !== undefined) return "error" as const
+    if (input.info.finish === "error") return "error" as const
+
+    const text = assistantText(input)
+    if (!text && (typeof input.info.finish !== "string" || !["tool-calls", "unknown"].includes(input.info.finish))) {
+      return "format" as const
+    }
+
+    return "normal"
+  }
+
+  function continuationPrompt(input: string, reason: ContinueResult["reason"]) {
+    const base = reason === "normal" ? input : (resumeInstructions[reason] ?? resumeInstructions.format)
+    if (reason === "normal") return base
+    return [base, "", input].join("\n")
+  }
+
+  async function resumeSession(session: Session.Info["id"]) {
+    const { SessionPrompt } = await import("./prompt")
+    try {
+      return await SessionPrompt.loop({
+        sessionID: session,
+        resume_existing: true,
+      })
+    } catch {
+      return continueSession(session, "The previous run was interrupted and should continue from the last state.")
+    }
+  }
+
+  async function latestAssistant(session: Session.Info["id"]): Promise<Asst | undefined> {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(session)).catch(() => [])
+    return msgs
+      .flatMap((item) =>
+        item.info.role === "assistant" && typeof item.info.time.completed === "number" ? [item as Asst] : [],
+      )
+      .at(0)
+  }
+
+  async function latestResult(session: Session.Info["id"]): Promise<Asst | undefined> {
+    const msg = await latestAssistant(session)
+    if (!msg || msg.info.error) return
+    if (!msg.info.finish || ["tool-calls", "unknown"].includes(msg.info.finish)) return
+    return msg
+  }
+
+  function stopped(input: SessionStatus.Info["type"]) {
+    return (
+      input === "aborted" ||
+      input === "paused" ||
+      input === "failed" ||
+      input === "timeout" ||
+      input === "error" ||
+      input === "blocked"
+    )
+  }
+
+  function formatResult(
+    session: Session.Info["id"],
+    result: MessageV2.WithParts,
+    reason: ContinueResult["reason"],
+  ): ContinueResult {
+    return {
+      child: session,
+      status: SessionStatus.get(session),
+      message_id: result.info.id,
+      finish: result.info.role === "assistant" ? result.info.finish : undefined,
+      reply: assistantText(result) || "No textual reply was produced from the child session.",
+      reason,
+    }
+  }
+
+  function reqString(input: unknown) {
+    if (typeof input === "string" && input.trim()) return input
+  }
+
+  function reqArray(input: unknown) {
+    if (!Array.isArray(input)) return
+    return input.flatMap((item) => {
+      if (typeof item !== "string" || !item.trim()) return []
+      return [item]
     })
   }
 

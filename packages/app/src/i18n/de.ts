@@ -484,6 +484,7 @@ export const dict = {
   "session.followupDock.edit": "Bearbeiten",
   "session.followupDock.collapse": "Warteschlange einklappen",
   "session.followupDock.expand": "Warteschlange ausklappen",
+  "session.followupDock.target": "Antwort an {{target}}",
   "session.revertDock.summary.one": "{{count}} zurückgesetzte Nachricht",
   "session.revertDock.summary.other": "{{count}} zurückgesetzte Nachrichten",
   "session.revertDock.collapse": "Zurückgesetzte Nachrichten einklappen",

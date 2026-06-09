@@ -1106,6 +1106,39 @@ test("reply - publishes audit events for asked and replied", async () => {
   })
 })
 
+test("ask - from timeout state treats prior as idle so the session can recover", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const sessionID = SessionID.make("session_status_timeout")
+      SessionStatus.set(sessionID, { type: "running" })
+      SessionStatus.set(sessionID, { type: "timeout", message: "no progress" })
+      const ask = PermissionNext.ask({
+        id: PermissionID.make("per_status_timeout"),
+        sessionID,
+        permission: "bash",
+        patterns: ["ls"],
+        metadata: {},
+        always: [],
+        ruleset: [],
+      })
+
+      await waitForPending(1)
+      expect(SessionStatus.get(sessionID).type).toBe("waiting_permission")
+      await PermissionNext.reply({
+        requestID: PermissionID.make("per_status_timeout"),
+        reply: "once",
+      })
+
+      await expect(ask).resolves.toBeUndefined()
+      // The reply is the user's "retry" action. It must reset the session to a
+      // normal state instead of restoring the prior terminal status.
+      expect(SessionStatus.get(sessionID).type).toBe("idle")
+    },
+  })
+})
+
 test("ask - sets waiting_permission and restores prior status after once", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({

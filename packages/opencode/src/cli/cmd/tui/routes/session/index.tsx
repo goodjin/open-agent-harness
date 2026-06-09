@@ -217,7 +217,8 @@ export function Session() {
     if (part.id === lastSwitch) return
 
     if (part.tool === "plan_exit") {
-      local.agent.set("build")
+      const next = (part.metadata as { targetAgent?: string } | undefined)?.targetAgent ?? undefined
+      if (next) local.agent.set(next)
       lastSwitch = part.id
     } else if (part.tool === "plan_enter") {
       local.agent.set("plan")

@@ -33,7 +33,7 @@ import { ConfigRoutes } from "./routes/config"
 import { ExperimentalRoutes } from "./routes/experimental"
 import { ProviderRoutes } from "./routes/provider"
 import { InstanceBootstrap } from "../project/bootstrap"
-import { NotFoundError, ForbiddenError } from "../storage/db"
+import { ConflictError, NotFoundError, ForbiddenError } from "../storage/db"
 import type { ContentfulStatusCode } from "hono/utils/http-status"
 import { websocket } from "hono/bun"
 import { HTTPException } from "hono/http-exception"
@@ -95,6 +95,7 @@ export namespace Server {
           let status: ContentfulStatusCode
           if (err instanceof NotFoundError) status = 404
           else if (err instanceof ForbiddenError) status = 403
+          else if (err instanceof ConflictError) status = 409
           else if (err instanceof Provider.ModelNotFoundError) status = 400
           else if (err.name.startsWith("ProviderAuth")) status = 400
           else if (err.name.startsWith("WorkflowInvalid")) status = 400

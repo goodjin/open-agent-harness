@@ -478,6 +478,7 @@ export const dict = {
   "session.followupDock.edit": "Edytuj",
   "session.followupDock.collapse": "Zwiń wiadomości w kolejce",
   "session.followupDock.expand": "Rozwiń wiadomości w kolejce",
+  "session.followupDock.target": "Odpowiedź do {{target}}",
   "session.revertDock.summary.one": "{{count}} cofnięta wiadomość",
   "session.revertDock.summary.other": "{{count}} cofnięte wiadomości",
   "session.revertDock.collapse": "Zwiń cofnięte wiadomości",

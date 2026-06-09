@@ -164,6 +164,18 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 
 `session.result.get` 与会话结束自动回复使用同一份结果。Runtime 不应为 UI 获取动作重复生成结果；如果目标 Task completed 但没有 ResultRecord，Runtime 先请求该 Task 对应 Session 输出 `done.result`，再持久化并返回。
 
+协议恢复：
+
+当加载会话发现最后一条 assistant message 只有 native `AgentProtocolOutput`，但没有 protocol summary、context、response、malformed 或 recovery hint，Runtime 可以进入选择性恢复。恢复不得直接重放整个 protocol package，因为中断前可能已经开始执行非幂等工具或创建子会话。
+
+选择性恢复规则：
+
+| Action | Runtime 行为 |
+|---|---|
+| `confirm` | 可重新建立 pending user confirmation，让 UI 恢复确认框。 |
+| `agent` | 先按 action id 查找已创建 child session；存在时只检查 delegation result 和 child session status，必要时恢复该 child session，不创建重复 child；不存在时才创建新的 child session。 |
+| `tool` / `runtime` / 其他 action | 不自动重放。写入 recovery hint，引导用户重新发送或澄清请求，让模型基于当前状态生成新的 protocol package。 |
+
 ### 右侧任务栏
 
 Session Workbench 右侧应提供 task bar，用于记录当前会话的任务序列。

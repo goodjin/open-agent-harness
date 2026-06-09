@@ -4,15 +4,15 @@ import { Agent } from "../../src/agent/agent"
 import { Instance } from "../../src/project/instance"
 import { tmpdir } from "../fixture/fixture"
 
-// Mirror of the runtime's inferVerifierDependencies logic. Kept in the test
+// Mirror of the runtime's verifier dependency validation logic. Kept in the test
 // file because the helper itself is private inside SessionRunner. If the
 // helper changes, this test must be updated to match.
-async function infer(actions: AgentProtocol.Action[]) {
-  const result = actions.map((item) => ({ ...item, depends_on: [...item.depends_on] }))
-  const targets = new Map<string, string>()
-  for (const item of result) {
+async function issues(actions: AgentProtocol.Action[]) {
+  const targets = new Map<string, AgentProtocol.Action>()
+  const byID = new Map(actions.map((item) => [item.id, item] as const))
+  for (const item of actions) {
     if (item.executor.type !== "agent") continue
-    targets.set(item.executor.target, item.id)
+    targets.set(item.executor.target, item)
   }
   const kindByTarget = new Map<string, string | undefined>()
   await Promise.all(
@@ -21,25 +21,29 @@ async function infer(actions: AgentProtocol.Action[]) {
       kindByTarget.set(target, agent?.kind)
     }),
   )
-  const blocked: { id: string; title: string; reason: string }[] = []
-  for (const item of result) {
+  const kindByID = new Map(actions.map((item) => [item.id, item.executor.type === "agent" ? kindByTarget.get(item.executor.target) : undefined] as const))
+  const out: { id: string; title: string; reason: string }[] = []
+  for (const item of actions) {
     if (item.executor.type !== "agent") continue
     if (kindByTarget.get(item.executor.target) !== "verifier") continue
-    if (item.depends_on.length > 0) continue
-    if (!item.executor.target.endsWith("-verifier")) {
-      blocked.push({ id: item.id, title: item.title, reason: `non-suffixed verifier` })
+    const deps = item.depends_on.filter((dep) => byID.has(dep))
+    const workers = deps.filter((dep) => kindByID.get(dep) === "worker")
+    if (workers.length === 0) {
+      out.push({ id: item.id, title: item.title, reason: `missing worker dependency` })
       continue
     }
+    if (!item.executor.target.endsWith("-verifier")) continue
     const base = item.executor.target.slice(0, -"-verifier".length)
-    const workerID = targets.get(base)
-    if (!workerID) {
-      blocked.push({ id: item.id, title: item.title, reason: `missing worker '${base}'` })
+    const worker = targets.get(base)
+    if (!worker || kindByTarget.get(worker.executor.target) !== "worker") {
+      out.push({ id: item.id, title: item.title, reason: `missing worker '${base}'` })
       continue
     }
-    if (workerID === item.id) continue
-    item.depends_on = [workerID]
+    if (!item.depends_on.includes(worker.id)) {
+      out.push({ id: item.id, title: item.title, reason: `missing depends '${worker.id}'` })
+    }
   }
-  return { actions: result, blocked }
+  return out
 }
 
 function parse(input: object) {
@@ -120,8 +124,8 @@ describe("AgentProtocol schema strips the 'none' depends_on sentinel", () => {
   })
 })
 
-describe("verifier dependency inference (runtime contract)", () => {
-  test("infers depends_on from matching worker base name", async () => {
+describe("verifier dependency validation (runtime contract)", () => {
+  test("rejects empty depends_on even when a matching worker exists", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -143,15 +147,16 @@ describe("verifier dependency inference (runtime contract)", () => {
             ],
           },
         })
-        const r = await infer(actions)
-        const verify = r.actions.find((a) => a.id === "verify_1")!
-        expect(verify.depends_on).toEqual(["impl_1"])
-        expect(r.blocked).toEqual([])
+        const r = await issues(actions)
+        expect(actions.find((a) => a.id === "verify_1")?.depends_on).toEqual([])
+        expect(r).toHaveLength(1)
+        expect(r[0]?.id).toBe("verify_1")
+        expect(r[0]?.reason).toContain("missing worker dependency")
       },
     })
   })
 
-  test("blocks verifier when no worker is present in the graph", async () => {
+  test("rejects verifier when no matching worker is present in the graph", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -170,17 +175,15 @@ describe("verifier dependency inference (runtime contract)", () => {
             ],
           },
         })
-        const r = await infer(actions)
-        const verify = r.actions.find((a) => a.id === "verify_1")!
-        expect(verify.depends_on).toEqual([])
-        expect(r.blocked).toHaveLength(1)
-        expect(r.blocked[0]?.id).toBe("verify_1")
-        expect(r.blocked[0]?.reason).toContain("backend")
+        const r = await issues(actions)
+        expect(r).toHaveLength(1)
+        expect(r[0]?.id).toBe("verify_1")
+        expect(r[0]?.reason).toContain("missing worker dependency")
       },
     })
   })
 
-  test("preserves explicit depends_on for verifiers that already declared one", async () => {
+  test("accepts explicit depends_on for matching worker verifiers", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -197,20 +200,17 @@ describe("verifier dependency inference (runtime contract)", () => {
                 executor: { type: "agent", target: "backend", capabilities: [] },
                 depends_on: [], context_refs: [], result_policy: "summary" },
               { id: "review", type: "action", title: "Review", operation: "review",
-                executor: { type: "agent", target: "sisyphus-verifier", capabilities: [] },
+                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
                 depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
             ],
           },
         })
-        const r = await infer(actions)
-        const review = r.actions.find((a) => a.id === "review")!
-        expect(review.depends_on).toEqual(["impl_1"])
-        expect(r.blocked).toEqual([])
+        expect(await issues(actions)).toEqual([])
       },
     })
   })
 
-  test("non-suffixed verifiers (e.g. security-reviewer) are not auto-inferred and require explicit depends", async () => {
+  test("rejects suffixed verifier that depends on the wrong worker", async () => {
     await using tmp = await tmpdir()
     await Instance.provide({
       directory: tmp.path,
@@ -223,19 +223,45 @@ describe("verifier dependency inference (runtime contract)", () => {
           payload: {
             type: "action_graph",
             actions: [
-              { id: "review", type: "action", title: "Review", operation: "review",
-                executor: { type: "agent", target: "security-reviewer", capabilities: [] },
+              { id: "impl_1", type: "action", title: "Frontend", operation: "do",
+                executor: { type: "agent", target: "frontend", capabilities: [] },
                 depends_on: [], context_refs: [], result_policy: "summary" },
+              { id: "verify_1", type: "action", title: "Verify backend", operation: "verify",
+                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
+                depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
             ],
           },
         })
-        const r = await infer(actions)
-        const review = r.actions.find((a) => a.id === "review")!
-        // No worker with target "security-reviewer" exists; the verifier
-        // must explicitly declare depends_on or set it to ["none"].
-        expect(review.depends_on).toEqual([])
-        expect(r.blocked).toHaveLength(1)
-        expect(r.blocked[0]?.id).toBe("review")
+        const r = await issues(actions)
+        expect(r).toHaveLength(1)
+        expect(r[0]?.reason).toContain("backend")
+      },
+    })
+  })
+
+  test("accepts generic verifier when it depends on a worker", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const actions = parse({
+          type: "agent.protocol",
+          version: "1",
+          intent: "execute",
+          title: "Test",
+          payload: {
+            type: "action_graph",
+            actions: [
+              { id: "impl_1", type: "action", title: "Backend", operation: "do",
+                executor: { type: "agent", target: "backend", capabilities: [] },
+                depends_on: [], context_refs: [], result_policy: "summary" },
+              { id: "review", type: "action", title: "Review", operation: "review",
+                executor: { type: "agent", target: "security-reviewer", capabilities: [] },
+                depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
+            ],
+          },
+        })
+        expect(await issues(actions)).toEqual([])
       },
     })
   })

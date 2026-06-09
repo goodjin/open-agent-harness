@@ -530,6 +530,7 @@ export const dict = {
   "session.followupDock.edit": "แก้ไข",
   "session.followupDock.collapse": "ย่อข้อความในคิว",
   "session.followupDock.expand": "ขยายข้อความในคิว",
+  "session.followupDock.target": "ตอบกลับไปยัง {{target}}",
   "session.revertDock.summary.one": "{{count}} ข้อความที่ถูกย้อนกลับ",
   "session.revertDock.summary.other": "{{count}} ข้อความที่ถูกย้อนกลับ",
   "session.revertDock.collapse": "ย่อข้อความที่ถูกย้อนกลับ",

@@ -1,5 +1,5 @@
 import { Installation } from "@/installation"
-import { DEFAULT_REQUEST_TIMEOUT, Provider } from "@/provider/provider"
+import { Provider } from "@/provider/provider"
 import { Log } from "@/util/log"
 import {
   streamText,
@@ -37,9 +37,9 @@ export namespace LLM {
     "Final protocol reminder:",
     "Strictly follow the Agent Protocol output requirements for this request.",
     "Call `AgentProtocolOutput` exactly once.",
-    "Use the current items shape only: `{ version: \"2\", items }`.",
+    'Use the current items shape only: `{ version: "2", items }`.',
     "Never wrap the protocol package in an `input` field; the native tool arguments themselves are exactly `{ version, items }`.",
-    'For runtime work use `items`; common items are `{ id, kind: "tool", target, args, depends, result }`, `{ id, kind: "agent", target, prompt, depends, result }`, `{ id, kind: "ask", prompt, mode, options }`, and `{ id, kind: "confirm", prompt, plan }`.',
+    'For runtime work use `items`; common items are `{ id, kind: "tool", target, args, depends, result }`, `{ id, kind: "agent", target, prompt, depends, result }`, `{ id, kind: "input", prompt, mode, options }`, and `{ id, kind: "confirm", prompt, plan }`.',
   ].join("\n")
   const PROTOCOL_TURN_REMINDER = [
     "Based on all turns above, decide the next step.",
@@ -85,7 +85,7 @@ export namespace LLM {
     structuredOutput?: boolean
   }
 
-  export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: () => void; touch?: () => void }
+  export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: LLMConcurrency.Release }
 
   export function compose(
     input: Pick<StreamInput, "agent" | "model" | "system" | "user" | "runtimeTools" | "structuredOutput"> & {
@@ -162,18 +162,11 @@ export namespace LLM {
       if (isCodex) {
         options.instructions = SystemPrompt.instructions()
       }
-      const timeout =
-        options["timeout"] === false
-          ? false
-          : typeof options["timeout"] === "number"
-            ? options["timeout"]
-            : DEFAULT_REQUEST_TIMEOUT
       release = await LLMConcurrency.acquire({
         model: input.model,
         provider,
         sessionID: input.sessionID,
         abort: input.abort,
-        timeout,
       })
 
       const params = {
@@ -401,13 +394,11 @@ export namespace LLM {
   }
 
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
-    const rules = input.agent.inheritPermissions === true
-      ? PermissionNext.merge(input.agent.permission, input.permission ?? [])
-      : input.agent.permission
-    const disabled = PermissionNext.disabled(
-      Object.keys(input.tools),
-      rules,
-    )
+    const rules =
+      input.agent.inheritPermissions === true
+        ? PermissionNext.merge(input.agent.permission, input.permission ?? [])
+        : input.agent.permission
+    const disabled = PermissionNext.disabled(Object.keys(input.tools), rules)
     for (const tool of Object.keys(input.tools)) {
       if (input.user.tools?.[tool] === false || disabled.has(tool)) {
         delete input.tools[tool]

@@ -7,6 +7,7 @@ import { useLanguage } from "@/context/language"
 
 export function SessionFollowupDock(props: {
   items: { id: string; text: string }[]
+  target?: string
   sending?: string
   onSend: (id: string) => void
   onEdit: (id: string) => void
@@ -46,6 +47,16 @@ export function SessionFollowupDock(props: {
         }}
       >
         <span class="shrink-0 text-13-medium text-text-strong cursor-default">{label()}</span>
+        <Show when={props.target}>
+          {(target) => (
+            <span
+              class="min-w-0 truncate text-12-regular text-text-weak cursor-default"
+              title={language.t("session.followupDock.target", { target: target() })}
+            >
+              {language.t("session.followupDock.target", { target: target() })}
+            </span>
+          )}
+        </Show>
         <Show when={store.collapsed && preview()}>
           <span class="min-w-0 flex-1 truncate text-13-regular text-text-base cursor-default">{preview()}</span>
         </Show>
