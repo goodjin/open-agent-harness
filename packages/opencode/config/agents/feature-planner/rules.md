@@ -19,6 +19,9 @@
 - Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
+- The runtime auto-links a verifier item to a same-name worker when the verifier's `target` follows the `<name>-verifier` naming convention (e.g. `backend-verifier` is linked to the `backend` action in the same graph). Leave `depends` empty for these verifiers unless the link is custom; do not duplicate the dependency in `depends`.
+- For a verifier that does NOT follow the `<name>-verifier` convention (e.g. `security-reviewer`, `plan-reviewer`, `verifier`), explicitly set `depends` to the upstream worker ids. If a verifier truly has no worker dependency, set `depends` to `["none"]` so the runtime does not block the run with a missing-dependency error.
+- If the planner genuinely forgets to declare the upstream worker, the runtime will mark the verifier as `blocked` and surface the missing link in the next turn. Fix the next package by adding the worker action or by switching the verifier to one that does follow the naming convention.
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
 - Do not assign large feature work directly to implementation agents. Split it into smaller task calls first.

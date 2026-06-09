@@ -448,14 +448,15 @@ export namespace AgentProtocol {
   const Legacy = z.discriminatedUnion("kind", [LegacyAct, LegacyAnswer, LegacyDone])
 
   export const Declaration = z.preprocess((input) => {
-    if (!input || typeof input !== "object" || Array.isArray(input)) return input
-    const value = input as globalThis.Record<string, unknown>
+    const cleaned = stripNone(input)
+    if (!cleaned || typeof cleaned !== "object" || Array.isArray(cleaned)) return cleaned
+    const value = cleaned as globalThis.Record<string, unknown>
     const wrap = wrapped(value)
     if (wrap) return wrap
     const simple = flat(value)
     if (simple) return simple
-    if ("payload" in value) return input
-    if (!("intent" in value)) return input
+    if ("payload" in value) return cleaned
+    if (!("intent" in value)) return cleaned
     const next = { ...value }
     if (next.intent === "execute") {
       next.payload = { type: "action_graph", actions: actions(next.actions) }
@@ -537,6 +538,34 @@ export namespace AgentProtocol {
     const json = decode(input) ?? decode(patched) ?? decode(end(patched))
     if (Array.isArray(json)) return json
     return []
+  }
+
+  export const NONE_DEPENDENCY = "none"
+
+  // stripNone walks the raw declaration and removes the literal "none"
+  // sentinel from every depends / depends_on array. The schema validator
+  // must not see "none" or it will report a missing-dependency error. The
+  // runtime reads back the original sentinel from the action graph and
+  // treats it as "this call intentionally has no upstream dependency".
+  function stripNone(input: unknown): unknown {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input
+    const value = input as globalThis.Record<string, unknown>
+    if ("depends_on" in value && Array.isArray(value.depends_on)) {
+      value.depends_on = (value.depends_on as unknown[]).filter((item) => item !== NONE_DEPENDENCY)
+    }
+    if ("depends" in value && Array.isArray(value.depends)) {
+      value.depends = (value.depends as unknown[]).filter((item) => item !== NONE_DEPENDENCY)
+    }
+    if (Array.isArray(value.items)) {
+      for (const item of value.items as unknown[]) stripNone(item)
+    } else if (Array.isArray(value.calls)) {
+      for (const item of value.calls as unknown[]) stripNone(item)
+    } else if (Array.isArray(value.actions)) {
+      for (const item of value.actions as unknown[]) stripNone(item)
+    } else if (value.payload && typeof value.payload === "object") {
+      stripNone(value.payload)
+    }
+    return input
   }
 
   function wrapped(input: globalThis.Record<string, unknown>) {

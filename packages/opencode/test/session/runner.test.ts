@@ -17,6 +17,7 @@ import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
 import { AgentDelegation } from "../../src/agent/delegation"
 import { Agent } from "../../src/agent/agent"
+import { AgentProtocol } from "../../src/protocol/schema"
 
 describe("SessionRunner", () => {
   test("selects chat for ordinary agents", () => {
@@ -2516,7 +2517,8 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              await runner.process({
+              console.log("DEBUG before process")
+              const result = await runner.process({
                 user,
                 sessionID: session.id,
                 model,
@@ -2642,13 +2644,177 @@ describe("SessionRunner", () => {
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
-
               expect(result).toBe("stop")
               expect(calls).toBe(2)
               expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored))).toBe(true)
               expect(messages.every((item) => item.parts.every((part) => part.type !== "text" || part.metadata?.kind !== "protocol_malformed" || part.ignored))).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.plain")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.retry")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("protocol runner accepts plain JSON answer in final text output", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      version: "2",
+      title: "Read package",
+      items: [
+        {
+          id: "read_package",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "package.json" },
+          depends: [],
+          result: "summary",
+        },
+      ],
+    }
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      if (calls === 1) {
+        return {
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol output received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        } as never
+      }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "text-start" }
+          yield { type: "text-delta", text: '{"kind":"answer","message":"Recovered from plain JSON answer."}' }
+          yield { type: "text-end" }
+          yield {
+            type: "finish-step",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+
+    try {
+      await Bun.write(path.join(tmp.path, "package.json"), JSON.stringify({ name: "plain-final-json" }))
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "read package" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [
+                    {
+                      id: "read",
+                      description: "Read package",
+                      schema: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] },
+                    },
+                  ],
+                  prompt: "# Available Protocol Tools",
+                  execute: async () => ({
+                    title: "package.json",
+                    output: JSON.stringify({ name: "plain-final-json" }),
+                    metadata: {},
+                  }),
+                } as never,
+              })
+              const messages = await Session.messages({ sessionID: session.id })
+              const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Recovered from plain JSON answer.")))).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.final.malformed")).toBe(false)
+              expect(logs.some((item) => item.type === "protocol.final.retry")).toBe(false)
             },
           }),
       })
@@ -4375,4 +4541,35 @@ describe("SessionRunner", () => {
       hook.mockRestore()
     }
   })
+
+  test("verifier dependency inference: schema leaves depends_on empty for runtime to infer", () => {
+    // A V2 protocol with no depends reaches the runtime untouched so the
+    // runtime inference can auto-link the verifier to its base-name worker.
+    const decl = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "impl_1", kind: "agent", target: "backend", prompt: "do work", depends: [] },
+        { id: "verify_1", kind: "agent", target: "backend-verifier", prompt: "verify", depends: [] },
+      ],
+    })
+    if (decl.payload?.type !== "action_graph") throw new Error("not action_graph")
+    const verify = decl.payload.actions.find((a) => a.id === "verify_1")
+    expect(verify?.depends_on).toEqual([])
+  })
+
+  test("verifier dependency inference: 'none' sentinel survives the parser", () => {
+    // The planner can explicitly opt out of auto-inference by setting
+    // depends_on to ["none"]. The schema strips the sentinel before validation
+    // and the runtime reads back the empty depends_on to mean "no dependency".
+    const decl = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "review", kind: "agent", target: "security-reviewer", prompt: "review", depends: ["none"] },
+      ],
+    })
+    if (decl.payload?.type !== "action_graph") throw new Error("not action_graph")
+    const review = decl.payload.actions.find((a) => a.id === "review")
+    expect(review?.depends_on).toEqual([])
+  })
+
 })

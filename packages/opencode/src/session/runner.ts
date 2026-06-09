@@ -438,6 +438,94 @@ export namespace SessionRunner {
     return "stop"
   }
 
+  // inferVerifierDependencies walks the action graph and, for every verifier
+  // agent action that did not declare an upstream dependency, tries to link
+  // it to the worker action that shares its base name (e.g. `backend` for
+  // `backend-verifier`). The convention is enforced at runtime so the planner
+  // never accidentally runs a verifier in parallel with the worker it is
+  // supposed to inspect.
+  //
+  // Outcomes for each verifier action:
+  //   1. depends_on is non-empty after parsing -> untouched.
+  //   2. depends_on is empty and a worker action with the matching base
+  //      name exists in the same graph -> the dependency is filled in.
+  //   3. depends_on is empty and no worker action matches -> the action is
+  //      recorded as blocked so the model can see the missing link in the
+  //      next turn and either add a worker or set depends_on to ["none"].
+  //
+  // A verifier action whose depends_on was the literal "none" sentinel has
+  // already been stripped to an empty array by the schema layer; this
+  // function treats that case the same as case 3 above (the model must
+  // make the "no dependency" decision explicitly each turn).
+  async function inferVerifierDependencies(actions: AgentProtocol.Action[]): Promise<{
+    actions: AgentProtocol.Action[]
+    blocked: { id: string; title: string; reason: string }[]
+  }> {
+    const result = actions.map((item) => ({ ...item, depends_on: [...item.depends_on] }))
+    const targets = new Map<string, string>()
+    for (const item of result) {
+      if (item.executor.type !== "agent") continue
+      targets.set(item.executor.target, item.id)
+    }
+    const kindByTarget = new Map<string, string | undefined>()
+    await Promise.all(
+      [...targets.keys()].map(async (target) => {
+        const agent = await Agent.get(target)
+        kindByTarget.set(target, agent?.kind)
+      }),
+    )
+    const blocked: { id: string; title: string; reason: string }[] = []
+    for (const item of result) {
+      if (item.executor.type !== "agent") continue
+      if (kindByTarget.get(item.executor.target) !== "verifier") continue
+      if (item.depends_on.length > 0) continue
+      // Only auto-infer for verifiers that follow the `<name>-verifier` naming
+      // convention. Plain reviewers (e.g. `security-reviewer`) are not tied to
+      // a single worker, so the planner must declare their dependencies
+      // explicitly or set depends_on to ["none"].
+      if (!item.executor.target.endsWith("-verifier")) {
+        blocked.push({
+          id: item.id,
+          title: item.title,
+          reason:
+            `Verifier '${item.executor.target}' has no depends_on and does not follow the ` +
+            `'<name>-verifier' naming convention, so the runtime cannot infer its ` +
+            `worker. Either declare the upstream worker in depends_on or set ` +
+            `depends_on to ["${AgentProtocol.NONE_DEPENDENCY}"] to declare that this ` +
+            `verifier intentionally has no upstream worker.`,
+        })
+        continue
+      }
+      const base = item.executor.target.slice(0, -"-verifier".length)
+      const workerID = targets.get(base)
+      if (!workerID) {
+        blocked.push({
+          id: item.id,
+          title: item.title,
+          reason:
+            `Verifier '${item.executor.target}' has no depends_on and no worker action ` +
+            `with target '${base}' is present in the same action graph. ` +
+            `Either add a worker action with executor.target '${base}' or explicitly set ` +
+            `depends_on to ["${AgentProtocol.NONE_DEPENDENCY}"] to declare that this ` +
+            `verifier intentionally has no upstream worker.`,
+        })
+        continue
+      }
+      if (workerID === item.id) {
+        blocked.push({
+          id: item.id,
+          title: item.title,
+          reason:
+            `Verifier '${item.executor.target}' cannot depend on itself; supply a ` +
+            `different worker action or set depends_on to ["${AgentProtocol.NONE_DEPENDENCY}"].`,
+        })
+        continue
+      }
+      item.depends_on = [workerID]
+    }
+    return { actions: result, blocked }
+  }
+
   async function execute(input: {
     chat: SessionProcessor.Info
     stream: LLM.StreamInput
@@ -446,7 +534,18 @@ export namespace SessionRunner {
     recovered: boolean
   }) {
     const runID = Identifier.ascending("log").replace(/^log_/, "apr_")
-    const plan = input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
+    const originalActions = input.parsed.declaration.payload.type === "action_graph"
+      ? input.parsed.declaration.payload.actions
+      : []
+    const inference = await inferVerifierDependencies(originalActions)
+    const inferredDeclaration: AgentProtocol.Declaration = inference.actions === originalActions
+      ? input.parsed.declaration
+      : {
+          ...input.parsed.declaration,
+          payload: { type: "action_graph", actions: inference.actions },
+        }
+    const plan = inferredDeclaration.payload.type === "action_graph" ? inferredDeclaration.payload.actions : []
+    const blockedByID = new Map(inference.blocked.map((item) => [item.id, item.reason] as const))
     const runtime = input.stream.runtimeTools ?? await RuntimeTools.build({
       agent: input.stream.agent,
       model: input.stream.model,
@@ -456,10 +555,10 @@ export namespace SessionRunner {
       bypassAgentCheck: false,
       messages: [],
     })
-    await pending(input.sessionID, runID, input.parsed.declaration)
+    await pending(input.sessionID, runID, inferredDeclaration)
     const agents = AgentDelegation.list(await Agent.list(), input.stream.agent.name)
     const run = await AgentProtocolExecutor.run({
-      declaration: input.parsed.declaration,
+      declaration: inferredDeclaration,
       sections: input.parsed.sections,
       runID,
       agents: agents.map((item) => ({
@@ -467,8 +566,16 @@ export namespace SessionRunner {
         entry: item.entry,
         capability: item.capability,
       })),
-      execute: (action, prompt) =>
-        action.executor.type === "tool"
+      execute: (action, prompt) => {
+        const blockedReason = blockedByID.get(action.id)
+        if (blockedReason) {
+          return Promise.resolve({
+            title: action.title,
+            output: blockedReason,
+            metadata: { blocked: true, reason: "missing_verifier_dependency" },
+          })
+        }
+        return action.executor.type === "tool"
           ? tool({
               action,
               prompt,
@@ -498,7 +605,8 @@ export namespace SessionRunner {
                       sessionID: input.sessionID,
                       messageID: input.chat.message.id,
                     })
-            : Promise.resolve(undefined),
+            : Promise.resolve(undefined)
+      },
     })
     await verifierGate({
       actions: plan,
@@ -1543,6 +1651,36 @@ export namespace SessionRunner {
     return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(text)
   }
 
+  function parseInquireAnswer(
+    answer: string[] | undefined,
+    validLabels: Set<string>,
+  ): { selected: string[]; notes: Record<string, string>; custom: string[] } {
+    const selected: string[] = []
+    const notes: Record<string, string> = {}
+    const custom: string[] = []
+    if (!answer?.length) return { selected, notes, custom }
+    for (const raw of answer) {
+      const item = raw.trim()
+      if (!item) continue
+      const idx = item.indexOf(": ")
+      if (idx > 0) {
+        const label = item.slice(0, idx).trim()
+        const note = item.slice(idx + 2).trim()
+        if (validLabels.has(label)) {
+          if (!selected.includes(label)) selected.push(label)
+          if (note) notes[label] = note
+          continue
+        }
+      }
+      if (validLabels.has(item)) {
+        if (!selected.includes(item)) selected.push(item)
+      } else {
+        custom.push(item)
+      }
+    }
+    return { selected, notes, custom }
+  }
+
   async function human(input: {
     action: AgentProtocol.Action
     runID: string
@@ -1571,10 +1709,11 @@ export namespace SessionRunner {
           }]
         })
       : []
+    const prompt = typeof data.prompt === "string" ? data.prompt : input.action.title
     const answers = await Question.ask({
       sessionID: input.sessionID,
       questions: [{
-        question: typeof data.prompt === "string" ? data.prompt : input.action.title,
+        question: prompt,
         header: input.action.title.slice(0, 30),
         options,
         multiple: data.mode === "multi",
@@ -1582,9 +1721,31 @@ export namespace SessionRunner {
       }],
       tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
     })
+
+    const valid = new Set(options.map((o) => o.label))
+    const parsed = parseInquireAnswer(answers[0], valid)
+    const lines: string[] = []
+    if (parsed.selected.length) {
+      lines.push(`- Selected: ${parsed.selected.map((s) => `"${s}"`).join(", ")}`)
+    }
+    if (parsed.custom.length) {
+      lines.push(
+        `- Custom answer${parsed.custom.length > 1 ? "s" : ""}: ${parsed.custom.map((c) => `"${c}"`).join(", ")}`,
+      )
+    }
+    const noteEntries = Object.entries(parsed.notes)
+    if (noteEntries.length) {
+      lines.push("- Additional details provided by the user:")
+      for (const [label, note] of noteEntries) {
+        lines.push(`  - "${label}": "${note}"`)
+      }
+    }
+    const header = parsed.selected.length || parsed.custom.length
+      ? `User has answered your question "${prompt}" (this is the user's final answer; do not re-ask this question):`
+      : `The user did not provide an answer to "${prompt}". You may ask a different question or proceed with a reasonable default.`
     return {
       title: input.action.title,
-      output: `User answered: ${(answers[0] ?? []).join(", ") || "Unanswered"}`,
+      output: lines.length ? `${header}\n${lines.join("\n")}` : header,
       metadata: { answers },
     }
   }

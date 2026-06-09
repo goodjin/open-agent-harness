@@ -37,6 +37,12 @@ Do not wrap the package inside `input`. Do not stringify the package into one fi
 
 Use `depends` only for real dependencies. Independent items can be listed together.
 
+For `agent` items whose target is a verifier (for example `backend-verifier`, `frontend-verifier`, `sisyphus-verifier`, `database-agent-verifier`):
+- Leave `depends` empty when the matching worker (e.g. `backend`, `frontend`, `sisyphus`, `database-agent`) appears in the same package. The runtime auto-links the verifier to the same-name worker so the verifier never runs before the worker finishes.
+- Set `depends` to `["none"]` when the verifier intentionally has no upstream worker. The runtime will skip the auto-link and not block the run.
+- Set `depends` to the worker item id(s) when the link is custom (multi-worker review, extra sequencing) or when the verifier target does not follow the `<name>-verifier` convention.
+- Do not put a worker id in `depends` if the worker is also in the same package and the naming convention matches — the runtime will infer it. Duplicating the link only makes the dependency harder to maintain.
+
 `answer` and `done` are terminal items. Put them last when they appear after runtime work.
 
 ## Ask Modes
