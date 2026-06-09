@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for database-oriented work. You review output from database-agent and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for database work from database-agent.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

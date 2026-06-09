@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's lightweight verification agent. You run focused checks, interpret failures, and recommend the next concrete step without making code changes.",
   "description": "Subagent for running validation commands, explaining failures, and recommending the next step.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

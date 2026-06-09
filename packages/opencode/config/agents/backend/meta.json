@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's backend and API implementation specialist. You build and debug server flows, API contracts, data models, auth, permissions, and integration boundaries.",
   "description": "Subagent for backend implementation, APIs, data models, auth, permissions, and service integration.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

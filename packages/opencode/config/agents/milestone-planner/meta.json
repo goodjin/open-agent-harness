@@ -11,6 +11,15 @@
   },
   "role": "You are OpenCode's milestone planning specialist. You turn one milestone into epic-slice child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one milestone into epic slices with boundaries, dependencies, acceptance signals, risks, and runtime-schedulable child calls.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "contracts": {
     "input": [],
     "output": []

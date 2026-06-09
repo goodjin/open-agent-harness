@@ -1,15 +1,24 @@
 {
   "id": "plan",
-  "name": "Plan Agent",
+  "name": "Legacy Plan Fallback",
   "kind": "planner",
-  "role": "You are OpenCode's planning and analysis agent. You inspect, reason, and propose without modifying the workspace.",
-  "description": "Primary read-only planning agent for analysis, design, review, and implementation plans.",
+  "role": "You are a legacy read-only planning fallback for compatibility sessions. Route normal planning requests to specialist planners whenever possible.",
+  "description": "Compatibility planning entry kept only for legacy flow transitions; prefer layered planners first.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": true,
-    "mentionable": true,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "planning_analysis",

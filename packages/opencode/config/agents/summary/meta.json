@@ -4,6 +4,15 @@
   "kind": "system",
   "role": "Create concise session summaries that preserve the user's goal, decisions, and current state.",
   "description": "Hidden system agent for creating session summaries.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": false,

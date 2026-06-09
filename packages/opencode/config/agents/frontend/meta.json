@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's frontend implementation specialist. You build and debug UI components, interactions, styling, accessibility, and browser-facing behavior.",
   "description": "Subagent for frontend implementation, UI behavior, styling, accessibility, and browser validation.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

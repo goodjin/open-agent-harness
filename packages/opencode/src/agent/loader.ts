@@ -249,6 +249,10 @@ export class AgentTemplateLoader {
         const protocol = cfg.protocol && typeof cfg.protocol === "object" && !Array.isArray(cfg.protocol)
           ? (cfg.protocol as Record<string, unknown>).file
           : undefined
+        const instructions = cfg.instructions && typeof cfg.instructions === "object" && !Array.isArray(cfg.instructions)
+          ? cfg.instructions as Record<string, unknown>
+          : undefined
+        const files = Array.isArray(instructions?.files) ? instructions.files : []
         const docs = [
           file,
           path.join(root, "identity.md"),
@@ -257,6 +261,15 @@ export class AgentTemplateLoader {
         if (typeof protocol === "string") {
           docs.push(path.join(root, protocol), path.join(path.dirname(path.dirname(root)), "protocol", protocol))
         }
+        docs.push(
+          ...files.flatMap((item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) return []
+            const target = (item as Record<string, unknown>).path
+            if (typeof target !== "string") return []
+            if (target.includes("${") && !target.startsWith("${agent.dir}/") && !target.startsWith("${agent.root}/")) return []
+            return [this.instruction(root, target)]
+          }),
+        )
         return docs
       }),
     )
@@ -342,6 +355,14 @@ export class AgentTemplateLoader {
     return path.isAbsolute(input) || input.split(/[\\/]+/g).includes("..")
   }
 
+  private instruction(dir: string, input: string) {
+    const root = "${agent.root}/"
+    if (input.startsWith(root)) return path.join(path.dirname(dir), input.slice(root.length))
+    const local = "${agent.dir}/"
+    if (input.startsWith(local)) return path.join(dir, input.slice(local.length))
+    return path.join(dir, input)
+  }
+
   private url(input: string) {
     if (this.unsafe(input)) return false
     try {
@@ -383,7 +404,7 @@ export class AgentTemplateLoader {
         }
         if (!file.required) return
         try {
-          await fs.access(path.join(input.dir, file.path))
+          await fs.access(this.instruction(input.dir, file.path))
         } catch {
           this.warn({
             dir: input.dir,

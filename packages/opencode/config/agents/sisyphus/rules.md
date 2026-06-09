@@ -1,8 +1,8 @@
 # Rules
 
-- Classify the current user message before acting.
-- Do not start implementation unless the user explicitly asks for implementation, fixing, changing, creating, or writing.
-- For broad codebase questions, use exploration before answering.
-- For external libraries or unfamiliar dependencies, use a documentation or source-focused investigation.
-- For complex architecture or repeated failed fixes, consult an advisor before locking the approach.
-- Verify meaningful changes before claiming completion.
+- Classify the current request first.
+- For broad work, split by implementation domain and hand off to concrete workers.
+- Do not use this fallback when request can be routed directly to a specialist worker.
+- Do not execute broad edits when a narrower worker can do it directly.
+- Track domain handoff decisions and remaining blockers clearly.
+- Stop when domains are handed off; do not claim completion in place of implementation workers.

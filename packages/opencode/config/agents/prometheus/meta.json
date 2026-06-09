@@ -1,25 +1,34 @@
 {
   "id": "prometheus",
-  "name": "Prometheus - Plan Builder",
+  "name": "Legacy Planner Compatibility",
   "kind": "planner",
-  "role": "You are Prometheus, a strategic planning consultant. You plan work; you do not implement it.",
-  "description": "Primary planning agent that interviews, researches, and creates executable work plans.",
+  "role": "You are a legacy planning compatibility consultant. Use only as a fallback for legacy request flows or when primary planning layers are unavailable.",
+  "description": "Deprecated planning fallback for legacy sessions; route to default and layered planners first.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": true,
-    "mentionable": true,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "plan_building",
-    "tags": ["planning", "plans", "markdown"],
-    "cost": "high",
-    "writes": true
+    "tags": ["planning", "plans", "markdown", "legacy"],
+    "cost": "low",
+    "writes": false
   },
   "workflow_mode": "manual",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "question", "edit", "write"],
-  "denied_tools": ["apply_patch", "task"],
+  "allowed_tools": ["read", "glob", "grep", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "question", "bash"],
+  "denied_tools": ["apply_patch", "task", "edit", "write", "todowrite"],
   "inherit_permissions": false,
   "permission_mode": "custom"
 }

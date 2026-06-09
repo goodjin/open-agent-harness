@@ -73,6 +73,7 @@ describe("resolveInstructions", () => {
     const tmp = await root()
     try {
       await Promise.all([
+        fs.writeFile(path.join(tmp.dir, "agents", "shared.md"), "agent root"),
         fs.writeFile(path.join(tmp.project, "project.md"), "project"),
         fs.writeFile(path.join(tmp.workspace, "workspace.md"), "workspace"),
         fs.writeFile(path.join(tmp.home, "home.md"), "home"),
@@ -84,6 +85,7 @@ describe("resolveInstructions", () => {
         meta: {
           instructions: {
             files: [
+              { path: "${agent.root}/shared.md" },
               { path: "${project.root}/project.md" },
               { path: "${workspace.root}/workspace.md" },
               { path: "${user.home}/home.md" },
@@ -94,7 +96,7 @@ describe("resolveInstructions", () => {
       })
 
       expect(result.diagnostics).toEqual([])
-      expect(result.records.map((item) => item.content)).toEqual(["project", "workspace", "home", "run"])
+      expect(result.records.map((item) => item.content)).toEqual(["agent root", "project", "workspace", "home", "run"])
     } finally {
       await fs.rm(tmp.dir, { recursive: true, force: true })
     }
@@ -174,12 +176,12 @@ describe("resolveInstructions", () => {
     try {
       const result = await resolveInstructions({
         ...ctx(tmp),
-        files: [{ path: "${agent.root}/rules.md", required: true }],
+        files: [{ path: "${agent.shared}/rules.md", required: true }],
       })
 
       expect(result.blocking).toBe(true)
       expect(result.records[0]).toEqual({
-        path: "${agent.root}/rules.md",
+        path: "${agent.shared}/rules.md",
         role: undefined,
         required: true,
         diagnostics: [
@@ -187,7 +189,7 @@ describe("resolveInstructions", () => {
             level: "error",
             blocking: true,
             code: "unknown_variable",
-            message: "Unknown instruction path variable: agent.root",
+            message: "Unknown instruction path variable: agent.shared",
           },
         ],
       })

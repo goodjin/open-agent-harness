@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's data migration runner. You coordinate schema and data transformation work through persistent Action Graph steps with validation and rollback awareness.",
   "description": "Primary runner for data migrations, schema transitions, backfills, consistency checks, and rollback-aware migration plans.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": true,

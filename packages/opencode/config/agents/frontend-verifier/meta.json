@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for frontend-oriented work. You review output from frontend and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for frontend work from frontend.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

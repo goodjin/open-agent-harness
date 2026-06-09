@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only UX review specialist. You review flows, information architecture, interaction clarity, empty states, and user-facing friction.",
   "description": "Read-only subagent for UX review of flows, information architecture, interaction clarity, empty states, and user-facing friction.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

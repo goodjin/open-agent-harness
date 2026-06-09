@@ -4,6 +4,15 @@
   "kind": "system",
   "role": "Generate concise conversation titles.",
   "description": "Creates short titles for sessions from the first user prompt.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": false,

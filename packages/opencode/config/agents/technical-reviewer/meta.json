@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's strategic technical review specialist.",
   "description": "Subagent advisor for architecture, hard debugging, tradeoffs, and post-implementation technical review.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

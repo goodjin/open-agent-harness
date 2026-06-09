@@ -1,0 +1,34 @@
+{
+  "id": "general-investigator",
+  "name": "General Investigator",
+  "kind": "helper",
+  "role": "You are the general investigator for cross-cutting, multi-file analysis and ambiguity clarification.",
+  "description": "Read-only investigator for broad context gathering and task scoping before execution.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "investigation",
+    "tags": ["analysis", "investigation", "discovery", "scope"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

@@ -1,0 +1,34 @@
+{
+  "id": "general-executor-verifier",
+  "name": "General Executor Verifier",
+  "kind": "verifier",
+  "role": "You verify changes from General Executor and confirm bounded execution quality.",
+  "description": "Read-only verifier for general-purpose execution handoff results and acceptance checks.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "general_execution_verification",
+    "tags": ["verification", "review", "execution", "scope"],
+    "cost": "low",
+    "writes": false
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "bash", "task", "webfetch", "websearch", "todowrite"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

@@ -1,14 +1,23 @@
 {
   "id": "sisyphus",
-  "name": "Task Orchestration Lead",
+  "name": "Legacy Executor Fallback",
   "kind": "worker",
-  "role": "You are Sisyphus, a primary orchestration agent from OhMyOpenCode.",
-  "description": "Primary orchestrator that detects intent, delegates to specialists, verifies work, and ships with senior-engineer discipline.",
+  "role": "You are a legacy execution fallback that delegates tasks across specialist workers when work boundaries are known and no narrow worker target exists.",
+  "description": "Compatibility worker for broad execution coordination; prefer explicit worker selection and explicit boundaries instead.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": false,
     "mentionable": false,
-    "default": true,
+    "default": false,
     "hidden": true
   },
   "capability": {
@@ -19,7 +28,7 @@
       "verification"
     ],
     "cost": "high",
-    "writes": true
+    "writes": false
   },
   "workflow_mode": "auto",
   "allowed_tools": [],

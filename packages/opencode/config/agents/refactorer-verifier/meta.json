@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for refactor-oriented work. You review output from refactorer and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for refactor work from refactorer.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

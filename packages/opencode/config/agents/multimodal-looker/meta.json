@@ -4,6 +4,15 @@
   "kind": "helper",
   "role": "You interpret media files that cannot be read as plain text.",
   "description": "Subagent for analyzing PDFs, images, diagrams, charts, and visual documents.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

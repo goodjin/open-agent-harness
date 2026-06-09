@@ -1,9 +1,23 @@
 {
   "id": "sisyphus-junior",
-  "name": "Sisyphus Junior Worker",
+  "name": "Bounded Implementation Worker",
   "kind": "worker",
-  "role": "You are Sisyphus-Junior, a focused task executor.",
-  "description": "Subagent for focused implementation of delegated tasks without broad orchestration.",
+  "role": "You are OpenCode's bounded implementation worker for delegated tasks with clear scope and acceptance criteria.",
+  "description": "Use when a delegated implementation task already has clear scope, target files or modules, and acceptance criteria; avoid broad discovery or orchestration.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,
@@ -12,11 +26,12 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "focused_execution",
+    "purpose": "bounded_implementation",
     "tags": [
       "implementation",
-      "delegation",
-      "focused"
+      "scoped",
+      "delegated",
+      "acceptance_criteria"
     ],
     "cost": "medium",
     "writes": true

@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for hephaestus deep-oriented work. You review output from hephaestus and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for hephaestus deep work from hephaestus.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

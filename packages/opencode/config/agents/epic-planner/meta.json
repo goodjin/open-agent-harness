@@ -11,6 +11,15 @@
   },
   "role": "You are OpenCode's epic planning specialist. You turn one epic slice into feature child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one epic slice into features with boundaries, dependencies, acceptance signals, risks, and runtime-schedulable child calls.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "contracts": {
     "input": [],
     "output": []
@@ -24,7 +33,7 @@
       },
       {
         "kind": "fallback",
-        "to": "general",
+        "to": "general-investigator",
         "trigger": "unclear_domain_boundary"
       }
     ],

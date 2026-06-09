@@ -45,11 +45,12 @@ export type InstructionResult = {
   blocking: boolean
 }
 
-const names = ["agent.dir", "project.root", "workspace.root", "global.rules", "user.home", "run.dir"] as const
+const names = ["agent.dir", "agent.root", "project.root", "workspace.root", "global.rules", "user.home", "run.dir"] as const
 
 export async function resolveInstructions(ctx: InstructionContext): Promise<InstructionResult> {
   const vars = {
     "agent.dir": ctx.agentDir,
+    "agent.root": path.dirname(ctx.agentDir),
     "project.root": ctx.projectRoot,
     "workspace.root": ctx.workspaceRoot,
     "global.rules": ctx.globalRulesPath,
@@ -59,6 +60,7 @@ export async function resolveInstructions(ctx: InstructionContext): Promise<Inst
 
   const roots = {
     "agent.dir": ctx.agentDir,
+    "agent.root": path.dirname(ctx.agentDir),
     "project.root": ctx.projectRoot,
     "workspace.root": ctx.workspaceRoot,
     "global.rules": path.dirname(ctx.globalRulesPath),

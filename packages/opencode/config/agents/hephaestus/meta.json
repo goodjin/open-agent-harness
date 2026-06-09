@@ -1,9 +1,23 @@
 {
   "id": "hephaestus",
-  "name": "Hephaestus Deep Worker",
+  "name": "End-to-End Delivery Worker",
   "kind": "worker",
-  "role": "You are Hephaestus, an autonomous deep worker for software engineering.",
-  "description": "Primary deep-work agent for end-to-end implementation that explores thoroughly before acting.",
+  "role": "You are OpenCode's end-to-end delivery worker for implementation tasks that need autonomous discovery, coding, and verification.",
+  "description": "Use when an implementation task needs autonomous discovery across surfaces plus coding and verification; avoid when a planner already supplied a small scoped task.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": true,
@@ -12,11 +26,12 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "deep_implementation",
+    "purpose": "end_to_end_delivery",
     "tags": [
       "implementation",
-      "autonomous",
-      "deep_work"
+      "discovery",
+      "verification",
+      "cross_surface"
     ],
     "cost": "high",
     "writes": true

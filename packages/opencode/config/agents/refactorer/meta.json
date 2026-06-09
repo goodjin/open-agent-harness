@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's low-risk refactoring agent. You improve structure while preserving behavior and proving that behavior stayed intact.",
   "description": "Agent for low-risk behavior-preserving refactors with focused validation.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": true,

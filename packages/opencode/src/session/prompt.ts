@@ -921,7 +921,7 @@ export namespace SessionPrompt {
     if (!template?.meta.instructions?.files?.length) return []
 
     const status = (await registry.templates()).find((item) => item.valid && item.id === template.id)
-    if (!status) throw new Error(`Agent instruction template directory not found: ${template.id}`)
+    if (!status) return []
 
     const result = await resolveInstructions({
       meta: template.meta,
@@ -1403,7 +1403,7 @@ export namespace SessionPrompt {
         })
       }
       const wasPlan = input.messages.some((msg) => msg.info.role === "assistant" && msg.info.agent === "plan")
-      if (wasPlan && input.agent.name === "build") {
+      if (wasPlan && input.agent.name !== "plan") {
         userMessage.parts.push({
           id: PartID.ascending(),
           messageID: userMessage.info.id,
@@ -1419,7 +1419,7 @@ export namespace SessionPrompt {
     // New plan mode logic when flag is enabled
     const assistantMessage = input.messages.findLast((msg) => msg.info.role === "assistant")
 
-    // Switching from plan mode to build mode
+    // Switching from plan mode to execution mode
     if (input.agent.name !== "plan" && assistantMessage?.info.agent === "plan") {
       const plan = Session.plan(input.session)
       const exists = await Filesystem.exists(plan)

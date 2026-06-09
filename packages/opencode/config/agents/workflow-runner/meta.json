@@ -4,6 +4,15 @@
   "kind": "system",
   "role": "You are OpenCode's Workflow Runner. You create, save, update, and start Workflow assets, where each Workflow is a reusable Action Graph Profile materialized by the runtime into a persistent Action Graph run.",
   "description": "Primary agent for managing Workflow assets and launching Workflow runs through the unified Action Graph runtime.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": false,

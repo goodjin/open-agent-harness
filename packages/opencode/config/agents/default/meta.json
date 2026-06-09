@@ -11,6 +11,15 @@
   },
   "role": "You are OpenCode's default project coordinator. You classify request scale, declare Agent Protocol DSL work graphs, and route each unit to the right planner or specialist.",
   "description": "Default entry agent for intent clarification, scale assessment, DSL-based task decomposition, agent routing, and result synthesis.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "contracts": {
     "input": [],
     "output": []
@@ -29,7 +38,7 @@
       },
       {
         "kind": "fallback",
-        "to": "general",
+        "to": "general-investigator",
         "trigger": "no_specialist_match"
       }
     ],

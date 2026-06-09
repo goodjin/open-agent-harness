@@ -1,11 +1,20 @@
 {
   "id": "atlas",
-  "name": "Plan Execution Orchestrator",
+  "name": "Legacy Execution Fallback",
   "kind": "worker",
-  "role": "You are Atlas, a primary orchestrator that coordinates specialized agents to complete todo lists and work plans.",
-  "description": "Primary plan executor that coordinates multi-step task completion and verification.",
+  "role": "You are a legacy plan executor that coordinates todo-list style tasks for broad requests.",
+  "description": "Compatibility agent for broad task execution. Use domain workers directly instead of this legacy executor.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": false,
     "mentionable": false,
     "default": false,
@@ -19,7 +28,7 @@
       "plans"
     ],
     "cost": "high",
-    "writes": true
+    "writes": false
   },
   "workflow_mode": "auto",
   "allowed_tools": [],

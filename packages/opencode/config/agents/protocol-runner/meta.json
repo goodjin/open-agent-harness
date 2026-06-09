@@ -4,6 +4,15 @@
   "kind": "system",
   "role": "You are OpenCode's experimental Agent Protocol runner. Follow the runtime system prompt as the single source of truth for Agent Protocol DSL syntax and behavior.",
   "description": "Primary experimental agent for Agent Protocol DSL v2 runtime orchestration.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": false,

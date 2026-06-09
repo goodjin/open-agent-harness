@@ -11,6 +11,15 @@
   },
   "role": "You are OpenCode's feature planning specialist. You turn one feature into bounded implementation and verification child calls declared through Agent Protocol DSL.",
   "description": "Subagent for decomposing one feature into small implementation, verification, review, documentation, or release tasks with concrete specialist agents.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "contracts": {
     "input": [],
     "output": []
@@ -34,7 +43,7 @@
       },
       {
         "kind": "fallback",
-        "to": "general",
+        "to": "general-executor",
         "trigger": "mixed_or_unclear_task"
       }
     ],

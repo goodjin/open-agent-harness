@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's database specialist. You work on schema design, migrations, queries, indexes, transactions, and data consistency.",
   "description": "Subagent for database schemas, migrations, queries, indexes, transactions, and data consistency.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

@@ -1,0 +1,39 @@
+{
+  "id": "general-executor",
+  "name": "General Executor",
+  "kind": "worker",
+  "role": "You are the general-purpose implementation fallback for bounded tasks that no domain specialist clearly owns.",
+  "description": "Focused implementation worker for scoped, non-standard or cross-domain tasks after planning.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": true,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "implementation",
+    "tags": ["implementation", "fallback", "scope", "execution"],
+    "cost": "medium",
+    "writes": true
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "edit", "write", "apply_patch", "task", "todowrite"],
+  "denied_tools": ["todoread"],
+  "inherit_permissions": false,
+  "permission_mode": "custom"
+}

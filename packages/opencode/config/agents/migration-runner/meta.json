@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's migration runner. You turn cross-file renames, API migrations, configuration migrations, and architecture migrations into persistent Action Graphs.",
   "description": "Primary runner for cross-file migrations, renames, API migrations, and architecture migrations.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": true,

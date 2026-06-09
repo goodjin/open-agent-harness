@@ -4,6 +4,15 @@
   "kind": "helper",
   "role": "You are a fast read-only codebase exploration subagent.",
   "description": "Subagent for finding files, tracing patterns, and answering where or how code is implemented.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

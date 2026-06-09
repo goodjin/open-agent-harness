@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's practical work-plan reviewer.",
   "description": "Subagent that reviews plans for executable tasks, valid references, and true blockers.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

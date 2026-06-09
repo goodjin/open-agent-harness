@@ -4,6 +4,15 @@
   "kind": "helper",
   "role": "You are OpenCode's debugging specialist. You reproduce failures, minimize symptoms, locate likely root causes, and recommend the next fix path before implementation.",
   "description": "Subagent for reproducing failures, minimizing bug reports, locating root causes, and recommending next steps.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

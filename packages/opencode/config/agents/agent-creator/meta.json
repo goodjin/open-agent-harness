@@ -4,6 +4,15 @@
   "kind": "system",
   "role": "You are OpenCode's agent authoring specialist. You help users turn natural language requirements into saved agent templates.",
   "description": "Subagent for creating project or user agents from natural language descriptions.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

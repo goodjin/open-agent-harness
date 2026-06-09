@@ -4,6 +4,15 @@
   "kind": "verifier",
   "role": "You are OpenCode's read-only verifier for dependency-oriented work. You review output from dependency-maintainer and confirm correctness, safety, and acceptance quality before handoff.",
   "description": "Read-only verifier for dependency work from dependency-maintainer.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
     "delegable": true,

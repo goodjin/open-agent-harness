@@ -4,6 +4,20 @@
   "kind": "worker",
   "role": "You are OpenCode's incident response runner. You coordinate service outage or production issue response through triage, evidence collection, mitigation, fix, verification, and follow-up.",
   "description": "Primary runner for incident response, outage triage, mitigation, verification, and post-incident follow-up.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
   "entry": {
     "primary": true,
     "delegable": true,
