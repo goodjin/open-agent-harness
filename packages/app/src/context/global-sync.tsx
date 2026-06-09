@@ -5,6 +5,7 @@ import type {
   Project,
   ProviderAuthResponse,
   ProviderListResponse,
+  Session,
   Todo,
 } from "@open-agent-harness/sdk/v2/client"
 import { showToast } from "@open-agent-harness/ui/toast"
@@ -31,10 +32,14 @@ import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } fr
 import { createRefreshQueue } from "./global-sync/queue"
 import { clearSessionPrefetchDirectory } from "./global-sync/session-prefetch"
 import { estimateRootSessionTotal, loadSessionTreeWithFallback } from "./global-sync/session-load"
-import type { ProjectMeta } from "./global-sync/types"
-import { SESSION_RECENT_LIMIT } from "./global-sync/types"
+import type { ProjectMeta, RootLoadArgs } from "./global-sync/types"
 import { sanitizeProject } from "./global-sync/utils"
 import { formatServerError } from "@/utils/server-errors"
+
+type LoadMode = "current" | "running"
+
+const INITIAL_SESSION_LIMIT = 10
+const live = new Set(["queued", "rate_limited", "retry", "running", "starting", "waiting_permission", "waiting_user"])
 
 type GlobalStore = {
   ready: boolean
@@ -59,7 +64,7 @@ function createGlobalSync() {
   const sdkCache = new Map<string, OpencodeClient>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
-  const sessionMeta = new Map<string, { limit: number; roots: Set<string> }>()
+  const sessionMeta = new Map<string, { limit: number; mode: LoadMode; roots: Set<string> }>()
 
   const [projectCache, setProjectCache, projectInit] = persisted(
     Persist.global("globalSync.project", ["globalSync.project.v1"]),
@@ -153,7 +158,7 @@ function createGlobalSync() {
   const children = createChildStoreManager({
     owner,
     isBooting: (directory) => booting.has(directory),
-    isLoadingSessions: (directory) => sessionLoads.has(directory),
+    isLoadingSessions: (directory) => [...sessionLoads.keys()].some((key) => key.startsWith(`${directory}:`)),
     onBootstrap: (directory) => {
       void bootstrapInstance(directory)
     },
@@ -177,68 +182,115 @@ function createGlobalSync() {
     return sdk
   }
 
-  async function loadSessions(directory: string) {
-    const pending = sessionLoads.get(directory)
+  async function runningRoots(directory: string, status: Record<string, { type?: string }>) {
+    const roots: Session[] = []
+    const seen = new Set<string>()
+    const ids = Object.entries(status)
+      .filter((item) => live.has(item[1]?.type ?? "idle"))
+      .map((item) => item[0])
+
+    for (const id of ids) {
+      let next = id
+      const walk = new Set<string>()
+      while (next && !walk.has(next)) {
+        walk.add(next)
+        const session = await globalSDK.client.session
+          .get({ directory, sessionID: next })
+          .then((x) => x.data)
+          .catch(() => undefined)
+        if (!session || session.time?.archived) break
+        if (session.parentID) {
+          next = session.parentID
+          continue
+        }
+        if (seen.has(session.id)) break
+        seen.add(session.id)
+        roots.push(session)
+        break
+      }
+      if (roots.length >= INITIAL_SESSION_LIMIT) break
+    }
+
+    return roots.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
+  }
+
+  async function loadSessions(directory: string, opts?: { mode?: LoadMode }) {
+    const mode = opts?.mode ?? "current"
+    const key = `${directory}:${mode}`
+    const pending = sessionLoads.get(key)
     if (pending) return pending
 
     children.pin(directory)
     const [store, setStore] = children.child(directory, { bootstrap: false })
     const meta = sessionMeta.get(directory)
-    if (meta && meta.limit >= store.limit) {
+    if (mode === "running" && meta?.mode === "current") {
       children.unpin(directory)
       return
     }
 
-    const limit = Math.max(store.limit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
-    const promise = loadSessionTreeWithFallback({
-      directory,
-      limit,
-      all: true,
-      children: true,
-      loaded: meta?.roots,
-      list: (query) => globalSDK.client.session.list(query),
-      tree: (query) => globalSDK.client.session.tree(query),
-      descendants: (query) =>
-        globalSDK.client.session.descendantsBatch({
-          body_directory: query.directory,
-          ids: query.ids,
-        }),
-    })
-      .then((x) => {
-        const nonArchived = (x.data ?? [])
-          .filter((s) => !!s?.id)
-          .filter((s) => !s.time?.archived)
-          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-        const roots = nonArchived.filter((s) => !s.parentID)
-        const limit = store.limit
-        const ids = new Set(nonArchived.map((s) => s.id))
-        const childSessions = store.session.filter((s) => !!s.parentID && !ids.has(s.id))
-        const sessions = [...nonArchived, ...childSessions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-        setStore(
-          "sessionTotal",
-          estimateRootSessionTotal({
-            count: roots.length,
-            limit,
-            limited: false,
-          }),
-        )
-        setStore("session", reconcile(sessions, { key: "id" }))
-        cleanupDroppedSessionCaches(store, setStore, sessions, setSessionTodo)
-        sessionMeta.set(directory, { limit, roots: new Set(x.ids) })
-      })
-      .catch((err) => {
-        console.error("Failed to load sessions", err)
-        const project = getFilename(directory)
-        showToast({
-          variant: "error",
-          title: language.t("toast.session.listFailed.title", { project }),
-          description: formatServerError(err, language.t),
-        })
-      })
+    const limit = mode === "running" ? INITIAL_SESSION_LIMIT : Math.max(store.limit, INITIAL_SESSION_LIMIT)
+    if (meta?.mode === mode && meta.limit >= limit) {
+      children.unpin(directory)
+      return
+    }
 
-    sessionLoads.set(directory, promise)
+    const promise = (async () => {
+      const status = mode === "running" ? await globalSDK.client.session.status().then((x) => x.data ?? {}) : undefined
+      if (status) setStore("session_status", reconcile(status))
+      const base = status ? await runningRoots(directory, status) : undefined
+      const list: RootLoadArgs["list"] = async (query) => {
+        if (base) return { data: base }
+        return globalSDK.client.session.list(query)
+      }
+
+      const x = await loadSessionTreeWithFallback({
+        directory,
+        limit: base ? base.length : limit,
+        children: true,
+        loaded: meta?.mode === mode ? meta.roots : undefined,
+        list,
+        tree: (query) => globalSDK.client.session.tree(query),
+        descendants: (query) =>
+          globalSDK.client.session.descendantsBatch({
+            body_directory: query.directory,
+            ids: query.ids,
+          }),
+      })
+      const nonArchived = (x.data ?? [])
+        .filter((s) => !!s?.id)
+        .filter((s) => !s.time?.archived)
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      const roots = nonArchived.filter((s) => !s.parentID)
+      const ids = new Set(nonArchived.map((s) => s.id))
+      const childSessions = store.session.filter((s) => !!s.parentID && !ids.has(s.id))
+      const sessions = [...nonArchived, ...childSessions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+      if (mode === "running" && sessionMeta.get(directory)?.mode === "current") return
+      setStore(
+        "sessionTotal",
+        mode === "running"
+          ? roots.length
+          : estimateRootSessionTotal({
+              count: roots.length,
+              limit: store.limit,
+              limited: x.limited,
+            }),
+      )
+      setStore("session", reconcile(sessions, { key: "id" }))
+      cleanupDroppedSessionCaches(store, setStore, sessions, setSessionTodo)
+      sessionMeta.set(directory, { limit, mode, roots: new Set(x.ids) })
+    })().catch((err) => {
+      console.error("Failed to load sessions", err)
+      const project = getFilename(directory)
+      showToast({
+        variant: "error",
+        title: language.t("toast.session.listFailed.title", { project }),
+        description: formatServerError(err, language.t),
+      })
+    })
+
+    sessionLoads.set(key, promise)
     promise.finally(() => {
-      sessionLoads.delete(directory)
+      sessionLoads.delete(key)
       children.unpin(directory)
     })
     return promise

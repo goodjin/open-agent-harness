@@ -122,6 +122,7 @@ const table = sqliteTable("session", {
 - Avoid mocks as much as possible
 - Test actual implementation, do not duplicate logic into tests
 - Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package dirs like `packages/opencode`.
+- After frontend changes under `packages/app`, run the lightweight app smoke check from `packages/app`: `bun test:e2e:local -- app/smoke.spec.ts`. Treat this as the minimum end-to-end verification for Vite compile, app boot, and project session rendering before reporting the change complete.
 
 ## Type Checking
 

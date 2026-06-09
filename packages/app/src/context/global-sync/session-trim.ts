@@ -1,6 +1,6 @@
 import type { PermissionRequest, Session } from "@open-agent-harness/sdk/v2/client"
 import { cmp } from "./utils"
-import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
+import { SESSION_RECENT_WINDOW } from "./types"
 
 export function sessionUpdatedAt(session: Session) {
   return session.time.updated ?? session.time.created
@@ -42,9 +42,7 @@ export function trimSessions(
     .sort((a, b) => cmp(a.id, b.id))
   const roots = all.filter((s) => !s.parentID)
   const children = all.filter((s) => !!s.parentID)
-  const base = roots.slice(0, limit)
-  const recent = takeRecentSessions(roots.slice(limit), SESSION_RECENT_LIMIT, cutoff)
-  const keepRoots = [...base, ...recent]
+  const keepRoots = roots.slice(0, limit)
   const keepRootIds = new Set(keepRoots.map((s) => s.id))
   const by = children.reduce((acc, session) => {
     if (!session.parentID) return acc

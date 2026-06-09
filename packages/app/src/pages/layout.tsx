@@ -1776,7 +1776,7 @@ export default function Layout(props: ParentProps) {
         const next = new Set(dirs)
         for (const directory of next) {
           if (loadedSessionDirs.has(directory)) continue
-          globalSync.project.loadSessions(directory)
+          globalSync.project.loadSessions(directory, { mode: "current" })
         }
 
         loadedSessionDirs.clear()
@@ -2302,7 +2302,7 @@ export default function Layout(props: ParentProps) {
               classList={{
                 "hidden xl:block": true,
                 "absolute inset-y-0 left-0": true,
-                "z-10": true,
+                "z-30": true,
               }}
               style={{ width: `${Math.max(layout.sidebar.width(), 244)}px` }}
               ref={(el) => {

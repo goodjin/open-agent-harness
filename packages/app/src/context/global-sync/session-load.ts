@@ -2,30 +2,35 @@ import type { Session, SessionTreeNode } from "@open-agent-harness/sdk/v2/client
 import type { RootLoadArgs, TreeLoadArgs } from "./types"
 
 export async function loadRootSessionsWithFallback(input: RootLoadArgs) {
+  const pick = (sessions: Session[] | undefined) =>
+    input.keepRoot ? (sessions ?? []).filter(input.keepRoot) : sessions
   if (input.all) {
     const result = await input.list({ directory: input.directory, roots: true })
+    const data = pick(result.data)
     return {
-      data: result.data,
+      data,
       limit: input.limit,
       limited: false,
-      ids: (result.data ?? []).map((session) => session.id),
+      ids: (data ?? []).map((session) => session.id),
     } as const
   }
   try {
     const result = await input.list({ directory: input.directory, roots: true, limit: input.limit })
+    const data = pick(result.data)
     return {
-      data: result.data,
+      data,
       limit: input.limit,
       limited: true,
-      ids: (result.data ?? []).map((session) => session.id),
+      ids: (data ?? []).map((session) => session.id),
     } as const
   } catch {
     const result = await input.list({ directory: input.directory, roots: true })
+    const data = pick(result.data)
     return {
-      data: result.data,
+      data,
       limit: input.limit,
       limited: false,
-      ids: (result.data ?? []).map((session) => session.id),
+      ids: (data ?? []).map((session) => session.id),
     } as const
   }
 }

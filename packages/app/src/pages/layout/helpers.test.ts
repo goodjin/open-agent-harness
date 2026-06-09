@@ -245,6 +245,59 @@ describe("layout workspace helpers", () => {
     ])
   })
 
+  test("adds virtual session tree row metadata", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "other", directory: "/workspace" }),
+      session({ id: "child", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "child" }),
+    ]
+    const map = new Map([
+      ["root", ["child"]],
+      ["child", ["grand"]],
+    ])
+
+    const result = visibleSessionTree([list[0], list[1]], list, map, new Set(["root", "child"]))
+
+    expect(
+      result.map((item) => ({
+        id: item.session.id,
+        depth: item.depth,
+        first: item.first,
+        last: item.last,
+        guides: item.guides,
+        childCount: item.childCount,
+        index: item.index,
+      })),
+    ).toEqual([
+      { id: "root", depth: 0, first: true, last: false, guides: [], childCount: 1, index: undefined },
+      { id: "child", depth: 1, first: true, last: true, guides: [true], childCount: 1, index: 0 },
+      { id: "grand", depth: 2, first: true, last: true, guides: [true, false], childCount: 0, index: 0 },
+      { id: "other", depth: 0, first: false, last: true, guides: [], childCount: 0, index: undefined },
+    ])
+  })
+
+  test("filters virtual session tree rows with a keep predicate", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "other", directory: "/workspace" }),
+      session({ id: "child", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "child" }),
+    ]
+    const map = new Map([
+      ["root", ["child"]],
+      ["child", ["grand"]],
+    ])
+    const keep = new Set(["root", "child", "other"])
+
+    const result = visibleSessionTree([list[0], list[1]], list, map, new Set(["root", "child"]), (item) =>
+      keep.has(item.id),
+    )
+
+    expect(result.map((item) => item.session.id)).toEqual(["root", "child", "other"])
+    expect(result[1].childCount).toBe(0)
+  })
+
   test("sorts child sessions by newest creation time first", () => {
     const map = childMapByParent([
       session({ id: "root", directory: "/workspace", time: { created: 1, updated: 1 } }),

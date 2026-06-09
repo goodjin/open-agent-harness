@@ -231,6 +231,67 @@ describe("loadSessionTreeWithFallback", () => {
     expect(result.ids).toEqual(["root-a", "root-b"])
     expect(result.data?.map((s) => s.id)).toEqual(["root-a", "root-b", "child-b"])
   })
+
+  test("filters roots before loading lightweight trees", async () => {
+    const calls: string[] = []
+    const result = await loadSessionTreeWithFallback({
+      directory: "dir",
+      limit: 10,
+      children: true,
+      keepRoot: (session) => session.id === "root-b",
+      list: async () => ({
+        data: [
+          {
+            id: "root-a",
+            slug: "root-a",
+            projectID: "proj",
+            directory: "dir",
+            title: "Root A",
+            version: "v2",
+            time: { created: 1, updated: 1 },
+          },
+          {
+            id: "root-b",
+            slug: "root-b",
+            projectID: "proj",
+            directory: "dir",
+            title: "Root B",
+            version: "v2",
+            time: { created: 2, updated: 2 },
+          },
+        ] as never,
+      }),
+      tree: async (query) => {
+        calls.push(query.root)
+        return {
+          data: {
+            nodes: [
+              {
+                id: query.root,
+                root_id: query.root,
+                title: query.root,
+                status: { type: "running" },
+                stats: {
+                  messages: 1,
+                  tokens_input: 0,
+                  tokens_output: 0,
+                  tool_calls: 0,
+                  files: 0,
+                  additions: 0,
+                  deletions: 0,
+                },
+                time: { created: 2, updated: 2 },
+              },
+            ],
+          },
+        } as never
+      },
+    })
+
+    expect(calls).toEqual(["root-b"])
+    expect(result.ids).toEqual(["root-b"])
+    expect(result.data?.map((s) => s.id)).toEqual(["root-b"])
+  })
 })
 
 describe("sessionFromNode", () => {

@@ -68,6 +68,7 @@ const names = [
   "magnifying-glass-menu",
   "window-cursor",
   "task",
+  "pause",
   "stop",
   "layout-left",
   "layout-left-partial",

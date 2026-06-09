@@ -81,6 +81,11 @@ export const sessionLineage = (sessions: Session[], id?: string) => {
 export type SessionTreeItem = {
   session: Session
   depth: number
+  first: boolean
+  last: boolean
+  guides: boolean[]
+  childCount: number
+  index?: number
 }
 
 export const visibleSessionTree = (
@@ -88,18 +93,54 @@ export const visibleSessionTree = (
   sessions: Session[],
   children: Map<string, string[]>,
   expanded: Set<string>,
+  keep?: (session: Session) => boolean,
 ) => {
+  const include = keep ?? (() => true)
   const by = new Map(sessions.map((s) => [s.id, s]))
-  const walk = (session: Session, depth: number): SessionTreeItem[] => [
-    { session, depth },
-    ...(expanded.has(session.id)
-      ? (children.get(session.id) ?? [])
-          .map((id) => by.get(id))
-          .filter((item): item is Session => !!item && !item.time?.archived)
-          .flatMap((item) => walk(item, depth + 1))
-      : []),
-  ]
-  return roots.flatMap((session) => walk(session, 0))
+  const kids = (session: Session) =>
+    (children.get(session.id) ?? [])
+      .map((id) => by.get(id))
+      .filter((item): item is Session => !!item && !item.time?.archived)
+  const rows: SessionTreeItem[] = []
+  const root = roots.filter((session) => !session.time?.archived && include(session))
+  const stack = root
+    .map((session, index) => ({
+      session,
+      depth: 0,
+      first: index === 0,
+      last: index === root.length - 1,
+      guides: [] as boolean[],
+      index: undefined as number | undefined,
+    }))
+    .reverse()
+
+  while (stack.length > 0) {
+    const item = stack.pop()!
+    const all = kids(item.session)
+    const visible = all.map((session, index) => ({ session, index })).filter((item) => include(item.session))
+    rows.push({
+      session: item.session,
+      depth: item.depth,
+      first: item.first,
+      last: item.last,
+      guides: item.guides,
+      childCount: visible.length,
+      index: item.index,
+    })
+    if (!expanded.has(item.session.id)) continue
+    for (let i = visible.length - 1; i >= 0; i--) {
+      const child = visible[i]
+      stack.push({
+        session: child.session,
+        depth: item.depth + 1,
+        first: i === 0,
+        last: i === visible.length - 1,
+        guides: [...item.guides, !item.last],
+        index: child.index,
+      })
+    }
+  }
+  return rows
 }
 
 export const sessionDescendants = (roots: Session[], sessions: Session[], children: Map<string, string[]>) => {
@@ -131,7 +172,8 @@ export const childSummaryBySession = (
         if (!session || session.time?.archived) return acc
         const next = visit(child)
         return {
-          completed: acc.completed + next.completed + (sessionCompleted(session, messages[child], status[child]) ? 1 : 0),
+          completed:
+            acc.completed + next.completed + (sessionCompleted(session, messages[child], status[child]) ? 1 : 0),
           total: acc.total + next.total + 1,
           working: acc.working + next.working + (sessionWorking(messages[child], status[child]) ? 1 : 0),
         }
@@ -180,7 +222,8 @@ export const sessionCompleted = (session: Session, messages: Message[] | undefin
   if (!messages) return (session.time.updated ?? session.time.created) > session.time.created
   return messages.some(
     (message) =>
-      message.role === "assistant" && typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
+      message.role === "assistant" &&
+      typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
   )
 }
 

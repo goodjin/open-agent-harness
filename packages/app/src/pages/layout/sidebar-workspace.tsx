@@ -1,5 +1,15 @@
 import { useNavigate, useParams } from "@solidjs/router"
-import { createEffect, createMemo, createSignal, For, Show, type Accessor, type JSX } from "solid-js"
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  type Accessor,
+  type JSX,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { createSortable } from "@thisbeyond/solid-dnd"
 import { createMediaQuery } from "@solid-primitives/media"
@@ -16,12 +26,17 @@ import { type Session } from "@open-agent-harness/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
+import { useNotification } from "@/context/notification"
+import { usePermission } from "@/context/permission"
+import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import { type Filter, NewSessionItem, SessionFilterBar, SessionItem, SessionSkeleton } from "./sidebar-items"
 import {
   childMapByParent,
   childSummaryBySession,
   effectiveSessionExpansion,
+  sessionCompleted,
   sessionLineage,
+  sessionWorking,
   sortedRootSessions,
   visibleSessionTree,
 } from "./helpers"
@@ -259,7 +274,12 @@ const WorkspaceSessionList = (props: {
 }): JSX.Element => {
   const params = useParams()
   const globalSync = useGlobalSync()
+  const notification = useNotification()
+  const permission = usePermission()
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
+  const [scroll, setScroll] = createSignal(0)
+  const [height, setHeight] = createSignal(0)
+  let el: HTMLDivElement | undefined
   const lineage = createMemo(() => sessionLineage(props.all(), params.id))
   const large = createMemo(() => props.all().length > 200)
   const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
@@ -268,19 +288,93 @@ const WorkspaceSessionList = (props: {
     return new Set([...props.all().map((session) => session.id), ...open()])
   })
   const [filter, setFilter] = createSignal<Filter | undefined>()
-  const nav = createMemo(() =>
-    visibleSessionTree(props.sessions(), props.all(), props.children(), view()).map((item) => item.session),
-  )
+  const shown = createMemo(() => {
+    const active = filter()
+    if (!active) return
+    const all = props.all()
+    const dir = all[0]?.directory
+    if (!dir) return new Set<string>()
+    const [store] = globalSync.child(dir, { bootstrap: false })
+    const by = new Map(all.map((session) => [session.id, session]))
+    const children = props.children()
+    const memo = new Map<string, boolean>()
+    const matches = (session: Session) => {
+      const status = store.session_status[session.id]
+      const blocked = !!sessionPermissionRequest(store.session, store.permission, session.id, (item) => {
+        return !permission.autoResponds(item, session.directory)
+      })
+      const failed =
+        notification.session.unseenHasError(session.id) || status?.type === "error" || status?.type === "timeout"
+      const working = !blocked && sessionWorking(store.message[session.id], status)
+      const done = !blocked && !working && !failed && sessionCompleted(session, store.message[session.id], status)
+      if (active === "running") return working
+      if (active === "failed") return failed
+      if (active === "success") return done
+      return !working
+    }
+    const keep = (id: string): boolean => {
+      const cached = memo.get(id)
+      if (cached !== undefined) return cached
+      const session = by.get(id)
+      if (!session || session.time?.archived) {
+        memo.set(id, false)
+        return false
+      }
+      const value = matches(session) || (children.get(id) ?? []).some(keep)
+      memo.set(id, value)
+      return value
+    }
+    const ids = new Set<string>()
+    for (const session of props.sessions()) {
+      if (!keep(session.id)) continue
+      for (const [id, value] of memo.entries()) {
+        if (value) ids.add(id)
+      }
+    }
+    return ids
+  })
+  const tree = createMemo(() => {
+    const ids = shown()
+    return visibleSessionTree(
+      props.sessions(),
+      props.all(),
+      props.children(),
+      view(),
+      ids ? (session) => ids.has(session.id) : undefined,
+    )
+  })
+  const nav = createMemo(() => tree().map((item) => item.session))
   const summary = createMemo(() => {
     const dir = props.all()[0]?.directory
     if (!dir) return new Map<string, { completed: number; total: number; working: number }>()
     const [store] = globalSync.child(dir, { bootstrap: false })
-    return childSummaryBySession(props.all(), props.children(), store.message, store.session_status)
+    const children = props.children()
+    const parents = props.all().filter((session) => (children.get(session.id)?.length ?? 0) > 0)
+    return childSummaryBySession(parents, children, store.message, store.session_status)
   })
   const set = (id: string, value: boolean) => setExpanded(id, value)
+  const row = 30
+  const over = 8
+  const measure = () => setHeight(el?.clientHeight ?? 0)
+  const range = createMemo(() => {
+    const count = tree().length
+    const start = Math.max(0, Math.floor(scroll() / row) - over)
+    const size = Math.ceil(height() / row) + over * 2
+    const end = Math.min(count, start + size)
+    return { start, end, count }
+  })
+  const slice = createMemo(() => tree().slice(range().start, range().end))
+
+  onMount(() => {
+    measure()
+    if (typeof ResizeObserver === "undefined" || !el) return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    onCleanup(() => ro.disconnect())
+  })
 
   return (
-    <nav class="flex flex-col gap-1 max-h-[70vh] overflow-y-auto overflow-x-hidden pr-1">
+    <nav class="flex min-h-0 flex-col gap-1 overflow-hidden pr-1">
       <Show when={props.showNew()}>
         <NewSessionItem
           slug={props.slug()}
@@ -294,49 +388,61 @@ const WorkspaceSessionList = (props: {
       <Show when={props.loading()}>
         <SessionSkeleton />
       </Show>
-      <For each={props.sessions()}>
-        {(session, index) => (
-          <SessionItem
-            session={session}
-            list={props.all()}
-            navList={nav}
-            slug={props.slug()}
-            mobile={props.mobile}
-            popover={props.popover}
-            expanded={() => expanded}
-            lineage={lineage}
-            filter={filter}
-            setExpanded={set}
-            children={props.children()}
-            childSummary={summary()}
-            collapseByDefault={large}
-            sidebarExpanded={props.ctx.sidebarExpanded}
-            sidebarHovering={props.ctx.sidebarHovering}
-            nav={props.ctx.nav}
-            hoverSession={props.ctx.hoverSession}
-            setHoverSession={props.ctx.setHoverSession}
-            clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-            prefetchSession={props.ctx.prefetchSession}
-            archiveSession={props.ctx.archiveSession}
-            first={index() === 0}
-          />
-        )}
-      </For>
-      <Show when={props.hasMore()}>
-        <div class="relative w-full py-1">
-          <Button
-            variant="ghost"
-            class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
-            size="large"
-            onClick={(e: MouseEvent) => {
-              props.loadMore()
-              ;(e.currentTarget as HTMLButtonElement).blur()
-            }}
-          >
-            {props.language.t("common.loadMore")}
-          </Button>
-        </div>
-      </Show>
+      <div
+        ref={el}
+        class="min-h-0 max-h-[70vh] overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
+        onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
+      >
+        <div style={{ height: `${range().start * row}px` }} />
+        <For each={slice()}>
+          {(item) => (
+            <SessionItem
+              session={item.session}
+              list={props.all()}
+              navList={nav}
+              slug={props.slug()}
+              mobile={props.mobile}
+              popover={props.popover}
+              expanded={() => expanded}
+              lineage={lineage}
+              setExpanded={set}
+              children={props.children()}
+              childSummary={summary()}
+              guides={item.guides}
+              childCount={item.childCount}
+              collapseByDefault={large}
+              sidebarExpanded={props.ctx.sidebarExpanded}
+              sidebarHovering={props.ctx.sidebarHovering}
+              nav={props.ctx.nav}
+              hoverSession={props.ctx.hoverSession}
+              setHoverSession={props.ctx.setHoverSession}
+              clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
+              prefetchSession={props.ctx.prefetchSession}
+              archiveSession={props.ctx.archiveSession}
+              depth={item.depth}
+              first={item.first}
+              last={item.last}
+              index={item.index}
+            />
+          )}
+        </For>
+        <div style={{ height: `${(range().count - range().end) * row}px` }} />
+        <Show when={props.hasMore()}>
+          <div class="relative w-full py-1">
+            <Button
+              variant="ghost"
+              class="flex w-full text-left justify-start text-14-regular text-text-weak pl-9 pr-10"
+              size="large"
+              onClick={(e: MouseEvent) => {
+                props.loadMore()
+                ;(e.currentTarget as HTMLButtonElement).blur()
+              }}
+            >
+              {props.language.t("common.loadMore")}
+            </Button>
+          </div>
+        </Show>
+      </div>
     </nav>
   )
 }
@@ -379,8 +485,8 @@ export const SortableWorkspace = (props: {
   const touch = createMediaQuery("(hover: none)")
   const showNew = createMemo(() => !loading() && (touch() || sessions().length === 0 || (active() && !params.id)))
   const loadMore = async () => {
-    setWorkspaceStore("limit", (limit) => (limit ?? 0) + 5)
-    await globalSync.project.loadSessions(props.directory)
+    setWorkspaceStore("limit", (limit) => (limit ?? 0) + 10)
+    await globalSync.project.loadSessions(props.directory, { mode: "current" })
   }
 
   const workspaceEditActive = createMemo(() => props.ctx.editorOpen(`workspace:${props.directory}`))
@@ -516,8 +622,8 @@ export const LocalWorkspace = (props: {
   const loading = createMemo(() => !booted() && sessions().length === 0)
   const hasMore = createMemo(() => workspace().store.sessionTotal > sessions().length)
   const loadMore = async () => {
-    workspace().setStore("limit", (limit) => (limit ?? 0) + 5)
-    await globalSync.project.loadSessions(props.project.worktree)
+    workspace().setStore("limit", (limit) => (limit ?? 0) + 10)
+    await globalSync.project.loadSessions(props.project.worktree, { mode: "current" })
   }
 
   return (
