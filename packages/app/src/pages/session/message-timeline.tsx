@@ -152,10 +152,18 @@ const match = (
   sessionID: string | undefined,
   children: { id: string }[],
   session: Session[],
+  messages: MessageType[],
 ) => {
   if (!input || !sessionID) return false
-  if (input.sessionID === sessionID) return !input.tool || input.tool.messageID === messageID
+  if (input.sessionID === sessionID) return !input.tool || turn(messages, messageID, input.tool.messageID)
   return children.some((item) => within(session, item.id, input.sessionID))
+}
+
+const turn = (messages: MessageType[], root: string, target: string) => {
+  const start = messages.findIndex((item) => item.id === root)
+  if (start < 0) return root === target
+  const next = messages.slice(start + 1).findIndex((item) => item.role === "user")
+  return messages.slice(start, next < 0 ? undefined : start + 1 + next).some((item) => item.id === target)
 }
 
 const dot = (type: string) => {
@@ -1273,12 +1281,12 @@ export function MessageTimeline(props: {
                   })
                   const question = createMemo(() => {
                     const req = props.request?.question
-                    if (!match(req, messageID, sessionID(), kids(), sync.data.session)) return
+                    if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
                     return req
                   })
                   const permission = createMemo(() => {
                     const req = props.request?.permission
-                    if (!match(req, messageID, sessionID(), kids(), sync.data.session)) return
+                    if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
                     return req
                   })
                   const [questionOpen, setQuestionOpen] = createSignal(true)

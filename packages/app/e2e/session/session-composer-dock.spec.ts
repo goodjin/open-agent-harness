@@ -61,7 +61,7 @@ async function setAutoAccept(page: any, enabled: boolean) {
 
 async function expectQuestionBlocked(page: any) {
   await expect(page.locator(questionDockSelector)).toBeVisible()
-  await expect(page.locator(promptSelector)).toHaveCount(0)
+  await expect(page.locator(promptSelector)).toBeVisible()
 }
 
 async function expectQuestionOpen(page: any) {
@@ -71,7 +71,7 @@ async function expectQuestionOpen(page: any) {
 
 async function expectPermissionBlocked(page: any) {
   await expect(page.locator(permissionDockSelector)).toBeVisible()
-  await expect(page.locator(promptSelector)).toHaveCount(0)
+  await expect(page.locator(promptSelector)).toBeVisible()
 }
 
 async function expectPermissionOpen(page: any) {
@@ -562,7 +562,7 @@ test("todo dock transitions and collapse behavior", async ({ page, sdk, gotoSess
   })
 })
 
-test("keyboard focus stays off prompt while blocked", async ({ page, sdk, gotoSession }) => {
+test("keyboard focus stays off prompt while request card is visible", async ({ page, sdk, gotoSession }) => {
   await withDockSession(sdk, "e2e composer dock keyboard", async (session) => {
     await withDockSeed(sdk, session.id, async () => {
       await gotoSession(session.id)
@@ -582,7 +582,8 @@ test("keyboard focus stays off prompt while blocked", async ({ page, sdk, gotoSe
 
       await page.locator("main").click({ position: { x: 5, y: 5 } })
       await page.keyboard.type("abc")
-      await expect(page.locator(promptSelector)).toHaveCount(0)
+      await expect(page.locator(promptSelector)).not.toBeFocused()
+      await expect(page.locator(promptSelector)).not.toContainText("abc")
     })
   })
 })
