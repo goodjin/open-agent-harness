@@ -65,6 +65,10 @@
     gap: 8px;
     width: 100%;
     min-width: 0;
+    border: 1px solid var(--border-weaker-base);
+    border-radius: 6px;
+    background: var(--surface-weak);
+    padding: 8px 10px;
     color: var(--text-weak);
     font-family: var(--font-family-sans);
     font-size: var(--font-size-base);

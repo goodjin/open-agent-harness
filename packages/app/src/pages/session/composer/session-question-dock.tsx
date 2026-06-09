@@ -10,7 +10,10 @@ import { useSDK } from "@/context/sdk"
 
 type Notes = Record<string, string>
 
-const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[]; notes: Record<number, Notes> }>()
+const cache = new Map<
+  string,
+  { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[]; notes: Record<number, Notes> }
+>()
 
 const OPTION_DESCRIPTION_LIMIT = 140
 
@@ -97,13 +100,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       return
     }
 
-    const dock = root.closest('[data-component="session-prompt-dock"]')
-    if (!(dock instanceof HTMLElement)) return
-
-    const dockBottom = dock.getBoundingClientRect().bottom
-    const below = Math.max(0, dockBottom - root.getBoundingClientRect().bottom)
     const gap = 8
-    const max = Math.max(240, Math.floor(dockBottom - top - gap - below))
+    const bottom = scroller instanceof HTMLElement ? scroller.getBoundingClientRect().bottom : window.innerHeight
+    const max = Math.max(240, Math.floor(bottom - top - gap))
     root.style.setProperty("--question-prompt-max-height", `${max}px`)
   }
 
@@ -120,7 +119,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     update()
     window.addEventListener("resize", update)
 
-    const dock = root?.closest('[data-component="session-prompt-dock"]')
+    const dock = root?.closest('[data-component="session-request-card"], [data-component="session-prompt-dock"]')
     const scroller = document.querySelector(".scroll-view__viewport")
     const observer = new ResizeObserver(update)
     if (dock instanceof HTMLElement) observer.observe(dock)
@@ -181,7 +180,8 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     }
   }
 
-  const submit = () => void reply(questions().map((_, i) => answersWithNotes(store.answers[i] ?? [], store.notes[i] ?? {})))
+  const submit = () =>
+    void reply(questions().map((_, i) => answersWithNotes(store.answers[i] ?? [], store.notes[i] ?? {})))
 
   const pick = (answer: string, custom: boolean = false) => {
     setStore("answers", store.tab, [answer])
@@ -336,7 +336,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
             const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
             const [descriptionOpen, setDescriptionOpen] = createSignal(false)
             const descriptionView = createMemo(() => limitDescription(opt.description ?? ""))
-            const descriptionText = createMemo(() => (descriptionOpen() ? opt.description ?? "" : descriptionView().text))
+            const descriptionText = createMemo(() =>
+              descriptionOpen() ? (opt.description ?? "") : descriptionView().text,
+            )
             const descriptionCanExpand = createMemo(() => descriptionView().hidden > 0)
             const toggleDescription = (e: MouseEvent) => {
               e.preventDefault()
@@ -367,7 +369,10 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
                   <span data-slot="question-option-main">
                     <span data-slot="option-label">{opt.label}</span>
                     <Show when={opt.description}>
-                      <span data-slot="option-description" data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}>
+                      <span
+                        data-slot="option-description"
+                        data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}
+                      >
                         {descriptionText()}
                       </span>
                     </Show>

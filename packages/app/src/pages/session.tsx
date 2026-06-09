@@ -28,7 +28,7 @@ import type { SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { base64Encode, checksum } from "@open-agent-harness/util/encode"
 import { useNavigate, useSearchParams } from "@solidjs/router"
-import { NewSessionView, SessionHeader } from "@/components/session"
+import { NewSessionView } from "@/components/session"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
 import { useGlobalSync } from "@/context/global-sync"
@@ -41,7 +41,13 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, createSizing, focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
+import {
+  createOpenReviewFile,
+  createSessionTabs,
+  createSizing,
+  focusTerminalById,
+  isSessionBusy,
+} from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -58,12 +64,15 @@ import { formatServerError } from "@/utils/server-errors"
 
 const emptyUserMessages: UserMessage[] = []
 const emptyFollowups: (FollowupDraft & { id: string })[] = []
+const encoder = new TextEncoder()
+const bytes = (input: unknown) => encoder.encode(JSON.stringify(input) ?? "").length
 
 type SessionHistoryWindowInput = {
   sessionID: () => string | undefined
   messagesReady: () => boolean
   loaded: () => number
   visibleUserMessages: () => UserMessage[]
+  measure: (message: UserMessage) => number
   historyMore: () => boolean
   historyLoading: () => boolean
   loadMore: (sessionID: string) => Promise<void>
@@ -78,7 +87,8 @@ type SessionHistoryWindowInput = {
  * small batches while scrolling upward, and prefetches older history near top.
  */
 function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
-  const turnInit = 10
+  const turnMax = 10
+  const byteMax = 10_000
   const turnBatch = 1
   const turnScrollThreshold = 200
   const turnPrefetchBuffer = 16
@@ -92,15 +102,31 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
     prefetchNoGrowth: 0,
   })
 
-  const initialTurnStart = (len: number) => (len > turnInit ? len - turnInit : 0)
+  const initialTurnStart = (msgs: UserMessage[]) => {
+    if (msgs.length <= 1) return 0
+
+    let total = 0
+    let count = 0
+    for (let i = msgs.length - 1; i >= 0 && count < turnMax; i--) {
+      const msg = msgs[i]
+      if (!msg) continue
+      const next = Math.max(1, input.measure(msg))
+      if (count > 0 && total + next > byteMax) break
+      total += next
+      count += 1
+    }
+
+    return Math.max(0, msgs.length - Math.max(1, count))
+  }
 
   const turnStart = createMemo(() => {
     const id = input.sessionID()
-    const len = input.visibleUserMessages().length
+    const msgs = input.visibleUserMessages()
+    const len = msgs.length
     if (!id || len <= 0) return 0
-    if (state.turnID !== id) return initialTurnStart(len)
+    if (state.turnID !== id) return initialTurnStart(msgs)
     if (state.turnStart <= 0) return 0
-    if (state.turnStart >= len) return initialTurnStart(len)
+    if (state.turnStart >= len) return initialTurnStart(msgs)
     return state.turnStart
   })
 
@@ -284,7 +310,7 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
       () => [input.sessionID(), input.messagesReady()] as const,
       ([id, ready]) => {
         if (!id || !ready) return
-        setTurnStart(initialTurnStart(input.visibleUserMessages().length))
+        setTurnStart(initialTurnStart(input.visibleUserMessages()))
       },
       { defer: true },
     ),
@@ -387,6 +413,7 @@ export default function Page() {
   const desktopSidePanelOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
   const sessionPanelWidth = createMemo(() => (desktopSidePanelOpen() ? `${layout.session.width()}px` : "100%"))
+  const max = () => (typeof window === "undefined" ? 1600 : Math.max(320, window.innerWidth - 180))
   const centered = createMemo(() => isDesktop() && !desktopSidePanelOpen())
 
   function normalizeTab(tab: string) {
@@ -461,6 +488,21 @@ export default function Page() {
     },
   )
   const lastUserMessage = createMemo(() => visibleUserMessages().at(-1))
+  const measure = (message: UserMessage) => {
+    const list = messages()
+    const idx = list.findIndex((item) => item.id === message.id)
+    if (idx === -1) return bytes(message)
+
+    let total = 0
+    for (let i = idx; i < list.length; i++) {
+      const item = list[i]
+      if (!item) continue
+      if (i !== idx && item.role === "user") break
+      total += bytes(item)
+      total += bytes(sync.data.part[item.id] ?? [])
+    }
+    return total
+  }
 
   createEffect(() => {
     const tab = activeFileTab()
@@ -1045,7 +1087,7 @@ export default function Page() {
             <Show
               when={mobileLogs()}
               fallback={
-                <Show when={lastUserMessage()}>
+                <Show when={messagesReady()}>
                   <MessageTimeline
                     mobileChanges={mobileChanges()}
                     mobileFallback={reviewContent({
@@ -1059,6 +1101,16 @@ export default function Page() {
                       emptyClass: "h-full pb-64 -mt-4 flex flex-col items-center justify-center text-center gap-6",
                     })}
                     actions={actions}
+                    request={{
+                      question: composer.questionRequest(),
+                      permission: composer.permissionRequest(),
+                      responding: composer.permissionResponding(),
+                      submit: resumeScroll,
+                      decide: (response) => {
+                        resumeScroll()
+                        composer.decide(response)
+                      },
+                    }}
                     scroll={ui.scroll}
                     onResumeScroll={resumeScroll}
                     setScrollRef={setScrollRef}
@@ -1119,11 +1171,11 @@ export default function Page() {
         comments.clear()
         resumeScroll()
       }}
-      onResponseSubmit={resumeScroll}
       followup={
         params.id
           ? {
               queue: queueEnabled,
+              target: followupTarget(),
               items: followupDock(),
               sending: sendingFollowup(),
               edit: editingFollowup(),
@@ -1405,6 +1457,7 @@ export default function Page() {
     messagesReady,
     loaded: () => messages().length,
     visibleUserMessages,
+    measure,
     historyMore,
     historyLoading,
     loadMore: (sessionID) => sync.session.history.loadMore(sessionID),
@@ -1499,6 +1552,12 @@ export default function Page() {
     const id = params.id
     if (!id) return emptyFollowups
     return followup.items[id] ?? emptyFollowups
+  })
+
+  const followupTarget = createMemo(() => {
+    const id = params.id
+    if (!id) return
+    return sync.session.get(id)?.title?.trim() || id
   })
 
   const editingFollowup = createMemo(() => {
@@ -1860,7 +1919,6 @@ export default function Page() {
 
   return (
     <div class="relative bg-background-base size-full overflow-hidden flex flex-col">
-      <SessionHeader />
       <div class="flex-1 min-h-0 flex flex-col md:flex-row">
         <Show when={!isDesktop() && !!params.id}>
           <Tabs value={store.mobileTab} class="h-auto">
@@ -1906,8 +1964,7 @@ export default function Page() {
         >
           <div
             classList={{
-              "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger flex-1 md:flex-none min-w-0":
-                true,
+              "@container relative shrink-0 flex flex-col min-h-0 h-full bg-background-stronger flex-1 md:flex-none min-w-0": true,
               "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
                 !size.active(),
             }}
@@ -1922,8 +1979,8 @@ export default function Page() {
                 <ResizeHandle
                   direction="horizontal"
                   size={layout.session.width()}
-                  min={450}
-                  max={typeof window === "undefined" ? 1000 : Math.max(450, Math.min(1000, window.innerWidth - 360))}
+                  min={320}
+                  max={max()}
                   onResize={(width) => {
                     size.touch()
                     layout.session.resize(width)

@@ -106,11 +106,7 @@ const escapeHtml = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
 
 const exportHtml = (name: string, text: string) =>
-  save(
-    name,
-    "text/html;charset=utf-8",
-    `<!doctype html><meta charset="utf-8"><pre>${escapeHtml(text)}</pre>`,
-  )
+  save(name, "text/html;charset=utf-8", `<!doctype html><meta charset="utf-8"><pre>${escapeHtml(text)}</pre>`)
 
 const exportPdf = (text: string) => {
   const win = window.open("", "_blank")
@@ -121,7 +117,11 @@ const exportPdf = (text: string) => {
   win.print()
 }
 
-const filename = (text: string) => text.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "shell"
+const filename = (text: string) =>
+  text
+    .replace(/[^a-z0-9._-]+/gi, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "shell"
 
 const pretty = (input: unknown) => JSON.stringify(unwrap(input), null, 2)
 
@@ -247,10 +247,10 @@ function createThrottledValue(getValue: () => string) {
   return value
 }
 
-function LimitedText(props: { text: string; children: (text: () => string) => JSX.Element }) {
+function LimitedText(props: { text: string; limit?: number; children: (text: () => string) => JSX.Element }) {
   const i18n = useI18n()
   const [open, setOpen] = createSignal(false)
-  const view = createMemo(() => limitTextLines(props.text))
+  const view = createMemo(() => limitTextLines(props.text, props.limit))
   const text = createMemo(() => (open() ? props.text : view().text))
 
   return (
@@ -265,8 +265,12 @@ function LimitedText(props: { text: string; children: (text: () => string) => JS
   )
 }
 
-function LimitedMarkdown(props: { text: string; cacheKey?: string }) {
-  return <LimitedText text={props.text}>{(text) => <Markdown text={text()} cacheKey={props.cacheKey} />}</LimitedText>
+function LimitedMarkdown(props: { text: string; cacheKey?: string; limit?: number }) {
+  return (
+    <LimitedText text={props.text} limit={props.limit}>
+      {(text) => <Markdown text={text()} cacheKey={props.cacheKey} />}
+    </LimitedText>
+  )
 }
 
 function relativizeProjectPath(path: string, directory?: string) {
@@ -1575,6 +1579,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
     return isLastTextPart()
   })
   const [copied, setCopied] = createSignal(false)
+  const [open, setOpen] = createSignal(true)
 
   const handleCopy = async () => {
     const content = displayText()
@@ -1590,8 +1595,26 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
         <Show
           when={workflow()}
           fallback={
-            <div data-slot="text-part-body">
-              <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
+            <div data-slot="text-part-box">
+              <button
+                type="button"
+                data-slot="text-part-header"
+                aria-expanded={open()}
+                onClick={() => setOpen((value) => !value)}
+              >
+                <span data-slot="part-header-title">
+                  <Icon name="bubble-5" size="small" />
+                  <span>{i18n.t("ui.sessionTurn.summary.response")}</span>
+                </span>
+                <span data-slot="part-header-toggle">
+                  <Icon name="chevron-down" size="small" />
+                </span>
+              </button>
+              <Show when={open()}>
+                <div data-slot="text-part-body" data-scrollable>
+                  <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
+                </div>
+              </Show>
             </div>
           }
         >
@@ -1636,14 +1659,34 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
 }
 
 PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
+  const i18n = useI18n()
   const part = () => props.part as ReasoningPart
   const text = () => part().text.trim()
   const throttledText = createThrottledValue(text)
+  const [open, setOpen] = createSignal(true)
 
   return (
     <Show when={throttledText()}>
       <div data-component="reasoning-part">
-        <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
+        <button
+          type="button"
+          data-slot="reasoning-part-header"
+          aria-expanded={open()}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span data-slot="part-header-title">
+            <Icon name="brain" size="small" />
+            <span>{i18n.t("ui.messagePart.collapsed.reasoning.title")}</span>
+          </span>
+          <span data-slot="part-header-toggle">
+            <Icon name="chevron-down" size="small" />
+          </span>
+        </button>
+        <Show when={open()}>
+          <div data-slot="reasoning-part-body" data-scrollable>
+            <LimitedMarkdown text={throttledText()} cacheKey={part().id} limit={3} />
+          </div>
+        </Show>
       </div>
     </Show>
   )
@@ -2008,7 +2051,9 @@ ToolRegistry.register({
                 size="small"
                 variant="secondary"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => save(`${filename(cmd())}.md`, "text/markdown;charset=utf-8", "```shell\n" + text() + "\n```")}
+                onClick={() =>
+                  save(`${filename(cmd())}.md`, "text/markdown;charset=utf-8", "```shell\n" + text() + "\n```")
+                }
                 aria-label="Export Markdown"
               />
             </Tooltip>

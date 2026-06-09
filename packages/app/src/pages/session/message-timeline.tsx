@@ -1,4 +1,4 @@
-import { For, createEffect, createMemo, on, onCleanup, Show, Index, type JSX } from "solid-js"
+import { For, createEffect, createMemo, createSignal, on, onCleanup, Show, Index, type JSX } from "solid-js"
 import { createStore, produce } from "solid-js/store"
 import { useNavigate } from "@solidjs/router"
 import { Button } from "@open-agent-harness/ui/button"
@@ -12,24 +12,40 @@ import { Spinner } from "@open-agent-harness/ui/spinner"
 import { SessionTurn, SessionTurnDiffs, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
-import type { AssistantMessage, Message as MessageType, Part, TextPart, UserMessage } from "@open-agent-harness/sdk/v2"
+import { Tooltip, TooltipKeybind } from "@open-agent-harness/ui/tooltip"
+import type {
+  AssistantMessage,
+  Message as MessageType,
+  Part,
+  PermissionRequest,
+  QuestionRequest,
+  Session,
+  TextPart,
+  UserMessage,
+} from "@open-agent-harness/sdk/v2"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { Binary } from "@open-agent-harness/util/binary"
 import { getFilename } from "@open-agent-harness/util/path"
 import { Popover as KobaltePopover } from "@kobalte/core/popover"
 import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
+import { StatusPopover } from "@/components/status-popover"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
+import { useCommand } from "@/context/command"
+import { useLayout } from "@/context/layout"
 import { useLanguage } from "@/context/language"
-import { useSessionKey } from "@/pages/session/session-layout"
+import { useSessionLayout } from "@/pages/session/session-layout"
 import { useGlobalSDK } from "@/context/global-sdk"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { useTerminal } from "@/context/terminal"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { isSessionBusy } from "@/pages/session/helpers"
+import { focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
+import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
+import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 
 type MessageComment = {
   path: string
@@ -45,6 +61,8 @@ const idle = { type: "idle" as const }
 
 const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
+const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
@@ -58,26 +76,24 @@ type DelegationState = {
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 
-const delegationItem = (input: unknown): input is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-  record(input) &&
-  typeof input.parent_message_id === "string" &&
-  typeof input.child_session_id === "string"
+const delegationItem = (
+  input: unknown,
+): input is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+  record(input) && typeof input.parent_message_id === "string" && typeof input.child_session_id === "string"
 
 const delegationRows = (input: unknown, messageID: string) => {
   if (!Array.isArray(input)) return []
   const rows = input
-    .filter((item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-      delegationItem(item) && item.parent_message_id === messageID,
+    .filter(
+      (item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+        delegationItem(item) && item.parent_message_id === messageID,
     )
-    .reduce(
-      (acc: Map<string, { id: string; label: string }>, item) => {
-        if (acc.has(item.child_session_id)) return acc
-        const label = text(item.action_title) || `子会话 ${String(item.child_session_id)}`
-        acc.set(item.child_session_id, { id: item.child_session_id, label })
-        return acc
-      },
-      new Map<string, { id: string; label: string }>(),
-    )
+    .reduce((acc: Map<string, { id: string; label: string }>, item) => {
+      if (acc.has(item.child_session_id)) return acc
+      const label = text(item.action_title) || `子会话 ${String(item.child_session_id)}`
+      acc.set(item.child_session_id, { id: item.child_session_id, label })
+      return acc
+    }, new Map<string, { id: string; label: string }>())
   return Array.from(rows.values())
 }
 
@@ -96,8 +112,9 @@ const delegationProgress = (input: unknown, messageID: string): DelegationState 
   if (!record(protocol)) return { total: 0, done: 0, active: [], completed: [] }
 
   const active = Object.values(record(protocol.pending_delegations) ? protocol.pending_delegations : {})
-    .filter((item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-      delegationItem(item) && item.parent_message_id === messageID,
+    .filter(
+      (item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+        delegationItem(item) && item.parent_message_id === messageID,
     )
     .map((item) => ({
       id: String(item.child_session_id),
@@ -106,16 +123,47 @@ const delegationProgress = (input: unknown, messageID: string): DelegationState 
 
   const completed = delegationRows(protocol.completed_delegations, messageID)
 
-  const completedIds = completed.map((item) => item.id)
-  const totalItems = new Set(active.map((item) => item.id).concat(completedIds))
-  for (const item of completed) totalItems.add(item.id)
+  const ids = new Set(active.map((item) => item.id).concat(completed.map((item) => item.id)))
 
   return {
-    total: totalItems.size,
+    total: ids.size,
     done: completed.length,
     active,
     completed,
   }
+}
+
+const within = (session: Session[], root: string, target: string): boolean => {
+  if (root === target) return true
+  const map = new Map(session.map((item) => [item.id, item.parentID]))
+  let id: string | undefined = target
+  while (id) {
+    const parent = map.get(id)
+    if (!parent) return false
+    if (parent === root) return true
+    id = parent
+  }
+  return false
+}
+
+const match = (
+  input: { sessionID: string; tool?: { messageID: string } } | undefined,
+  messageID: string,
+  sessionID: string | undefined,
+  children: { id: string }[],
+  session: Session[],
+) => {
+  if (!input || !sessionID) return false
+  if (input.sessionID === sessionID) return !input.tool || input.tool.messageID === messageID
+  return children.some((item) => within(session, item.id, input.sessionID))
+}
+
+const dot = (type: string) => {
+  if (type === "waiting_user" || type === "waiting_permission" || type === "rate_limited" || type === "blocked")
+    return "bg-icon-warning-base"
+  if (live.has(type)) return "bg-icon-info-base"
+  if (type === "completed" || type === "idle") return "bg-icon-success-base"
+  return "bg-icon-critical-base"
 }
 
 const done = (messages: MessageType[], id: string) => {
@@ -139,6 +187,14 @@ type UserActions = {
   context?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
   continue?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
   prompt?: (input: { sessionID: string; messageID: string; text: string }) => Promise<void> | void
+}
+
+type Requests = {
+  question?: QuestionRequest
+  permission?: PermissionRequest
+  responding: boolean
+  submit: () => void
+  decide: (response: "once" | "always" | "reject") => void
 }
 
 const messageComments = (parts: Part[]): MessageComment[] =>
@@ -191,107 +247,11 @@ const markBoundaryGesture = (input: {
   }
 }
 
-type StageConfig = {
-  init: number
-  batch: number
-}
-
-type TimelineStageInput = {
-  sessionKey: () => string
-  turnStart: () => number
-  messages: () => UserMessage[]
-  config: StageConfig
-}
-
-/**
- * Defer-mounts small timeline windows so revealing older turns does not
- * block first paint with a large DOM mount.
- *
- * Once staging completes for a session it never re-stages — backfill and
- * new messages render immediately.
- */
-function createTimelineStaging(input: TimelineStageInput) {
-  const [state, setState] = createStore({
-    activeSession: "",
-    completedSession: "",
-    count: 0,
-  })
-
-  const stagedCount = createMemo(() => {
-    const total = input.messages().length
-    if (input.turnStart() <= 0) return total
-    if (state.completedSession === input.sessionKey()) return total
-    const init = Math.min(total, input.config.init)
-    if (state.count <= init) return init
-    if (state.count >= total) return total
-    return state.count
-  })
-
-  const stagedUserMessages = createMemo(() => {
-    const list = input.messages()
-    const count = stagedCount()
-    if (count >= list.length) return list
-    return list.slice(Math.max(0, list.length - count))
-  })
-
-  let frame: number | undefined
-  const cancel = () => {
-    if (frame === undefined) return
-    cancelAnimationFrame(frame)
-    frame = undefined
-  }
-
-  createEffect(
-    on(
-      () => [input.sessionKey(), input.turnStart() > 0, input.messages().length] as const,
-      ([sessionKey, isWindowed, total]) => {
-        cancel()
-        const shouldStage =
-          isWindowed &&
-          total > input.config.init &&
-          state.completedSession !== sessionKey &&
-          state.activeSession !== sessionKey
-        if (!shouldStage) {
-          setState({ activeSession: "", count: total })
-          return
-        }
-
-        let count = Math.min(total, input.config.init)
-        setState({ activeSession: sessionKey, count })
-
-        const step = () => {
-          if (input.sessionKey() !== sessionKey) {
-            frame = undefined
-            return
-          }
-          const currentTotal = input.messages().length
-          count = Math.min(currentTotal, count + input.config.batch)
-          setState("count", count)
-          if (count >= currentTotal) {
-            setState({ completedSession: sessionKey, activeSession: "" })
-            frame = undefined
-            return
-          }
-          frame = requestAnimationFrame(step)
-        }
-        frame = requestAnimationFrame(step)
-      },
-    ),
-  )
-
-  const isStaging = createMemo(() => {
-    const key = input.sessionKey()
-    return state.activeSession === key && state.completedSession !== key
-  })
-
-  onCleanup(cancel)
-  return { messages: stagedUserMessages, isStaging }
-}
-
 export function MessageTimeline(props: {
   mobileChanges: boolean
   mobileFallback: JSX.Element
   actions?: UserActions
+  request?: Requests
   scroll: { overflow: boolean; bottom: boolean }
   onResumeScroll: () => void
   setScrollRef: (el: HTMLDivElement | undefined) => void
@@ -324,9 +284,13 @@ export function MessageTimeline(props: {
   const sync = useSync()
   const settings = useSettings()
   const dialog = useDialog()
+  const command = useCommand()
+  const layout = useLayout()
   const language = useLanguage()
-  const { params, sessionKey } = useSessionKey()
+  const terminal = useTerminal()
+  const { params, sessionKey, tabs, view } = useSessionLayout()
   const platform = usePlatform()
+  const tab = createMemo(() => tabs().active())
 
   const sessionID = createMemo(() => params.id)
   const sessionMessages = createMemo(() => {
@@ -365,7 +329,19 @@ export function MessageTimeline(props: {
 
     return false
   }
-  const rendered = createMemo(() => props.renderedUserMessages.filter((message) => turnMatches(message.id)).map((message) => message.id))
+  const turns = createMemo(() => {
+    const id = sessionID()
+    const revert = id ? sync.session.get(id)?.revert?.messageID : undefined
+    return sessionMessages().filter(
+      (message): message is UserMessage => message.role === "user" && (!revert || message.id < revert),
+    )
+  })
+  const rendered = createMemo(() => props.renderedUserMessages.filter((message) => turnMatches(message.id)))
+  const ordinal = (id: string) => {
+    const idx = turns().findIndex((message) => message.id === id)
+    if (idx >= 0) return idx + 1
+    return props.turnStart + rendered().findIndex((message) => message.id === id) + 1
+  }
 
   const [slot, setSlot] = createStore({
     open: false,
@@ -427,7 +403,6 @@ export function MessageTimeline(props: {
   const shareUrl = createMemo(() => info()?.share?.url)
   const shareEnabled = createMemo(() => sync.data.config.share !== "disabled")
   const parentID = createMemo(() => info()?.parentID)
-  const showHeader = createMemo(() => true)
   const filterOptions: { id: SessionTurnFilter; label: string }[] = [
     { id: "all", label: "全部" },
     { id: "thinking", label: "思考" },
@@ -435,14 +410,6 @@ export function MessageTimeline(props: {
     { id: "output", label: "输出" },
     { id: "tool", label: "工具调用" },
   ]
-  const stageCfg = { init: 1, batch: 3 }
-  const staging = createTimelineStaging({
-    sessionKey,
-    turnStart: () => props.turnStart,
-    messages: () => props.renderedUserMessages,
-    config: stageCfg,
-  })
-
   const [title, setTitle] = createStore({
     draft: "",
     editing: false,
@@ -461,6 +428,7 @@ export function MessageTimeline(props: {
   let more: HTMLButtonElement | undefined
 
   const [req, setReq] = createStore({ share: false, unshare: false })
+  const [op, setOp] = createStore({ child: {} as Record<string, string | undefined> })
 
   const shareSession = () => {
     const id = sessionID()
@@ -696,6 +664,85 @@ export function MessageTimeline(props: {
     navigate(`/${params.dir}/session/${id}`)
   }
 
+  const openTree = () => {
+    const id = sessionID()
+    if (!id) return
+    navigate(`/${params.dir}/session/${id}/tree`)
+  }
+
+  const term = () => {
+    const next = !view().terminal.opened()
+    view().terminal.toggle()
+    if (!next) return
+    const id = terminal.active()
+    if (id) focusTerminalById(id)
+  }
+
+  const review = () => {
+    view().reviewPanel.open()
+    tabs().setActive("review")
+  }
+
+  const files = () => {
+    layout.fileTree.open()
+    tabs().setActive(layout.fileTree.tab())
+  }
+
+  const post = (id: string, path: string, body: Record<string, unknown>) => {
+    setOp("child", id, path)
+    return sdk
+      .request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          directory: sdk.directory,
+          ids: [id],
+          source_session: sessionID(),
+          ...body,
+        }),
+      })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        await sync.session.sync(id, { force: true }).catch(() => undefined)
+        const current = sessionID()
+        if (current) await sync.session.sync(current, { force: true }).catch(() => undefined)
+      })
+      .finally(() => {
+        setOp("child", id, undefined)
+      })
+  }
+
+  const pause = (id: string) =>
+    post(id, "/session/tree/abort", { reason: "Paused from session timeline" }).catch((err: unknown) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: errorMessage(err),
+      }),
+    )
+
+  const resume = (id: string) =>
+    post(id, "/session/tree/resume", { mode: "restore" }).catch((err: unknown) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: errorMessage(err),
+      }),
+    )
+
+  const cont = (id: string) =>
+    post(id, "/session/tree/resume", {
+      include_completed: true,
+      mode: "message",
+      message: language.t("sessionTree.resumeDialog.defaultMessage"),
+    }).catch((err: unknown) =>
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: errorMessage(err),
+      }),
+    )
+
   function DialogDeleteSession(props: { sessionID: string }) {
     const name = createMemo(() => sync.session.get(props.sessionID)?.title ?? language.t("command.session.new"))
     const handleDelete = async () => {
@@ -733,10 +780,8 @@ export function MessageTimeline(props: {
         <div
           class="absolute left-1/2 -translate-x-1/2 bottom-6 z-[60] pointer-events-none transition-all duration-200 ease-out"
           classList={{
-            "opacity-100 translate-y-0 scale-100":
-              props.scroll.overflow && !props.scroll.bottom && !staging.isStaging(),
-            "opacity-0 translate-y-2 scale-95 pointer-events-none":
-              !props.scroll.overflow || props.scroll.bottom || staging.isStaging(),
+            "opacity-100 translate-y-0 scale-100": props.scroll.overflow && !props.scroll.bottom,
+            "opacity-0 translate-y-2 scale-95 pointer-events-none": !props.scroll.overflow || props.scroll.bottom,
           }}
         >
           <button
@@ -814,302 +859,367 @@ export function MessageTimeline(props: {
           onClick={props.onAutoScrollInteraction}
           class="relative min-w-0 w-full h-full"
           style={{
-            "--session-title-height": showHeader() ? "80px" : "0px",
-            "--sticky-accordion-top": showHeader() ? "88px" : "0px",
+            "--session-title-height": "80px",
+            "--sticky-accordion-top": "88px",
           }}
         >
           <div ref={props.setContentRef} class="min-w-0 w-full">
-            <Show when={showHeader()}>
-              <div
-                data-session-title
-                classList={{
-                  "sticky top-0 z-30 bg-[linear-gradient(to_bottom,var(--background-stronger)_48px,transparent)]": true,
-                  "w-full": true,
-                  "pb-4": true,
-                  "pl-2 pr-3 md:pl-4 md:pr-3": true,
-                  "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
-                }}
-              >
-                <div class="h-12 w-full flex items-center justify-between gap-2">
-                  <div class="flex items-center gap-1 min-w-0 flex-1 pr-3">
-                    <Show when={parentID()}>
-                      <IconButton
-                        tabIndex={-1}
-                        icon="arrow-left"
-                        variant="ghost"
-                        onClick={navigateParent}
-                        aria-label={language.t("common.goBack")}
-                      />
-                    </Show>
-                    <div class="flex items-center min-w-0 grow-1">
-                      <div
-                        class="shrink-0 flex items-center justify-center overflow-hidden transition-[width,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                        style={{
-                          width: slot.open ? "16px" : "0px",
-                          "margin-right": slot.open ? "8px" : "0px",
-                        }}
-                        aria-hidden="true"
-                      >
-                        <Show when={slot.show}>
-                          <div
-                            class="transition-opacity duration-200 ease-out"
-                            classList={{
-                              "opacity-0": slot.fade,
-                            }}
-                          >
-                            <Spinner class="size-4" style={{ color: tint() ?? "var(--icon-interactive-base)" }} />
-                          </div>
-                        </Show>
-                      </div>
-                      <Show when={titleValue() || title.editing}>
-                        <Show
-                          when={title.editing}
-                          fallback={
-                            <h1
-                              class="text-14-medium text-text-strong truncate grow-1 min-w-0"
-                              onDblClick={openTitleEditor}
-                            >
-                              {titleValue()}
-                            </h1>
-                          }
+            <div
+              data-session-title
+              classList={{
+                "sticky top-0 z-30 bg-[linear-gradient(to_bottom,var(--background-stronger)_48px,transparent)]": true,
+                "w-full": true,
+                "pb-4": true,
+                "pl-2 pr-3 md:pl-4 md:pr-3": true,
+                "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
+              }}
+            >
+              <div class="h-12 w-full flex items-center justify-between gap-2">
+                <div class="flex items-center gap-1 min-w-0 flex-1 pr-3">
+                  <Show when={parentID()}>
+                    <IconButton
+                      tabIndex={-1}
+                      icon="arrow-left"
+                      variant="ghost"
+                      onClick={navigateParent}
+                      aria-label={language.t("common.goBack")}
+                    />
+                  </Show>
+                  <div class="flex items-center min-w-0 grow-1">
+                    <div
+                      class="shrink-0 flex items-center justify-center overflow-hidden transition-[width,margin] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      style={{
+                        width: slot.open ? "16px" : "0px",
+                        "margin-right": slot.open ? "8px" : "0px",
+                      }}
+                      aria-hidden="true"
+                    >
+                      <Show when={slot.show}>
+                        <div
+                          class="transition-opacity duration-200 ease-out"
+                          classList={{
+                            "opacity-0": slot.fade,
+                          }}
                         >
-                          <InlineInput
-                            ref={(el) => {
-                              titleRef = el
-                            }}
-                            value={title.draft}
-                            disabled={title.saving}
-                            class="text-14-medium text-text-strong grow-1 min-w-0 rounded-[6px]"
-                            style={{ "--inline-input-shadow": "var(--shadow-xs-border-select)" }}
-                            onInput={(event) => setTitle("draft", event.currentTarget.value)}
-                            onKeyDown={(event) => {
-                              event.stopPropagation()
-                              if (event.key === "Enter") {
-                                event.preventDefault()
-                                void saveTitleEditor()
-                                return
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault()
-                                closeTitleEditor()
-                              }
-                            }}
-                            onBlur={closeTitleEditor}
-                          />
-                        </Show>
+                          <Spinner class="size-4" style={{ color: tint() ?? "var(--icon-interactive-base)" }} />
+                        </div>
                       </Show>
                     </div>
+                    <Show when={titleValue() || title.editing}>
+                      <Show
+                        when={title.editing}
+                        fallback={
+                          <h1
+                            class="text-14-medium text-text-strong truncate grow-1 min-w-0"
+                            onDblClick={openTitleEditor}
+                          >
+                            {titleValue()}
+                          </h1>
+                        }
+                      >
+                        <InlineInput
+                          ref={(el) => {
+                            titleRef = el
+                          }}
+                          value={title.draft}
+                          disabled={title.saving}
+                          class="text-14-medium text-text-strong grow-1 min-w-0 rounded-[6px]"
+                          style={{ "--inline-input-shadow": "var(--shadow-xs-border-select)" }}
+                          onInput={(event) => setTitle("draft", event.currentTarget.value)}
+                          onKeyDown={(event) => {
+                            event.stopPropagation()
+                            if (event.key === "Enter") {
+                              event.preventDefault()
+                              void saveTitleEditor()
+                              return
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault()
+                              closeTitleEditor()
+                            }
+                          }}
+                          onBlur={closeTitleEditor}
+                        />
+                      </Show>
+                    </Show>
                   </div>
-                  <Show when={sessionID()}>
-                    {(id) => (
-                      <div class="shrink-0 flex items-center gap-3">
-                        <SessionContextUsage placement="bottom" />
-                        <DropdownMenu
-                          gutter={4}
-                          placement="bottom-end"
-                          open={title.menuOpen}
-                          onOpenChange={(open) => {
-                            setTitle("menuOpen", open)
-                            if (open) return
-                          }}
-                        >
-                          <DropdownMenu.Trigger
-                            as={IconButton}
-                            icon="dot-grid"
+                </div>
+                <Show when={sessionID()}>
+                  {(id) => (
+                    <div class="shrink-0 flex items-center gap-3">
+                      <div class="hidden md:flex items-center gap-1">
+                        <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
+                          <StatusPopover />
+                        </Tooltip>
+                        <Tooltip placement="bottom" value={language.t("sessionTree.open")}>
+                          <Button
                             variant="ghost"
-                            class="size-6 rounded-md data-[expanded]:bg-surface-base-active"
-                            classList={{
-                              "bg-surface-base-active": share.open || title.pendingShare,
-                            }}
-                            aria-label={language.t("common.moreOptions")}
-                            aria-expanded={title.menuOpen || share.open || title.pendingShare}
-                            ref={(el: HTMLButtonElement) => {
-                              more = el
-                            }}
-                          />
-                          <DropdownMenu.Portal>
-                            <DropdownMenu.Content
-                              style={{ "min-width": "104px" }}
-                              onCloseAutoFocus={(event) => {
-                                if (title.pendingRename) {
-                                  event.preventDefault()
-                                  setTitle("pendingRename", false)
-                                  openTitleEditor()
-                                  return
-                                }
-                                if (title.pendingShare) {
-                                  event.preventDefault()
-                                  requestAnimationFrame(() => {
-                                    setShare({ open: true, dismiss: null })
-                                    setTitle("pendingShare", false)
-                                  })
-                                }
-                              }}
-                            >
-                              <DropdownMenu.Item
-                                onSelect={() => {
-                                  setTitle("pendingRename", true)
-                                  setTitle("menuOpen", false)
-                                }}
-                              >
-                                <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Item
-                                onSelect={() => {
-                                  setTitle("menuOpen", false)
-                                  copyTitle()
-                                }}
-                              >
-                                <div class="flex size-5 shrink-0 items-center justify-center">
-                                  <Icon name="copy" size="small" class="text-icon-weak" />
-                                </div>
-                                <DropdownMenu.ItemLabel>{language.t("session.copyName")}</DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                              <Show when={shareEnabled()}>
-                                <DropdownMenu.Item
-                                  onSelect={() => {
-                                    setTitle({ pendingShare: true, menuOpen: false })
-                                  }}
-                                >
-                                  <DropdownMenu.ItemLabel>
-                                    {language.t("session.share.action.share")}
-                                  </DropdownMenu.ItemLabel>
-                                </DropdownMenu.Item>
-                              </Show>
-                              <DropdownMenu.Item onSelect={() => void archiveSession(id())}>
-                                <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                              <DropdownMenu.Separator />
-                              <DropdownMenu.Item
-                                onSelect={() => dialog.show(() => <DialogDeleteSession sessionID={id()} />)}
-                              >
-                                <DropdownMenu.ItemLabel>{language.t("common.delete")}</DropdownMenu.ItemLabel>
-                              </DropdownMenu.Item>
-                            </DropdownMenu.Content>
-                          </DropdownMenu.Portal>
-                        </DropdownMenu>
-
-                        <KobaltePopover
-                          open={share.open}
-                          anchorRef={() => more}
-                          placement="bottom-end"
-                          gutter={4}
-                          modal={false}
-                          onOpenChange={(open) => {
-                            if (open) setShare("dismiss", null)
-                            setShare("open", open)
-                          }}
+                            class="h-6 w-7 p-0 box-border shrink-0"
+                            onClick={openTree}
+                            disabled={!id()}
+                            aria-label={language.t("sessionTree.open")}
+                          >
+                            <Icon size="small" name="branch" />
+                          </Button>
+                        </Tooltip>
+                        <TooltipKeybind
+                          title={language.t("command.terminal.toggle")}
+                          keybind={command.keybind("terminal.toggle")}
                         >
-                          <KobaltePopover.Portal>
-                            <KobaltePopover.Content
-                              data-component="popover-content"
-                              style={{ "min-width": "320px" }}
-                              onEscapeKeyDown={(event) => {
-                                setShare({ dismiss: "escape", open: false })
+                          <Button
+                            variant="ghost"
+                            class="h-6 w-7 p-0 box-border shrink-0"
+                            onClick={term}
+                            aria-label={language.t("command.terminal.toggle")}
+                            aria-expanded={view().terminal.opened()}
+                            aria-controls="terminal-panel"
+                          >
+                            <Icon size="small" name={view().terminal.opened() ? "terminal-active" : "terminal"} />
+                          </Button>
+                        </TooltipKeybind>
+                        <TooltipKeybind
+                          title={language.t("command.review.toggle")}
+                          keybind={command.keybind("review.toggle")}
+                        >
+                          <Button
+                            variant="ghost"
+                            class="h-6 w-7 p-0 box-border shrink-0"
+                            onClick={review}
+                            aria-label={language.t("command.review.toggle")}
+                            aria-expanded={tab() === "review"}
+                            aria-controls="review-panel"
+                          >
+                            <Icon size="small" name={tab() === "review" ? "review-active" : "review"} />
+                          </Button>
+                        </TooltipKeybind>
+                        <TooltipKeybind
+                          title={language.t("command.fileTree.toggle")}
+                          keybind={command.keybind("fileTree.toggle")}
+                        >
+                          <Button
+                            variant="ghost"
+                            class="h-6 w-7 p-0 box-border shrink-0"
+                            onClick={files}
+                            aria-label={language.t("command.fileTree.toggle")}
+                            aria-expanded={layout.fileTree.opened() && (tab() === "changes" || tab() === "all")}
+                            aria-controls="file-tree-panel"
+                          >
+                            <Icon
+                              size="small"
+                              name={
+                                layout.fileTree.opened() && (tab() === "changes" || tab() === "all")
+                                  ? "file-tree-active"
+                                  : "file-tree"
+                              }
+                            />
+                          </Button>
+                        </TooltipKeybind>
+                      </div>
+                      <SessionContextUsage placement="bottom" />
+                      <DropdownMenu
+                        gutter={4}
+                        placement="bottom-end"
+                        open={title.menuOpen}
+                        onOpenChange={(open) => {
+                          setTitle("menuOpen", open)
+                          if (open) return
+                        }}
+                      >
+                        <DropdownMenu.Trigger
+                          as={IconButton}
+                          icon="dot-grid"
+                          variant="ghost"
+                          class="size-6 rounded-md data-[expanded]:bg-surface-base-active"
+                          classList={{
+                            "bg-surface-base-active": share.open || title.pendingShare,
+                          }}
+                          aria-label={language.t("common.moreOptions")}
+                          aria-expanded={title.menuOpen || share.open || title.pendingShare}
+                          ref={(el: HTMLButtonElement) => {
+                            more = el
+                          }}
+                        />
+                        <DropdownMenu.Portal>
+                          <DropdownMenu.Content
+                            style={{ "min-width": "104px" }}
+                            onCloseAutoFocus={(event) => {
+                              if (title.pendingRename) {
                                 event.preventDefault()
-                                event.stopPropagation()
-                              }}
-                              onPointerDownOutside={() => {
-                                setShare({ dismiss: "outside", open: false })
-                              }}
-                              onFocusOutside={() => {
-                                setShare({ dismiss: "outside", open: false })
-                              }}
-                              onCloseAutoFocus={(event) => {
-                                if (share.dismiss === "outside") event.preventDefault()
-                                setShare("dismiss", null)
+                                setTitle("pendingRename", false)
+                                openTitleEditor()
+                                return
+                              }
+                              if (title.pendingShare) {
+                                event.preventDefault()
+                                requestAnimationFrame(() => {
+                                  setShare({ open: true, dismiss: null })
+                                  setTitle("pendingShare", false)
+                                })
+                              }
+                            }}
+                          >
+                            <DropdownMenu.Item
+                              onSelect={() => {
+                                setTitle("pendingRename", true)
+                                setTitle("menuOpen", false)
                               }}
                             >
-                              <div class="flex flex-col p-3">
-                                <div class="flex flex-col gap-1">
-                                  <div class="text-13-medium text-text-strong">
-                                    {language.t("session.share.popover.title")}
-                                  </div>
-                                  <div class="text-12-regular text-text-weak">
-                                    {shareUrl()
-                                      ? language.t("session.share.popover.description.shared")
-                                      : language.t("session.share.popover.description.unshared")}
-                                  </div>
+                              <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              onSelect={() => {
+                                setTitle("menuOpen", false)
+                                copyTitle()
+                              }}
+                            >
+                              <div class="flex size-5 shrink-0 items-center justify-center">
+                                <Icon name="copy" size="small" class="text-icon-weak" />
+                              </div>
+                              <DropdownMenu.ItemLabel>{language.t("session.copyName")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                            <Show when={shareEnabled()}>
+                              <DropdownMenu.Item
+                                onSelect={() => {
+                                  setTitle({ pendingShare: true, menuOpen: false })
+                                }}
+                              >
+                                <DropdownMenu.ItemLabel>
+                                  {language.t("session.share.action.share")}
+                                </DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
+                            <DropdownMenu.Item onSelect={() => void archiveSession(id())}>
+                              <DropdownMenu.ItemLabel>{language.t("common.archive")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator />
+                            <DropdownMenu.Item
+                              onSelect={() => dialog.show(() => <DialogDeleteSession sessionID={id()} />)}
+                            >
+                              <DropdownMenu.ItemLabel>{language.t("common.delete")}</DropdownMenu.ItemLabel>
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Portal>
+                      </DropdownMenu>
+
+                      <KobaltePopover
+                        open={share.open}
+                        anchorRef={() => more}
+                        placement="bottom-end"
+                        gutter={4}
+                        modal={false}
+                        onOpenChange={(open) => {
+                          if (open) setShare("dismiss", null)
+                          setShare("open", open)
+                        }}
+                      >
+                        <KobaltePopover.Portal>
+                          <KobaltePopover.Content
+                            data-component="popover-content"
+                            style={{ "min-width": "320px" }}
+                            onEscapeKeyDown={(event) => {
+                              setShare({ dismiss: "escape", open: false })
+                              event.preventDefault()
+                              event.stopPropagation()
+                            }}
+                            onPointerDownOutside={() => {
+                              setShare({ dismiss: "outside", open: false })
+                            }}
+                            onFocusOutside={() => {
+                              setShare({ dismiss: "outside", open: false })
+                            }}
+                            onCloseAutoFocus={(event) => {
+                              if (share.dismiss === "outside") event.preventDefault()
+                              setShare("dismiss", null)
+                            }}
+                          >
+                            <div class="flex flex-col p-3">
+                              <div class="flex flex-col gap-1">
+                                <div class="text-13-medium text-text-strong">
+                                  {language.t("session.share.popover.title")}
                                 </div>
-                                <div class="mt-3 flex flex-col gap-2">
-                                  <Show
-                                    when={shareUrl()}
-                                    fallback={
+                                <div class="text-12-regular text-text-weak">
+                                  {shareUrl()
+                                    ? language.t("session.share.popover.description.shared")
+                                    : language.t("session.share.popover.description.unshared")}
+                                </div>
+                              </div>
+                              <div class="mt-3 flex flex-col gap-2">
+                                <Show
+                                  when={shareUrl()}
+                                  fallback={
+                                    <Button
+                                      size="large"
+                                      variant="primary"
+                                      class="w-full"
+                                      onClick={shareSession}
+                                      disabled={req.share}
+                                    >
+                                      {req.share
+                                        ? language.t("session.share.action.publishing")
+                                        : language.t("session.share.action.publish")}
+                                    </Button>
+                                  }
+                                >
+                                  <div class="flex flex-col gap-2">
+                                    <TextField
+                                      value={shareUrl() ?? ""}
+                                      readOnly
+                                      copyable
+                                      copyKind="link"
+                                      tabIndex={-1}
+                                      class="w-full"
+                                    />
+                                    <div class="grid grid-cols-2 gap-2">
+                                      <Button
+                                        size="large"
+                                        variant="secondary"
+                                        class="w-full shadow-none border border-border-weak-base"
+                                        onClick={unshareSession}
+                                        disabled={req.unshare}
+                                      >
+                                        {req.unshare
+                                          ? language.t("session.share.action.unpublishing")
+                                          : language.t("session.share.action.unpublish")}
+                                      </Button>
                                       <Button
                                         size="large"
                                         variant="primary"
                                         class="w-full"
-                                        onClick={shareSession}
-                                        disabled={req.share}
+                                        onClick={viewShare}
+                                        disabled={req.unshare}
                                       >
-                                        {req.share
-                                          ? language.t("session.share.action.publishing")
-                                          : language.t("session.share.action.publish")}
+                                        {language.t("session.share.action.view")}
                                       </Button>
-                                    }
-                                  >
-                                    <div class="flex flex-col gap-2">
-                                      <TextField
-                                        value={shareUrl() ?? ""}
-                                        readOnly
-                                        copyable
-                                        copyKind="link"
-                                        tabIndex={-1}
-                                        class="w-full"
-                                      />
-                                      <div class="grid grid-cols-2 gap-2">
-                                        <Button
-                                          size="large"
-                                          variant="secondary"
-                                          class="w-full shadow-none border border-border-weak-base"
-                                          onClick={unshareSession}
-                                          disabled={req.unshare}
-                                        >
-                                          {req.unshare
-                                            ? language.t("session.share.action.unpublishing")
-                                            : language.t("session.share.action.unpublish")}
-                                        </Button>
-                                        <Button
-                                          size="large"
-                                          variant="primary"
-                                          class="w-full"
-                                          onClick={viewShare}
-                                          disabled={req.unshare}
-                                        >
-                                          {language.t("session.share.action.view")}
-                                        </Button>
-                                      </div>
                                     </div>
-                                  </Show>
-                                </div>
+                                  </div>
+                                </Show>
                               </div>
-                            </KobaltePopover.Content>
-                          </KobaltePopover.Portal>
-                        </KobaltePopover>
-                      </div>
-                    )}
-                  </Show>
-                </div>
-                <div class="flex w-full items-center gap-1 overflow-x-auto no-scrollbar pb-1">
-                  <For each={filterOptions}>
-                    {(item) => (
-                      <button
-                        type="button"
-                        class="shrink-0 rounded-md px-2.5 py-1 text-12-medium transition-colors"
-                        classList={{
-                          "bg-surface-base-active text-text-strong": props.filter === item.id,
-                          "text-text-weak hover:bg-surface-base-hover hover:text-text-base": props.filter !== item.id,
-                        }}
-                        onClick={() => props.onFilterChange(item.id)}
-                      >
-                        {item.label}
-                      </button>
-                    )}
-                  </For>
-                </div>
+                            </div>
+                          </KobaltePopover.Content>
+                        </KobaltePopover.Portal>
+                      </KobaltePopover>
+                    </div>
+                  )}
+                </Show>
               </div>
-            </Show>
-
+              <div class="flex w-full items-center gap-1 overflow-x-auto no-scrollbar pb-1">
+                <For each={filterOptions}>
+                  {(item) => (
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md px-2.5 py-1 text-12-medium transition-colors"
+                      classList={{
+                        "bg-surface-base-active text-text-strong": props.filter === item.id,
+                        "text-text-weak hover:bg-surface-base-hover hover:text-text-base": props.filter !== item.id,
+                      }}
+                      onClick={() => props.onFilterChange(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
             <div
               role="log"
               class="flex flex-col gap-12 items-start justify-start pb-16 transition-[margin]"
@@ -1136,7 +1246,8 @@ export function MessageTimeline(props: {
                 </div>
               </Show>
               <For each={rendered()}>
-                {(messageID) => {
+                {(message) => {
+                  const messageID = message.id
                   const active = createMemo(() => activeMessageID() === messageID)
                   const comments = createMemo(() => messageComments(sync.data.part[messageID] ?? []), [], {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
@@ -1144,10 +1255,35 @@ export function MessageTimeline(props: {
                   const commentCount = createMemo(() => comments().length)
                   const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID))
                   const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID))
-                  const completed = createMemo(() => sessionStatus().type === "idle" && done(sessionMessages(), messageID))
-                  const turn = createMemo(() =>
-                    sessionMessages().find((item): item is UserMessage => item.id === messageID && item.role === "user"),
+                  const completed = createMemo(
+                    () => sessionStatus().type === "idle" && done(sessionMessages(), messageID),
                   )
+                  const turn = createMemo(() =>
+                    sessionMessages().find(
+                      (item): item is UserMessage => item.id === messageID && item.role === "user",
+                    ),
+                  )
+                  const kids = createMemo(() => {
+                    const map = new Map<string, { id: string; label: string }>()
+                    for (const item of [...delegation().active, ...delegation().completed]) {
+                      if (map.has(item.id)) continue
+                      map.set(item.id, item)
+                    }
+                    return Array.from(map.values())
+                  })
+                  const question = createMemo(() => {
+                    const req = props.request?.question
+                    if (!match(req, messageID, sessionID(), kids(), sync.data.session)) return
+                    return req
+                  })
+                  const permission = createMemo(() => {
+                    const req = props.request?.permission
+                    if (!match(req, messageID, sessionID(), kids(), sync.data.session)) return
+                    return req
+                  })
+                  const [questionOpen, setQuestionOpen] = createSignal(true)
+                  const [permissionOpen, setPermissionOpen] = createSignal(true)
+                  const [kidsOpen, setKidsOpen] = createSignal(true)
                   return (
                     <div
                       id={props.anchor(messageID)}
@@ -1213,6 +1349,78 @@ export function MessageTimeline(props: {
                           container: "w-full px-4 md:px-5",
                         }}
                       />
+                      <Show when={props.filter === "all" && active() && question()}>
+                        {(request) => {
+                          const req = request()
+                          const submit = props.request!.submit
+                          return (
+                            <div class="px-4 md:px-5 pt-4">
+                              <div
+                                data-component="session-request-card"
+                                class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
+                              >
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-12-medium text-text-strong"
+                                  aria-expanded={questionOpen()}
+                                  onClick={() => setQuestionOpen((value) => !value)}
+                                >
+                                  <span>需要确认</span>
+                                  <span
+                                    class="inline-flex text-icon-weak transition-transform"
+                                    classList={{ "-rotate-90": !questionOpen() }}
+                                  >
+                                    <Icon name="chevron-down" size="small" />
+                                  </span>
+                                </button>
+                                <Show when={questionOpen()}>
+                                  <div class="border-t border-border-weaker-base p-2">
+                                    <SessionQuestionDock request={req} onSubmit={submit} />
+                                  </div>
+                                </Show>
+                              </div>
+                            </div>
+                          )
+                        }}
+                      </Show>
+                      <Show when={props.filter === "all" && active() && permission()}>
+                        {(request) => {
+                          const req = request()
+                          const decide = props.request!.decide
+                          return (
+                            <div class="px-4 md:px-5 pt-4">
+                              <div
+                                data-component="session-request-card"
+                                class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
+                              >
+                                <button
+                                  type="button"
+                                  class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-12-medium text-text-strong"
+                                  aria-expanded={permissionOpen()}
+                                  onClick={() => setPermissionOpen((value) => !value)}
+                                >
+                                  <span>权限确认</span>
+                                  <span
+                                    class="inline-flex text-icon-weak transition-transform"
+                                    classList={{ "-rotate-90": !permissionOpen() }}
+                                  >
+                                    <Icon name="chevron-down" size="small" />
+                                  </span>
+                                </button>
+                                <Show when={permissionOpen()}>
+                                  <div class="border-t border-border-weaker-base p-2">
+                                    <SessionPermissionDock
+                                      request={req}
+                                      responding={props.request?.responding ?? false}
+                                      onDecide={decide}
+                                    />
+                                  </div>
+                                </Show>
+                              </div>
+                            </div>
+                          )
+                        }}
+                      </Show>
                       <Show when={props.filter === "all" && (completed() || delegation().total > 0)}>
                         <div class="px-4 md:px-5 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
@@ -1224,21 +1432,108 @@ export function MessageTimeline(props: {
                               >
                                 <Spinner class="size-3 text-text-interactive-base" />
                               </Show>
-                              <span>{delegated() ? delegationLabel : completeLabel}</span>
+                              <span>
+                                第 {ordinal(messageID)} 轮 · {delegated() ? delegationLabel : completeLabel}
+                              </span>
                               <Show when={delegation().total > 0}>
-                                <span class="shrink-0">（{delegation().done}/{delegation().total}）</span>
+                                <span class="shrink-0">
+                                  （{delegation().done}/{delegation().total}）
+                                </span>
                               </Show>
                             </span>
                             <div class="h-px flex-1 bg-border-weaker-base" />
                           </div>
-                          <Show when={delegation().active.length > 0}>
-                            <div class="pt-2 text-11-regular text-text-weak">
-                              <span class="font-semibold">正在处理:</span>
-                              <span class="inline-flex flex-wrap gap-1 pl-1">
-                                <For each={delegation().active}>
-                                  {(item) => <span class="rounded-md border border-border-weaker-base px-2 py-0.5">{item.label}</span>}
-                                </For>
-                              </span>
+                          <Show when={kids().length > 0}>
+                            <div class="mt-3 rounded-md border border-border-weak-base bg-background-base">
+                              <button
+                                type="button"
+                                class="flex w-full items-center justify-between gap-2 border-b border-border-weaker-base px-3 py-2 text-left"
+                                aria-expanded={kidsOpen()}
+                                onClick={() => setKidsOpen((value) => !value)}
+                              >
+                                <div class="min-w-0 text-12-medium text-text-strong">子会话</div>
+                                <div class="shrink-0 flex items-center gap-2">
+                                  <span class="text-11-regular text-text-weak">
+                                    {delegation().done}/{delegation().total}
+                                  </span>
+                                  <span
+                                    class="inline-flex text-icon-weak transition-transform"
+                                    classList={{ "-rotate-90": !kidsOpen() }}
+                                  >
+                                    <Icon name="chevron-down" size="small" />
+                                  </span>
+                                </div>
+                              </button>
+                              <Show when={kidsOpen()}>
+                                <div class="max-h-[360px] overflow-y-auto" data-scrollable>
+                                  <For each={kids()}>
+                                    {(item) => {
+                                      const status = createMemo(() => sync.data.session_status[item.id]?.type ?? "idle")
+                                      const info = createMemo(() => sync.session.get(item.id))
+                                      const busy = createMemo(() => !!op.child[item.id])
+                                      return (
+                                        <div class="grid grid-cols-[1fr_auto] gap-2 border-b border-border-weaker-base/70 px-3 py-2 last:border-b-0">
+                                          <button
+                                            type="button"
+                                            class="min-w-0 text-left"
+                                            onClick={() => navigate(`/${params.dir}/session/${item.id}`)}
+                                          >
+                                            <div class="flex min-w-0 items-center gap-2">
+                                              <span class={`size-2 rounded-full shrink-0 ${dot(status())}`} />
+                                              <span class="truncate text-12-medium text-text-strong">
+                                                {info()?.title || item.label}
+                                              </span>
+                                              <span class="shrink-0 text-11-regular text-text-weak">{status()}</span>
+                                            </div>
+                                            <div class="mt-0.5 truncate text-11-regular text-text-weak">{item.id}</div>
+                                          </button>
+                                          <div class="flex items-center gap-1">
+                                            <Button
+                                              variant="ghost"
+                                              size="small"
+                                              class="h-7 px-2"
+                                              onClick={() => navigate(`/${params.dir}/session/${item.id}`)}
+                                            >
+                                              {language.t("common.open")}
+                                            </Button>
+                                            <Show when={live.has(status())}>
+                                              <Button
+                                                variant="ghost"
+                                                size="small"
+                                                class="h-7 px-2"
+                                                disabled={busy()}
+                                                onClick={() => void pause(item.id)}
+                                              >
+                                                暂停
+                                              </Button>
+                                            </Show>
+                                            <Show when={stopped.has(status())}>
+                                              <Button
+                                                variant="secondary"
+                                                size="small"
+                                                class="h-7 px-2"
+                                                disabled={busy()}
+                                                onClick={() => void resume(item.id)}
+                                              >
+                                                恢复
+                                              </Button>
+                                            </Show>
+                                            <Button
+                                              variant="secondary"
+                                              size="small"
+                                              class="h-7 px-2"
+                                              disabled={busy()}
+                                              onClick={() => void cont(item.id)}
+                                            >
+                                              继续
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      )
+                                    }}
+                                  </For>
+                                </div>
+                              </Show>
                             </div>
                           </Show>
                           <SessionTurnDiffs diffs={turn()?.summary?.diffs ?? []} />
