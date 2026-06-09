@@ -38,6 +38,6 @@
     "task",
     "todowrite"
   ],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }

@@ -11,6 +11,7 @@ import {
   type ToolSet,
   tool,
   jsonSchema,
+  NoSuchToolError,
 } from "ai"
 import z from "zod"
 import { mergeDeep, pipe } from "remeda"
@@ -187,6 +188,7 @@ export namespace LLM {
       const maxOutputTokens =
         isCodex || provider.id.includes("github-copilot") ? undefined : ProviderTransform.maxOutputTokens(input.model)
 
+      const all = { ...input.tools }
       const tools: ToolSet =
         input.agent.runner === "protocol"
           ? {
@@ -291,6 +293,15 @@ export namespace LLM {
               ...failed.toolCall,
               toolName: lower,
             }
+          }
+          if (NoSuchToolError.isInstance(failed.error)) {
+            l.warn("tool call unavailable", {
+              tool: failed.toolCall.toolName,
+              inherited: input.agent.inheritPermissions === true,
+            })
+            throw new Error(
+              denied(input, failed.toolCall.toolName, all, tools) ?? unavailable(input, failed.toolCall.toolName, failed.error),
+            )
           }
           return {
             ...failed.toolCall,
@@ -403,6 +414,42 @@ export namespace LLM {
       }
     }
     return input.tools
+  }
+
+  function denied(
+    input: Pick<StreamInput, "agent" | "permission" | "user">,
+    name: string,
+    all: Record<string, Tool>,
+    active: Record<string, Tool>,
+  ) {
+    const tool = all[name] ? name : all[name.toLowerCase()] ? name.toLowerCase() : undefined
+    if (!tool || active[tool]) return
+    const inherited = input.agent.inheritPermissions === true
+    const rules = inherited ? PermissionNext.merge(input.agent.permission, input.permission ?? []) : input.agent.permission
+    const trace = PermissionNext.trace(tool, "*", rules)
+    const off = input.user.tools?.[tool] === false
+    if (!off && trace.action !== "deny") return
+    return [
+      `Permission denied for tool '${tool}'.`,
+      `Agent: ${input.agent.name}.`,
+      `inherit_permissions: ${inherited ? "true" : "false"}.`,
+      `Current permission source: ${inherited ? "agent + inherited session permissions" : "agent permissions only"}.`,
+      off
+        ? "Reason: this tool was disabled for the current model request."
+        : `Reason: permission rule '${trace.rule.permission}' with pattern '${trace.rule.pattern}' returned '${trace.action}'.`,
+    ].join(" ")
+  }
+
+  function unavailable(input: Pick<StreamInput, "agent">, name: string, error: NoSuchToolError) {
+    const inherited = input.agent.inheritPermissions === true
+    const list = error.availableTools?.filter((item) => item !== "invalid").join(", ") || "none"
+    return [
+      `Permission denied or tool unavailable for '${name}'.`,
+      `Agent: ${input.agent.name}.`,
+      `inherit_permissions: ${inherited ? "true" : "false"}.`,
+      `Current permission source: ${inherited ? "agent + inherited session permissions" : "agent permissions only"}.`,
+      `Available tools: ${list}.`,
+    ].join(" ")
   }
 
   export function prepareMessages(input: Pick<StreamInput, "agent" | "messages">): ModelMessage[] {

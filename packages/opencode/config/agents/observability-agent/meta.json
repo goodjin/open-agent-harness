@@ -20,6 +20,6 @@
   "workflow_mode": "auto",
   "allowed_tools": [],
   "denied_tools": ["task", "todowrite"],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "lax"
 }

@@ -29,6 +29,6 @@
   "denied_tools": [
     "task"
   ],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "lax"
 }

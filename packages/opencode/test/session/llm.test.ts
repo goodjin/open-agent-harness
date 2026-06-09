@@ -451,7 +451,7 @@ function createChatStream(text: string) {
   })
 }
 
-function createToolStream(input: Record<string, unknown>) {
+function createToolStream(input: Record<string, unknown>, name = "read") {
   const payload =
     [
       `data: ${JSON.stringify({
@@ -470,7 +470,7 @@ function createToolStream(input: Record<string, unknown>) {
                   index: 0,
                   id: "call_read",
                   type: "function",
-                  function: { name: "read", arguments: JSON.stringify(input) },
+                  function: { name, arguments: JSON.stringify(input) },
                 },
               ],
             },
@@ -685,6 +685,7 @@ describe("session.llm.stream", () => {
           entry: ent,
           capability: cap,
           options: {},
+          inheritPermissions: true,
           permission: [{ permission: "question", pattern: "*", action: "deny" }],
         } satisfies Agent.Info
 
@@ -722,6 +723,113 @@ describe("session.llm.stream", () => {
         const capture = await request
         const tools = capture.body.tools as Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }> | undefined
         expect(tools?.some((item) => item.function?.name === "question")).toBe(true)
+      },
+    })
+  })
+
+  test("reports permission denial instead of repairing unavailable tools to invalid", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const model = fixture.model
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createToolStream({ filePath: "src/app.ts", content: "test" }, "write"), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.make(providerID), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-test-permission-denied-tool")
+        const agent = {
+          name: "frontend",
+          mode: "primary",
+          entry: ent,
+          capability: cap,
+          options: {},
+          permission: [
+            { permission: "*", pattern: "*", action: "allow" },
+            { permission: "edit", pattern: "*", action: "deny" },
+          ],
+          inheritPermissions: false,
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("user-permission-denied-tool"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a helpful assistant."],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "write the file" }],
+          tools: {
+            read: tool({
+              description: "Read file",
+              inputSchema: z.object({ filePath: z.string() }),
+              execute: async () => ({ output: "" }),
+            }),
+            write: tool({
+              description: "Write file",
+              inputSchema: z.object({ filePath: z.string(), content: z.string() }),
+              execute: async () => ({ output: "" }),
+            }),
+          },
+        })
+
+        const items: unknown[] = []
+        for await (const item of stream.fullStream) {
+          items.push(item)
+        }
+        const err = items.find(
+          (item): item is { type: "tool-error"; toolName: string; error: unknown } =>
+            !!item && typeof item === "object" && "type" in item && item.type === "tool-error",
+        )
+        expect(err?.toolName).toBe("write")
+        expect(String(err?.error)).toContain("Permission denied for tool 'write'")
+        expect(String(err?.error)).toContain("inherit_permissions: false")
+        expect(JSON.stringify(items)).not.toContain('"toolName":"invalid"')
+
+        const capture = await request
+        expect(JSON.stringify(capture.body.tools)).not.toContain("invalid")
       },
     })
   })

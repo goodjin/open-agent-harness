@@ -20,6 +20,6 @@
   "workflow_mode": "manual",
   "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "question", "edit", "write"],
   "denied_tools": ["apply_patch", "task"],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }

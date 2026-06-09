@@ -26,6 +26,6 @@
   "denied_tools": [
     "call_omo_agent"
   ],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "lax"
 }

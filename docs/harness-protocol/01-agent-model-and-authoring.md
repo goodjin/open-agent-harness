@@ -191,6 +191,8 @@ Agent 默认不继承项目或上层会话权限。每个 Agent 应拥有自己�
 - `lax`：使用 Runtime 定义的 Agent lax profile，并应用 `denied_tools`。当 `inherit_permissions` 为 true 时，可以与项目或上层允许策略合并，但拒绝项优先。
 - `custom`：使用 `allowed_tools` 和 `denied_tools` 作为作者定义的 Agent permission profile。只有当 `inherit_permissions` 为 true 时，才与外部权限策略合并。
 
+Package 内置 Agent 模板也遵守默认不继承原则。只有确实需要受 parent session 权限收窄的 Agent，才应显式设置 `inherit_permissions: true`，并在无权限错误中暴露当前是否继承了权限。
+
 ## Relationship Metadata
 
 `relationships` 描述 Agent 的协作关系。它让系统知道某个 Agent 经常依赖哪些上游 Agent、常把结果交给哪些下游 Agent、与哪些 Agent 不应并行运行，以及当目标 Agent 不可用时可以考虑哪些替代能力。

@@ -21,6 +21,6 @@
   "workflow_mode": "auto",
   "allowed_tools": [],
   "denied_tools": [],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "strict"
 }

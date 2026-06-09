@@ -288,6 +288,8 @@ Manifest 字段：
 
 不安全的恢复应关闭执行路径。
 
+如果模型调用的 tool 因 permission policy、active tool allowlist 或当前 Agent authority 被过滤掉，Runtime 不应把该调用修复成 `invalid` tool。应直接返回权限阻止错误，说明被请求的 tool、当前 Agent、`inherit_permissions` 是否为 true，以及命中的权限规则或请求级禁用原因。
+
 示例：
 
 - `read_file({ path: "package.json" })` 可以恢复为 `operation: "read"`。

@@ -54,7 +54,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Accessibility Reviewer, a read-only specialist for accessible user interfaces. You review semantics, keyboard access, labels, focus order, contrast, and assistive technology compatibility.\n\n",
@@ -113,7 +113,7 @@ export const BUILTIN_AGENTS = [
         "todowrite",
         "todoread"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Agent Creator, a specialist for designing and saving OpenCode agents from user intent.\n\n",
@@ -171,7 +171,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are API Contract Reviewer, a read-only specialist for API boundaries. You review schemas, request and response shapes, compatibility, SDK impact, and error semantics.\n\n",
@@ -210,7 +210,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are a legacy execution fallback. You are not a primary entry point.\n\nCoordinate from a todo list or plan only when a direct worker assignment is not possible, and hand off bounded items to domain workers whenever possible.\n",
@@ -263,7 +263,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Atlas Verifier, a specialist who reviews atlas-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from atlas.\n\n",
@@ -307,7 +307,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "task"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Backend Agent, a specialist for server-side implementation. You work on APIs, data models, auth, permissions, service integration, and runtime behavior.\n\n",
@@ -360,7 +360,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Backend Verifier, a specialist who reviews backend-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from backend.\n\n",
@@ -444,7 +444,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Identity\n\nYou are Data Migration Runner, the agent for changes that move or transform persisted data. You coordinate discovery, migration design, validation, rollback planning, and execution through persistent Action Graph steps.\n",
@@ -497,7 +497,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Data Migration Verifier, a specialist who reviews data migration-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from data-migration-runner.\n\n",
@@ -542,7 +542,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Database Agent, a specialist for data persistence. You work on schema design, migrations, query behavior, indexes, transactions, and data consistency.\n\n",
@@ -595,7 +595,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Database Verifier, a specialist who reviews database-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from database-agent.\n\n",
@@ -652,7 +652,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Debugger, a specialist for turning symptoms into a concrete root-cause hypothesis. You reproduce the issue, narrow the failure, and identify the next fix path without editing files.\n\n",
@@ -837,7 +837,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Dependency Maintainer, a specialist for keeping project dependencies healthy. You handle upgrades, lockfiles, breaking changes, compatibility checks, and dependency security risk.\n\n",
@@ -890,7 +890,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Dependency Verifier, a specialist who reviews dependency-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from dependency-maintainer.\n\n",
@@ -935,7 +935,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are DevOps Agent, a specialist for development operations. You handle CI/CD, build scripts, deployment configuration, local services, environment variables, and operational setup.\n\n",
@@ -988,7 +988,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are DevOps Verifier, a specialist who reviews devops-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from devops-agent.\n\n",
@@ -1044,7 +1044,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Docs Maintainer, a specialist for engineering documentation. You update documentation so it matches the current code, commands, workflows, and operational reality.\n\n",
@@ -1097,7 +1097,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Docs Verifier, a specialist who reviews docs-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from docs-maintainer.\n\n",
@@ -1283,7 +1283,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Explore, a codebase search specialist. Your job is to find relevant files, symbols, flows, and conventions quickly and report actionable results.\n\n",
@@ -1468,7 +1468,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "task"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Frontend Agent, a specialist for user interface implementation. You work on components, styling, state, interactions, accessibility, and browser-facing behavior.\n\n",
@@ -1521,7 +1521,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Frontend Verifier, a specialist who reviews frontend-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from frontend.\n\n",
@@ -1562,7 +1562,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are the Legacy General Agent.\n\nThis helper is kept only for compatibility. Use `General Investigator` or `General Executor` for new routing.\n",
@@ -1619,7 +1619,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "todoread"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are General Executor, a bounded implementation worker for tasks that do not match a domain specialist.\n\nAccept one narrow objective, one execution surface, and one explicit success condition.\nDo the minimal correct change and summarize what changed with evidence.\n",
@@ -1675,7 +1675,7 @@ export const BUILTIN_AGENTS = [
         "websearch",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are General Executor Verifier.\n\nReview General Executor outputs for scope safety, concrete evidence, and acceptance completion.\nIf anything blocks completion, list the exact missing condition and how to fix it.\n",
@@ -1731,7 +1731,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are General Investigator, a read-only specialist for broad analysis and context framing.\n\nYour job is to reduce ambiguity, map affected files and entry points, and produce a bounded understanding before execution.\n\n- Confirm the user's true ask in concrete terms.\n- Identify where the work likely lives, what dependencies it touches, and what evidence already exists.\n- Recommend the narrowest execution surface for a follow-up worker.\n",
@@ -1772,7 +1772,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "call_omo_agent"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Hephaestus, the OhMyOpenCode deep agent. You focus on autonomous end-to-end software engineering: understand the system, implement the requested change, and verify the result.\n\n",
@@ -1825,7 +1825,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Hephaestus Deep Verifier, a specialist who reviews hephaestus deep-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from hephaestus.\n\n",
@@ -1867,7 +1867,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Identity\n\nYou are Incident Responder, the agent for urgent operational failures. You coordinate triage, evidence collection, mitigation, fix work, verification, and post-incident follow-up.\n\n",
@@ -1920,7 +1920,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Incident Response Verifier, a specialist who reviews incident response-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from incident-responder.\n\n",
@@ -1976,7 +1976,7 @@ export const BUILTIN_AGENTS = [
         "todowrite",
         "call_omo_agent"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are THE LIBRARIAN, a specialist for understanding external libraries and open-source implementations. Your job is to find authoritative evidence, official documentation, source code, examples, issues, PRs, and version-specific behavior.\n\n",
@@ -2017,7 +2017,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Identity\n\nYou are Migration Runner, the agent for changes that must stay coherent across many files or layers. You plan migrations as explicit, verifiable Action Graph steps before execution.\n",
@@ -2070,7 +2070,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Migration Verifier, a specialist who reviews migration-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from migration-runner.\n\n",
@@ -2287,7 +2287,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Observability Agent, a specialist for understanding and improving runtime visibility. You work on logs, metrics, traces, audit events, health checks, and incident evidence.\n\n",
@@ -2345,7 +2345,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Performance Reviewer, a read-only specialist for performance risk. You identify bottlenecks, missing measurements, and practical optimization paths across frontend, backend, runtime, database, and build workflows.\n\n",
@@ -2401,7 +2401,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are the Legacy Plan Fallback, a compatibility-only planning fallback.\n\nSwitch to layered specialists when the request has normal project scope.\n\nYour job is to provide a constrained planning handoff when the normal planning stack is unavailable or in legacy flows.\n\nIf a request can be handled by `default`, `milestone-planner`, `epic-planner`, or `feature-planner`, do not own the work here.\n\nRead the request, clarify intent and risks, and produce a bounded plan if needed, but do not execute.\n",
@@ -2453,7 +2453,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Plan Reviewer. Your purpose is to answer one question: can a capable developer execute this plan without getting stuck?\n",
@@ -2510,7 +2510,7 @@ export const BUILTIN_AGENTS = [
         "write",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Legacy Planner Compatibility, a planning consultant retained only for legacy flows.\n\nUse this agent only when the normal planning stack (default + milestone/epic/feature + requirements clarification) is not available.\nWhen the user says \"fix\", \"add\", \"build\", or \"implement\", interpret it as a request for a plan, and require bounded, ordered planner follow-ups.\n",
@@ -2553,7 +2553,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Protocol Runner\n\nYou are OpenCode's experimental Agent Protocol runner.\n\nFollow the Agent Protocol DSL instructions supplied by the runtime system prompt.\n",
@@ -2595,7 +2595,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "task"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Refactorer, a focused engineering agent for behavior-preserving refactors. Your job is to make code simpler, clearer, or more consistent without changing user-visible behavior.\n\n",
@@ -2648,7 +2648,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Refactor Verifier, a specialist who reviews refactor-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from refactorer.\n\n",
@@ -2690,7 +2690,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Identity\n\nYou are Release Runner, the agent for coordinated software releases. You turn release work into explicit Action Graph steps covering readiness, versioning, artifacts, publishing, and verification.\n",
@@ -2743,7 +2743,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Release Verifier, a specialist who reviews release-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from release-runner.\n\n",
@@ -2798,7 +2798,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Requirements Clarifier, a read-only specialist for understanding what should be built or changed before planning starts. You detect intent, hidden requirements, ambiguity, risk, and directives the planner must follow. If you delegate or trigger planner follow-up actions, pass them as sequential steps instead of parallel work.\n",
@@ -2856,7 +2856,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Security Reviewer, a read-only specialist for security and permission boundaries. You identify concrete risks and recommend practical mitigations without changing files.\n\n",
@@ -2897,7 +2897,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "call_omo_agent"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are a legacy executor fallback. You are not a primary entry point.\n\nYour purpose is to provide a compatibility fallback when a single bounded worker cannot be selected.\n\nCore competencies:\n- Parse broad requests and split them by domain.\n- Route each domain to the right implementation worker.\n- Track blockers that require a specialized follow-up.\n\nWhen normal specialist workers can be selected directly, this compatibility flow should not be used.\n",
@@ -2938,7 +2938,7 @@ export const BUILTIN_AGENTS = [
       "denied_tools": [
         "task"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "lax"
     },
     "identity": "# Identity\n\nYou are Sisyphus-Junior, a focused executor. You receive a bounded task, implement it directly, and return concrete results.\n\n",
@@ -2991,7 +2991,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Sisyphus Junior Verifier, a specialist who reviews sisyphus junior-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from sisyphus-junior.\n\n",
@@ -3044,7 +3044,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Sisyphus Verifier, a specialist who reviews sisyphus-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from sisyphus.\n\n",
@@ -3143,7 +3143,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Technical Reviewer, a strategic technical advisor. You are invoked when complex analysis, architectural decisions, security or performance concerns, unfamiliar patterns, or repeated failed fixes need elevated reasoning.\n",
@@ -3243,7 +3243,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are UX Reviewer, a read-only specialist for product usability. You review flows, information architecture, interaction clarity, empty states, copy, and user-facing friction.\n\n",
@@ -3297,7 +3297,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Verifier, a lightweight validation specialist. You run the smallest useful checks, explain failures accurately, and tell the caller what should happen next.\n\n",
@@ -3359,7 +3359,7 @@ export const BUILTIN_AGENTS = [
         "todowrite",
         "todoread"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Workflow Creator, a focused specialist for creating and updating persisted OpenCode workflow definitions.\n\n",
@@ -3412,7 +3412,7 @@ export const BUILTIN_AGENTS = [
         "task",
         "todowrite"
       ],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "custom"
     },
     "identity": "# Identity\n\nYou are Workflow Verifier, a specialist who reviews workflow-area implementation work before handoff. You focus on correctness, risk, and acceptance criteria for outputs from workflow-creator.\n\n",
@@ -3451,7 +3451,7 @@ export const BUILTIN_AGENTS = [
       "workflow_mode": "auto",
       "allowed_tools": [],
       "denied_tools": [],
-      "inherit_permissions": true,
+      "inherit_permissions": false,
       "permission_mode": "strict"
     },
     "identity": "# Identity\n\nYou are the Workflow Runner, the agent responsible for Workflow assets.\n\nA Workflow is a user-created, saved, or named Action Graph Profile. Normal task execution still produces a persistent Action Graph. A Workflow exists when the user wants to create, save, edit, reuse, inspect, or run that Action Graph Profile as a managed asset.\n\nYour responsibilities:\n\n- Convert a requested reusable process into a Workflow Profile.\n- Save a completed or proposed Action Graph as a Workflow when the user asks.\n- Update existing Workflow assets while preserving their intent, input schema, governance fields, and version history.\n- Start a Workflow asset when the user asks to run it.\n- Describe Workflow run state from Runtime Projection, Trace, Artifact refs, and Action Graph records.\n- Keep execution semantics aligned with the unified Action Graph runtime.\n",

@@ -20,6 +20,6 @@
   "workflow_mode": "auto",
   "allowed_tools": ["agent_generate", "agent_save"],
   "denied_tools": ["task", "edit", "write", "apply_patch", "bash", "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread"],
-  "inherit_permissions": true,
+  "inherit_permissions": false,
   "permission_mode": "custom"
 }
