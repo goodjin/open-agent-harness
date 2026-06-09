@@ -731,6 +731,13 @@ Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment co
 
 下表基于当前 `packages/opencode/config/agents/*/meta.json` 的实际内置 Agent。这里的 `kind` 是建议归类，用于接力策略和后续迁移；当前文档更新不等于这些 `meta.json` 已经写入 `kind` 字段。
 
+verifier 命名上区分两种用法，影响 Runtime 推断 verifier 依赖 worker 的方式：
+
+- 形如 `<name>-verifier`（例如 `backend-verifier`、`frontend-verifier`）的 verifier 走"同 base name worker 自动绑定"，Runtime 会把 verifier 的 `depends_on` 自动接到对应 worker 上。
+- 不带 `-verifier` 后缀的 reviewer（如 `security-reviewer`、`plan-reviewer`、`ux-reviewer`）不绑定单一 worker，调用方必须显式声明 `depends_on` 或写成 `["none"]`。
+
+具体行为由 Runtime 在归一化阶段执行，详见 `02-model-runtime-protocol.md` 的 Verifier 自动依赖推断小节和 `03-action-executor-contract.md` 的依赖归一化与 Verifier 推断小节。
+
 | Agent | 建议 kind | 依据 |
 |---|---|---|
 | `default` | `planner` | 默认入口，负责意图澄清、规模判断、DSL 任务拆解、路由和结果综合。 |

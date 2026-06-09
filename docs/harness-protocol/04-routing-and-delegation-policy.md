@@ -252,6 +252,21 @@ Runtime 展开 `orchestration_policy` 时遵循以下规则：
 
 用户将这类 Action Graph 保存为 Workflow，或主动创建 Workflow 时，它成为 Workflow 资产；执行能力仍来自同一套 Action Graph 和 Runtime 状态模型。
 
+## Verifier Routing 与 Worker 绑定
+
+verifier 类的 Agent Session 经常被 Planner 派发到和 worker 同一个 Action Graph 里。如果 verifier 不带显式 `depends_on`，Runtime 默认假设它要验证某个 base name 相同的 worker，于是把 verifier 的执行时机绑到 worker 之后。
+
+绑定规则：
+
+- 仅对 `executor.type === "agent"` 且目标 Agent `kind === "verifier"` 的 action 生效。
+- 当 `executor.target` 形如 `<name>-verifier` 时，Runtime 在同一 Action Graph 中查找 `executor.target === "<name>"` 的 worker action；找到则把 verifier 的 `depends_on` 写为 `[<worker.id>]`，调度上确保 verifier 在 worker 完成后再启动。
+- 当 `executor.target` 不带 `-verifier` 后缀（典型如 `security-reviewer`、`plan-reviewer`、`technical-reviewer`）时，Runtime 不做自动绑定，因为这类 verifier 通常横跨多个 worker，没有单一上游；模型必须显式声明 `depends_on`，或者写成 `["none"]` 表示该 verifier 故意不依赖任何 worker。
+- 同名 worker 不存在或 verifier 的 target 退化为自身时，Runtime 把该 verifier 记为 `blocked`，并在 transcript 中给出修复提示，避免静默并行启动后 verifier 拿到空上下文。
+
+`["none"]` 是 schema 层识别的字面量，校验前会被过滤掉，让 Runtime 真正读到空 `depends_on` 并按上面的规则走推断或报错；Agent Protocol 导出常量 `AgentProtocol.NONE_DEPENDENCY` 作为引用入口。
+
+这一约束配合 `## Runtime Orchestration Policy 展开` 一起工作：planner 编排出的 `on_completed` 阶段 verifier 调度，会因为上面这条绑定规则而不会在 worker 完成前抢先执行。
+
 ## Delegation Request 恢复
 
 如果模型输出直接 task/delegation request，Runtime 只有在以下条件成立时才可以将其恢复为 Agent Action：

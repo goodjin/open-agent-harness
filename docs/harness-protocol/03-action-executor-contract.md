@@ -157,6 +157,22 @@ Graph-level policy、Action-level policy、Runtime policy 和 Agent metadata / O
 
 Action Contract 是 Runtime、Executor、UI 和后续 Agent Session 共同读取的治理对象。模型可以声明其中一部分，Runtime 根据上下文补齐可执行边界。
 
+## 依赖归一化与 Verifier 推断
+
+Action Graph 在执行前要经过一次依赖归一化。归一化的对象是 `depends_on` 字段，目的是在保留模型显式声明的前提下，强制 verifier 不会在它要验证的 worker 完成前启动。
+
+归一化分两层：
+
+1. **Schema 层**：解析模型输出时移除 `depends_on` 中字符串字面量 `"none"`。`"none"` 是"verifier 故意不依赖任何 worker"的唯一哨兵；schema 在校验前过滤掉它，避免触发"缺少依赖"类错误。`AgentProtocol.NONE_DEPENDENCY` 暴露这个常量。
+2. **Runtime 层**：调用 `inferVerifierDependencies(actions)` 走一次 Action Graph。判断规则：
+
+   - `depends_on` 非空：保持原样，模型已经显式声明。
+   - `depends_on` 为空且 `executor.type === "agent"`，目标 Agent `kind` 为 `verifier`，且 target 以 `-verifier` 结尾：在同一 Action Graph 中查找 `executor.target` 去掉 `-verifier` 后缀同名的 worker。命中则把 verifier 的 `depends_on` 写为 `[<worker.id>]`。
+   - `depends_on` 为空且目标 verifier 不带 `-verifier` 后缀（如 `security-reviewer`、`plan-reviewer`）：不自动推断。Runtime 把该 action 记为 `blocked`，错误信息提示模型显式声明 `depends_on`，或者写成 `["none"]` 表示该 verifier 故意不依赖 worker。
+   - `depends_on` 为空且带 `-verifier` 后缀但找不到同名 worker：同样标记为 `blocked`，错误信息提示补一个 base name 对应的 worker action，或显式写成 `["none"]`。
+
+被 `blocked` 的 verifier 在当前轮不会进入执行队列；模型在下一次 LLM 调用时能在 transcript 里看到 blocked 原因，从而补上 worker 或调整 `depends_on`。schema 层的 `"none"` 过滤与 Runtime 层的推断组合后，verifier 既不会和 worker 并行启动，也不会因为依赖缺失被静默放过。
+
 ## Artifact 语义
 
 Artifact 是 Action 或 Executor 产生的可引用产物。Runtime 使用 Artifact ref 把大型输出、证据和中间结果从模型上下文中分离出来。

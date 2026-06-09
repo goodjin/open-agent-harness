@@ -306,17 +306,6 @@ Loop 必须有边界，例如 `max_attempts`、预算、时间限制、人工 De
 
 模型侧 `calls[]` 保持扁平，Runtime 在归一化阶段补齐更完整的治理对象。
 
-## Verifier 自动依赖推断
-
-verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph，但模型侧 `depends_on` 容易漏写，导致 verifier 与 worker 并行启动、verifier 拿到空上下文。Runtime 接受 declaration 后会做一次显式归一化：
-
-1. 对每个 `kind === "agent"` 且 executor.target 末尾为 `-verifier` 的 call，如果 `depends_on` 为空，Runtime 在同一个 Action Graph 中查找 executor.target 与去掉 `-verifier` 后缀同名的 worker call，找到则把 verifier 的 `depends_on` 写为 `[<worker.id>]`。
-2. 如果找不到同名 worker，Runtime 把该 verifier 标记为 `blocked`，错误信息中提示模型补一个 `<name>` worker action，或者把 `depends_on` 显式写成 `["none"]` 表示 verifier 故意不依赖任何 worker。
-3. 对于不带 `-verifier` 后缀的 verifier（如 `security-reviewer`、`plan-reviewer`），Runtime 不做自动推断；模型必须显式声明 `depends_on`，否则同样会被标记为 `blocked` 并提示补依赖。
-4. `"none"` 是唯一的 "无依赖" 哨兵；只有 schema 校验通过后 Runtime 才会读到空 `depends_on`，再结合 worker 是否存在决定走自动推断还是报错。
-
-这样无论 Planner 是否记得写 `depends_on`，verifier 都不会在 worker 完成前启动，也不会因为依赖缺失而静默执行空验证。
-
 
 映射关系：
 
@@ -375,6 +364,17 @@ verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph�
   "result": "structured"
 }
 ```
+
+## Verifier 自动依赖推断
+
+verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph，但模型侧 `depends_on` 容易漏写，导致 verifier 与 worker 并行启动、verifier 拿到空上下文。Runtime 接受 declaration 后会做一次显式归一化：
+
+1. 对每个 `kind === "agent"` 且 executor.target 末尾为 `-verifier` 的 call，如果 `depends_on` 为空，Runtime 在同一个 Action Graph 中查找 executor.target 与去掉 `-verifier` 后缀同名的 worker call，找到则把 verifier 的 `depends_on` 写为 `[<worker.id>]`。
+2. 如果找不到同名 worker，Runtime 把该 verifier 标记为 `blocked`，错误信息中提示模型补一个 `<name>` worker action，或者把 `depends_on` 显式写成 `["none"]` 表示 verifier 故意不依赖任何 worker。
+3. 对于不带 `-verifier` 后缀的 verifier（如 `security-reviewer`、`plan-reviewer`），Runtime 不做自动推断；模型必须显式声明 `depends_on`，否则同样会被标记为 `blocked` 并提示补依赖。
+4. `"none"` 是唯一的 "无依赖" 哨兵；只有 schema 校验通过后 Runtime 才会读到空 `depends_on`，再结合 worker 是否存在决定走自动推断还是报错。
+
+这样无论 Planner 是否记得写 `depends_on`，verifier 都不会在 worker 完成前启动，也不会因为依赖缺失而静默执行空验证。
 
 ## Runtime 归一化
 
