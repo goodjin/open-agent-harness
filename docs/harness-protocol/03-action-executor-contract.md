@@ -173,6 +173,8 @@ Action Graph 在执行前要经过一次依赖归一化。归一化的对象是 
 
 被 `blocked` 的 verifier 在当前轮不会进入执行队列；模型在下一次 LLM 调用时能在 transcript 里看到 blocked 原因，从而补上 worker 或调整 `depends_on`。schema 层的 `"none"` 过滤与 Runtime 层的推断组合后，verifier 既不会和 worker 并行启动，也不会因为依赖缺失被静默放过。
 
+`confirm` 是这个校验之前的人机边界。如果 Action Graph 以无依赖 `confirm` 开头，Runtime 先执行该 confirmation gate，并把后续 action 的 verifier dependency 校验延后到确认之后。这样 UI 能恢复确认框，也避免在用户确认前创建子会话或执行工具。确认提交必须携带明确 `response: "confirm" | "cancel"`，执行器不得把空答案或本地化文案猜测为用户意图。
+
 ## Artifact 语义
 
 Artifact 是 Action 或 Executor 产生的可引用产物。Runtime 使用 Artifact ref 把大型输出、证据和中间结果从模型上下文中分离出来。

@@ -1816,6 +1816,149 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner preserves confirmation gate before verifier dependency validation", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        { id: "confirm_plan", kind: "confirm", prompt: "Approve?", plan: "Run backend work." },
+        { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change.", depends: ["confirm_plan"] },
+        {
+          id: "verify",
+          kind: "agent",
+          target: "backend-verifier",
+          prompt: "Verify backend change.",
+          depends: ["confirm_plan"],
+        },
+      ],
+    }
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
+      fullStream: (async function* () {
+        yield { type: "start" }
+        yield { type: "start-step" }
+        yield { type: "tool-input-start", id: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+        yield {
+          type: "tool-call",
+          toolCallId: "call_1",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: body,
+        }
+        yield {
+          type: "tool-result",
+          toolCallId: "call_1",
+          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+          input: body,
+          output: {
+            output: "Agent Protocol package received.",
+            title: "Agent Protocol Output",
+            metadata: { protocol: true },
+          },
+        }
+        yield {
+          type: "finish-step",
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        }
+        yield { type: "finish" }
+      })(),
+    }) as never)
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name === "backend") return { name, kind: "worker" } as never
+      if (name === "backend-verifier") return { name, kind: "verifier" } as never
+      return undefined
+    })
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const run = runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "implement and verify backend" }],
+                tools: {},
+              })
+
+              let questions = await Question.list()
+              for (let i = 0; i < 20 && questions.length === 0; i++) {
+                await Bun.sleep(10)
+                questions = await Question.list()
+              }
+
+              const children = await Session.children(session.id)
+              const after = await Session.get(session.id)
+              const protocol = after.dsl_context?.protocol as { confirmations?: { status: string }[] } | undefined
+
+              expect(children).toHaveLength(0)
+              expect(questions).toHaveLength(1)
+              expect(questions[0]?.tool?.callID).toBe("call_confirm_plan")
+              expect(protocol?.confirmations?.[0]?.status).toBe("pending")
+
+              await Question.reject(questions[0]!.id).catch(() => {})
+              await run.catch(() => undefined)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      provider.mockRestore()
+    }
+  })
+
   test("protocol runner defers verifier until worker delegation completes", async () => {
     await using tmp = await tmpdir()
     const model = {

@@ -176,6 +176,8 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 | `agent` | 先按 action id 查找已创建 child session；存在时只检查 delegation result 和 child session status，必要时恢复该 child session，不创建重复 child；不存在时才创建新的 child session。 |
 | `tool` / `runtime` / 其他 action | 不自动重放。写入 recovery hint，引导用户重新发送或澄清请求，让模型基于当前状态生成新的 protocol package。 |
 
+如果内存中的 question 队列在重启后丢失，但 session `dsl_context.protocol.confirmations` 仍有 `pending` confirmation，`question.list` 应从持久状态合成最新 pending request。确认交互只在会话 timeline 内以请求卡展示，不使用全局弹框或 composer 浮层；用户点击 Confirm / Cancel 时客户端必须提交明确 `response: "confirm" | "cancel"`，Runtime 更新 confirmation 状态，并用明确的用户输入继续对应会话。确认或取消后，请求卡折叠为只读占位，可展开查看原 plan，但不能再次修改。
+
 ### 右侧任务栏
 
 Session Workbench 右侧应提供 task bar，用于记录当前会话的任务序列。

@@ -73,8 +73,54 @@ type DelegationState = {
   completed: { id: string; label: string }[]
 }
 
+type ConfirmStatus = "pending" | "confirmed" | "cancelled"
+
+type ConfirmRecord = {
+  action_id: string
+  action_title?: string
+  message_id: string
+  plan?: string
+  run_id: string
+  status: ConfirmStatus
+  updated_at?: number
+}
+
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
+
+const status = (input: unknown): ConfirmStatus | undefined => {
+  if (input === "pending" || input === "confirmed" || input === "cancelled") return input
+  return undefined
+}
+
+const confirmItem = (input: unknown): ConfirmRecord | undefined => {
+  if (!record(input)) return
+  const state = status(input.status)
+  const action = text(input.action_id)
+  const message = text(input.message_id)
+  const run = text(input.run_id)
+  if (!state || !action || !message || !run) return
+  return {
+    action_id: action,
+    action_title: text(input.action_title),
+    message_id: message,
+    plan: text(input.plan),
+    run_id: run,
+    status: state,
+    updated_at: typeof input.updated_at === "number" ? input.updated_at : undefined,
+  }
+}
+
+const confirmations = (input: unknown, messageID: string, messages: MessageType[]) => {
+  if (!record(input)) return []
+  const protocol = input.protocol
+  if (!record(protocol)) return []
+  const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  return vals
+    .map(confirmItem)
+    .filter((item): item is ConfirmRecord => !!item && turn(messages, messageID, item.message_id))
+    .sort((a, b) => (a.updated_at ?? 0) - (b.updated_at ?? 0))
+}
 
 const delegationItem = (
   input: unknown,
@@ -203,6 +249,75 @@ type Requests = {
   responding: boolean
   submit: () => void
   decide: (response: "once" | "always" | "reject") => void
+}
+
+function SessionConfirmationCard(props: {
+  item: ConfirmRecord
+  request?: QuestionRequest
+  submit: () => void
+}) {
+  const [open, setOpen] = createSignal(props.item.status === "pending")
+  const title = createMemo(() => {
+    if (props.item.status === "confirmed") return "已确认"
+    if (props.item.status === "cancelled") return "已取消"
+    return "需要确认"
+  })
+
+  createEffect(() => {
+    if (props.item.status !== "pending") setOpen(false)
+  })
+
+  return (
+    <div class="px-4 md:px-5 pt-4">
+      <div data-component="session-request-card" class="rounded-md border border-border-weak-base bg-background-base overflow-hidden">
+        <button
+          type="button"
+          class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+          aria-expanded={open()}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span class="min-w-0 flex flex-col gap-0.5">
+            <span class="text-12-medium text-text-strong">{title()}</span>
+            <span class="truncate text-11-regular text-text-weak">
+              {props.item.action_title ?? props.item.action_id}
+            </span>
+          </span>
+          <span class="inline-flex items-center gap-2">
+            <span
+              class="rounded-sm border px-1.5 py-0.5 text-10-medium"
+              classList={{
+                "border-border-weak-base text-text-weak": props.item.status === "pending",
+                "border-icon-success-base/40 text-icon-success-base": props.item.status === "confirmed",
+                "border-icon-warning-base/40 text-icon-warning-base": props.item.status === "cancelled",
+              }}
+            >
+              {props.item.status}
+            </span>
+            <span class="inline-flex text-icon-weak transition-transform" classList={{ "-rotate-90": !open() }}>
+              <Icon name="chevron-down" size="small" />
+            </span>
+          </span>
+        </button>
+        <Show when={open()}>
+          <div class="border-t border-border-weaker-base p-2">
+            <Show
+              when={props.item.status === "pending" && props.request}
+              fallback={
+                <div
+                  data-scrollable
+                  class="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
+                >
+                  {props.item.plan || "No plan text recorded."}
+                </div>
+              }
+            >
+              {(req) => <SessionQuestionDock request={req()} onSubmit={props.submit} />}
+            </Show>
+          </div>
+        </Show>
+      </div>
+    </div>
+  )
 }
 
 const messageComments = (parts: Part[]): MessageComment[] =>
@@ -1284,6 +1399,11 @@ export function MessageTimeline(props: {
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
                     return req
                   })
+                  const confirms = createMemo(() => confirmations(info()?.dsl_context, messageID, sessionMessages()))
+                  const questionConfirm = createMemo(() => {
+                    const req = question()
+                    return !!req?.tool && confirms().some((item) => item.status === "pending" && item.message_id === req.tool?.messageID)
+                  })
                   const permission = createMemo(() => {
                     const req = props.request?.permission
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
@@ -1357,7 +1477,18 @@ export function MessageTimeline(props: {
                           container: "w-full px-4 md:px-5",
                         }}
                       />
-                      <Show when={props.filter === "all" && active() && question()}>
+                      <Show when={props.filter === "all"}>
+                        <For each={confirms()}>
+                          {(item) => (
+                            <SessionConfirmationCard
+                              item={item}
+                              request={item.status === "pending" ? question() : undefined}
+                              submit={props.request?.submit ?? (() => undefined)}
+                            />
+                          )}
+                        </For>
+                      </Show>
+                      <Show when={props.filter === "all" && active() && !questionConfirm() ? question() : undefined}>
                         {(request) => {
                           const req = request()
                           const submit = props.request!.submit

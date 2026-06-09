@@ -299,6 +299,12 @@ export namespace AgentTemplate {
       capability: Capability.default(CapabilityDefaults).describe("What the agent is good for"),
       hidden: z.boolean().default(false).describe("Whether to hide the agent from interactive pickers"),
       runner: Runner.default("chat").describe("Which session runtime handles this agent"),
+      concurrency: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum concurrent delegated sessions for this agent inside one project."),
       workflow_mode: WorkflowMode.default("auto").describe("How the agent executes workflows"),
       allowed_tools: z.array(Text).default([]).describe("List of tools the agent is allowed to use"),
       denied_tools: z.array(Text).default([]).describe("List of tools the agent is denied from using"),
@@ -374,5 +380,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
 }

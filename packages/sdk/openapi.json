@@ -11780,6 +11780,14 @@
                     "items": {
                       "$ref": "#/components/schemas/QuestionAnswer"
                     }
+                  },
+                  "response": {
+                    "description": "Explicit confirmation response for confirm-only prompts",
+                    "type": "string",
+                    "enum": [
+                      "confirm",
+                      "cancel"
+                    ]
                   }
                 },
                 "required": [
@@ -22650,6 +22658,79 @@
                 },
                 "additionalProperties": false
               },
+              "verification": {
+                "description": "Worker verification policy",
+                "type": "object",
+                "properties": {
+                  "required": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "on_write": {
+                    "default": [
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "high_risk": {
+                    "default": [
+                      "test",
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "test_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "review_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "test_commands": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "risk": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "skip_test_on_no_change": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "observability": {
                 "description": "Observability policy",
                 "type": "object",
@@ -22811,6 +22892,12 @@
                   "workflow",
                   "protocol"
                 ]
+              },
+              "concurrency": {
+                "description": "Maximum concurrent delegated sessions for this agent inside one project.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
@@ -23196,6 +23283,79 @@
                 },
                 "additionalProperties": false
               },
+              "verification": {
+                "description": "Worker verification policy",
+                "type": "object",
+                "properties": {
+                  "required": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "on_write": {
+                    "default": [
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "high_risk": {
+                    "default": [
+                      "test",
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "test_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "review_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "test_commands": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "risk": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "skip_test_on_no_change": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "observability": {
                 "description": "Observability policy",
                 "type": "object",
@@ -23357,6 +23517,12 @@
                   "workflow",
                   "protocol"
                 ]
+              },
+              "concurrency": {
+                "description": "Maximum concurrent delegated sessions for this agent inside one project.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
@@ -23760,6 +23926,79 @@
                 },
                 "additionalProperties": false
               },
+              "verification": {
+                "description": "Worker verification policy",
+                "type": "object",
+                "properties": {
+                  "required": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "on_write": {
+                    "default": [
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "high_risk": {
+                    "default": [
+                      "test",
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "test_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "review_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "test_commands": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "risk": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "skip_test_on_no_change": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "observability": {
                 "description": "Observability policy",
                 "type": "object",
@@ -23921,6 +24160,12 @@
                   "workflow",
                   "protocol"
                 ]
+              },
+              "concurrency": {
+                "description": "Maximum concurrent delegated sessions for this agent inside one project.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
@@ -24294,6 +24539,79 @@
                 },
                 "additionalProperties": false
               },
+              "verification": {
+                "description": "Worker verification policy",
+                "type": "object",
+                "properties": {
+                  "required": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "on_write": {
+                    "default": [
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "high_risk": {
+                    "default": [
+                      "test",
+                      "review"
+                    ],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "test",
+                        "review"
+                      ]
+                    }
+                  },
+                  "test_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "review_verifier": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "test_commands": {
+                    "default": [],
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "risk": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high"
+                    ]
+                  },
+                  "skip_test_on_no_change": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
               "observability": {
                 "description": "Observability policy",
                 "type": "object",
@@ -24455,6 +24773,12 @@
                   "workflow",
                   "protocol"
                 ]
+              },
+              "concurrency": {
+                "description": "Maximum concurrent delegated sessions for this agent inside one project.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
@@ -24856,6 +25180,78 @@
             },
             "additionalProperties": false
           },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "required": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "test",
+                    "review"
+                  ]
+                }
+              },
+              "on_write": {
+                "default": [
+                  "review"
+                ],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "test",
+                    "review"
+                  ]
+                }
+              },
+              "high_risk": {
+                "default": [
+                  "test",
+                  "review"
+                ],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "test",
+                    "review"
+                  ]
+                }
+              },
+              "test_verifier": {
+                "type": "string",
+                "minLength": 1
+              },
+              "review_verifier": {
+                "type": "string",
+                "minLength": 1
+              },
+              "test_commands": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "risk": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              "skip_test_on_no_change": {
+                "default": true,
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
           "runner": {
             "default": "chat",
             "type": "string",
@@ -24864,6 +25260,11 @@
               "workflow",
               "protocol"
             ]
+          },
+          "concurrency": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "native": {
             "type": "boolean"

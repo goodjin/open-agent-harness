@@ -9,6 +9,7 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 
 type Notes = Record<string, string>
+type Response = "confirm" | "cancel"
 
 const cache = new Map<
   string,
@@ -31,6 +32,31 @@ export function answersWithNotes(answers: QuestionAnswer, notes: Notes): Questio
     if (!note) return item
     return `${item}: ${note}`
   })
+}
+
+type ConfirmQuestion = Pick<QuestionRequest["questions"][number], "custom" | "header" | "multiple" | "options">
+
+export function confirmOption(options: ConfirmQuestion["options"] | undefined) {
+  return (options ?? []).find(
+    (item) => /^(confirm|approve)$/i.test(item.label) || item.label === "确认" || item.label === "確認",
+  )
+}
+
+function cancelOption(options: ConfirmQuestion["options"] | undefined) {
+  return (options ?? []).find((item) => /^(cancel|reject)$/i.test(item.label) || item.label === "取消")
+}
+
+export function confirmOnly(questions: ConfirmQuestion[]) {
+  if (questions.length !== 1) return false
+  const item = questions[0]
+  if (!item) return false
+  if (item.multiple === true) return false
+  if (item.custom !== false) return false
+  const options = item.options ?? []
+  if (options.length === 0) return /^confirm\b/i.test(item.header ?? "")
+  if (options.length === 1) return !!confirmOption(options)
+  if (options.length === 2) return !!confirmOption(options) && !!cancelOption(options)
+  return false
 }
 
 export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit: () => void }> = (props) => {
@@ -56,12 +82,16 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
   const question = createMemo(() => questions()[store.tab])
   const options = createMemo(() => question()?.options ?? [])
+  const confirming = createMemo(() => confirmOnly(questions()))
+  const confirmLabel = createMemo(() => confirmOption(options())?.label ?? "Confirm")
+  const cancelLabel = createMemo(() => cancelOption(options())?.label ?? language.t("ui.common.dismiss"))
   const input = createMemo(() => store.custom[store.tab] ?? "")
   const on = createMemo(() => store.customOn[store.tab] === true)
   const multi = createMemo(() => question()?.multiple === true)
   const custom = createMemo(() => question()?.custom !== false)
 
   const summary = createMemo(() => {
+    if (confirming()) return question()?.header ?? confirmLabel()
     const n = Math.min(store.tab + 1, total())
     return language.t("session.question.progress", { current: n, total: total() })
   })
@@ -148,13 +178,13 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     showToast({ title: language.t("common.requestFailed"), description: message })
   }
 
-  const reply = async (answers: QuestionAnswer[]) => {
+  const reply = async (answers: QuestionAnswer[], response?: Response) => {
     if (store.sending) return
 
     props.onSubmit()
     setStore("sending", true)
     try {
-      await sdk.client.question.reply({ requestID: props.request.id, answers })
+      await sdk.client.question.reply({ requestID: props.request.id, answers, response })
       replied = true
       cache.delete(props.request.id)
     } catch (err) {
@@ -178,6 +208,14 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     } finally {
       setStore("sending", false)
     }
+  }
+
+  const cancel = () => {
+    if (confirming()) {
+      void reply([[cancelLabel()]], "cancel")
+      return
+    }
+    void reject()
   }
 
   const submit = () =>
@@ -257,6 +295,10 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
   const next = () => {
     if (store.sending) return
+    if (confirming()) {
+      void reply([[confirmLabel()]], "confirm")
+      return
+    }
     if (store.editing) commitCustom()
 
     if (store.tab >= total() - 1) {
@@ -310,8 +352,8 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       }
       footer={
         <>
-          <Button variant="ghost" size="large" disabled={store.sending} onClick={reject}>
-            {language.t("ui.common.dismiss")}
+          <Button variant="ghost" size="large" disabled={store.sending} onClick={cancel}>
+            {confirming() ? cancelLabel() : language.t("ui.common.dismiss")}
           </Button>
           <div data-slot="question-footer-actions">
             <Show when={store.tab > 0}>
@@ -320,95 +362,98 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
               </Button>
             </Show>
             <Button variant={last() ? "primary" : "secondary"} size="large" disabled={store.sending} onClick={next}>
-              {last() ? language.t("ui.common.submit") : language.t("ui.common.next")}
+              {confirming() ? confirmLabel() : last() ? language.t("ui.common.submit") : language.t("ui.common.next")}
             </Button>
           </div>
         </>
       }
     >
       <div data-slot="question-text">{question()?.question}</div>
-      <Show when={multi()} fallback={<div data-slot="question-hint">{language.t("ui.question.singleHint")}</div>}>
-        <div data-slot="question-hint">{language.t("ui.question.multiHint")}</div>
+      <Show when={!confirming()}>
+        <Show when={multi()} fallback={<div data-slot="question-hint">{language.t("ui.question.singleHint")}</div>}>
+          <div data-slot="question-hint">{language.t("ui.question.multiHint")}</div>
+        </Show>
       </Show>
-      <div data-slot="question-options">
-        <For each={options()}>
-          {(opt, i) => {
-            const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
-            const [descriptionOpen, setDescriptionOpen] = createSignal(false)
-            const descriptionView = createMemo(() => limitDescription(opt.description ?? ""))
-            const descriptionText = createMemo(() =>
-              descriptionOpen() ? (opt.description ?? "") : descriptionView().text,
-            )
-            const descriptionCanExpand = createMemo(() => descriptionView().hidden > 0)
-            const toggleDescription = (e: MouseEvent) => {
-              e.preventDefault()
-              e.stopPropagation()
-              setDescriptionOpen(!descriptionOpen())
-            }
-            return (
-              <div data-slot="question-option-item" data-picked={picked()}>
-                <button
-                  data-slot="question-option"
-                  data-picked={picked()}
-                  role={multi() ? "checkbox" : "radio"}
-                  aria-checked={picked()}
-                  disabled={store.sending}
-                  onClick={() => selectOption(i())}
-                >
-                  <span data-slot="question-option-check" aria-hidden="true">
-                    <span
-                      data-slot="question-option-box"
-                      data-type={multi() ? "checkbox" : "radio"}
-                      data-picked={picked()}
-                    >
-                      <Show when={multi()} fallback={<span data-slot="question-option-radio-dot" />}>
-                        <Icon name="check-small" size="small" />
+      <Show when={!confirming()}>
+        <div data-slot="question-options">
+          <For each={options()}>
+            {(opt, i) => {
+              const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
+              const [descriptionOpen, setDescriptionOpen] = createSignal(false)
+              const descriptionView = createMemo(() => limitDescription(opt.description ?? ""))
+              const descriptionText = createMemo(() =>
+                descriptionOpen() ? (opt.description ?? "") : descriptionView().text,
+              )
+              const descriptionCanExpand = createMemo(() => descriptionView().hidden > 0)
+              const toggleDescription = (e: MouseEvent) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setDescriptionOpen(!descriptionOpen())
+              }
+              return (
+                <div data-slot="question-option-item" data-picked={picked()}>
+                  <button
+                    data-slot="question-option"
+                    data-picked={picked()}
+                    role={multi() ? "checkbox" : "radio"}
+                    aria-checked={picked()}
+                    disabled={store.sending}
+                    onClick={() => selectOption(i())}
+                  >
+                    <span data-slot="question-option-check" aria-hidden="true">
+                      <span
+                        data-slot="question-option-box"
+                        data-type={multi() ? "checkbox" : "radio"}
+                        data-picked={picked()}
+                      >
+                        <Show when={multi()} fallback={<span data-slot="question-option-radio-dot" />}>
+                          <Icon name="check-small" size="small" />
+                        </Show>
+                      </span>
+                    </span>
+                    <span data-slot="question-option-main">
+                      <span data-slot="option-label">{opt.label}</span>
+                      <Show when={opt.description}>
+                        <span
+                          data-slot="option-description"
+                          data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}
+                        >
+                          {descriptionText()}
+                        </span>
                       </Show>
                     </span>
-                  </span>
-                  <span data-slot="question-option-main">
-                    <span data-slot="option-label">{opt.label}</span>
-                    <Show when={opt.description}>
-                      <span
-                        data-slot="option-description"
-                        data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}
-                      >
-                        {descriptionText()}
-                      </span>
-                    </Show>
-                  </span>
-                </button>
-                <Show when={descriptionCanExpand()}>
-                  <button
-                    type="button"
-                    data-slot="option-description-toggle"
-                    data-expanded={descriptionOpen()}
-                    aria-expanded={descriptionOpen()}
-                    onClick={toggleDescription}
-                  >
-                    {descriptionOpen()
-                      ? language.t("ui.question.optionDescription.showLess")
-                      : language.t("ui.question.optionDescription.showMore")}
                   </button>
-                </Show>
-                <Show when={picked()}>
-                  <textarea
-                    data-slot="question-option-note"
-                    placeholder={language.t("ui.question.optionNote.placeholder")}
-                    value={note(opt.label)}
-                    rows={1}
-                    disabled={store.sending}
-                    onInput={(e) => {
-                      noteUpdate(opt.label, e.currentTarget.value)
-                      e.currentTarget.style.height = "0px"
-                      e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`
-                    }}
-                  />
-                </Show>
-              </div>
-            )
-          }}
-        </For>
+                  <Show when={descriptionCanExpand()}>
+                    <button
+                      type="button"
+                      data-slot="option-description-toggle"
+                      data-expanded={descriptionOpen()}
+                      aria-expanded={descriptionOpen()}
+                      onClick={toggleDescription}
+                    >
+                      {descriptionOpen()
+                        ? language.t("ui.question.optionDescription.showLess")
+                        : language.t("ui.question.optionDescription.showMore")}
+                    </button>
+                  </Show>
+                  <Show when={picked()}>
+                    <textarea
+                      data-slot="question-option-note"
+                      placeholder={language.t("ui.question.optionNote.placeholder")}
+                      value={note(opt.label)}
+                      rows={1}
+                      disabled={store.sending}
+                      onInput={(e) => {
+                        noteUpdate(opt.label, e.currentTarget.value)
+                        e.currentTarget.style.height = "0px"
+                        e.currentTarget.style.height = `${e.currentTarget.scrollHeight}px`
+                      }}
+                    />
+                  </Show>
+                </div>
+              )
+            }}
+          </For>
 
         <Show when={custom()}>
           <Show
@@ -515,7 +560,8 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
             </form>
           </Show>
         </Show>
-      </div>
+        </div>
+      </Show>
     </DockPrompt>
   )
 }

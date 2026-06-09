@@ -376,6 +376,8 @@ verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph�
 
 这样无论 Planner 是否记得写 `depends_on`，verifier 都不会在 worker 完成前启动，也不会因为依赖缺失而静默执行空验证。
 
+如果 Action Graph 的第一个 action 是无依赖 `confirm`，Runtime 要先建立 pending confirmation，而不能因为后续 verifier 依赖问题把整个 package 预先判为 blocked。用户确认前，后续 `agent` / `tool` action 不应启动；用户确认后，Runtime 或下一轮模型再基于当前状态继续执行和校验。客户端提交确认结果时必须带明确 `response: "confirm" | "cancel"`，不能只依赖按钮文案或本地化答案。
+
 ## Runtime 归一化
 
 Runtime 将模型侧协议对象归一化为内部执行表示：

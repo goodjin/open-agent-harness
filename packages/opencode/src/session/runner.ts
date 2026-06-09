@@ -28,6 +28,7 @@ import { Storage } from "@/storage/storage"
 import { Truncate } from "@/tool/truncation"
 import { Question } from "@/question"
 import { SessionStatus } from "./status"
+import { AgentConcurrency } from "@/protocol/agent-concurrency"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -391,7 +392,9 @@ export namespace SessionRunner {
     const parsedValue = valid ? parsed.value : fixed!
     const issues =
       parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
-        ? await verifierIssues(parsedValue.declaration.payload.actions)
+        ? confirmGate(parsedValue.declaration.payload.actions)
+          ? []
+          : await verifierIssues(parsedValue.declaration.payload.actions)
         : []
     if (issues.length > 0 && retry < 1) {
       await Promise.all(
@@ -908,6 +911,15 @@ export namespace SessionRunner {
     return issues
   }
 
+  function confirmGate(actions: AgentProtocol.Action[]) {
+    const action = actions[0]
+    if (!action) return
+    if (action.depends_on.length > 0) return
+    if (action.operation !== "confirm") return
+    if (action.executor.type !== "human") return
+    return action
+  }
+
   async function execute(input: {
     chat: SessionProcessor.Info
     stream: LLM.StreamInput
@@ -920,7 +932,7 @@ export namespace SessionRunner {
       input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
     const agents = AgentDelegation.list(await Agent.list(), input.stream.agent.name)
     const checked = AgentVerification.apply({ actions: base, agents })
-    const declaration: AgentProtocol.Declaration =
+    let declaration: AgentProtocol.Declaration =
       input.parsed.declaration.payload.type === "action_graph"
         ? {
             ...input.parsed.declaration,
@@ -930,7 +942,7 @@ export namespace SessionRunner {
             },
           }
         : input.parsed.declaration
-    const actions = declaration.payload.type === "action_graph" ? declaration.payload.actions : []
+    let actions = declaration.payload.type === "action_graph" ? declaration.payload.actions : []
     await SessionLog.emit({
       sessionID: input.sessionID,
       messageID: input.chat.message.id,
@@ -945,7 +957,25 @@ export namespace SessionRunner {
       },
     })
     const issues = await verifierIssues(actions)
-    if (issues.length > 0) return rejected(runID, declaration, issues)
+    const gate = confirmGate(actions)
+    if (issues.length > 0) {
+      if (!gate) return rejected(runID, declaration, issues)
+      declaration = {
+        ...declaration,
+        payload: {
+          type: "action_graph",
+          actions: [gate],
+        },
+      }
+      actions = [gate]
+      await SessionLog.emit({
+        sessionID: input.sessionID,
+        messageID: input.chat.message.id,
+        level: "info",
+        type: "protocol.confirm.deferred_validation",
+        data: { runID, issues },
+      })
+    }
     const plan = actions
     const runtime =
       input.stream.runtimeTools ??
@@ -957,8 +987,9 @@ export namespace SessionRunner {
         processor: input.chat,
         bypassAgentCheck: false,
         messages: [],
-      }))
+    }))
     await pending(input.sessionID, runID, declaration)
+    const completed = new Set<string>()
     const run = await AgentProtocolExecutor.run({
       declaration,
       sections: input.parsed.sections,
@@ -1001,7 +1032,7 @@ export namespace SessionRunner {
             metadata: { blocked: true, reason: "wait_unsupported" },
           }
         }
-        return action.executor.type === "tool"
+        const result = await (action.executor.type === "tool"
           ? tool({
               action,
               prompt,
@@ -1023,6 +1054,7 @@ export namespace SessionRunner {
                 messageID: input.chat.message.id,
                 abort: input.stream.abort,
                 model: input.stream.model,
+                completed,
               })
             : action.executor.type === "human"
               ? human({
@@ -1031,7 +1063,9 @@ export namespace SessionRunner {
                   sessionID: input.sessionID,
                   messageID: input.chat.message.id,
                 })
-              : Promise.resolve(undefined)
+              : Promise.resolve(undefined))
+        if (result && result.metadata.blocked !== true && result.metadata.failed !== true) completed.add(action.id)
+        return result
       },
     })
     await verifierGate({
@@ -2430,11 +2464,12 @@ export namespace SessionRunner {
       tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
     })
     const answer = answers[0]?.[0] ?? ""
-    const ok = /^confirm\b/i.test(answer)
+    const ok = yes(answer)
     await storeConfirm({
       action: input.action,
       messageID: input.messageID,
       plan,
+      response: ok ? "confirm" : "cancel",
       runID: input.runID,
       sessionID: input.sessionID,
       status: ok ? "confirmed" : "cancelled",
@@ -2458,11 +2493,17 @@ export namespace SessionRunner {
     }
   }
 
+  function yes(input: string) {
+    const answer = input.trim()
+    return /^(confirm|approve|yes)\b/i.test(answer) || answer === "确认" || answer === "確認"
+  }
+
   async function storeConfirm(input: {
     action: AgentProtocol.Action
     messageID: MessageID
     note?: string
     plan: string
+    response?: "confirm" | "cancel"
     runID: string
     sessionID: SessionID
     status: "pending" | "confirmed" | "cancelled"
@@ -2476,6 +2517,7 @@ export namespace SessionRunner {
       message_id: input.messageID,
       plan: input.plan,
       note: input.note,
+      response: input.response,
       status: input.status,
       updated_at: Date.now(),
     }
@@ -2514,6 +2556,7 @@ export namespace SessionRunner {
     messageID: MessageID
     abort: AbortSignal
     model: LLM.StreamInput["model"]
+    completed: ReadonlySet<string>
   }): Promise<AgentProtocolExecutor.ToolResult> {
     const selected = await fallback(input.action, input.parentAgent, "target_unavailable")
     if (!selected.ok) {
@@ -2575,6 +2618,41 @@ export namespace SessionRunner {
           .filter((item) => item.length > 0)
           .join("\n"),
         metadata: { blocked: true, agentID: selected.agent.name, metadata: gate },
+      }
+    }
+    const throttle = await agentThrottle({
+      action: input.action,
+      agent: selected.agent,
+      sessionID: input.sessionID,
+      completed: input.completed,
+    })
+    if (throttle) {
+      await SessionLog.emit({
+        sessionID: input.sessionID,
+        messageID: input.messageID,
+        level: "info",
+        type: "protocol.agent.throttled",
+        data: {
+          actionID: input.action.id,
+          agent: selected.agent.name,
+          reason: throttle.reason,
+          limit: throttle.limit,
+          running: throttle.running,
+          depends_on: input.action.depends_on,
+        },
+      })
+      return {
+        title: input.action.title,
+        output: throttle.message,
+        metadata: {
+          blocked: true,
+          agentID: selected.agent.name,
+          reason: throttle.reason,
+          agentConcurrency: {
+            limit: throttle.limit,
+            running: throttle.running,
+          },
+        },
       }
     }
     const parent = await Session.get(input.sessionID)
@@ -2788,6 +2866,37 @@ export namespace SessionRunner {
     if (!selected) return { ok: false as const, error: `Protocol agent not found: ${found}` }
     if (AgentDelegation.visible(selected, parent)) return { ok: true as const, agent: selected }
     return { ok: false as const, error: `Protocol agent not available from ${parent}: ${selected.name}` }
+  }
+
+  async function agentThrottle(input: {
+    action: AgentProtocol.Action
+    agent: Agent.Info
+    completed: ReadonlySet<string>
+    sessionID: SessionID
+  }) {
+    const info = await SessionDelegation.query({ sessionID: input.sessionID, output: false })
+    const pending = await projectPending(input.sessionID)
+    return AgentConcurrency.block({
+      action: input.action.id,
+      agent: input.agent.name,
+      kind: input.agent.kind,
+      depends: input.action.depends_on,
+      completed: input.completed,
+      done: info.completed,
+      pending: info.pending,
+      running: AgentConcurrency.running(input.agent.name, pending),
+      cfg: { concurrency: input.agent.concurrency },
+    })
+  }
+
+  async function projectPending(sessionID: SessionID) {
+    const session = await Session.get(sessionID)
+    const rows = await Promise.all(
+      [...Session.list({ directory: session.directory, limit: 5000 })].map((item) =>
+        SessionDelegation.query({ sessionID: item.id, output: false }),
+      ),
+    )
+    return rows.flatMap((item) => item.pending)
   }
 
   function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {

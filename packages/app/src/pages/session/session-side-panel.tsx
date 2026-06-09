@@ -410,6 +410,7 @@ export function SessionSidePanel(props: {
   logPanel: () => JSX.Element
   activeDiff?: string
   focusReviewDiff: (path: string) => void
+  sessionWidth: number
 }) {
   const layout = useLayout()
   const sync = useSync()
@@ -430,7 +431,7 @@ export function SessionSidePanel(props: {
   const reviewTab = createMemo(() => isDesktop())
   const logTab = createMemo(() => isDesktop() && !!params.id)
   const fileTab = createMemo(() => isDesktop() && fileOpen())
-  const panelWidth = createMemo(() => (open() ? `calc(100% - ${layout.session.width()}px)` : "0px"))
+  const panelWidth = createMemo(() => (open() ? `calc(100% - ${props.sessionWidth}px)` : "0px"))
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))

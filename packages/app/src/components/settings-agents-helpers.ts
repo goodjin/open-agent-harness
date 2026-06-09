@@ -10,6 +10,7 @@ import type {
 
 export type Scope = NonNullable<AgentManageSaveInput["scope"]>
 export type Meta = AgentManageSaveInput["meta"]
+type MetaRuntime = Meta & { concurrency?: number }
 export type Mode = NonNullable<Meta["mode"]>
 export type Runner = NonNullable<Meta["runner"]>
 export type Cost = NonNullable<NonNullable<Meta["capability"]>["cost"]>
@@ -42,6 +43,7 @@ export type Form = {
   rules: string
   mode: Mode
   runner: Runner
+  concurrency: string
   hidden: boolean
   primary: boolean
   delegable: boolean
@@ -155,6 +157,7 @@ export const blank = (): Form => ({
   rules: "",
   mode: "subagent",
   runner: "chat",
+  concurrency: "",
   hidden: false,
   primary: false,
   delegable: true,
@@ -186,6 +189,7 @@ export const fill = (item: AgentManageInfo): Form => ({
   rules: item.rules,
   mode: item.meta.mode ?? item.effective.mode,
   runner: item.meta.runner ?? item.effective.runner,
+  concurrency: String((item.meta as MetaRuntime).concurrency ?? ""),
   hidden: item.meta.hidden ?? item.effective.hidden,
   primary: item.meta.entry?.primary ?? item.effective.entry.primary ?? false,
   delegable: item.meta.entry?.delegable ?? item.effective.entry.delegable ?? false,
@@ -264,7 +268,7 @@ export const meta = (form: Form): Meta => {
         model_messages: messages.length ? messages : undefined,
       }
     : undefined
-  return {
+  const value: MetaRuntime = {
     ...form.base,
     ...form.raw,
     id: form.id.trim(),
@@ -273,6 +277,7 @@ export const meta = (form: Form): Meta => {
     description: form.description.trim(),
     mode: form.mode,
     runner: form.runner,
+    concurrency: form.concurrency.trim() ? Number(form.concurrency.trim()) : undefined,
     hidden: form.hidden,
     entry: {
       ...form.base?.entry,
@@ -296,6 +301,7 @@ export const meta = (form: Form): Meta => {
     instructions,
     auto_append_prompt: text(form.autoAppend),
   }
+  return value as Meta
 }
 
 export const input = (form: Form): AgentManageSaveInput => ({

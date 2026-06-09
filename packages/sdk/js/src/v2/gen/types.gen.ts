@@ -2460,6 +2460,19 @@ export type AgentManageInfo = {
       allow_partial?: boolean
     }
     /**
+     * Worker verification policy
+     */
+    verification?: {
+      required?: Array<"test" | "review">
+      on_write?: Array<"test" | "review">
+      high_risk?: Array<"test" | "review">
+      test_verifier?: string
+      review_verifier?: string
+      test_commands?: Array<string>
+      risk?: "low" | "medium" | "high"
+      skip_test_on_no_change?: boolean
+    }
+    /**
      * Observability policy
      */
     observability?: {
@@ -2540,6 +2553,10 @@ export type AgentManageInfo = {
      * Which session runtime handles this agent
      */
     runner?: "chat" | "workflow" | "protocol"
+    /**
+     * Maximum concurrent delegated sessions for this agent inside one project.
+     */
+    concurrency?: number
     /**
      * How the agent executes workflows
      */
@@ -2701,6 +2718,19 @@ export type AgentManageValidateOutput = {
       allow_partial?: boolean
     }
     /**
+     * Worker verification policy
+     */
+    verification?: {
+      required?: Array<"test" | "review">
+      on_write?: Array<"test" | "review">
+      high_risk?: Array<"test" | "review">
+      test_verifier?: string
+      review_verifier?: string
+      test_commands?: Array<string>
+      risk?: "low" | "medium" | "high"
+      skip_test_on_no_change?: boolean
+    }
+    /**
      * Observability policy
      */
     observability?: {
@@ -2781,6 +2811,10 @@ export type AgentManageValidateOutput = {
      * Which session runtime handles this agent
      */
     runner?: "chat" | "workflow" | "protocol"
+    /**
+     * Maximum concurrent delegated sessions for this agent inside one project.
+     */
+    concurrency?: number
     /**
      * How the agent executes workflows
      */
@@ -2947,6 +2981,19 @@ export type AgentManageSaveInput = {
       allow_partial?: boolean
     }
     /**
+     * Worker verification policy
+     */
+    verification?: {
+      required?: Array<"test" | "review">
+      on_write?: Array<"test" | "review">
+      high_risk?: Array<"test" | "review">
+      test_verifier?: string
+      review_verifier?: string
+      test_commands?: Array<string>
+      risk?: "low" | "medium" | "high"
+      skip_test_on_no_change?: boolean
+    }
+    /**
      * Observability policy
      */
     observability?: {
@@ -3027,6 +3074,10 @@ export type AgentManageSaveInput = {
      * Which session runtime handles this agent
      */
     runner?: "chat" | "workflow" | "protocol"
+    /**
+     * Maximum concurrent delegated sessions for this agent inside one project.
+     */
+    concurrency?: number
     /**
      * How the agent executes workflows
      */
@@ -3186,6 +3237,19 @@ export type AgentManagePatchInput = {
       allow_partial?: boolean
     }
     /**
+     * Worker verification policy
+     */
+    verification?: {
+      required?: Array<"test" | "review">
+      on_write?: Array<"test" | "review">
+      high_risk?: Array<"test" | "review">
+      test_verifier?: string
+      review_verifier?: string
+      test_commands?: Array<string>
+      risk?: "low" | "medium" | "high"
+      skip_test_on_no_change?: boolean
+    }
+    /**
      * Observability policy
      */
     observability?: {
@@ -3266,6 +3330,10 @@ export type AgentManagePatchInput = {
      * Which session runtime handles this agent
      */
     runner?: "chat" | "workflow" | "protocol"
+    /**
+     * Maximum concurrent delegated sessions for this agent inside one project.
+     */
+    concurrency?: number
     /**
      * How the agent executes workflows
      */
@@ -3383,7 +3451,18 @@ export type Agent = {
     cost?: "low" | "medium" | "high"
     writes?: boolean
   }
+  verification?: {
+    required?: Array<"test" | "review">
+    on_write?: Array<"test" | "review">
+    high_risk?: Array<"test" | "review">
+    test_verifier?: string
+    review_verifier?: string
+    test_commands?: Array<string>
+    risk?: "low" | "medium" | "high"
+    skip_test_on_no_change?: boolean
+  }
   runner?: "chat" | "workflow" | "protocol"
+  concurrency?: number
   native?: boolean
   hidden?: boolean
   topP?: number
@@ -8022,6 +8101,10 @@ export type QuestionReplyData = {
      * User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)
      */
     answers: Array<QuestionAnswer>
+    /**
+     * Explicit confirmation response for confirm-only prompts
+     */
+    response?: "confirm" | "cancel"
   }
   path: {
     requestID: string

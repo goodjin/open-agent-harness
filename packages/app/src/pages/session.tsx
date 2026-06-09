@@ -7,6 +7,7 @@ import {
   Match,
   Switch,
   createMemo,
+  createSignal,
   createEffect,
   createComputed,
   on,
@@ -20,6 +21,7 @@ import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange
 import { createStore } from "solid-js/store"
 import { ResizeHandle } from "@open-agent-harness/ui/resize-handle"
 import { Select } from "@open-agent-harness/ui/select"
+import { Spinner } from "@open-agent-harness/ui/spinner"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import { createAutoScroll } from "@open-agent-harness/ui/hooks"
 import { previewSelectedLines } from "@open-agent-harness/ui/pierre/selection-bridge"
@@ -410,11 +412,27 @@ export default function Page() {
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const size = createSizing()
+  const [frame, setFrame] = createSignal<HTMLDivElement>()
+  const [wide, setWide] = createSignal(0)
+  const paneMin = 320
+  const sideMin = 320
   const desktopSidePanelOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
-  const sessionPanelWidth = createMemo(() => (desktopSidePanelOpen() ? `${layout.session.width()}px` : "100%"))
-  const max = () => (typeof window === "undefined" ? 1600 : Math.max(320, window.innerWidth - 180))
+  const bound = createMemo(() => {
+    const full = wide() || (typeof window === "undefined" ? 1600 : window.innerWidth)
+    return Math.max(paneMin, full - sideMin)
+  })
+  const pane = createMemo(() =>
+    desktopSidePanelOpen() ? Math.min(layout.session.width(), bound()) : layout.session.width(),
+  )
+  const sessionPanelWidth = createMemo(() => (desktopSidePanelOpen() ? `${pane()}px` : "100%"))
+  const max = () => bound()
   const centered = createMemo(() => isDesktop() && !desktopSidePanelOpen())
+
+  createResizeObserver(
+    () => frame(),
+    ({ width }) => setWide(Math.floor(width)),
+  )
 
   function normalizeTab(tab: string) {
     if (!tab.startsWith("file://")) return tab
@@ -1079,6 +1097,19 @@ export default function Page() {
     </Show>
   )
 
+  const sessionLoadingPanel = () => (
+    <div
+      class="flex h-full min-h-0 flex-col items-center justify-center gap-3 text-text-weak"
+      data-component="session-loading"
+    >
+      <Spinner class="size-5" />
+      <div class="text-13-regular">
+        {language.t("session.messages.loading")}
+        {language.t("common.loading.ellipsis")}
+      </div>
+    </div>
+  )
+
   const sessionPanel = () => (
     <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
       <div class="flex-1 min-h-0 overflow-hidden">
@@ -1087,7 +1118,7 @@ export default function Page() {
             <Show
               when={mobileLogs()}
               fallback={
-                <Show when={messagesReady()}>
+                <Show when={messagesReady()} fallback={sessionLoadingPanel()}>
                   <MessageTimeline
                     mobileChanges={mobileChanges()}
                     mobileFallback={reviewContent({
@@ -1105,7 +1136,10 @@ export default function Page() {
                       question: composer.questionRequest(),
                       permission: composer.permissionRequest(),
                       responding: composer.permissionResponding(),
-                      submit: resumeScroll,
+                      submit: () => {
+                        resumeScroll()
+                        if (params.id) void syncCurrentSession(params.id, { force: true })
+                      },
                       decide: (response) => {
                         resumeScroll()
                         composer.decide(response)
@@ -1919,7 +1953,7 @@ export default function Page() {
 
   return (
     <div class="relative bg-background-base size-full overflow-hidden flex flex-col">
-      <div class="flex-1 min-h-0 flex flex-col md:flex-row">
+      <div ref={setFrame} class="flex-1 min-h-0 flex flex-col md:flex-row">
         <Show when={!isDesktop() && !!params.id}>
           <Tabs value={store.mobileTab} class="h-auto">
             <Tabs.List>
@@ -1978,7 +2012,7 @@ export default function Page() {
               <div onPointerDown={() => size.start()}>
                 <ResizeHandle
                   direction="horizontal"
-                  size={layout.session.width()}
+                  size={pane()}
                   min={320}
                   max={max()}
                   onResize={(width) => {
@@ -1994,6 +2028,7 @@ export default function Page() {
             logPanel={logPanel}
             activeDiff={tree.activeDiff}
             focusReviewDiff={focusReviewDiff}
+            sessionWidth={pane()}
           />
         </Show>
       </div>

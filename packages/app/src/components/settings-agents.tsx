@@ -472,6 +472,11 @@ export const SettingsAgents: Component<{ selected?: string }> = (props) => {
                   options={runners}
                   onChange={(value) => setForm("runner", value as Runner)}
                 />
+                <Field
+                  label="Concurrency"
+                  value={form.concurrency}
+                  onChange={(value) => setForm("concurrency", value.replace(/[^\d]/g, ""))}
+                />
                 <Check label="Hidden" checked={form.hidden} onChange={(value) => setForm("hidden", value)} />
                 <Check label="Entry primary" checked={form.primary} onChange={(value) => setForm("primary", value)} />
                 <Check

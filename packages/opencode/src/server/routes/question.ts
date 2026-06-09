@@ -3,9 +3,119 @@ import { describeRoute, validator } from "hono-openapi"
 import { resolver } from "hono-openapi"
 import { QuestionID } from "@/question/schema"
 import { Question } from "../../question"
+import { Session } from "@/session"
+import { SessionPrompt } from "@/session/prompt"
+import { MessageID, SessionID } from "@/session/schema"
+import { Storage } from "@/storage/storage"
 import z from "zod"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
+
+type Confirm = {
+  action_id?: unknown
+  action_title?: unknown
+  message_id?: unknown
+  plan?: unknown
+  plan_ref?: unknown
+  run_id?: unknown
+  status?: unknown
+  updated_at?: unknown
+}
+
+const prefix = "que_protocol_confirm_"
+
+const text = (input: unknown) => (typeof input === "string" ? input : undefined)
+const num = (input: unknown) => (typeof input === "number" ? input : 0)
+const rec = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input)
+
+function id(input: { sessionID: string; run: string; action: string }) {
+  return QuestionID.make(`${prefix}${Buffer.from(JSON.stringify(input)).toString("base64url")}`)
+}
+
+function parse(input: QuestionID) {
+  const raw = String(input)
+  if (!raw.startsWith(prefix)) return
+  try {
+    const data = JSON.parse(Buffer.from(raw.slice(prefix.length), "base64url").toString("utf8"))
+    if (!rec(data)) return
+    const sessionID = text(data.sessionID)
+    const run = text(data.run)
+    const action = text(data.action)
+    if (!sessionID || !run || !action) return
+    return { sessionID: SessionID.make(sessionID), run, action }
+  } catch {
+    return
+  }
+}
+
+function pending(sessions: Session.Info[]) {
+  const latest = new Map<string, Confirm>()
+  for (const session of sessions) {
+    const protocol = rec(session.dsl_context?.protocol) ? session.dsl_context.protocol : undefined
+    const vals = Array.isArray(protocol?.confirmations) ? protocol.confirmations : []
+    for (const val of vals) {
+      if (!rec(val) || val.status !== "pending") continue
+      if (!text(val.run_id) || !text(val.action_id) || !text(val.message_id)) continue
+      const prev = latest.get(session.id)
+      if (prev && num(prev.updated_at) >= num(val.updated_at)) continue
+      latest.set(session.id, val)
+    }
+  }
+  return Array.from(latest.entries())
+}
+
+async function confirm(input: {
+  answers?: Question.Answer[]
+  reject?: boolean
+  requestID: QuestionID
+  response?: Question.Reply["response"]
+}) {
+  const key = parse(input.requestID)
+  if (!key) return false
+  const status = input.reject || input.response === "cancel" ? "cancelled" : "confirmed"
+  const session = await Session.get(key.sessionID)
+  const ctx = rec(session.dsl_context) ? session.dsl_context : {}
+  const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+  const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  const next = vals.map((val) => {
+    if (!rec(val)) return val
+    if (val.run_id !== key.run || val.action_id !== key.action) return val
+    return {
+      ...val,
+      response: status === "confirmed" ? "confirm" : "cancel",
+      status,
+      updated_at: Date.now(),
+    }
+  })
+  const item = next.find((val) => rec(val) && val.run_id === key.run && val.action_id === key.action)
+  await Session.setDslContext({
+    sessionID: key.sessionID,
+    dsl_context: {
+      ...ctx,
+      protocol: {
+        ...protocol,
+        confirmations: next,
+      },
+    },
+  })
+  if (rec(item)) {
+    await Storage.write(["session_protocol_confirmation", key.sessionID, key.run, key.action], item)
+  }
+  await SessionPrompt.prompt({
+    sessionID: key.sessionID,
+    parts: [
+      {
+        type: "text",
+        text:
+          status === "confirmed"
+            ? `User confirmed protocol action ${key.action} from run ${key.run}. Continue from the current protocol state without re-asking this confirmation.`
+            : `User cancelled protocol action ${key.action} from run ${key.run}. Do not execute downstream work that depended on that confirmation.`,
+      },
+    ],
+  })
+  return true
+}
 
 export const QuestionRoutes = lazy(() =>
   new Hono()
@@ -27,7 +137,41 @@ export const QuestionRoutes = lazy(() =>
         },
       }),
       async (c) => {
-        const questions = await Question.list()
+        const sessions = Array.from(Session.list({ limit: 5000 }))
+        const ids = new Set(sessions.map((session) => session.id))
+        const live = (await Question.list()).filter((item) => ids.has(item.sessionID))
+        const seen = new Set(live.map((item) => `${item.sessionID}:${item.tool?.messageID}:${item.tool?.callID}`))
+        const restored = pending(sessions).flatMap(([sessionID, item]) => {
+          const run = text(item.run_id)
+          const action = text(item.action_id)
+          const message = text(item.message_id)
+          if (!run || !action || !message) return []
+          const call = `call_${action}`
+          if (seen.has(`${sessionID}:${message}:${call}`)) return []
+          const plan = text(item.plan) ?? ""
+          return [
+            {
+              id: id({ sessionID, run, action }),
+              sessionID: SessionID.make(sessionID),
+              questions: [
+                {
+                  question: ["Please confirm this plan before execution.", "", plan]
+                    .filter((part) => part.trim().length > 0)
+                    .join("\n"),
+                  header: "Confirm plan",
+                  options: [
+                    { label: "Confirm", description: "Approve this plan and continue execution." },
+                    { label: "Cancel", description: "Do not execute this plan." },
+                  ],
+                  multiple: false,
+                  custom: false,
+                },
+              ],
+              tool: { messageID: MessageID.make(message), callID: call },
+            },
+          ]
+        })
+        const questions = [...live, ...restored]
         return c.json(questions)
       },
     )
@@ -59,6 +203,9 @@ export const QuestionRoutes = lazy(() =>
       async (c) => {
         const params = c.req.valid("param")
         const json = c.req.valid("json")
+        if (await confirm({ requestID: params.requestID, answers: json.answers, response: json.response })) {
+          return c.json(true)
+        }
         await Question.reply({
           requestID: params.requestID,
           answers: json.answers,
@@ -92,6 +239,7 @@ export const QuestionRoutes = lazy(() =>
       ),
       async (c) => {
         const params = c.req.valid("param")
+        if (await confirm({ requestID: params.requestID, reject: true })) return c.json(true)
         await Question.reject(params.requestID)
         return c.json(true)
       },

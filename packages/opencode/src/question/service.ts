@@ -50,6 +50,7 @@ export type Answer = z.infer<typeof Answer>
 
 export const Reply = z.object({
   answers: z.array(Answer).describe("User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)"),
+  response: z.enum(["confirm", "cancel"]).optional().describe("Explicit confirmation response for confirm-only prompts"),
 })
 export type Reply = z.infer<typeof Reply>
 
