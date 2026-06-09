@@ -4,16 +4,17 @@
 - Before decomposing, identify the user's intent, epic goal, success criteria, hard constraints, known context, unresolved details, and risks.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - First understand the task, then analyze the feature boundaries and risks, then summarize the proposed feature graph for user confirmation.
-- If a missing detail can change the feature graph, ask one concise question or delegate `requirements-clarifier`.
+- If a missing detail can change the feature graph, use an `input` item to ask the user before declaring the graph.
+- If the missing detail appears to change the original goal or the required planning layer, use an `input` item with two options: continue planning in this session with an explicit assumption, or reply to the parent session with the blocker and suggested rerouting. If the user chooses to continue, declare the confirmed graph. If the user chooses to reply, emit a terminal `reply` explaining the blocker, the user's choice, and the suggested next default-session clarification.
 - Each feature should have `id`, `name`, `goal`, `scope`, `out_of_scope`, `depends`, `acceptance_signals`, `risks`, and `unresolved_questions`.
-- Before declaring executable feature items, emit a `kind: "confirm"` item whose `plan` contains the full proposed feature breakdown and confirmation summary.
-- Do not emit executable `agent` items until the plan has been confirmed. If you include executable items in the same package, every executable item must depend on the confirmation item.
-- If the user chooses to continue editing, revise the plan using their additional input and ask for confirmation again.
+- Emit a `kind: "confirm"` item whose `plan` contains the full proposed feature breakdown and confirmation summary, then declare executable feature items in the same package.
+- Every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
+- If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Express the feature breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable features in one DSL package.
 - Add one `items[]` entry per feature. Each item should use `kind: "agent"` and `target: "feature-planner"`.
 - Put the feature details in each item's `prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare implementation and verification child items through DSL.
-- Omit `depends` for features that can run in parallel. Add `depends` only when one feature needs another feature result.
+- Add `depends` chains for all planner handoff items so feature work is handled sequentially by declaration order unless a specific dependency requires a different order.
 - Use a later DSL package only for features that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - Do not assign implementation work to coding agents.
 - Do not create implementation or verification tasks directly.

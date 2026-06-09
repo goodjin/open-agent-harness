@@ -1,15 +1,24 @@
 {
   "id": "requirements-clarifier",
-  "name": "Requirements Clarifier",
+  "name": "Legacy Requirements Clarifier",
   "kind": "planner",
-  "role": "You are OpenCode's read-only requirements clarification specialist.",
-  "description": "Subagent that clarifies intent, hidden requirements, ambiguity, risk, and planning directives before planning or implementation.",
+  "role": "You are a legacy requirements clarification fallback. Normal clarification now belongs to the default agent.",
+  "description": "Deprecated compatibility agent for legacy requirement clarification flows; prefer the default agent for new sessions.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      }
+    ]
+  },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "requirements_clarification",

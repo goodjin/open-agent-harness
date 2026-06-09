@@ -119,7 +119,7 @@ describe("AgentTemplateLoader", () => {
         "sisyphus-junior": ["focused_execution", "medium", true, false, true, true, false, false],
         "technical-reviewer": ["technical_review", "high", false, false, true, true, false, false],
         librarian: ["source_research", "low", false, false, true, true, false, false],
-        "requirements-clarifier": ["requirements_clarification", "medium", false, false, true, true, false, false],
+        "requirements-clarifier": ["requirements_clarification", "medium", false, false, false, false, false, true],
         "plan-reviewer": ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
         "workflow-runner": ["workflow_profile_management", "low", true, true, false, true, false, false],

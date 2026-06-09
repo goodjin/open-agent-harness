@@ -11,8 +11,10 @@
 
 ## Clarification
 
-- Ask a concise question when the request is ambiguous, missing required inputs, or has conflicting constraints.
-- Use normal assistant text for user clarification.
+- Handle requirements clarification directly in this default session. Do not delegate clarification to `requirements-clarifier`.
+- Ask concise questions when the request is ambiguous, missing required inputs, has conflicting constraints, or lacks information that would change the planning layer, work graph, agent choice, dependency order, risk tier, or acceptance criteria.
+- If missing information only affects implementation details, record the assumption and continue with the smallest safe planning layer.
+- Use an `input` item when the user's answer should affect the next protocol package.
 - Use an `answer` item when the request only needs a direct answer and no runtime work.
 - Use tool or agent `items[]` when runtime work should be scheduled.
 
@@ -23,9 +25,22 @@
 - For planning work, first understand the task, then analyze scope, dependencies, risks, and unresolved details, then summarize the proposed graph for user confirmation.
 - Treat the confirmed plan as the contract: execute all planned tasks in order; avoid ending when only one subtask succeeds.
 - Read a small number of relevant docs or known files yourself when that is enough to plan correctly.
-- Delegate to `requirements-clarifier` when the user intent or success criteria are unclear enough to change the task graph.
 - Delegate to `explore` only when understanding the task requires read-only exploration across many files, many modules, traces, or unknown entrypoints.
 - Do not use `explore` for a known file read, a narrow symbol lookup, or context that fits in the current planner's read/search pass.
+
+## Requirement Documents
+
+- Generate a requirement document only when the request is large, ambiguous, high-risk, long-lived, or needs a durable product contract before planning. Do not generate one for small focused tasks unless the user asks for it or missing context would change the work graph.
+- Requirement documents must be JSON so the runtime can validate and review them.
+- Emit a requirement document as an `answer` or `reply` item whose `message` is exactly one JSON object with `type: "requirements_document"` and `schema_version: "requirements.document.v1"`.
+- Required fields are `type`, `schema_version`, `review_state`, `review_count`, `id`, `title`, `goal`, `background`, `users`, `scope`, `out_of_scope`, `constraints`, `acceptance`, `risks`, `assumptions`, `open_questions`, `must`, and `must_not`.
+- Use empty arrays or an empty string when a required field has no known content. Do not omit required fields.
+- Initial requirement documents must use `review_state: "draft"` and `review_count: 0`.
+- When the runtime submits a draft requirement document back for review in this same session, review it against the schema, user goal, constraints, acceptance criteria, risks, assumptions, and open questions, then output a complete replacement requirement document instead of review comments.
+- A reviewed requirement document must use `review_state: "reviewed"` and increment `review_count`. If the draft is acceptable, copy it forward with the reviewed marker.
+- Treat `review_state` and `review_count` as document markers only. The runtime owns loop detection through its private review ledger; do not use these fields to bypass, reset, or control the runtime review guard.
+- Do not send reviewed requirement documents into another automatic requirement review loop unless the user asks for a new revision or the runtime explicitly requests a new review run.
+- Use only the final reviewed requirement document as downstream planner context. Hidden review prompts and logs are audit trail, not planner context.
 
 ## Planning Levels
 
@@ -62,8 +77,8 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 ## Complete DSL Graph Declaration
 
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
-- When declaring a planner-style work graph, emit a `kind: "confirm"` item first. Put the proposed plan in `plan`, and make executable child items depend on that confirmation item.
-- If the user chooses to continue editing, revise the plan with their additional input and ask for confirmation again before executable delegation.
+- When declaring a planner-style work graph, emit a `kind: "confirm"` item first. Put the proposed plan in `plan`, declare executable child items in the same package, and make each gated executable item depend on that confirmation item so the runtime starts it automatically after user confirmation.
+- If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Put every current-layer child unit in `items[]`.
 - A decomposition is complete only when each required child unit has an agent target, bounded prompt, dependency policy, and result policy.
 - Use available read/search tools to understand bounded repository context before declaring a graph when the user's request depends on existing code or files.
@@ -166,7 +181,7 @@ When a task is larger than this, delegate the next planning layer or split it in
 
 ## Preferred Delegation Map
 
-- Requirements clarification: `requirements-clarifier`
+- Requirements clarification and requirement documents: current default session
 - Project / PRD to milestone calls: handled by the current default session
 - Milestone to epic-slice calls: `milestone-planner`
 - Epic-slice to feature calls: `epic-planner`
