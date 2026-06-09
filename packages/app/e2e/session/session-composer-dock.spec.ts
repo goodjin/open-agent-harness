@@ -303,6 +303,64 @@ test("blocked question flow unblocks after submit", async ({ page, sdk, gotoSess
   })
 })
 
+test("long question option descriptions are truncated and can be expanded", async ({
+  page,
+  sdk,
+  gotoSession,
+}) => {
+  await withDockSession(sdk, "e2e composer dock long descriptions", async (session) => {
+    await withDockSeed(sdk, session.id, async () => {
+      await gotoSession(session.id)
+
+      const longDescription = "This is a deliberately long description ".repeat(20).trimEnd()
+      const shortDescription = "Short note"
+      await seedSessionQuestion(sdk, {
+        sessionID: session.id,
+        questions: [
+          {
+            header: "Long input",
+            question: "Pick one option",
+            options: [
+              { label: "Verbose", description: longDescription },
+              { label: "Concise", description: shortDescription },
+            ],
+          },
+        ],
+      })
+
+      const dock = page.locator(questionDockSelector)
+      await expectQuestionBlocked(page)
+
+      const longItem = dock.locator('[data-slot="question-option-item"]').first()
+      const longDescriptionSpan = longItem.locator('[data-slot="option-description"]').first()
+      await expect(longDescriptionSpan).toHaveAttribute("data-truncated", "true")
+      await expect(longDescriptionSpan).not.toHaveText(longDescription)
+
+      const toggle = longItem.locator('[data-slot="option-description-toggle"]')
+      await expect(toggle).toBeVisible()
+      await expect(toggle).toHaveText(/show more/i)
+
+      await toggle.click()
+      await expect(longDescriptionSpan).toHaveAttribute("data-truncated", "false")
+      await expect(longDescriptionSpan).toHaveText(longDescription)
+      await expect(toggle).toHaveText(/show less/i)
+
+      await toggle.click()
+      await expect(longDescriptionSpan).toHaveAttribute("data-truncated", "true")
+      await expect(toggle).toHaveText(/show more/i)
+
+      const shortItem = dock.locator('[data-slot="question-option-item"]').nth(1)
+      const shortDescriptionSpan = shortItem.locator('[data-slot="option-description"]').first()
+      await expect(shortDescriptionSpan).toHaveAttribute("data-truncated", "false")
+      await expect(shortItem.locator('[data-slot="option-description-toggle"]')).toHaveCount(0)
+
+      await longItem.locator('[data-slot="question-option"]').first().click()
+      await dock.getByRole("button", { name: /submit/i }).click()
+      await expectQuestionOpen(page)
+    })
+  })
+})
+
 test("blocked permission flow supports allow once", async ({ page, sdk, gotoSession }) => {
   await withDockSession(sdk, "e2e composer dock permission once", async (session) => {
     await gotoSession(session.id)

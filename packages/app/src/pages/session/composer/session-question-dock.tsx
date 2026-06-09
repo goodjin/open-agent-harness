@@ -1,4 +1,4 @@
-import { For, Show, createMemo, onCleanup, onMount, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@open-agent-harness/ui/button"
 import { DockPrompt } from "@open-agent-harness/ui/dock-prompt"
@@ -11,6 +11,16 @@ import { useSDK } from "@/context/sdk"
 type Notes = Record<string, string>
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[]; notes: Record<number, Notes> }>()
+
+const OPTION_DESCRIPTION_LIMIT = 140
+
+type DescriptionView = { text: string; hidden: number }
+
+export function limitDescription(text: string, limit: number = OPTION_DESCRIPTION_LIMIT): DescriptionView {
+  if (!text) return { text: "", hidden: 0 }
+  if (text.length <= limit) return { text, hidden: 0 }
+  return { text: text.slice(0, limit), hidden: text.length - limit }
+}
 
 export function answersWithNotes(answers: QuestionAnswer, notes: Notes): QuestionAnswer {
   return answers.map((item) => {
@@ -324,6 +334,15 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         <For each={options()}>
           {(opt, i) => {
             const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
+            const [descriptionOpen, setDescriptionOpen] = createSignal(false)
+            const descriptionView = createMemo(() => limitDescription(opt.description ?? ""))
+            const descriptionText = createMemo(() => (descriptionOpen() ? opt.description ?? "" : descriptionView().text))
+            const descriptionCanExpand = createMemo(() => descriptionView().hidden > 0)
+            const toggleDescription = (e: MouseEvent) => {
+              e.preventDefault()
+              e.stopPropagation()
+              setDescriptionOpen(!descriptionOpen())
+            }
             return (
               <div data-slot="question-option-item" data-picked={picked()}>
                 <button
@@ -348,10 +367,25 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
                   <span data-slot="question-option-main">
                     <span data-slot="option-label">{opt.label}</span>
                     <Show when={opt.description}>
-                      <span data-slot="option-description">{opt.description}</span>
+                      <span data-slot="option-description" data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}>
+                        {descriptionText()}
+                      </span>
                     </Show>
                   </span>
                 </button>
+                <Show when={descriptionCanExpand()}>
+                  <button
+                    type="button"
+                    data-slot="option-description-toggle"
+                    data-expanded={descriptionOpen()}
+                    aria-expanded={descriptionOpen()}
+                    onClick={toggleDescription}
+                  >
+                    {descriptionOpen()
+                      ? language.t("ui.question.optionDescription.showLess")
+                      : language.t("ui.question.optionDescription.showMore")}
+                  </button>
+                </Show>
                 <Show when={picked()}>
                   <textarea
                     data-slot="question-option-note"

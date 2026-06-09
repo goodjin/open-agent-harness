@@ -168,4 +168,6 @@ export const dict: Record<string, string> = {
   "ui.question.singleHint": "Select one answer",
   "ui.question.custom.placeholder": "Type your answer...",
   "ui.question.optionNote.placeholder": "Add details for this choice...",
+  "ui.question.optionDescription.showMore": "Show more",
+  "ui.question.optionDescription.showLess": "Show less",
 }
