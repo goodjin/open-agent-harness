@@ -67,6 +67,22 @@ const list = (value: unknown) => (Array.isArray(value) ? value.filter((item) => 
 const filled = (value: string | undefined): value is string => Boolean(value)
 const compact = (input: Record<string, unknown>) =>
   Object.fromEntries(Object.entries(input).filter((entry) => entry[1] !== undefined))
+const metric = (log: Log) => {
+  const metrics = object(log.data.metrics)
+  return count(log.data.durationMs) ?? count(log.data.duration_ms) ?? count(metrics?.durationMs) ?? count(metrics?.duration_ms)
+}
+export const duration = (logs: Log[]) => {
+  const value = logs.map(metric).find((item) => item !== undefined)
+  if (value !== undefined) return Math.max(0, value)
+  if (logs.length < 2) return 0
+  const times = logs.map((log) => log.time)
+  return Math.max(0, Math.max(...times) - Math.min(...times))
+}
+export const durationLabel = (input: number) => {
+  if (input < 1000) return `${Math.round(input)}ms`
+  if (input < 60_000) return `${(input / 1000).toFixed(input < 10_000 ? 1 : 0)}s`
+  return `${Math.floor(input / 60_000)}m ${Math.round((input % 60_000) / 1000)}s`
+}
 const finish = (value: unknown) => {
   switch (value) {
     case "stop":
@@ -227,6 +243,24 @@ export function describeLog(record: Log): Summary {
         detail: text(data.runID),
         meta: [],
       }
+    case "agent.metadata.output_validated":
+      return {
+        title: "Protocol output validated",
+        detail: text(data.agent),
+        meta: [text(data.status)].filter(filled),
+      }
+    case "agent.metadata.output_validation_failed":
+      return {
+        title: "Protocol output validation failed",
+        detail: text(data.agent),
+        meta: [text(data.status)].filter(filled),
+      }
+    case "agent.metadata.messages":
+      return {
+        title: "Protocol metadata diagnostics",
+        detail: text(data.agent),
+        meta: [text(data.event)].filter(filled),
+      }
     case "memory.captured":
       return {
         title: "Memory captured",
@@ -326,7 +360,8 @@ export function mergeLogs(current: Log[], incoming: Log[]) {
 const protocol = (log: Log) => log.type.startsWith("protocol.") || log.type.startsWith("agent.metadata.") || log.data.protocol === true
 const noisy = (log: Log) => {
   if (log.type === "protocol.action.tool_call") return false
-  if (log.type === "agent.metadata.output_validation_failed") return false
+  if (log.type === "agent.metadata.output_validation_failed") return true
+  if (log.type === "agent.metadata.messages") return true
   if (log.type === "protocol.failed" || log.type === "protocol.action.failed" || log.type === "protocol.action.blocked") return false
   if (log.type === "protocol.final.malformed" || log.type === "protocol.final.plain_tool_syntax") return false
   if (log.type === "tool.error" && log.data.protocol === true) return false
@@ -352,6 +387,17 @@ export function groupLogs(logs: Log[], filter: Filter = "all"): Row[] {
         row.logs.push(log)
         continue
       }
+    }
+    if (filter === "protocol" && log.data.protocol === true) {
+      rows.push({
+        id: log.id,
+        time: log.time,
+        level: log.level,
+        type: log.type,
+        logs: [log],
+        summary: describeLog(log),
+      })
+      continue
     }
     if (log.type === "llm.start") {
       rows.push({
@@ -905,6 +951,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                     const current = () => sections.find((item) => item.id === store.detail[row.id]) ?? sections[0]
                     const section = () => current() ?? { id: "raw", label: "Raw", data: raw(row.logs) }
                     const open = () => store.open[row.id] === true
+                    const spent = () => durationLabel(duration(row.logs))
                     const toggle = () => setStore("open", row.id, !open())
                     return (
                       <div
@@ -926,6 +973,10 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                             <div class="min-w-0 text-13-medium text-text-strong break-words">{row.summary.title}</div>
                             <div class="text-11-regular text-text-weaker break-words">{row.level}</div>
+                            <For each={row.summary.meta}>
+                              {(item) => <div class="text-11-regular text-text-weaker break-words">{item}</div>}
+                            </For>
+                            <div class="ml-auto text-11-regular text-text-weaker tabular-nums">{spent()}</div>
                           </div>
                           <Show when={row.summary.detail}>
                             <div class="mt-1 text-12-regular text-text-base break-words">{row.summary.detail}</div>

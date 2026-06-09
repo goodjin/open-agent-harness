@@ -4,6 +4,8 @@ import {
   compactLogs,
   describeLog,
   detailSections,
+  duration,
+  durationLabel,
   groupLogs,
   mergeLogs,
   preserveScroll,
@@ -240,6 +242,12 @@ describe("session log timeline", () => {
       detail: "apr_1",
       meta: [],
     })
+
+    expect(describeLog(record("bad", 7, "agent.metadata.output_validation_failed", { agent: "tester", status: "failed" }))).toEqual({
+      title: "Protocol output validation failed",
+      detail: "tester",
+      meta: ["failed"],
+    })
   })
 
   test("merges records by id and orders the timeline newest first", () => {
@@ -294,7 +302,7 @@ describe("session log timeline", () => {
     expect(groupLogs(logs, "protocol").map((row) => row.id)).toEqual(["g", "e", "d", "c", "b", "a"])
   })
 
-  test("shows protocol errors and tool call markers in the default timeline", () => {
+  test("keeps output validation diagnostics in the protocol timeline", () => {
     const logs = [
       record("a", 1, "protocol.action.completed", { runID: "apr_1", actionID: "ok" }),
       record("b", 2, "protocol.action.tool_call", { runID: "apr_1", callID: "call_1" }),
@@ -304,7 +312,8 @@ describe("session log timeline", () => {
       record("f", 6, "agent.metadata.output_validation_failed", { agent: "tester" }),
     ]
 
-    expect(groupLogs(logs).map((row) => row.id)).toEqual(["f", "e", "c", "b"])
+    expect(groupLogs(logs).map((row) => row.id)).toEqual(["e", "c", "b"])
+    expect(groupLogs(logs, "protocol").map((row) => row.id)).toEqual(["f", "e", "d", "c", "b", "a"])
   })
 
   test("compacts start end lifecycle pairs in details", () => {
@@ -375,6 +384,16 @@ describe("session log timeline", () => {
         },
       },
     })
+  })
+
+  test("formats row durations from explicit metrics or event span", () => {
+    expect(duration([record("a", 1, "protocol.action.completed", { durationMs: 42 })])).toBe(42)
+    expect(duration([
+      record("a", 10, "llm.start", {}),
+      record("b", 30, "llm.finish", {}),
+    ])).toBe(20)
+    expect(durationLabel(42)).toBe("42ms")
+    expect(durationLabel(1200)).toBe("1.2s")
   })
 
   test("preserves scroll position when new logs are inserted above the viewport", async () => {
