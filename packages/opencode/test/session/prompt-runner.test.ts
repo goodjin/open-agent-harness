@@ -135,6 +135,84 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
+  test("session loop prefers bound session agent over last user agent", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "bound-worker", {
+            kind: "worker",
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-bound-agent"),
+            fn: async () => {
+              resetRegistry()
+              const seen: string[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push(stream.agent.name)
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Bound agent loop test" })
+                await Session.setAgent({ sessionID: session.id, agent: "bound-worker" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "default",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "continue delegated work",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(seen).toEqual(["bound-worker"])
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
   test("session loop fails setup when required agent instruction is missing", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"
@@ -552,8 +630,8 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).not.toContain("## read")
                 expect(seen[0]?.prompt).not.toContain("## bash")
                 expect(seen[0]?.prompt).toContain("input_schema:")
-                expect(seen[0]?.prompt).toContain('calls[].type: "agent"')
-                expect(seen[0]?.prompt).toContain('"type": "tool"')
+                expect(seen[0]?.prompt).toContain('items[].kind: "agent"')
+                expect(seen[0]?.prompt).toContain('"kind": "tool"')
                 expect(seen[0]?.prompt).toContain("## frontend")
                 await Session.remove(session.id)
               } finally {
@@ -568,7 +646,7 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
-  test("session loop stores stable protocol prompt outside dsl context", async () => {
+  test("session loop stores matching protocol prompt cache outside dsl context", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"
 
@@ -638,13 +716,97 @@ describe("SessionPrompt runner wiring", () => {
                 const ctx = (await Session.get(session.id)).dsl_context as {
                   protocol?: { tools?: unknown; pending_delegations?: unknown }
                 } | undefined
-                const saved = await Storage.read<{ protocol?: { prompt?: string; catalog?: string[] } }>(["session_runtime_context", session.id])
+                const saved = await Storage.read<{
+                  protocol?: { agent?: string; prompt?: string; catalog?: string[]; signature?: string }
+                }>(["session_runtime_context", session.id])
 
-                expect(seen).toEqual(["legacy stable protocol prompt", "legacy stable protocol prompt"])
+                expect(seen).toHaveLength(2)
+                expect(seen[0]).toBe(seen[1])
+                expect(seen[0]).not.toBe("legacy stable protocol prompt")
                 expect(ctx?.protocol?.tools).toBeUndefined()
                 expect(ctx?.protocol?.pending_delegations).toEqual({})
-                expect(saved.protocol?.prompt).toBe("legacy stable protocol prompt")
+                expect(saved.protocol?.agent).toBe("protocol-runner")
+                expect(saved.protocol?.prompt).toBe(seen[0])
                 expect(saved.protocol?.catalog).toContain("read")
+                expect(saved.protocol?.signature).toContain("protocol-runner")
+              } finally {
+                hook.mockRestore()
+                await Storage.remove(["session_runtime_context", session.id])
+                await Session.remove(session.id)
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop rebuilds protocol prompt cache when agent changes", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await Instance.provide({
+        directory: root,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-protocol-agent-cache"),
+            fn: async () => {
+              resetRegistry()
+              const seen: { agent: string; prompt: string }[] = []
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process(stream: LLM.StreamInput) {
+                    seen.push({ agent: stream.agent.name, prompt: stream.runtimeTools?.prompt ?? "" })
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              const session = await Session.create({ title: "Protocol agent cache test" })
+              try {
+                for (const name of ["protocol-runner", "default"]) {
+                  const user = MessageID.ascending()
+                  await Session.updateMessage({
+                    id: user,
+                    sessionID: session.id,
+                    role: "user",
+                    time: { created: Date.now() },
+                    agent: name,
+                    model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                    tools: {},
+                    mode: "",
+                  } as MessageV2.User)
+                  await Session.updatePart({
+                    id: PartID.ascending(),
+                    messageID: user,
+                    sessionID: session.id,
+                    type: "text",
+                    text: `continue as ${name}`,
+                  })
+                  await SessionPrompt.loop({ sessionID: session.id })
+                }
+
+                const saved = await Storage.read<{
+                  protocol?: { agent?: string; prompt?: string; catalog?: string[]; signature?: string }
+                }>(["session_runtime_context", session.id])
+
+                expect(seen.map((item) => item.agent)).toEqual(["protocol-runner", "default"])
+                expect(seen[0]?.prompt).not.toBe(seen[1]?.prompt)
+                expect(saved.protocol?.agent).toBe("default")
+                expect(saved.protocol?.prompt).toBe(seen[1]?.prompt)
+                expect(saved.protocol?.signature).toContain("default")
               } finally {
                 hook.mockRestore()
                 await Storage.remove(["session_runtime_context", session.id])

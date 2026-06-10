@@ -129,6 +129,8 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 
 当父会话等待一个或多个子会话结果时，Session Workbench 底部应显示 child-session status panel。该 panel 读取 Runtime Projection，不从聊天文本推断状态。
 
+子会话的 Agent 标签必须来自 session 一级 `agent` 绑定。UI 不得用最新 user message 的 `agent` 字段推断 child session 的执行 Agent，因为 resume、restore、bulk control 等控制输入可能由其他会话或 default 入口发起。若标题已包含 `(@agent)` 或 session 已有绑定 Agent，只展示这一份执行 Agent，不再追加发起控制输入的 Agent 名称。
+
 每个子会话一行：
 
 - 状态图标。
@@ -164,6 +166,8 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 
 `session.result.get` 与会话结束自动回复使用同一份结果。Runtime 不应为 UI 获取动作重复生成结果；如果目标 Task completed 但没有 ResultRecord，Runtime 先请求该 Task 对应 Session 输出 `done.result`，再持久化并返回。
 
+当 UI 或 Runtime 向 child session 写入 resume/control message 时，user message 的 `agent` 应使用目标 child session 的绑定 Agent。`source_session` 只表示控制动作来源，不得覆盖目标会话的执行 Agent。
+
 协议恢复：
 
 当加载会话发现最后一条 assistant message 只有 native `AgentProtocolOutput`，但没有 protocol summary、context、response、malformed 或 recovery hint，Runtime 可以进入选择性恢复。恢复不得直接重放整个 protocol package，因为中断前可能已经开始执行非幂等工具或创建子会话。
@@ -176,7 +180,7 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 | `agent` | 先按 action id 查找已创建 child session；存在时只检查 delegation result 和 child session status，必要时恢复该 child session，不创建重复 child；不存在时才创建新的 child session。 |
 | `tool` / `runtime` / 其他 action | 不自动重放。写入 recovery hint，引导用户重新发送或澄清请求，让模型基于当前状态生成新的 protocol package。 |
 
-如果内存中的 question 队列在重启后丢失，但 session `dsl_context.protocol.confirmations` 仍有 `pending` confirmation，`question.list` 应从持久状态合成最新 pending request。确认交互只在会话 timeline 内以请求卡展示，不使用全局弹框或 composer 浮层；用户点击 Confirm / Cancel 时客户端必须提交明确 `response: "confirm" | "cancel"`，Runtime 更新 confirmation 状态，并用明确的用户输入继续对应会话。确认或取消后，请求卡折叠为只读占位，可展开查看原 plan，但不能再次修改。
+如果内存中的 question 队列在重启后丢失，但 session `dsl_context.protocol.confirmations` 仍有 `pending` confirmation，`question.list` 应从持久状态合成最新 pending request。确认交互只在会话 timeline 内以请求卡展示，不使用全局弹框或 composer 浮层；UI 展示 pending confirmation 时必须和 `question.list` 的当前可提交 request 对齐，同一 action/message 的 retry 只展示最新记录，同一会话存在多个 pending 时只展示当前可提交项或最新 pending。非当前项目的 `question.asked` 不弹全局提示，切换到目标项目后由对应会话区展示。用户点击 Confirm / Cancel 时客户端必须提交明确 `response: "confirm" | "cancel"`，Runtime 更新 confirmation 状态，并用明确的用户输入继续对应会话。确认或取消后，请求卡折叠为只读占位，可展开查看原 plan，但不能再次修改。
 
 ### 右侧任务栏
 

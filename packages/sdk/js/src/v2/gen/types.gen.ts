@@ -92,7 +92,8 @@ export type SessionStatus =
       type: "rate_limited"
       providerID: string
       modelID: string
-      scope: "provider" | "model"
+      scope: "provider" | "model" | "agent"
+      agent?: string
       active: number
       limit: number
       queued: number
@@ -130,6 +131,11 @@ export type SessionStatus =
   | {
       type: "blocked"
       message?: string
+    }
+  | {
+      type: "interrupted"
+      message?: string
+      prior?: "queued" | "starting" | "running" | "rate_limited" | "retry"
     }
   | {
       type: "completed"
@@ -222,6 +228,10 @@ export type EventQuestionReplied = {
     sessionID: string
     requestID: string
     answers: Array<QuestionAnswer>
+    /**
+     * Explicit confirmation response for confirm-only prompts
+     */
+    response?: "confirm" | "cancel"
   }
 }
 
@@ -1032,6 +1042,11 @@ export type Session = {
     url: string
   }
   title: string
+  agent?: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
   version: string
   time: {
     created: number
@@ -1953,6 +1968,11 @@ export type GlobalSession = {
     url: string
   }
   title: string
+  agent?: string
+  model?: {
+    providerID: string
+    modelID: string
+  }
   version: string
   time: {
     created: number
@@ -4680,6 +4700,11 @@ export type SessionCreateData = {
   body?: {
     parentID?: string
     title?: string
+    agent?: string
+    model?: {
+      providerID: string
+      modelID: string
+    }
     permission?: PermissionRuleset
   }
   path?: never

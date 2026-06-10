@@ -46,6 +46,13 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
+import {
+  confirmationKey,
+  protocolConfirmationRequest,
+  questionConfirmationKey,
+  visibleConfirmations,
+} from "@/pages/session/session-confirmation-match"
+import { delegationProgress, pendingDelegation, turn } from "@/pages/session/session-delegations"
 
 type MessageComment = {
   path: string
@@ -65,13 +72,6 @@ const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "e
 const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
-
-type DelegationState = {
-  total: number
-  done: number
-  active: { id: string; label: string }[]
-  completed: { id: string; label: string }[]
-}
 
 type ConfirmStatus = "pending" | "confirmed" | "cancelled"
 
@@ -122,63 +122,6 @@ const confirmations = (input: unknown, messageID: string, messages: MessageType[
     .sort((a, b) => (a.updated_at ?? 0) - (b.updated_at ?? 0))
 }
 
-const delegationItem = (
-  input: unknown,
-): input is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-  record(input) && typeof input.parent_message_id === "string" && typeof input.child_session_id === "string"
-
-const delegationRows = (input: unknown, messageID: string) => {
-  if (!Array.isArray(input)) return []
-  const rows = input
-    .filter(
-      (item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-        delegationItem(item) && item.parent_message_id === messageID,
-    )
-    .reduce((acc: Map<string, { id: string; label: string }>, item) => {
-      if (acc.has(item.child_session_id)) return acc
-      const label = text(item.action_title) || `子会话 ${String(item.child_session_id)}`
-      acc.set(item.child_session_id, { id: item.child_session_id, label })
-      return acc
-    }, new Map<string, { id: string; label: string }>())
-  return Array.from(rows.values())
-}
-
-const pendingDelegation = (input: unknown, messageID: string) => {
-  if (!record(input)) return false
-  const protocol = input.protocol
-  if (!record(protocol)) return false
-  const pending = protocol.pending_delegations
-  if (!record(pending)) return false
-  return Object.values(pending).some((item) => record(item) && item.parent_message_id === messageID)
-}
-
-const delegationProgress = (input: unknown, messageID: string): DelegationState => {
-  if (!record(input)) return { total: 0, done: 0, active: [], completed: [] }
-  const protocol = input.protocol
-  if (!record(protocol)) return { total: 0, done: 0, active: [], completed: [] }
-
-  const active = Object.values(record(protocol.pending_delegations) ? protocol.pending_delegations : {})
-    .filter(
-      (item): item is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
-        delegationItem(item) && item.parent_message_id === messageID,
-    )
-    .map((item) => ({
-      id: String(item.child_session_id),
-      label: text(item.action_title) || `子会话 ${String(item.child_session_id)}`,
-    }))
-
-  const completed = delegationRows(protocol.completed_delegations, messageID)
-
-  const ids = new Set(active.map((item) => item.id).concat(completed.map((item) => item.id)))
-
-  return {
-    total: ids.size,
-    done: completed.length,
-    active,
-    completed,
-  }
-}
-
 const within = (session: Session[], root: string, target: string): boolean => {
   if (root === target) return true
   const map = new Map(session.map((item) => [item.id, item.parentID]))
@@ -205,18 +148,12 @@ const match = (
   return children.some((item) => within(session, item.id, input.sessionID))
 }
 
-const turn = (messages: MessageType[], root: string, target: string) => {
-  const start = messages.findIndex((item) => item.id === root)
-  if (start < 0) return root === target
-  const next = messages.slice(start + 1).findIndex((item) => item.role === "user")
-  return messages.slice(start, next < 0 ? undefined : start + 1 + next).some((item) => item.id === target)
-}
-
 const dot = (type: string) => {
   if (type === "waiting_user" || type === "waiting_permission" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"
   if (live.has(type)) return "bg-icon-info-base"
-  if (type === "completed" || type === "idle") return "bg-icon-success-base"
+  if (type === "completed") return "bg-icon-success-base"
+  if (type === "idle") return "bg-icon-weak-base"
   return "bg-icon-critical-base"
 }
 
@@ -301,7 +238,8 @@ function SessionConfirmationCard(props: {
         <Show when={open()}>
           <div class="border-t border-border-weaker-base p-2">
             <Show
-              when={props.item.status === "pending" && props.request}
+              when={props.item.status === "pending" ? props.request : undefined}
+              keyed
               fallback={
                 <div
                   data-scrollable
@@ -311,7 +249,7 @@ function SessionConfirmationCard(props: {
                 </div>
               }
             >
-              {(req) => <SessionQuestionDock request={req()} onSubmit={props.submit} />}
+              {(req) => <SessionQuestionDock request={req} onSubmit={props.submit} />}
             </Show>
           </div>
         </Show>
@@ -508,7 +446,7 @@ export function MessageTimeline(props: {
     }
 
     const status = sessionStatus()
-    if (status.type !== "idle") {
+    if (live.has(status.type)) {
       const messages = sessionMessages()
       for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "user") return messages[i].id
@@ -1376,8 +1314,8 @@ export function MessageTimeline(props: {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
                   })
                   const commentCount = createMemo(() => comments().length)
-                  const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID))
-                  const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID))
+                  const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID, sessionMessages()))
+                  const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
                   const completed = createMemo(
                     () => sessionStatus().type === "idle" && done(sessionMessages(), messageID),
                   )
@@ -1399,11 +1337,19 @@ export function MessageTimeline(props: {
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
                     return req
                   })
-                  const confirms = createMemo(() => confirmations(info()?.dsl_context, messageID, sessionMessages()))
+                  const all = createMemo(() => confirmations(info()?.dsl_context, messageID, sessionMessages()))
+                  const questionKey = createMemo(() => questionConfirmationKey(question()))
+                  const confirms = createMemo(() => visibleConfirmations(all(), questionKey()))
                   const questionConfirm = createMemo(() => {
-                    const req = question()
-                    return !!req?.tool && confirms().some((item) => item.status === "pending" && item.message_id === req.tool?.messageID)
+                    const key = questionKey()
+                    if (!key) return false
+                    return confirms().some((item) => item.status === "pending" && confirmationKey(item) === key)
                   })
+                  const confirmRequest = (item: ConfirmRecord) => {
+                    if (item.status !== "pending") return
+                    if (confirmationKey(item) === questionKey()) return question()
+                    return protocolConfirmationRequest({ item, sessionID: sessionID() })
+                  }
                   const permission = createMemo(() => {
                     const req = props.request?.permission
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
@@ -1482,15 +1428,14 @@ export function MessageTimeline(props: {
                           {(item) => (
                             <SessionConfirmationCard
                               item={item}
-                              request={item.status === "pending" ? question() : undefined}
+                              request={confirmRequest(item)}
                               submit={props.request?.submit ?? (() => undefined)}
                             />
                           )}
                         </For>
                       </Show>
-                      <Show when={props.filter === "all" && active() && !questionConfirm() ? question() : undefined}>
+                      <Show when={props.filter === "all" && active() && !questionConfirm() ? question() : undefined} keyed>
                         {(request) => {
-                          const req = request()
                           const submit = props.request!.submit
                           return (
                             <div class="px-4 md:px-5 pt-4">
@@ -1514,7 +1459,7 @@ export function MessageTimeline(props: {
                                 </button>
                                 <Show when={questionOpen()}>
                                   <div class="border-t border-border-weaker-base p-2">
-                                    <SessionQuestionDock request={req} onSubmit={submit} />
+                                    <SessionQuestionDock request={request} onSubmit={submit} />
                                   </div>
                                 </Show>
                               </div>

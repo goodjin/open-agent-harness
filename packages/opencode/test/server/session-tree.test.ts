@@ -8,6 +8,7 @@ import { Server } from "../../src/server/server"
 import { SessionStatus } from "../../src/session/status"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -71,7 +72,14 @@ describe("Session tree projection", () => {
               }),
             })
             expect(res.status).toBe(200)
-            expect((await Session.get(child.id)).title).toBe("renamed-child")
+            const updated = await Session.get(child.id)
+            expect(updated.title).toBe("renamed-child")
+            expect(updated.agent).toBe("build")
+            expect(updated.model).toEqual({
+              providerID: ProviderID.make("anthropic"),
+              modelID: ModelID.make("claude-sonnet-4"),
+            })
+            expect(JSON.stringify(updated.dsl_context ?? {})).not.toContain("session_tree")
 
             const tree = await app.request(`/session/tree?root=${parent.id}`)
             const body = (await tree.json()) as { nodes: Record<string, unknown>[] }
@@ -144,6 +152,7 @@ describe("Session tree projection", () => {
           fn: async () => {
             const parent = await Session.create({ title: "tree-root" })
             const idle = await Session.create({ title: "tree-idle", parentID: parent.id })
+            await Session.setAgent({ sessionID: idle.id, agent: "build" })
             const app = Server.Default()
             const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
             const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
@@ -171,6 +180,7 @@ describe("Session tree projection", () => {
               expect(await res.json()).toEqual({ resumed: 1 })
               expect(loop).not.toHaveBeenCalled()
               expect(inputs).toHaveLength(1)
+              expect(inputs[0]?.agent).toBe("build")
               const text = inputs[0]?.parts.find((part) => part.type === "text")?.text
               expect(text).toContain("[Session Command]")
               expect(text).toContain("source: user")
@@ -207,6 +217,7 @@ describe("Session tree projection", () => {
           fn: async () => {
             const parent = await Session.create({ title: "tree-root" })
             const idle = await Session.create({ title: "tree-idle", parentID: parent.id })
+            SessionStatus.set(idle.id, { type: "completed" })
             const app = Server.Default()
             const prompt = spyOn(SessionPrompt, "prompt")
 

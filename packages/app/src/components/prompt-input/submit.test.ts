@@ -16,12 +16,15 @@ const optimistic: Array<{
   }
 }> = []
 const optimisticSeeded: boolean[] = []
-const storedSessions: Record<string, Array<{ id: string; title?: string }>> = {}
+const storedSessions: Record<string, Array<{ id: string; title?: string; agent?: string }>> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentPrompt: Array<{ directory: string; sessionID: string }> = []
 const sentShell: string[] = []
 const syncedDirectories: string[] = []
 const toasts: Array<{ title?: string; description?: string }> = []
+const treeUpdates: Array<{ directory: string; ids?: string[]; agent?: string; confirm?: boolean }> = []
+const treeConflicts: Array<{ directory: string; sessionID: string; agent: string }> = []
+let confirmNext = false
 
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
@@ -55,6 +58,23 @@ const clientFor = (directory: string) => {
       },
       command: async () => ({ data: undefined }),
       abort: async () => ({ data: undefined }),
+      tree2: {
+        update: async (input: { ids?: string[]; agent?: string; confirm?: boolean }) => {
+          treeUpdates.push({ directory, ids: input.ids, agent: input.agent, confirm: input.confirm })
+          const id = input.ids?.[0]
+          if (
+            id &&
+            input.agent &&
+            !input.confirm &&
+            treeConflicts.some((item) => item.directory === directory && item.sessionID === id && item.agent === input.agent)
+          ) {
+            const err = new Error("conflict") as Error & { status?: number }
+            err.status = 409
+            throw err
+          }
+          return { data: { updated: input.ids?.length ?? 0 } }
+        },
+      },
     },
     worktree: {
       create: async () => ({ data: { directory: `${directory}/new` } }),
@@ -207,6 +227,8 @@ beforeAll(async () => {
     }),
   }))
 
+  globalThis.confirm = () => confirmNext
+
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
 })
@@ -223,6 +245,9 @@ beforeEach(() => {
   sentShell.length = 0
   syncedDirectories.length = 0
   toasts.length = 0
+  treeUpdates.length = 0
+  treeConflicts.length = 0
+  confirmNext = false
   selected = "/repo/worktree-a"
   variant = undefined
   currentModel = { id: "model", provider: { id: "provider" } }
@@ -261,12 +286,26 @@ describe("prompt submit worktree selection", () => {
     expect(createdClients).toEqual(["/repo/worktree-a", "/repo/worktree-b"])
     expect(createdSessions).toEqual(["/repo/worktree-a", "/repo/worktree-b"])
     expect(sentShell).toEqual(["/repo/worktree-a", "/repo/worktree-b"])
-    expect(syncedDirectories).toEqual(["/repo/worktree-a", "/repo/worktree-a", "/repo/worktree-b", "/repo/worktree-b"])
+    expect(syncedDirectories).toEqual([
+      "/repo/worktree-a",
+      "/repo/worktree-a",
+      "/repo/worktree-a",
+      "/repo/worktree-b",
+      "/repo/worktree-b",
+      "/repo/worktree-b",
+    ])
     expect(promoted).toEqual([
       { directory: "/repo/worktree-a", sessionID: "session-1" },
       { directory: "/repo/worktree-b", sessionID: "session-2" },
     ])
-    expect(syncedDirectories).toEqual(["/repo/worktree-a", "/repo/worktree-a", "/repo/worktree-b", "/repo/worktree-b"])
+    expect(syncedDirectories).toEqual([
+      "/repo/worktree-a",
+      "/repo/worktree-a",
+      "/repo/worktree-a",
+      "/repo/worktree-b",
+      "/repo/worktree-b",
+      "/repo/worktree-b",
+    ])
   })
 
   test("applies auto-accept to newly created sessions", async () => {
@@ -356,6 +395,95 @@ describe("prompt submit worktree selection", () => {
 
     expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
     expect(optimistic[0]?.sessionID).toBe("child")
+  })
+
+  test("binds the selected agent before sending followup prompts", async () => {
+    params = { id: "child" }
+    currentAgent = { name: "build" }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "child", agent: "default" }) as never,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(treeUpdates[0]).toMatchObject({ directory: "/repo/main", ids: ["child"], agent: "build", confirm: false })
+    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
+    expect(optimistic[0]?.message.agent).toBe("build")
+  })
+
+  test("does not send when bound agent change is rejected", async () => {
+    params = { id: "child" }
+    currentAgent = { name: "build" }
+    treeConflicts.push({ directory: "/repo/main", sessionID: "child", agent: "build" })
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "child", agent: "default" }) as never,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(treeUpdates).toHaveLength(1)
+    expect(sentPrompt).toEqual([])
+    expect(optimistic).toEqual([])
+  })
+
+  test("retries bound agent changes with confirmation before sending", async () => {
+    params = { id: "child" }
+    currentAgent = { name: "build" }
+    confirmNext = true
+    treeConflicts.push({ directory: "/repo/main", sessionID: "child", agent: "build" })
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "child", agent: "default" }) as never,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(treeUpdates.map((item) => item.confirm)).toEqual([false, true])
+    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
   })
 
   test("can submit shell text as a normal prompt", async () => {
@@ -500,7 +628,7 @@ describe("prompt submit worktree selection", () => {
 
     await submit.handleSubmit(event)
 
-    expect(storedSessions["/repo/worktree-a"]).toEqual([{ id: "session-1", title: "New session 1" }])
+    expect(storedSessions["/repo/worktree-a"]).toEqual([{ id: "session-1", title: "New session 1", agent: "agent" }])
     expect(optimisticSeeded).toEqual([true])
   })
 })

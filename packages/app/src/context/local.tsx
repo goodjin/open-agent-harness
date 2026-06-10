@@ -53,11 +53,9 @@ const clone = (value: State | undefined) => {
   } satisfies State
 }
 
-const tree = (input: unknown): State | undefined => {
+const bind = (input: unknown): State | undefined => {
   if (!input || typeof input !== "object" || Array.isArray(input)) return
-  const ctx = (input as { session_tree?: unknown }).session_tree
-  if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return
-  const item = ctx as {
+  const item = input as {
     agent?: unknown
     model?: {
       providerID?: unknown
@@ -160,7 +158,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           } satisfies State
         : undefined
       const info = sync.session.get(session)
-      return tree(info?.dsl_context) ?? saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
+      return bind(info) ?? saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
     })
 
     const started = createMemo(() => {

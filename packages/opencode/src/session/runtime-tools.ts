@@ -878,9 +878,7 @@ export namespace RuntimeTools {
   }
 
   function agentOf(session: Session.Info) {
-    const found = text(object(object(object(session.dsl_context).protocol).delegation).agent)
-    if (found) return found
-    return "default"
+    return session.agent ?? "default"
   }
 
   function delegationOf(session: Session.Info) {

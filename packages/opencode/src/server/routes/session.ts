@@ -148,6 +148,17 @@ function command(input: {
     .join("\n")
 }
 
+function bound(session: Session.Info) {
+  if (session.agent) return session.agent
+  const record = (input: unknown): input is Record<string, unknown> =>
+    typeof input === "object" && input !== null && !Array.isArray(input)
+  const protocol = session.dsl_context?.protocol
+  if (!record(protocol)) return undefined
+  const delegation = protocol.delegation
+  if (!record(delegation)) return undefined
+  return typeof delegation.agent === "string" ? delegation.agent : undefined
+}
+
 async function scoped<T>(directory: string | undefined, fn: () => Promise<T>) {
   if (!directory) return fn()
   return WorkspaceContext.provide({
@@ -385,16 +396,20 @@ export const SessionRoutes = lazy(() =>
       ),
       async (c) => {
         const body = c.req.valid("json")
-        await scoped(body.directory, async () => {
-          await Promise.all(
+        const aborted = await scoped(body.directory, async () => {
+          const done = new Set(["completed", "archived", "failed", "error", "timeout"])
+          const result = await Promise.all(
             body.ids.map(async (id) => {
               await Session.get(id)
+              if (done.has(SessionStatus.get(id).type)) return false
               SessionPrompt.cancel(id)
               SessionStatus.set(id, { type: "aborted", message: body.reason })
+              return true
             }),
           )
+          return result.filter(Boolean).length
         })
-        return c.json({ aborted: body.ids.length })
+        return c.json({ aborted })
       },
     )
     .post(
@@ -430,12 +445,12 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const body = c.req.valid("json")
         const mode = body.mode ?? "restore"
-        const done = new Set(["completed", "idle"])
-        const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+        const done = new Set(["completed"])
+        const stopped = new Set(["aborted", "paused", "failed", "blocked", "interrupted", "timeout", "error"])
         const resumed = await scoped(body.directory, async () => {
           const result = await Promise.all(
             body.ids.map(async (id) => {
-              await Session.get(id)
+              const info = await Session.get(id)
               const status = SessionStatus.get(id)
               if (mode === "restore") {
                 if (!stopped.has(status.type)) return false
@@ -458,6 +473,7 @@ export const SessionRoutes = lazy(() =>
               }
               void SessionPrompt.prompt({
                 sessionID: id,
+                agent: bound(info),
                 metadata: meta,
                 parts: [
                   {

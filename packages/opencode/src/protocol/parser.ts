@@ -88,7 +88,12 @@ export namespace AgentProtocolParser {
     if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return
     const json = decode(trimmed)
     if (!json || typeof json !== "object" || Array.isArray(json)) return
-    if ((json as { type?: unknown }).type !== "agent.protocol.output" && (json as { type?: unknown }).type !== "agent.protocol") return
+    if (
+      (json as { type?: unknown }).type !== "agent.protocol.output" &&
+      (json as { type?: unknown }).type !== "agent.protocol" &&
+      typeof (json as { kind?: unknown }).kind !== "string"
+    )
+      return
     return json
   }
 

@@ -199,10 +199,14 @@ type Status = {
   type?: string
 }
 
+const closed = ["idle", "completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
+const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "paused", "aborting"]
+const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
+
 export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {
-  if (!status || status.type === "idle") return false
-  if (status.type === "timeout" || status.type === "error") return false
-  if (status.type !== "running") return true
+  if (!status?.type) return false
+  if (closed.includes(status.type)) return false
+  if (status.type !== "running") return active.includes(status.type)
 
   const user = (messages ?? []).findLast((message) => message.role === "user")
   const assistant = (messages ?? []).findLast((message) => message.role === "assistant")
@@ -218,13 +222,16 @@ export const sessionWorking = (messages: Message[] | undefined, status: Status |
 }
 
 export const sessionCompleted = (session: Session, messages: Message[] | undefined, status: Status | undefined) => {
+  if (status?.type === "completed") return true
+  if (status?.type && failed.includes(status.type)) return false
   if (sessionWorking(messages, status)) return false
-  if (!messages) return (session.time.updated ?? session.time.created) > session.time.created
-  return messages.some(
-    (message) =>
-      message.role === "assistant" &&
-      typeof (message as { time?: { completed?: unknown } }).time?.completed === "number",
-  )
+  if (!messages) return false
+  const index = messages.findLastIndex((message) => message.role === "user")
+  if (index === -1) return false
+  return messages.slice(index + 1).some((message) => {
+    if (message.role !== "assistant") return false
+    return typeof (message as { time?: { completed?: unknown } }).time?.completed === "number"
+  })
 }
 
 export const childSessionSummary = (
@@ -250,6 +257,14 @@ const sessionTitleParts = (title: string) => {
     context: base.slice(0, idx).trim(),
     suffix,
   }
+}
+
+export const sessionTitleHasAgent = (title: string) => !!sessionTitleParts(title).suffix
+
+export const sessionAgentLabel = (session: Session, agent: string | undefined) => {
+  if (session.parentID) return undefined
+  if (sessionTitleHasAgent(session.title)) return undefined
+  return agent
 }
 
 export const displaySessionTitle = (session: Session, index?: number) => {

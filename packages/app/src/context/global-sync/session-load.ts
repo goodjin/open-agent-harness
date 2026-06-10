@@ -75,6 +75,13 @@ export function sessionFromNode(node: SessionTreeNode, root?: Session): Session 
     directory: root?.directory ?? "",
     parentID: node.parent_id,
     title: node.title,
+    agent: node.agent,
+    model: node.model
+      ? {
+          providerID: node.model.provider_id,
+          modelID: node.model.model_id,
+        }
+      : undefined,
     version: root?.version ?? "v2",
     summary: {
       additions: node.stats.additions,

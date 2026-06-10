@@ -53,6 +53,7 @@ import { AgentEntry } from "@/agent/entry"
 import { resolveInstructions } from "@/agent/instructions"
 import { Global } from "@/global"
 import { Storage } from "@/storage/storage"
+import { ConflictError } from "@/storage/db"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -268,12 +269,21 @@ export namespace SessionPrompt {
     const s = state()
     const match = s[sessionID]
     if (!match) {
-      SessionStatus.set(sessionID, { type: "idle" })
+      const status = SessionStatus.get(sessionID).type
+      if (
+        status === "completed" ||
+        status === "archived" ||
+        status === "failed" ||
+        status === "error" ||
+        status === "timeout"
+      )
+        return
+      SessionStatus.set(sessionID, { type: "aborted" })
       return
     }
     match.abort.abort()
     delete s[sessionID]
-    SessionStatus.set(sessionID, { type: "idle" })
+    SessionStatus.set(sessionID, { type: "aborted" })
     return
   }
 
@@ -289,7 +299,7 @@ export namespace SessionPrompt {
       return
     }
 
-    SessionStatus.set(sessionID, { type: "idle" })
+    SessionStatus.set(sessionID, { type: "completed" })
 
     if (entry.callbacks.length === 0) {
       delete s[sessionID]
@@ -360,6 +370,7 @@ export namespace SessionPrompt {
 
       if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
       lastUserID = lastUser.id
+      const agentName = pref(session).agent ?? lastUser.agent
       if (
         lastAssistant?.finish &&
         !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
@@ -575,7 +586,7 @@ export namespace SessionPrompt {
       ) {
         await SessionCompaction.create({
           sessionID,
-          agent: lastUser.agent,
+          agent: agentName,
           model: lastUser.model,
           auto: true,
         })
@@ -583,8 +594,8 @@ export namespace SessionPrompt {
       }
 
       // normal processing
-      const agent = await Agent.get(lastUser.agent)
-      if (!agent) throw new Error(`Agent not found: ${lastUser.agent}`)
+      const agent = await Agent.get(agentName)
+      if (!agent) throw new Error(`Agent not found: ${agentName}`)
       const maxSteps = agent.steps ?? Infinity
       const isLastStep = step >= maxSteps
       msgs = await insertReminders({
@@ -642,7 +653,7 @@ export namespace SessionPrompt {
           messages: msgs,
         })
         if (agent.runner === "protocol") {
-          runtime = await stable(sessionID, session, runtime)
+          runtime = await stable(sessionID, session, agent, runtime)
         }
         tools = agent.runner === "protocol" ? {} : runtime.tools
 
@@ -774,7 +785,7 @@ export namespace SessionPrompt {
         }
         await SessionCompaction.create({
           sessionID,
-          agent: lastUser.agent,
+          agent: agentName,
           model: lastUser.model,
           auto: true,
           overflow,
@@ -880,24 +891,9 @@ export namespace SessionPrompt {
   }
 
   function pref(session: Session.Info) {
-    const ctx = session.dsl_context?.session_tree
-    if (!ctx || typeof ctx !== "object" || Array.isArray(ctx)) return {}
-    const item = ctx as {
-      agent?: unknown
-      model?: {
-        providerID?: unknown
-        modelID?: unknown
-      }
-    }
     return {
-      agent: typeof item.agent === "string" ? item.agent : undefined,
-      model:
-        typeof item.model?.providerID === "string" && typeof item.model.modelID === "string"
-          ? {
-              providerID: ProviderID.make(item.model.providerID),
-              modelID: ModelID.make(item.model.modelID),
-            }
-          : undefined,
+      agent: session.agent,
+      model: session.model,
     }
   }
 
@@ -962,8 +958,10 @@ export namespace SessionPrompt {
 
   type RuntimeContext = {
     protocol?: {
+      agent?: string
       prompt?: string
       catalog?: string[]
+      signature?: string
     }
   }
 
@@ -975,18 +973,41 @@ export namespace SessionPrompt {
     return Storage.read<RuntimeContext>(["session_runtime_context", sessionID]).catch(() => undefined)
   }
 
-  async function stable(sessionID: SessionID, session: Session.Info, runtime: RuntimeTools.Info): Promise<RuntimeTools.Info> {
+  async function stable(
+    sessionID: SessionID,
+    session: Session.Info,
+    agent: Agent.Info,
+    runtime: RuntimeTools.Info,
+  ): Promise<RuntimeTools.Info> {
+    const ids = runtime.catalog.map((item) => item.id)
+    const signature = JSON.stringify({
+      agent: agent.name,
+      catalog: runtime.catalog.map((item) => ({
+        id: item.id,
+        description: item.description,
+        schema: item.schema,
+      })),
+    })
     const saved = await cache(sessionID)
-    if (saved?.protocol?.prompt) return { ...runtime, prompt: saved.protocol.prompt }
+    if (
+      saved?.protocol?.prompt &&
+      saved.protocol.agent === agent.name &&
+      saved.protocol.signature === signature
+    ) {
+      return { ...runtime, prompt: saved.protocol.prompt }
+    }
 
     const ctx = session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context) ? session.dsl_context : {}
     const prev = obj(ctx.protocol)
     const tools = obj(prev.tools)
-    const prompt = typeof tools.prompt === "string" ? tools.prompt : runtime.prompt
+    const legacy = Array.isArray(tools.catalog) ? tools.catalog.filter((item) => typeof item === "string") : []
+    const prompt = typeof tools.prompt === "string" && same(legacy, ids) ? tools.prompt : runtime.prompt
     await Storage.write(["session_runtime_context", sessionID], {
       protocol: {
+        agent: agent.name,
         prompt,
-        catalog: runtime.catalog.map((item) => item.id),
+        catalog: ids,
+        signature,
       },
     } satisfies RuntimeContext)
     if (typeof tools.prompt === "string" || prev.tools !== undefined) {
@@ -999,6 +1020,10 @@ export namespace SessionPrompt {
       })
     }
     return { ...runtime, prompt }
+  }
+
+  function same(left: string[], right: string[]) {
+    return left.length === right.length && left.every((item, index) => item === right[index])
   }
 
   /** @internal Exported for testing */
@@ -1031,9 +1056,14 @@ export namespace SessionPrompt {
     })
   }
 
-  async function createUserMessage(input: PromptInput, session: Session.Info) {
-    const sessionPref = pref(session)
-    const agentName = input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
+	  async function createUserMessage(input: PromptInput, session: Session.Info) {
+	    const sessionPref = pref(session)
+	    if (sessionPref.agent && input.agent && sessionPref.agent !== input.agent) {
+	      throw new ConflictError({
+	        message: `Session ${input.sessionID} has bound agent "${sessionPref.agent}". Update the session agent before sending with "${input.agent}".`,
+	      })
+	    }
+	    const agentName = sessionPref.agent ?? input.agent ?? (await Agent.defaultAgent())
     const agent = agentName ? await Agent.get(agentName) : undefined
 
     const model = input.model ?? sessionPref.model ?? agent?.model ?? (await lastModel(input.sessionID))
@@ -1813,7 +1843,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     const command = await Command.get(input.command)
     const session = await Session.get(input.sessionID)
     const sessionPref = pref(session)
-    const agentName = command.agent ?? input.agent ?? sessionPref.agent ?? (await Agent.defaultAgent())
+    const agentName = sessionPref.agent ?? command.agent ?? input.agent ?? (await Agent.defaultAgent())
 
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))

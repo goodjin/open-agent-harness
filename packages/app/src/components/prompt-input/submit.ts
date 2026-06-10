@@ -37,6 +37,11 @@ export type FollowupDraft = {
   variant?: string
 }
 
+type SubmitSession = Partial<Session> & {
+  id: string
+  agent?: string
+}
+
 type FollowupSendInput = {
   client: ReturnType<typeof useSDK>["client"]
   globalSync: ReturnType<typeof useGlobalSync>
@@ -167,7 +172,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
 }
 
 type PromptSubmitInput = {
-  info: Accessor<{ id: string } | undefined>
+  info: Accessor<SubmitSession | undefined>
   imageAttachments: Accessor<ImageAttachmentPart[]>
   commentCount: Accessor<number>
   autoAccept: Accessor<boolean>
@@ -216,6 +221,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
     if (err instanceof Error) return err.message
     return language.t("common.requestFailed")
+  }
+
+  const code = (err: unknown) => {
+    const item = err as { status?: number; response?: { status?: number } }
+    return item.status ?? item.response?.status
   }
 
   const abort = async () => {
@@ -407,9 +417,48 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       providerID: currentModel.provider.id,
     }
     const agent = currentAgent.name
+    let info: SubmitSession = session
+    const bind = async (confirm = false) => {
+      await client.session.tree2.update({
+        body_directory: sessionDirectory,
+        ids: [info.id],
+        agent,
+        confirm,
+      })
+      info = { ...info, agent }
+      seed(sessionDirectory, info as Session)
+    }
+    const current = info.agent
+    if (current !== agent) {
+      try {
+        await bind()
+      } catch (err) {
+        if (code(err) !== 409) {
+          showToast({
+            title: language.t("prompt.toast.promptSendFailed.title"),
+            description: errorMessage(err),
+          })
+          return
+        }
+        const ok =
+          globalThis.confirm?.(
+            `This session is bound to ${current ?? "another agent"}. Switch it to ${agent} before sending?`,
+          ) ?? false
+        if (!ok) return
+        try {
+          await bind(true)
+        } catch (next) {
+          showToast({
+            title: language.t("prompt.toast.promptSendFailed.title"),
+            description: errorMessage(next),
+          })
+          return
+        }
+      }
+    }
     const context = prompt.context.items().slice()
     const draft: FollowupDraft = {
-      sessionID: session.id,
+      sessionID: info.id,
       sessionDirectory,
       prompt: currentPrompt,
       context,
@@ -450,7 +499,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       clearInput()
       client.session
         .shell({
-          sessionID: session.id,
+          sessionID: info.id,
           agent,
           model,
           command: text,
@@ -473,7 +522,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         clearInput()
         client.session
           .command({
-            sessionID: session.id,
+            sessionID: info.id,
             command: commandName,
             arguments: args.join(" "),
             agent,
@@ -504,7 +553,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     const removeOptimisticMessage = () => {
       sync.session.optimistic.remove({
         directory: sessionDirectory,
-        sessionID: session.id,
+        sessionID: info.id,
         messageID,
       })
     }
@@ -517,20 +566,20 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       if (!worktree || worktree.status !== "pending") return true
 
       if (sessionDirectory === projectDirectory) {
-        sync.set("session_status", session.id, { type: "running" })
+        sync.set("session_status", info.id, { type: "running" })
       }
 
       const controller = new AbortController()
       const cleanup = () => {
         if (sessionDirectory === projectDirectory) {
-          sync.set("session_status", session.id, { type: "idle" })
+          sync.set("session_status", info.id, { type: "idle" })
         }
         removeOptimisticMessage()
         restoreCommentItems(commentItems)
         restoreInput()
       }
 
-      pending.set(session.id, { abort: controller, cleanup })
+      pending.set(info.id, { abort: controller, cleanup })
 
       const abortWait = new Promise<Awaited<ReturnType<typeof WorktreeState.wait>>>((resolve) => {
         if (controller.signal.aborted) {
@@ -561,7 +610,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         if (timer.id === undefined) return
         clearTimeout(timer.id)
       })
-      pending.delete(session.id)
+      pending.delete(info.id)
       if (controller.signal.aborted) return false
       if (result.status === "failed") throw new Error(result.message)
       return true
@@ -576,9 +625,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
     }).catch((err) => {
-      pending.delete(session.id)
+      pending.delete(info.id)
       if (sessionDirectory === projectDirectory) {
-        sync.set("session_status", session.id, { type: "idle" })
+        sync.set("session_status", info.id, { type: "idle" })
       }
       showToast({
         title: language.t("prompt.toast.promptSendFailed.title"),

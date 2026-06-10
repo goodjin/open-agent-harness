@@ -36,6 +36,18 @@ const withCategory = (category: string) => {
   })
 }
 
+const active = new Set([
+  "queued",
+  "starting",
+  "running",
+  "rate_limited",
+  "retry",
+  "waiting_permission",
+  "waiting_user",
+  "paused",
+  "aborting",
+])
+
 export const useSessionCommands = (actions: SessionCommandContext) => {
   const command = useCommand()
   const dialog = useDialog()
@@ -425,7 +437,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         onSelect: async () => {
           const sessionID = params.id
           if (!sessionID) return
-          if (status().type !== "idle") {
+          if (active.has(status().type)) {
             await sdk.client.session.abort({ sessionID }).catch(() => {})
           }
           const revert = info()?.revert?.messageID

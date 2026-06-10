@@ -1547,6 +1547,9 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
 
   const displayText = () => (part().text ?? "").trim()
   const throttledText = createThrottledValue(displayText)
+  const chars = createMemo(() =>
+    i18n.t("ui.sessionTurn.summary.responseChars", { count: numfmt().format(displayText().length) }),
+  )
   const workflow = createMemo(() => workflowMeta(part().metadata))
   const workflowTitle = createMemo(() => {
     const meta = workflow()
@@ -1605,6 +1608,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
                 <span data-slot="part-header-title">
                   <Icon name="bubble-5" size="small" />
                   <span>{i18n.t("ui.sessionTurn.summary.response")}</span>
+                  <span data-slot="part-header-meta">{chars()}</span>
                 </span>
                 <span data-slot="part-header-toggle">
                   <Icon name="chevron-down" size="small" />

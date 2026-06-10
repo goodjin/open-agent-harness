@@ -30,9 +30,16 @@ export async function InstanceBootstrap() {
   Truncate.init()
   SessionDelegation.init()
   const restored = await SessionStatus.restore()
+  const packets = await SessionRecovery.mark().catch((err) => {
+    Log.Default.warn("session recovery scan failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return []
+  })
+  const stale = new Set(packets.map((item) => item.session_id))
   for (const [id, status] of Object.entries(restored)) {
-    if (!SessionStatus.shouldContinue(status)) continue
     const sessionID = id as SessionID
+    if (!revive(status, stale.has(sessionID))) continue
     SessionStatus.set(sessionID, { type: "running" })
     void SessionPrompt.loop({ sessionID }).catch((err) => {
       Log.Default.warn("session auto-continue failed", {
@@ -42,15 +49,17 @@ export async function InstanceBootstrap() {
       SessionStatus.set(sessionID, { type: "error", message: err instanceof Error ? err.message : String(err) })
     })
   }
-  SessionRecovery.mark().catch((err) => {
-    Log.Default.warn("session recovery scan failed", {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  })
 
   Bus.subscribe(Command.Event.Executed, async (payload) => {
     if (payload.properties.name === Command.Default.INIT) {
       await Project.setInitialized(Instance.project.id)
     }
   })
+}
+
+export function revive(status: SessionStatus.Info, stale: boolean) {
+  if (SessionStatus.shouldContinue(status)) return true
+  if (status.type !== "interrupted") return false
+  if (status.prior !== "running" && status.prior !== "starting") return false
+  return !stale
 }

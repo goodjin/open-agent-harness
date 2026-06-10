@@ -2336,6 +2336,8 @@ describe("SessionRunner", () => {
               expect(children[0]?.title).toContain("Protocol: update_toolbar_backend")
               const child = await Session.get(children[0]!.id)
               expect(JSON.stringify(child.dsl_context)).toContain("agent.delegation.assignment")
+              expect(child.agent).toBe("backend")
+              expect(child.dsl_context).not.toHaveProperty("session_tree")
               expect(JSON.stringify(child.dsl_context)).toContain('"parent_session_id"')
               expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain("The parent session will resume automatically")
               expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_summary" && part.text.includes("The parent session will resume automatically"))).toBe(true)
@@ -3460,7 +3462,7 @@ describe("SessionRunner", () => {
           yield { type: "start" }
           yield { type: "start-step" }
           yield { type: "text-start" }
-          yield { type: "text-delta", text: '{"kind":"answer","message":"Recovered from plain JSON answer."}' }
+          yield { type: "text-delta", text: '{"kind":"answer","answer":"Recovered from plain JSON answer."}' }
           yield { type: "text-end" }
           yield {
             type: "finish-step",

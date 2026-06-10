@@ -25,7 +25,19 @@ export namespace Question {
     return runPromiseInstance(S.QuestionService.use((service) => service.ask(input)))
   }
 
-  export async function reply(input: { requestID: QuestionID; answers: Answer[] }): Promise<void> {
+  export async function askReply(input: {
+    sessionID: SessionID
+    questions: Info[]
+    tool?: { messageID: MessageID; callID: string }
+  }): Promise<Reply> {
+    return runPromiseInstance(S.QuestionService.use((service) => service.askReply(input)))
+  }
+
+  export async function reply(input: {
+    requestID: QuestionID
+    answers: Answer[]
+    response?: Reply["response"]
+  }): Promise<void> {
     return runPromiseInstance(S.QuestionService.use((service) => service.reply(input)))
   }
 

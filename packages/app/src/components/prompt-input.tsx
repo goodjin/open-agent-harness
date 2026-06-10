@@ -59,6 +59,18 @@ import { promptPlaceholder } from "./prompt-input/placeholder"
 import { isShellCommand } from "./prompt-input/shell-detect"
 import { ImagePreview } from "@open-agent-harness/ui/image-preview"
 
+const active = new Set([
+  "queued",
+  "starting",
+  "running",
+  "rate_limited",
+  "retry",
+  "waiting_permission",
+  "waiting_user",
+  "paused",
+  "aborting",
+])
+
 interface PromptInputProps {
   class?: string
   ref?: (el: HTMLDivElement) => void
@@ -245,7 +257,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         type: "idle",
       },
   )
-  const working = createMemo(() => status()?.type !== "idle")
+  const working = createMemo(() => active.has(status()?.type ?? "idle"))
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
   )

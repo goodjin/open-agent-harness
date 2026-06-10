@@ -40,6 +40,7 @@ export const dict = {
   "ui.sessionTurn.steps.show": "显示步骤",
   "ui.sessionTurn.steps.hide": "隐藏步骤",
   "ui.sessionTurn.summary.response": "回复",
+  "ui.sessionTurn.summary.responseChars": "{{count}} 字符",
   "ui.sessionTurn.diff.showMore": "显示更多更改（{{count}}）",
   "ui.sessionTurn.diff.summary": "本轮变更",
   "ui.sessionTurn.diff.expand": "展开另外 {{count}} 项",

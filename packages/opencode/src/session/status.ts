@@ -25,7 +25,8 @@ export namespace SessionStatus {
         type: z.literal("rate_limited"),
         providerID: z.string(),
         modelID: z.string(),
-        scope: z.enum(["provider", "model"]),
+        scope: z.enum(["provider", "model", "agent"]),
+        agent: z.string().optional(),
         active: z.number().int().nonnegative(),
         limit: z.number().int().positive(),
         queued: z.number().int().positive(),
@@ -63,6 +64,13 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("blocked"),
         message: z.string().optional(),
+      }),
+      z.object({
+        type: z.literal("interrupted"),
+        message: z.string().optional(),
+        prior: z
+          .enum(["queued", "starting", "running", "rate_limited", "retry"])
+          .optional(),
       }),
       z.object({
         type: z.literal("completed"),
@@ -137,10 +145,11 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "interrupted",
       "completed",
       "archived",
     ],
-    queued: ["idle", "starting", "running", "aborted", "failed", "blocked"],
+    queued: ["idle", "starting", "running", "aborted", "failed", "blocked", "interrupted"],
     starting: [
       "idle",
       "running",
@@ -153,6 +162,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "interrupted",
     ],
     running: [
       "idle",
@@ -168,6 +178,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "interrupted",
       "completed",
     ],
     rate_limited: [
@@ -184,6 +195,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "interrupted",
     ],
     waiting_permission: [
       "idle",
@@ -233,9 +245,14 @@ export namespace SessionStatus {
     aborted: ["idle", "running", "aborted", "archived"],
     failed: ["idle", "running", "failed", "archived"],
     blocked: ["idle", "running", "waiting_permission", "waiting_user", "aborted", "failed", "blocked"],
+    interrupted: ["idle", "running", "aborted", "failed", "blocked", "archived"],
     completed: ["idle", "running", "completed", "archived"],
     archived: ["idle", "archived"],
   }
+
+  type Restart = Extract<Info, { type: "starting" | "running" }>
+  const restart = new Set<Restart["type"]>(["starting", "running"])
+  const lost = (status: Info): status is Restart => restart.has(status.type as Restart["type"])
 
   export function get(sessionID: SessionID) {
     return (
@@ -263,7 +280,7 @@ export namespace SessionStatus {
     const prior = chains().get(sessionID) ?? Promise.resolve()
     const run = prior
       .then(() =>
-        status.type === "idle" || status.type === "completed" || status.type === "archived"
+        status.type === "idle" || status.type === "archived"
           ? Storage.remove(["session_status", sessionID])
           : Storage.write(["session_status", sessionID], {
               sessionID,
@@ -300,8 +317,16 @@ export namespace SessionStatus {
       const parsed = Info.safeParse(item.status)
       if (!parsed.success) continue
       if (parsed.data.type === "idle") continue
-      data[item.sessionID] = parsed.data
-      out[item.sessionID] = parsed.data
+      const status = lost(parsed.data)
+        ? ({
+            type: "interrupted",
+            prior: parsed.data.type,
+            message: `Session was ${parsed.data.type} when the process stopped.`,
+          } satisfies Info)
+        : parsed.data
+      data[item.sessionID] = status
+      out[item.sessionID] = status
+      if (status !== parsed.data) save(item.sessionID, status)
     }
     return out
   }

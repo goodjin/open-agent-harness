@@ -67,7 +67,10 @@ function tone(status: GraphRun["status"] | WorkflowStatus | undefined) {
 
 function sessionStatus(input: SessionStatus | undefined): WorkflowStatus | undefined {
   if (!input || input.type === "idle") return
-  if (input.type === "error" || input.type === "timeout") return "failed"
+  if (input.type === "completed") return "completed"
+  if (input.type === "error" || input.type === "timeout" || input.type === "failed" || input.type === "interrupted")
+    return "failed"
+  if (input.type === "aborted" || input.type === "archived") return "cancelled"
   return "running"
 }
 

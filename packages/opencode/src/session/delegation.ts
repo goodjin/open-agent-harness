@@ -49,9 +49,9 @@ export namespace SessionDelegation {
     action_title: string
     parent_session_id: string
     parent_message_id: string
-    parent_agent: string
+    parent_agent?: string
     child_session_id: string
-    agent: string
+    agent?: string
     metadata?: ReturnType<typeof AgentDelegation.runtime>
     result_policy: string
     created_at: number
@@ -103,6 +103,7 @@ export namespace SessionDelegation {
       },
     })
 
+    await Session.setAgent({ sessionID: input.childID, agent: input.agent, confirm: true })
     const child = await Session.get(input.childID)
     const childctx = object(child.dsl_context)
     const childprev = object(childctx.protocol)
@@ -212,7 +213,7 @@ export namespace SessionDelegation {
       }
       const freshNext = await load()
       if (!freshNext) return false
-      await notify(body)
+      await notify(body, item)
       await notified(input.sessionID, freshNext)
       return true
     } finally {
@@ -284,9 +285,7 @@ export namespace SessionDelegation {
       action_title: input.action.title,
       parent_session_id: input.sessionID,
       parent_message_id: input.messageID,
-      parent_agent: input.parentAgent,
       child_session_id: input.childID,
-      agent: input.agent,
       metadata: input.metadata,
       result_policy: input.action.result_policy,
       created_at: Date.now(),
@@ -301,9 +300,7 @@ export namespace SessionDelegation {
     if (
       typeof data.action_id !== "string" ||
       typeof data.action_title !== "string" ||
-      typeof data.agent !== "string" ||
       typeof data.child_session_id !== "string" ||
-      typeof data.parent_agent !== "string" ||
       typeof data.parent_message_id !== "string" ||
       typeof data.parent_session_id !== "string" ||
       typeof data.result_policy !== "string" ||
@@ -352,9 +349,7 @@ export namespace SessionDelegation {
       action_title: item.action_title as string,
       parent_session_id: item.parent_session_id as string,
       parent_message_id: item.parent_message_id as string,
-      parent_agent: item.parent_agent as string,
       child_session_id: item.child_session_id as string,
-      agent: item.agent as string,
       metadata: meta,
       result_policy: item.result_policy,
       completed_at: typeof item.completed_at === "number" ? item.completed_at : Date.now(),
@@ -395,7 +390,7 @@ export namespace SessionDelegation {
         protocol: {
           ...childprev,
           delegation: {
-            ...item,
+            ...clean(item),
             status: body.status,
             completed_at: body.completed_at,
             completed_message_id: messageID,
@@ -415,12 +410,13 @@ export namespace SessionDelegation {
     }
   }
 
-  async function notify(body: ReturnType<typeof completed>) {
+  async function notify(body: ReturnType<typeof completed>, item: Item) {
     const { SessionPrompt } = await import("./prompt")
     const stat = await progress(body)
+    const parent = await Session.get(SessionID.make(body.parent_session_id as string))
     void SessionPrompt.prompt({
       sessionID: SessionID.make(body.parent_session_id as string),
-      agent: body.parent_agent,
+      agent: parent.agent ?? item.parent_agent,
       parts: [
         {
           type: "text",
@@ -487,7 +483,7 @@ export namespace SessionDelegation {
         protocol: {
           ...prev,
           delegation: {
-            ...item,
+            ...clean(item),
             notified_at: time,
           },
         },
@@ -511,7 +507,7 @@ export namespace SessionDelegation {
             const data = object(entry)
             if (data.child_session_id !== sessionID) return entry
             return {
-              ...data,
+              ...clean(data),
               notified_at: time,
             }
           }),
@@ -521,6 +517,7 @@ export namespace SessionDelegation {
   }
 
   async function logdone(body: ReturnType<typeof completed>) {
+    const agent = await sessionAgent(body.child_session_id)
     await SessionLog.emit({
       sessionID: SessionID.make(body.parent_session_id as string),
       messageID: MessageID.make(body.parent_message_id as string),
@@ -528,7 +525,7 @@ export namespace SessionDelegation {
       type: body.status === "failed" ? "protocol.agent.failed" : "protocol.agent.completed",
       data: {
         actionID: body.action_id,
-        agent: body.agent,
+        ...(agent ? { agent } : {}),
         childSessionID: body.child_session_id,
         outputBytes: typeof body.output === "string" ? body.output.length : 0,
       },
@@ -537,13 +534,14 @@ export namespace SessionDelegation {
 
   async function logmeta(body: ReturnType<typeof completed>) {
     if (!body.metadata) return
+    const agent = await sessionAgent(body.child_session_id)
     await SessionLog.emit({
       sessionID: SessionID.make(body.parent_session_id),
       messageID: MessageID.make(body.parent_message_id),
       level: body.metadata.status === "completed" ? "info" : "warn",
       type: body.metadata.validation.status === "valid" ? "agent.metadata.output_validated" : "agent.metadata.output_validation_failed",
       data: {
-        agent: body.agent,
+        ...(agent ? { agent } : {}),
         status: body.metadata.status,
         artifacts: body.metadata.artifacts,
         validation: body.metadata.validation,
@@ -551,7 +549,8 @@ export namespace SessionDelegation {
       },
     })
     if (body.metadata.status === "completed") return
-    const cfg = await AgentDelegation.meta(body.agent).catch(() => undefined)
+    if (!agent) return
+    const cfg = await AgentDelegation.meta(agent).catch(() => undefined)
     const msgs = AgentDelegation.messages({ meta: cfg, event: "output_validation_failed" })
     if (!msgs.records.length && !msgs.diagnostics.length) return
     await SessionLog.emit({
@@ -560,7 +559,7 @@ export namespace SessionDelegation {
       level: "warn",
       type: "agent.metadata.messages",
       data: {
-        agent: body.agent,
+        agent,
         event: "output_validation_failed",
         records: msgs.records,
         diagnostics: msgs.diagnostics,
@@ -578,9 +577,9 @@ export namespace SessionDelegation {
       run_id: text(item.run_id),
       action_id: text(item.action_id),
       action_title: text(item.action_title),
-      parent_agent: text(item.parent_agent),
+      parent_agent: await sessionAgent(item.parent_session_id, text(item.parent_agent)),
       child_session_id: child,
-      agent: text(item.agent),
+      agent: await sessionAgent(child, text(item.agent)),
       result_policy: text(item.result_policy),
       created_at: number(item.created_at),
       completed_at: number(item.completed_at),
@@ -595,6 +594,17 @@ export namespace SessionDelegation {
     if (!ref) return
     const data = await Storage.read<{ output?: string }>(ref.split("/")).catch(() => undefined)
     return data?.output
+  }
+
+  async function sessionAgent(id: unknown, fallback?: string) {
+    const value = text(id)
+    if (!value) return fallback
+    const session = await Session.get(SessionID.make(value)).catch(() => undefined)
+    return session?.agent ?? fallback
+  }
+
+  function clean(item: Record<string, unknown>) {
+    return Object.fromEntries(Object.entries(item).filter((entry) => entry[0] !== "agent" && entry[0] !== "parent_agent"))
   }
 
   function match(item: Row, input: {

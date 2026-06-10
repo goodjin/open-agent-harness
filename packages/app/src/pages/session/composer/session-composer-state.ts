@@ -23,6 +23,17 @@ export const todoState = (input: {
 }
 
 const idle = { type: "idle" as const }
+const active = new Set([
+  "queued",
+  "starting",
+  "running",
+  "rate_limited",
+  "retry",
+  "waiting_permission",
+  "waiting_user",
+  "paused",
+  "aborting",
+])
 
 export function createSessionComposerState(options?: { closeMs?: number | (() => number) }) {
   const params = useParams()
@@ -107,7 +118,7 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     return sync.data.session_status[id] ?? idle
   })
 
-  const busy = createMemo(() => status().type !== "idle")
+  const busy = createMemo(() => active.has(status().type))
   const live = createMemo(() => {
     if (test.on && test.live !== undefined) return test.live
     return busy() || blocked()

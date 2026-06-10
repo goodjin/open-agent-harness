@@ -1,7 +1,23 @@
 import { describe, expect, test } from "bun:test"
 import { AgentConcurrency } from "../../src/protocol/agent-concurrency"
+import { Instance } from "../../src/project/instance"
+import type { Agent } from "../../src/agent/agent"
+import type { Provider } from "../../src/provider/provider"
+import { SessionID } from "../../src/session/schema"
 
 describe("AgentConcurrency", () => {
+  const model = {
+    id: "gpt-test",
+    providerID: "openai",
+  } as Provider.Model
+
+  const agent = (input: { name: string; kind?: Agent.Info["kind"]; concurrency?: number }) =>
+    ({
+      name: input.name,
+      kind: input.kind,
+      concurrency: input.concurrency,
+    }) as Agent.Info
+
   test("defaults ordinary planners to one concurrent task", () => {
     expect(AgentConcurrency.limit({ agent: "milestone-planner", kind: "planner" })).toBe(1)
     expect(AgentConcurrency.limit({ agent: "epic-planner", kind: "planner" })).toBe(1)
@@ -20,59 +36,64 @@ describe("AgentConcurrency", () => {
     expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner", cfg: { concurrency: 4 } })).toBe(4)
   })
 
-  test("counts only same-agent pending sessions", () => {
-    expect(
-      AgentConcurrency.running("backend", [
-        { action_id: "a", agent: "backend" },
-        { action_id: "b", agent: "frontend" },
-        { action_id: "c", agent: "backend" },
-      ]),
-    ).toBe(2)
+  test("waits for same project and same agent slot before request submission", async () => {
+    await Instance.provide({
+      directory: await tmp(),
+      fn: async () => {
+        const abort = new AbortController()
+        const one = await AgentConcurrency.acquire({
+          agent: agent({ name: "backend", kind: "worker", concurrency: 1 }),
+          model,
+          sessionID: SessionID.make("ses_1"),
+          abort: abort.signal,
+        })
+        let done = false
+        const two = AgentConcurrency.acquire({
+          agent: agent({ name: "backend", kind: "worker", concurrency: 1 }),
+          model,
+          sessionID: SessionID.make("ses_2"),
+          abort: abort.signal,
+        }).then((release) => {
+          done = true
+          return release
+        })
+
+        await Promise.resolve()
+        expect(done).toBe(false)
+        one()
+
+        const release = await two
+        expect(done).toBe(true)
+        release()
+      },
+    })
   })
 
-  test("blocks agent when dependency action is still pending", () => {
-    const out = AgentConcurrency.block({
-      action: "feature_2",
-      agent: "feature-planner",
-      kind: "planner",
-      depends: ["feature_1"],
-      completed: new Set(["confirm_plan"]),
-      done: [],
-      pending: [{ action_id: "feature_1", agent: "feature-planner" }],
-      running: 1,
+  test("does not share slots across different agents", async () => {
+    await Instance.provide({
+      directory: await tmp(),
+      fn: async () => {
+        const abort = new AbortController()
+        const one = await AgentConcurrency.acquire({
+          agent: agent({ name: "backend", kind: "worker", concurrency: 1 }),
+          model,
+          sessionID: SessionID.make("ses_3"),
+          abort: abort.signal,
+        })
+        const two = await AgentConcurrency.acquire({
+          agent: agent({ name: "frontend", kind: "worker", concurrency: 1 }),
+          model,
+          sessionID: SessionID.make("ses_4"),
+          abort: abort.signal,
+        })
+
+        two()
+        one()
+      },
     })
-
-    expect(out?.reason).toBe("agent_dependency_pending")
-  })
-
-  test("blocks agent when same-agent running count reaches limit", () => {
-    const out = AgentConcurrency.block({
-      action: "feature_3",
-      agent: "feature-planner",
-      kind: "planner",
-      depends: ["confirm_plan"],
-      completed: new Set(["confirm_plan"]),
-      done: [],
-      pending: [],
-      running: 2,
-    })
-
-    expect(out?.reason).toBe("agent_concurrency_limit")
-    expect(out?.limit).toBe(2)
-  })
-
-  test("allows worker when other agents are running but same-agent count is below limit", () => {
-    const out = AgentConcurrency.block({
-      action: "backend_2",
-      agent: "backend",
-      kind: "worker",
-      depends: ["confirm_plan"],
-      completed: new Set(["confirm_plan"]),
-      done: [],
-      pending: [],
-      running: 2,
-    })
-
-    expect(out).toBeUndefined()
   })
 })
+
+async function tmp() {
+  return await Bun.$`mktemp -d`.text().then((out) => out.trim())
+}

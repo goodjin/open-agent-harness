@@ -1137,7 +1137,6 @@ export default function Page() {
                       permission: composer.permissionRequest(),
                       responding: composer.permissionResponding(),
                       submit: () => {
-                        resumeScroll()
                         if (params.id) void syncCurrentSession(params.id, { force: true })
                       },
                       decide: (response) => {

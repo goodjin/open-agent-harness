@@ -1811,6 +1811,11 @@ export class Session3 extends HeyApiClient {
       directory?: string
       parentID?: string
       title?: string
+      agent?: string
+      model?: {
+        providerID: string
+        modelID: string
+      }
       permission?: PermissionRuleset
     },
     options?: Options<never, ThrowOnError>,
@@ -1823,6 +1828,8 @@ export class Session3 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "parentID" },
             { in: "body", key: "title" },
+            { in: "body", key: "agent" },
+            { in: "body", key: "model" },
             { in: "body", key: "permission" },
           ],
         },

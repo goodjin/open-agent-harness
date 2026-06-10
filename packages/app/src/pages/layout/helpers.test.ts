@@ -19,7 +19,10 @@ import {
   hasProjectPermissions,
   latestRootSession,
   sessionDescendants,
+  sessionCompleted,
+  sessionAgentLabel,
   sessionLineage,
+  sessionTitleHasAgent,
   sessionWorking,
   visibleSessionTree,
   workspaceKey,
@@ -42,6 +45,11 @@ const message = (input: Partial<Message> & Pick<Message, "id" | "sessionID">) =>
     time: { created: 0, completed: undefined },
     ...input,
   }) as Message
+
+const turn = (sessionID: string) => [
+  message({ id: `${sessionID}-user`, sessionID, role: "user", time: { created: 0 } }),
+  message({ id: `${sessionID}-assistant`, sessionID, time: { created: 1, completed: 2 } }),
+]
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
@@ -318,7 +326,7 @@ describe("layout workspace helpers", () => {
       childSessionSummary(
         [done, running, idle],
         {
-          done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
+          done: turn("done"),
           running: [message({ id: "running-message", sessionID: "running" })],
         },
         {
@@ -332,6 +340,51 @@ describe("layout workspace helpers", () => {
 
   test("does not treat timeout sessions as working", () => {
     expect(sessionWorking(undefined, { type: "timeout" })).toBe(false)
+  })
+
+  test("does not infer completion from lightweight tree timestamps", () => {
+    const item = session({ id: "pending", directory: "/workspace", time: { created: 1, updated: 2 } })
+
+    expect(sessionCompleted(item, undefined, undefined)).toBe(false)
+    expect(sessionCompleted(item, undefined, { type: "idle" })).toBe(false)
+    expect(sessionCompleted(item, undefined, { type: "waiting_user" })).toBe(false)
+  })
+
+  test("keeps terminal statuses out of working summaries", () => {
+    expect(sessionWorking(undefined, { type: "completed" })).toBe(false)
+    expect(sessionWorking(undefined, { type: "blocked" })).toBe(false)
+    expect(sessionWorking(undefined, { type: "failed" })).toBe(false)
+    expect(sessionWorking(undefined, { type: "interrupted" })).toBe(false)
+  })
+
+  test("uses explicit completed status without loaded messages", () => {
+    expect(sessionCompleted(session({ id: "done", directory: "/workspace" }), undefined, { type: "completed" })).toBe(
+      true,
+    )
+  })
+
+  test("requires a completed request turn before inferring completion from messages", () => {
+    const item = session({ id: "pending", directory: "/workspace" })
+
+    expect(
+      sessionCompleted(
+        item,
+        [message({ id: "orphan-assistant", sessionID: "pending", time: { created: 0, completed: 1 } })],
+        { type: "idle" },
+      ),
+    ).toBe(false)
+    expect(
+      sessionCompleted(
+        item,
+        [
+          ...turn("pending"),
+          message({ id: "latest-user", sessionID: "pending", role: "user", time: { created: 3 } }),
+        ],
+        { type: "idle" },
+      ),
+    ).toBe(false)
+    expect(sessionCompleted(item, turn("pending"), { type: "idle" })).toBe(true)
+    expect(sessionCompleted(item, turn("pending"), { type: "interrupted" })).toBe(false)
   })
 
   test("summarizes recursive child sessions", () => {
@@ -350,8 +403,8 @@ describe("layout workspace helpers", () => {
       childSessionSummary(
         sessionDescendants([list[1], list[2]], list, map),
         {
-          done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
-          grand: [message({ id: "grand-message", sessionID: "grand", time: { created: 0, completed: 1 } })],
+          done: turn("done"),
+          grand: turn("grand"),
         },
         {},
       ),
@@ -370,8 +423,8 @@ describe("layout workspace helpers", () => {
       list,
       map,
       {
-        done: [message({ id: "done-message", sessionID: "done", time: { created: 0, completed: 1 } })],
-        grand: [message({ id: "grand-message", sessionID: "grand", time: { created: 0, completed: 1 } })],
+        done: turn("done"),
+        grand: turn("grand"),
       },
       {
         idle: { type: "running" },
@@ -477,6 +530,24 @@ describe("layout workspace helpers", () => {
         0,
       ),
     ).toBe("Mission Build #3 Fix typecheck (@coder subagent)")
+  })
+
+  test("detects agent suffix in session title", () => {
+    expect(sessionTitleHasAgent("Protocol: fix task (@build)")).toBe(true)
+    expect(sessionTitleHasAgent("Regular session title")).toBe(false)
+  })
+
+  test("only shows inferred agent labels for root sessions without title agent", () => {
+    expect(sessionAgentLabel(session({ id: "root", directory: "/workspace", title: "Root" }), "default")).toBe("default")
+    expect(
+      sessionAgentLabel(
+        session({ id: "child", directory: "/workspace", parentID: "root", title: "Protocol: task (@build)" }),
+        "default",
+      ),
+    ).toBeUndefined()
+    expect(
+      sessionAgentLabel(session({ id: "child", directory: "/workspace", parentID: "root", title: "Child task" }), "default"),
+    ).toBeUndefined()
   })
 
   test("formats fallback project display name", () => {

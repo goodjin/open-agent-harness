@@ -121,6 +121,38 @@ test("reply - resolves the pending ask with answers", async () => {
   })
 })
 
+test("reply - preserves explicit confirmation response", async () => {
+  await using tmp = await tmpdir({ git: true })
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const ask = Question.askReply({
+        sessionID: SessionID.make("ses_test"),
+        questions: [
+          {
+            question: "Confirm?",
+            header: "Confirm plan",
+            options: [
+              { label: "Confirm", description: "Continue" },
+              { label: "Cancel", description: "Stop" },
+            ],
+            custom: false,
+          },
+        ],
+      })
+
+      const pending = await Question.list()
+      await Question.reply({
+        requestID: pending[0].id,
+        answers: [["Confirm"]],
+        response: "confirm",
+      })
+
+      expect(await ask).toEqual({ answers: [["Confirm"]], response: "confirm" })
+    },
+  })
+})
+
 test("reply - removes from pending list", async () => {
   await using tmp = await tmpdir({ git: true })
   await Instance.provide({

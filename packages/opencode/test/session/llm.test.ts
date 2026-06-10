@@ -125,6 +125,42 @@ describe("session.llm.hasToolCalls", () => {
     expect(system).not.toContain("after")
   })
 
+  test("does not hard-code grep as a protocol tool target", async () => {
+    const prompt = await Bun.file(path.join(import.meta.dir, "../../config/protocol/agent-protocol-v2.md")).text()
+    const system = LLM.compose({
+      agent: {
+        name: "protocol-runner",
+        mode: "primary",
+        runner: "protocol",
+        entry: ent,
+        capability: cap,
+        options: {},
+        permission: [],
+        protocol: {
+          file: "agent-protocol-v2.md",
+          prompt,
+        },
+      } satisfies Agent.Info,
+      model: {} as never,
+      system: [],
+      user: {
+        id: MessageID.make("user-protocol-no-grep-example"),
+        sessionID: SessionID.make("session-protocol-no-grep-example"),
+        role: "user",
+        time: { created: Date.now() },
+        agent: "protocol-runner",
+        model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+      } satisfies MessageV2.User,
+      runtimeTools: {
+        prompt: "# Available Protocol Agents\n\nNo protocol tools are currently available.",
+      } as never,
+      isCodex: false,
+    })[0]
+
+    expect(system).not.toContain('"target": "grep"')
+    expect(system).toContain('"target": "<listed-tool-id>"')
+  })
+
   test("uses protocol prompt loaded from agent metadata", () => {
     const system = LLM.compose({
       agent: {

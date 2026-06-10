@@ -332,11 +332,11 @@ Agent Session 使用以下状态：
 | Type | 含义 | 重启后默认行为 |
 |---|---|---|
 | `idle` | 没有活动调用，也没有需要保留的运行态。 | 不持久化，不自动继续。 |
-| `queued` | 请求已接受，等待进入模型或 executor 调度。 | 自动恢复调度。 |
-| `starting` | 正在启动模型循环、tool loop 或 executor。 | 自动恢复调度。 |
-| `running` | 模型、tool 或 executor 处于活动执行中。 | 自动恢复执行。 |
-| `rate_limited` | provider 或 model 并发限制触发，等待额度释放。 | 自动恢复等待和调度。 |
-| `retry` | Runtime 已安排重试，记录 attempt、message 和 next 时间。 | 自动恢复重试计划。 |
+| `queued` | 请求已接受，等待进入模型或 executor 调度，尚未进入执行副作用。 | 自动恢复调度。 |
+| `starting` | 正在启动模型循环、tool loop 或 executor。 | 先转为 `interrupted`；无未完成 tool 时自动继续，有未完成 tool 时等待用户恢复。 |
+| `running` | 模型、tool 或 executor 处于活动执行中。 | 先转为 `interrupted`；无未完成 tool 时自动继续，有未完成 tool 时等待用户恢复。 |
+| `rate_limited` | provider、model 或 agent 并发限制触发，等待额度释放。 | 自动恢复等待和调度。 |
+| `retry` | Runtime 已安排重试，记录 attempt、message 和 next 时间。 | 自动恢复 retry。 |
 | `waiting_permission` | 等待权限审批。 | 保留状态，等待审批或用户操作。 |
 | `waiting_user` | 等待用户输入、选择或澄清。 | 保留状态，等待用户操作。 |
 | `paused` | 用户或 Runtime 在安全点暂停。 | 保留状态，不自动继续。 |
@@ -346,10 +346,11 @@ Agent Session 使用以下状态：
 | `failed` | 会话失败，当前 failure policy 没有自动恢复路径。 | 保留状态，不自动继续。 |
 | `error` | Runtime、模型、provider 或工具返回错误。 | 保留状态，不自动继续。 |
 | `timeout` | 调用或等待超时。 | 保留状态，不自动继续。 |
-| `completed` | 会话已完成，结果应通过 ResultRecord 消费。 | 不作为活动运行态持久化，不自动继续。 |
+| `interrupted` | 进程停止、stream 断开或重启导致执行上下文丢失。 | 保留状态，等待恢复判断。 |
+| `completed` | 会话已完成，结果应通过 ResultRecord 消费。 | 持久化终态，不自动继续。 |
 | `archived` | 会话已归档。 | 不作为活动运行态持久化，不自动继续。 |
 
-`rate_limited` 应携带 `providerID`、`modelID`、`scope`、`active`、`limit` 和 `queued`，让 UI 能说明是 provider 级限制还是 model 级限制。`retry` 应携带 `attempt`、`message` 和 `next`，让恢复逻辑知道下一次尝试的依据。
+`rate_limited` 应携带 `providerID`、`modelID`、`scope`、`active`、`limit` 和 `queued`，让 UI 能说明是 provider、model 还是 agent 级限制；当 `scope=agent` 时应额外携带 `agent`。agent 并发限制在提交模型请求前等待槽位，不在创建子会话时拒绝创建，因此已创建会话继续运行时也会受同一规则控制。`retry` 应携带 `attempt`、`message` 和 `next`，让恢复逻辑知道下一次尝试的依据。
 
 余额不足、配额不足、认证失效这类 provider 错误应进入可分类的 `error` 或 `blocked`，并在 `message` / `error.class` 中说明原因。除非 Runtime 明确把它转成 `retry` 或 `rate_limited`，重启后不应自动继续，避免重复提交无效请求。
 
@@ -525,11 +526,12 @@ Progress Summary 字段：
 
 | 恢复输入 | Runtime 判断 |
 |---|---|
-| `queued` / `starting` | 重新进入调度队列。 |
-| `running` 且有 live executor handle | 继续监控原 handle。 |
-| `running` 且没有 live handle | 从同一 Session 的持久化历史恢复执行循环；不注入新的用户消息。 |
-| `rate_limited` | 恢复等待和调度，继续遵守 provider / model 限流。 |
-| `retry` | 恢复 retry 计划，按 attempt 和 next 时间继续。 |
+| `queued` | 自动恢复调度。 |
+| `starting` | 转为 `interrupted` 并执行恢复扫描；无未完成 tool 时自动继续。 |
+| `running` 且有 live executor handle | 同进程内继续监控原 handle。 |
+| `running` 且没有 live handle | 转为 `interrupted` 并执行恢复扫描；无未完成 tool 时自动继续，有未完成 tool 时等待用户恢复。 |
+| `rate_limited` | 自动恢复等待和调度，继续遵守 provider / model / agent 限流。 |
+| `retry` | 自动恢复 retry 计划。 |
 | `interrupted` 且有 safe checkpoint | 创建 `session.resumed` 或 retry attempt。 |
 
 以下状态不自动继续：
@@ -675,7 +677,7 @@ Runtime 接受新 mutation 时以 Event 和当前 Projection 为准；Materializ
 
 持久化规则：
 
-- `idle`、`completed` 和 `archived` 不作为活动运行态保存；写入这些状态时应删除对应快照。
+- `idle` 和 `archived` 不作为活动运行态保存；写入这些状态时应删除对应快照。`completed` 是持久化终态，用来避免重启后退回默认 `idle`。
 - 其他状态需要持久化，避免 Runtime 重启后把 `blocked`、`waiting_user`、`waiting_permission`、`error`、`timeout` 或限流状态误读成 `idle`。
 - 快照按 session id 存储，并带上 project id 和 directory；恢复时必须校验作用域，避免不同 workspace 的同名 session 互相污染。
 - 同一 session 的状态写入需要按顺序串行化，防止 `running -> blocked -> idle` 这类连续变更乱序落盘。

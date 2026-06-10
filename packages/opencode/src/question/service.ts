@@ -62,6 +62,7 @@ export const Event = {
       sessionID: SessionID.zod,
       requestID: QuestionID.zod,
       answers: z.array(Answer),
+      response: Reply.shape.response,
     }),
   ),
   Rejected: BusEvent.define(
@@ -83,7 +84,7 @@ export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("Que
 
 interface PendingEntry {
   info: Request
-  deferred: Deferred.Deferred<Answer[], RejectedError>
+  deferred: Deferred.Deferred<Reply, RejectedError>
 }
 
 export namespace QuestionService {
@@ -93,7 +94,12 @@ export namespace QuestionService {
       questions: Info[]
       tool?: { messageID: MessageID; callID: string }
     }) => Effect.Effect<Answer[], RejectedError>
-    readonly reply: (input: { requestID: QuestionID; answers: Answer[] }) => Effect.Effect<void>
+    readonly askReply: (input: {
+      sessionID: SessionID
+      questions: Info[]
+      tool?: { messageID: MessageID; callID: string }
+    }) => Effect.Effect<Reply, RejectedError>
+    readonly reply: (input: { requestID: QuestionID; answers: Answer[]; response?: Reply["response"] }) => Effect.Effect<void>
     readonly reject: (requestID: QuestionID) => Effect.Effect<void>
     readonly list: () => Effect.Effect<Request[]>
   }
@@ -117,7 +123,7 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         SessionStatus.set(sessionID, prior)
       }
 
-      const ask = Effect.fn("QuestionService.ask")(function* (input: {
+      const askReply = Effect.fn("QuestionService.askReply")(function* (input: {
         sessionID: SessionID
         questions: Info[]
         tool?: { messageID: MessageID; callID: string }
@@ -125,7 +131,7 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         const id = QuestionID.ascending()
         log.info("asking", { id, questions: input.questions.length })
 
-        const deferred = yield* Deferred.make<Answer[], RejectedError>()
+        const deferred = yield* Deferred.make<Reply, RejectedError>()
         const info: Request = {
           id,
           sessionID: input.sessionID,
@@ -154,20 +160,33 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         )
       })
 
-      const reply = Effect.fn("QuestionService.reply")(function* (input: { requestID: QuestionID; answers: Answer[] }) {
+      const ask = Effect.fn("QuestionService.ask")(function* (input: {
+        sessionID: SessionID
+        questions: Info[]
+        tool?: { messageID: MessageID; callID: string }
+      }) {
+        return (yield* askReply(input)).answers
+      })
+
+      const reply = Effect.fn("QuestionService.reply")(function* (input: {
+        requestID: QuestionID
+        answers: Answer[]
+        response?: Reply["response"]
+      }) {
         const existing = pending.get(input.requestID)
         if (!existing) {
           log.warn("reply for unknown request", { requestID: input.requestID })
           return
         }
         pending.delete(input.requestID)
-        log.info("replied", { requestID: input.requestID, answers: input.answers })
+        log.info("replied", { requestID: input.requestID, answers: input.answers, response: input.response })
         Bus.publish(Event.Replied, {
           sessionID: existing.info.sessionID,
           requestID: existing.info.id,
           answers: input.answers,
+          response: input.response,
         })
-        yield* Deferred.succeed(existing.deferred, input.answers)
+        yield* Deferred.succeed(existing.deferred, { answers: input.answers, response: input.response })
       })
 
       const reject = Effect.fn("QuestionService.reject")(function* (requestID: QuestionID) {
@@ -189,7 +208,7 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         return Array.from(pending.values(), (x) => x.info)
       })
 
-      return QuestionService.of({ ask, reply, reject, list })
+      return QuestionService.of({ ask, askReply, reply, reject, list })
     }),
   )
 }

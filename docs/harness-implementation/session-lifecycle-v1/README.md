@@ -183,11 +183,11 @@ aborted/cancelled command
 | Type | 说明 | 是否持久化 | 重启后行为 |
 |---|---|---:|---|
 | `idle` | 默认空闲态，没有活动调用。 | 否 | 不自动继续。 |
-| `queued` | 请求已进入队列。 | 是 | 自动恢复调度。 |
-| `starting` | 会话循环正在启动。 | 是 | 自动恢复调度。 |
-| `running` | 会话正在执行。 | 是 | 自动启动同一 Session 的 loop。 |
-| `rate_limited` | provider/model 级限流，携带 active、limit、queued。 | 是 | 自动恢复等待和调度。 |
-| `retry` | 已安排重试，携带 attempt、message、next。 | 是 | 自动恢复重试计划。 |
+| `queued` | 请求已进入队列，尚未进入执行副作用。 | 是 | 重启后自动继续调度。 |
+| `starting` | 会话循环正在启动。 | 是 | 重启后先转为 `interrupted`；无未完成 tool 时自动继续，有未完成 tool 时等待用户恢复。 |
+| `running` | 会话正在执行。 | 是 | 重启后先转为 `interrupted`；无未完成 tool 时自动继续，有未完成 tool 时等待用户恢复。 |
+| `rate_limited` | provider/model/agent 级限流，携带 active、limit、queued；agent 级限流额外携带 agent。 | 是 | 重启后自动继续等待和调度。 |
+| `retry` | 已安排重试，携带 attempt、message、next。 | 是 | 重启后自动继续 retry。 |
 | `waiting_permission` | 等待权限审批。 | 是 | 保持等待，不自动继续。 |
 | `waiting_user` | 等待用户输入。 | 是 | 保持等待，不自动继续。 |
 | `paused` | 安全点暂停。 | 是 | 保持暂停。 |
@@ -197,13 +197,15 @@ aborted/cancelled command
 | `failed` | 已失败。 | 是 | 不自动继续。 |
 | `error` | Runtime、provider、model 或工具错误。 | 是 | 保持错误，等待 retry / dismiss。 |
 | `timeout` | 调用或等待超时。 | 是 | 保持超时，等待 retry / dismiss。 |
-| `completed` | 已完成。 | 否 | 不自动继续。 |
+| `interrupted` | 进程停止、stream 断开或重启导致执行上下文丢失。 | 是 | 保持中断，等待恢复判断。 |
+| `completed` | 已完成。 | 是 | 不自动继续。 |
 | `archived` | 已归档。 | 否 | 不自动继续。 |
 
 写入规则：
 
 - `SessionStatus.set()` 更新内存状态、发布 `session.status`，并写入 `Storage(["session_status", sessionID])`。
-- `idle`、`completed`、`archived` 会删除快照，避免终态会话在重启后被当成待恢复任务。
+- `idle`、`archived` 会删除快照；`completed` 会保留快照，避免重启后被默认 `idle` 误判。
+- agent 级并发在提交模型请求前进入 `rate_limited` 等待，不在子会话创建时拒绝创建；已创建会话恢复或继续运行时也经过同一等待路径。
 - 快照包含 `sessionID`、`projectID`、`directory`、`status` 和 `time`，不包含消息正文、tool 输出正文或完整 transcript。
 - 同一个 session 的写入按 promise chain 串行化，降低连续状态变更乱序落盘的风险。
 
@@ -211,8 +213,9 @@ aborted/cancelled command
 
 - `InstanceBootstrap()` 在 `SessionDelegation.init()` 后调用 `SessionStatus.restore()`。
 - `restore()` 只恢复当前 project 和 directory 的快照，并用 schema 校验 `status`。
-- `running`、`queued`、`starting`、`rate_limited`、`retry` 会被视为可自动继续；启动时先把状态转回 `running`，再调用 `SessionPrompt.loop({ sessionID })`。
-- `blocked`、`waiting_user`、`waiting_permission`、`paused`、`aborted`、`failed`、`error`、`timeout` 只恢复可见状态，不自动发送消息，也不自动创建新请求。
+- `queued`、`rate_limited`、`retry` 属于可恢复调度态；重启后保持原状态并进入自动继续路径。
+- `running`、`starting` 属于可能丢失执行上下文的活动态；重启时先转为 `interrupted`，保留原状态到 `prior`。恢复扫描没有发现未完成 tool 时自动继续；发现未完成 tool 时保持 `interrupted`，等待用户确认恢复。
+- `blocked`、`waiting_user`、`waiting_permission`、`paused`、`aborted`、`failed`、`error`、`timeout`、`completed`、`interrupted` 只恢复可见状态，不自动发送消息，也不自动创建新请求。
 - 自动继续从同一 Session 的持久化历史承接原请求，不注入 “continue” 用户消息。只有用户选择发送消息继续，或 Runtime 需要通知正常停止的模型继续工作时，才写入带来源和目的的消息。
 
 这一步还不是完整 lifecycle Event sourcing。它是当前运行态的 Materialized State，用来避免重启后状态丢失和 UI 误判。后续 Phase 1 / Phase 2 仍需要把同样语义接入 Event、ResultRecord、RecoveryPlan 和 LifecycleProjection。
@@ -527,7 +530,7 @@ Parent reply 写入父会话时应同时保留 machine-readable projection 和�
 - running 但 handle 丢失的 Session 会进入 `interrupted`。
 - 不确定 side effect 时进入 `blocked`，等待用户或 audit。
 - 重启后 `blocked`、`waiting_user`、`waiting_permission`、`error`、`timeout` 不会被误置为 `idle`。
-- 重启后 `running`、`queued`、`starting`、`rate_limited`、`retry` 会从同一 Session 历史恢复，不通过发送用户消息继续。
+- 重启后 `queued`、`rate_limited`、`retry` 会自动继续；`running`、`starting` 在无未完成 tool 时自动继续，有未完成 tool 时保持 `interrupted` 等待用户恢复。
 
 ## 测试计划
 

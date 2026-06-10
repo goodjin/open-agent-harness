@@ -61,7 +61,6 @@ export type WorkspaceSidebarContext = {
   hoverSession: Accessor<string | undefined>
   setHoverSession: (id: string | undefined) => void
   clearHoverProjectSoon: () => void
-  prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
   workspaceName: (directory: string, projectId?: string, branch?: string) => string | undefined
   renameWorkspace: (directory: string, next: string, projectId?: string, branch?: string) => void
@@ -304,7 +303,10 @@ const WorkspaceSessionList = (props: {
         return !permission.autoResponds(item, session.directory)
       })
       const failed =
-        notification.session.unseenHasError(session.id) || status?.type === "error" || status?.type === "timeout"
+        notification.session.unseenHasError(session.id) ||
+        status?.type === "error" ||
+        status?.type === "timeout" ||
+        status?.type === "interrupted"
       const working = !blocked && sessionWorking(store.message[session.id], status)
       const done = !blocked && !working && !failed && sessionCompleted(session, store.message[session.id], status)
       if (active === "running") return working
@@ -417,7 +419,6 @@ const WorkspaceSessionList = (props: {
               hoverSession={props.ctx.hoverSession}
               setHoverSession={props.ctx.setHoverSession}
               clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-              prefetchSession={props.ctx.prefetchSession}
               archiveSession={props.ctx.archiveSession}
               depth={item.depth}
               first={item.first}

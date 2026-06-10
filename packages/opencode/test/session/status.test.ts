@@ -21,6 +21,7 @@ describe("session state machine", () => {
           { type: "error" as const, message: "test error" },
           { type: "timeout" as const, message: "test timeout" },
           { type: "retry" as const, attempt: 1, message: "retry message", next: Date.now() + 2000 },
+          { type: "interrupted" as const, prior: "running" as const, message: "process stopped" },
         ]
 
         for (const state of states) {
@@ -428,11 +429,113 @@ describe("session state machine", () => {
     })
   })
 
+  test("restores completed status across instance restart", async () => {
+    const sessionID = "test-session-completed-restart" as SessionID
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        SessionStatus.set(sessionID, { type: "completed" })
+        await SessionStatus.flush()
+        expect(SessionStatus.get(sessionID)).toEqual({ type: "completed" })
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        await SessionStatus.restore()
+        expect(SessionStatus.get(sessionID)).toEqual({ type: "completed" })
+        SessionStatus.set(sessionID, { type: "idle" })
+        await SessionStatus.flush()
+      },
+    })
+  })
+
+  test("restores restart-lost active statuses as interrupted", async () => {
+    const running = "test-session-running-restart" as SessionID
+    const starting = "test-session-starting-restart" as SessionID
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        SessionStatus.set(running, { type: "running" })
+        SessionStatus.set(starting, { type: "starting" })
+        await SessionStatus.flush()
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const restored = await SessionStatus.restore()
+        expect(restored[running]?.type).toBe("interrupted")
+        expect(restored[starting]?.type).toBe("interrupted")
+        expect(SessionStatus.get(running)).toEqual({
+          type: "interrupted",
+          prior: "running",
+          message: "Session was running when the process stopped.",
+        })
+        expect(SessionStatus.get(starting)).toEqual({
+          type: "interrupted",
+          prior: "starting",
+          message: "Session was starting when the process stopped.",
+        })
+        SessionStatus.set(running, { type: "idle" })
+        SessionStatus.set(starting, { type: "idle" })
+        await SessionStatus.flush()
+      },
+    })
+  })
+
+  test("restores queued rate limited and retry statuses for automatic continuation", async () => {
+    const queued = "test-session-queued-restart" as SessionID
+    const limited = "test-session-limited-restart" as SessionID
+    const retry = "test-session-retry-restart" as SessionID
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        SessionStatus.set(queued, { type: "queued" })
+        SessionStatus.set(limited, {
+          type: "rate_limited",
+          providerID: "p",
+          modelID: "m",
+          scope: "model",
+          active: 1,
+          limit: 1,
+          queued: 1,
+        })
+        SessionStatus.set(retry, { type: "running" })
+        SessionStatus.set(retry, { type: "retry", attempt: 1, message: "retry", next: Date.now() })
+        await SessionStatus.flush()
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const restored = await SessionStatus.restore()
+        expect(restored[queued]).toEqual({ type: "queued" })
+        expect(restored[limited]?.type).toBe("rate_limited")
+        expect(restored[retry]?.type).toBe("retry")
+        SessionStatus.set(queued, { type: "idle" })
+        SessionStatus.set(limited, { type: "idle" })
+        SessionStatus.set(retry, { type: "idle" })
+        await SessionStatus.flush()
+      },
+    })
+  })
+
   test("marks only active statuses for automatic continuation", async () => {
     expect(SessionStatus.shouldContinue({ type: "running" })).toBe(true)
     expect(SessionStatus.shouldContinue({ type: "retry", attempt: 1, message: "rate limited", next: Date.now() })).toBe(true)
     expect(SessionStatus.shouldContinue({ type: "rate_limited", providerID: "p", modelID: "m", scope: "model", active: 1, limit: 1, queued: 1 })).toBe(true)
     expect(SessionStatus.shouldContinue({ type: "blocked", message: "needs input" })).toBe(false)
+    expect(SessionStatus.shouldContinue({ type: "interrupted", prior: "running" })).toBe(false)
     expect(SessionStatus.shouldContinue({ type: "error", message: "quota exceeded" })).toBe(false)
     expect(SessionStatus.shouldContinue({ type: "waiting_permission" })).toBe(false)
   })

@@ -27,6 +27,7 @@ import { Auth } from "@/auth"
 import type { RuntimeTools } from "./runtime-tools"
 import { AgentProtocol } from "@/protocol/schema"
 import { LLMConcurrency } from "./llm-concurrency"
+import { AgentConcurrency } from "@/protocol/agent-concurrency"
 import type { SessionID } from "./schema"
 
 export namespace LLM {
@@ -85,7 +86,7 @@ export namespace LLM {
     structuredOutput?: boolean
   }
 
-  export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: LLMConcurrency.Release }
+  export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: () => void }
 
   export function compose(
     input: Pick<StreamInput, "agent" | "model" | "system" | "user" | "runtimeTools" | "structuredOutput"> & {
@@ -132,6 +133,10 @@ export namespace LLM {
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
     let release: (() => void) | undefined
+    const leases: (() => void)[] = []
+    const drain = () => {
+      for (const item of leases.splice(0).reverse()) item()
+    }
 
     try {
       const system = compose({ ...input, isCodex })
@@ -162,12 +167,23 @@ export namespace LLM {
       if (isCodex) {
         options.instructions = SystemPrompt.instructions()
       }
-      release = await LLMConcurrency.acquire({
-        model: input.model,
-        provider,
-        sessionID: input.sessionID,
-        abort: input.abort,
-      })
+      leases.push(
+        await AgentConcurrency.acquire({
+          agent: input.agent,
+          model: input.model,
+          sessionID: input.sessionID,
+          abort: input.abort,
+        }),
+      )
+      release = drain
+      leases.push(
+        await LLMConcurrency.acquire({
+          model: input.model,
+          provider,
+          sessionID: input.sessionID,
+          abort: input.abort,
+        }),
+      )
 
       const params = {
         temperature: input.model.capabilities.temperature

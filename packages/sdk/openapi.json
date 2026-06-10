@@ -2392,6 +2392,24 @@
                   "title": {
                     "type": "string"
                   },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "object",
+                    "properties": {
+                      "providerID": {
+                        "type": "string"
+                      },
+                      "modelID": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "providerID",
+                      "modelID"
+                    ]
+                  },
                   "permission": {
                     "$ref": "#/components/schemas/PermissionRuleset"
                   }
@@ -14904,8 +14922,12 @@
                 "type": "string",
                 "enum": [
                   "provider",
-                  "model"
+                  "model",
+                  "agent"
                 ]
+              },
+              "agent": {
+                "type": "string"
               },
               "active": {
                 "type": "integer",
@@ -15058,6 +15080,31 @@
               },
               "message": {
                 "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "interrupted"
+              },
+              "message": {
+                "type": "string"
+              },
+              "prior": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "starting",
+                  "running",
+                  "rate_limited",
+                  "retry"
+                ]
               }
             },
             "required": [
@@ -15305,6 +15352,14 @@
                 "items": {
                   "$ref": "#/components/schemas/QuestionAnswer"
                 }
+              },
+              "response": {
+                "description": "Explicit confirmation response for confirm-only prompts",
+                "type": "string",
+                "enum": [
+                  "confirm",
+                  "cancel"
+                ]
               }
             },
             "required": [
@@ -18265,6 +18320,24 @@
           "title": {
             "type": "string"
           },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "object",
+            "properties": {
+              "providerID": {
+                "type": "string"
+              },
+              "modelID": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerID",
+              "modelID"
+            ]
+          },
           "version": {
             "type": "string"
           },
@@ -20837,6 +20910,24 @@
           },
           "title": {
             "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "model": {
+            "type": "object",
+            "properties": {
+              "providerID": {
+                "type": "string"
+              },
+              "modelID": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "providerID",
+              "modelID"
+            ]
           },
           "version": {
             "type": "string"

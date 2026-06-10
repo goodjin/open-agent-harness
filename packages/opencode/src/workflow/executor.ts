@@ -259,7 +259,7 @@ export namespace WorkflowExecutor {
       pause: undefined,
       time: { ...state.time, updated: Date.now(), completed: Date.now() },
     }
-    SessionStatus.set(sessionID, { type: "idle" })
+    SessionStatus.set(sessionID, { type: "aborted" })
     await save(session, next)
     return next
   }
@@ -1262,7 +1262,7 @@ export namespace WorkflowExecutor {
       pause: undefined,
       time: { ...state.time, updated: Date.now(), completed: Date.now() },
     }
-    SessionStatus.set(sessionID, { type: "idle" })
+    SessionStatus.set(sessionID, { type: "completed" })
     await save(await bound(sessionID), next)
     void Audit.emit({
       sessionID,

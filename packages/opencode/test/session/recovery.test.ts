@@ -96,6 +96,31 @@ describe("session recovery", () => {
         }),
     })
   })
+
+  test("marks tools for sessions interrupted by a previous process", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_recovery_interrupted"),
+          fn: async () => {
+            const data = await stale(tmp.path, "bun test")
+            SessionStatus.set(data.sessionID, { type: "interrupted", prior: "running" })
+
+            const packets = await SessionRecovery.mark()
+
+            expect(packets).toHaveLength(1)
+            expect(packets[0].session_id).toBe(data.sessionID)
+            const part = (await MessageV2.parts(data.messageID)).find((item) => item.id === data.partID)
+            expect(part?.type).toBe("tool")
+            if (part?.type !== "tool") return
+            expect(part.state.status).toBe("error")
+            SessionStatus.set(data.sessionID, { type: "idle" })
+          },
+        }),
+    })
+  })
 })
 
 async function stale(dir: string, command: string) {

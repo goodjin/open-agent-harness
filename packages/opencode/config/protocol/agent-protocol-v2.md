@@ -18,7 +18,7 @@ Use this shape:
 {
   "version": "2",
   "items": [
-    { "id": "inspect", "kind": "tool", "target": "grep", "args": { "pattern": "SessionRunner" } }
+    { "id": "inspect", "kind": "tool", "target": "<listed-tool-id>", "args": { "...": "..." } }
   ]
 }
 ```

@@ -146,7 +146,7 @@ describe("session.prompt missing file", () => {
     })
   })
 
-  test("loop restores idle after completed assistant message", async () => {
+  test("loop marks completed after completed assistant message", async () => {
     await using tmp = await tmpdir({ git: true })
 
     await Instance.provide({
@@ -193,7 +193,7 @@ describe("session.prompt missing file", () => {
 
             const msg = await SessionPrompt.loop({ sessionID: session.id })
             expect(msg.info.role).toBe("assistant")
-            expect(SessionStatus.get(session.id).type).toBe("idle")
+            expect(SessionStatus.get(session.id).type).toBe("completed")
 
             await Session.remove(session.id)
           },
@@ -457,7 +457,7 @@ describe("session.prompt agent variant", () => {
 })
 
 describe("session.prompt agent switch", () => {
-  test("uses session tree model preference when caller omits model", async () => {
+  test("uses session model preference when caller omits model", async () => {
     await using tmp = await tmpdir({
       git: true,
       config: {
@@ -547,6 +547,36 @@ describe("session.prompt agent switch", () => {
 
             const messages = await Session.messages({ sessionID: session.id })
             expect(messages.map((item) => item.info.agent)).toEqual(["build", "plan"])
+
+            await Session.remove(session.id)
+          },
+      }),
+    })
+  })
+
+  test("rejects prompt agent changes for bound sessions", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+    await agent(tmp.path, "plan")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setAgent({ sessionID: session.id, agent: "build" })
+
+            const err = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "plan",
+              noReply: true,
+              parts: [{ type: "text", text: "wrong agent" }],
+            }).catch((err) => err)
+            expect((err as { data?: { message?: string } }).data?.message).toContain(
+              "Update the session agent before sending",
+            )
 
             await Session.remove(session.id)
           },

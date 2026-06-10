@@ -97,7 +97,8 @@ export namespace SessionRecovery {
       } as MessageV2.Part
       if (part.type !== "tool") continue
       if (part.state.status !== "pending" && part.state.status !== "running") continue
-      if (SessionStatus.get(row.session_id).type !== "idle") continue
+      const status = SessionStatus.get(row.session_id).type
+      if (status !== "idle" && status !== "interrupted") continue
 
       const session = bySession.get(row.session_id)
       if (!session) continue

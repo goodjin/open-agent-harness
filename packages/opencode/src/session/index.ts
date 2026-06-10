@@ -86,6 +86,14 @@ export namespace Session {
       directory: row.directory,
       parentID: row.parent_id ?? undefined,
       title: row.title,
+      agent: row.agent ?? undefined,
+      model:
+        row.model?.providerID && row.model.modelID
+          ? {
+              providerID: ProviderID.make(row.model.providerID),
+              modelID: ModelID.make(row.model.modelID),
+            }
+          : undefined,
       version: row.version,
       summary,
       share,
@@ -110,6 +118,8 @@ export namespace Session {
       slug: info.slug,
       directory: info.directory,
       title: info.title,
+      agent: info.agent,
+      model: info.model,
       version: info.version,
       share_url: info.share?.url,
       summary_additions: info.summary?.additions,
@@ -118,12 +128,18 @@ export namespace Session {
       summary_diffs: info.summary?.diffs,
       revert: info.revert ?? null,
       permission: info.permission,
-      dsl_context: info.dsl_context ?? null,
+      dsl_context: dsl(info.dsl_context),
       time_created: info.time.created,
       time_updated: info.time.updated,
       time_compacting: info.time.compacting,
       time_archived: info.time.archived,
     }
+  }
+
+  function dsl(input: Record<string, unknown> | undefined) {
+    if (!input) return null
+    const next = Object.fromEntries(Object.entries(input).filter((item) => item[0] !== "session_tree"))
+    return Object.keys(next).length === 0 ? null : next
   }
 
   function getForkedTitle(title: string): string {
@@ -158,6 +174,13 @@ export namespace Session {
         })
         .optional(),
       title: z.string(),
+      agent: z.string().optional(),
+      model: z
+        .object({
+          providerID: ProviderID.zod,
+          modelID: ModelID.zod,
+        })
+        .optional(),
       version: z.string(),
       time: z.object({
         created: z.number(),
@@ -272,6 +295,13 @@ export namespace Session {
       .object({
         parentID: SessionID.zod.optional(),
         title: z.string().optional(),
+        agent: z.string().optional(),
+        model: z
+          .object({
+            providerID: ProviderID.zod,
+            modelID: ModelID.zod,
+          })
+          .optional(),
         permission: Info.shape.permission,
       })
       .optional(),
@@ -280,6 +310,8 @@ export namespace Session {
         parentID: input?.parentID,
         directory: Instance.directory,
         title: input?.title,
+        agent: input?.agent,
+        model: input?.model,
         permission: input?.permission,
       })
     },
@@ -351,6 +383,8 @@ export namespace Session {
   export async function createNext(input: {
     id?: SessionID
     title?: string
+    agent?: string
+    model?: { providerID: ProviderID; modelID: ModelID }
     parentID?: SessionID
     workspaceID?: WorkspaceID
     directory: string
@@ -365,6 +399,8 @@ export namespace Session {
       workspaceID: input.workspaceID,
       parentID: input.parentID,
       title: input.title ?? createDefaultTitle(!!input.parentID),
+      agent: input.agent,
+      model: input.model,
       permission: input.permission,
       time: {
         created: Date.now(),
@@ -598,7 +634,7 @@ export namespace Session {
         const row = db
           .update(SessionTable)
           .set({
-            dsl_context: input.dsl_context ?? null,
+            dsl_context: dsl(input.dsl_context),
             time_updated: Date.now(),
           })
           .where(eq(SessionTable.id, input.sessionID))
@@ -633,17 +669,11 @@ export namespace Session {
             message: `Session ${input.sessionID} does not belong to the current directory`,
           })
         }
-        const ctx = {
-          ...(old.dsl_context ?? {}),
-          session_tree: {
-            ...((old.dsl_context?.session_tree as Record<string, unknown> | undefined) ?? {}),
-            model: input.model,
-          },
-        }
         const row = db
           .update(SessionTable)
           .set({
-            dsl_context: ctx,
+            model: input.model,
+            dsl_context: dsl(old.dsl_context),
             time_updated: Date.now(),
           })
           .where(eq(SessionTable.id, input.sessionID))
@@ -676,23 +706,17 @@ export namespace Session {
             message: `Session ${input.sessionID} does not belong to the current directory`,
           })
         }
-        const currentAgent = (old.dsl_context?.session_tree as { agent?: string } | undefined)?.agent
+        const currentAgent = old.agent
         if (currentAgent !== undefined && currentAgent !== input.agent && input.confirm !== true) {
           throw new ConflictError({
             message: `Session ${input.sessionID} has bound agent "${currentAgent}". Pass confirm=true to overwrite it with "${input.agent}".`,
           })
         }
-        const ctx = {
-          ...(old.dsl_context ?? {}),
-          session_tree: {
-            ...((old.dsl_context?.session_tree as Record<string, unknown> | undefined) ?? {}),
-            agent: input.agent,
-          },
-        }
         const row = db
           .update(SessionTable)
           .set({
-            dsl_context: ctx,
+            agent: input.agent,
+            dsl_context: dsl(old.dsl_context),
             time_updated: Date.now(),
           })
           .where(eq(SessionTable.id, input.sessionID))
@@ -761,20 +785,17 @@ export namespace Session {
     }
     return rows.map((item): TreeNode => {
       const stat = stats.get(item.id)!
-      const ctx = item.dsl_context?.session_tree as
-        | { agent?: string; model?: { providerID?: ProviderID; modelID?: ModelID } }
-        | undefined
       return {
         id: item.id,
         parent_id: item.parentID,
         root_id: rootID,
         title: item.title,
-        agent: ctx?.agent ?? stat.agent,
+        agent: item.agent ?? stat.agent,
         model:
-          ctx?.model?.providerID && ctx.model.modelID
+          item.model?.providerID && item.model.modelID
             ? {
-                provider_id: ctx.model.providerID,
-                model_id: ctx.model.modelID,
+                provider_id: item.model.providerID,
+                model_id: item.model.modelID,
               }
             : stat.model,
         status: SessionStatus.get(item.id),

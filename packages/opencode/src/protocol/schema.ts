@@ -212,7 +212,9 @@ export namespace AgentProtocol {
     id: Text,
     kind: z.literal("answer"),
     title: Text.optional(),
-    message: Text,
+    message: z.string().default(""),
+    answer: z.string().optional(),
+    text: z.string().optional(),
     depends: V2Depends,
   })
   const V2Done = z.object({
@@ -226,6 +228,8 @@ export namespace AgentProtocol {
     id: Text,
     title: Text.optional(),
     message: z.string().default(""),
+    answer: z.string().optional(),
+    text: z.string().optional(),
     summary: z.string().optional(),
     changed_files: z.array(Text).default([]),
     depends: V2Depends,
@@ -286,6 +290,8 @@ export namespace AgentProtocol {
   const FlatAnswer = z.object({
     kind: z.literal("answer"),
     message: z.string().default(""),
+    answer: z.string().optional(),
+    text: z.string().optional(),
   })
 
   const FlatDone = z.object({
@@ -313,6 +319,8 @@ export namespace AgentProtocol {
   const FlatReply = z.object({
     kind: z.literal("reply"),
     message: z.string().default(""),
+    answer: z.string().optional(),
+    text: z.string().optional(),
     summary: z.string().optional(),
     changed_files: z.array(Text).default([]),
   })
@@ -411,7 +419,10 @@ export namespace AgentProtocol {
             { if: { properties: { kind: { const: "agent" } } }, then: { required: ["target", "prompt"] } },
             { if: { properties: { kind: { const: "input" } } }, then: { required: ["prompt", "mode"] } },
             { if: { properties: { kind: { const: "confirm" } } }, then: { required: ["prompt", "plan"] } },
-            { if: { properties: { kind: { enum: ["answer", "reply"] } } }, then: { required: ["message"] } },
+            {
+              if: { properties: { kind: { enum: ["answer", "reply"] } } },
+              then: { anyOf: [{ required: ["message"] }, { required: ["answer"] }, { required: ["text"] }] },
+            },
           ],
         },
       },
@@ -527,6 +538,8 @@ export namespace AgentProtocol {
     .object({
       kind: z.literal("answer"),
       message: z.string().default(""),
+      answer: z.string().optional(),
+      text: z.string().optional(),
       say: z.string().default(""),
     })
     .strict()
@@ -923,11 +936,13 @@ export namespace AgentProtocol {
   function message(input: {
     kind: string
     message?: string
+    answer?: string
+    text?: string
     summary?: string
     changed_files?: string[]
     say?: string
   }) {
-    const msg = input.message || input.say || ""
+    const msg = input.message || input.answer || input.text || input.say || ""
     const sum = input.summary?.trim()
     const files = input.changed_files?.length ? `Changed files: ${input.changed_files.join(", ")}` : ""
     return [msg, sum, files].filter((item): item is string => typeof item === "string" && item.length > 0).join("\n\n")

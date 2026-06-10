@@ -37,6 +37,7 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.steps.show": "Show steps",
   "ui.sessionTurn.steps.hide": "Hide steps",
   "ui.sessionTurn.summary.response": "Response",
+  "ui.sessionTurn.summary.responseChars": "{{count}} chars",
   "ui.sessionTurn.diff.showMore": "Show more changes ({{count}})",
   "ui.sessionTurn.diff.summary": "Turn changes",
   "ui.sessionTurn.diff.expand": "Show {{count}} more",

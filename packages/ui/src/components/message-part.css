@@ -252,6 +252,16 @@
       gap: 8px;
     }
 
+    [data-slot="part-header-meta"] {
+      min-width: 0;
+      color: var(--text-weak);
+      font-size: var(--font-size-small);
+      font-weight: var(--font-weight-regular);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     [data-component="icon"] {
       color: var(--icon-weak);
       flex: none;

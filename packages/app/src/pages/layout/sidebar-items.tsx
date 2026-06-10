@@ -16,7 +16,7 @@ import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { displaySessionTitle, hasProjectPermissions, sessionWorking } from "./helpers"
+import { displaySessionTitle, hasProjectPermissions, sessionAgentLabel, sessionWorking } from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -48,13 +48,14 @@ const StatusBadge = (props: {
   unseenCount: Accessor<number>
 }): JSX.Element => {
   const type = createMemo(() => props.status() ?? "idle")
-  const bad = createMemo(() => ["aborting", "aborted", "blocked", "error", "failed", "timeout"].includes(type()))
-  const done = createMemo(() => ["archived", "completed", "idle"].includes(type()))
+  const bad = createMemo(() => ["aborting", "aborted", "blocked", "error", "failed", "interrupted", "timeout"].includes(type()))
+  const done = createMemo(() => ["archived", "completed"].includes(type()))
+  const idle = createMemo(() => type() === "idle")
   const active = createMemo(() => ["queued", "rate_limited", "retry", "running", "starting"].includes(type()))
   const icon = createMemo(() => {
     const value = type()
     if (value === "completed") return "check-small"
-    if (value === "idle") return "check-small"
+    if (value === "idle") return "circle-dot"
     if (value === "archived") return "archive"
     if (value === "running") return "status-active"
     if (value === "starting") return "status"
@@ -65,6 +66,7 @@ const StatusBadge = (props: {
     if (value === "waiting_permission") return "shield"
     if (value === "paused") return "pause"
     if (value === "blocked") return "circle-ban-sign"
+    if (value === "interrupted") return "warning"
     if (value === "aborting" || value === "aborted") return "stop"
     if (value === "timeout") return "warning"
     return "circle-x"
@@ -76,7 +78,8 @@ const StatusBadge = (props: {
         class="relative shrink-0 size-5 flex items-center justify-center border bg-background-base"
         classList={{
           "rounded-full border-icon-success-base text-icon-success-base": done(),
-          "rounded-md border-border-interactive-base text-text-interactive-base": !done() && !bad(),
+          "rounded-full border-border-weak-base text-icon-weak bg-surface-base": idle(),
+          "rounded-md border-border-interactive-base text-text-interactive-base": !done() && !idle() && !bad(),
           "rounded-sm border-icon-critical-base text-icon-critical-base bg-surface-critical-weak": bad(),
         }}
       >
@@ -221,7 +224,6 @@ export type SessionItemProps = {
   hoverSession: Accessor<string | undefined>
   setHoverSession: (id: string | undefined) => void
   clearHoverProjectSoon: () => void
-  prefetchSession: (session: Session, priority?: "high" | "low") => void
   archiveSession: (session: Session) => Promise<void>
 }
 
@@ -240,10 +242,6 @@ const SessionRow = (props: {
   setHoverSession: (id: string | undefined) => void
   clearHoverProjectSoon: () => void
   sidebarOpened: Accessor<boolean>
-  warmHover: () => void
-  warmPress: () => void
-  warmFocus: () => void
-  cancelHoverPrefetch: () => void
   depth?: number
   isActive: Accessor<boolean>
   canExpand?: Accessor<boolean>
@@ -275,10 +273,6 @@ const SessionRow = (props: {
     <A
       href={`/${props.slug}/session/${props.session.id}`}
       class={`flex h-full min-w-0 flex-1 items-center gap-2 text-left focus:outline-none ${props.dense ? "py-0.5" : "py-1"}`}
-      onPointerDown={props.warmPress}
-      onPointerEnter={props.warmHover}
-      onPointerLeave={props.cancelHoverPrefetch}
-      onFocus={props.warmFocus}
       onClick={() => {
         props.setHoverSession(undefined)
         if (props.sidebarOpened()) return
@@ -365,9 +359,7 @@ const SessionHoverPreview = (props: {
   hoverSession: Accessor<string | undefined>
   session: Session
   sidebarHovering: Accessor<boolean>
-  hoverReady: Accessor<boolean>
   hoverMessages: Accessor<UserMessage[] | undefined>
-  language: ReturnType<typeof useLanguage>
   isActive: Accessor<boolean>
   slug: string
   setHoverSession: (id: string | undefined) => void
@@ -385,21 +377,16 @@ const SessionHoverPreview = (props: {
     open={props.hoverSession() === props.session.id}
     onOpenChange={(open) => props.setHoverSession(open ? props.session.id : undefined)}
   >
-    <Show
-      when={props.hoverReady()}
-      fallback={<div class="text-12-regular text-text-weak">{props.language.t("session.messages.loading")}</div>}
-    >
-      <div class="overflow-y-auto overflow-x-hidden max-h-72 h-full">
-        <MessageNav
-          messages={props.hoverMessages() ?? []}
-          current={undefined}
-          getLabel={props.messageLabel}
-          onMessageSelect={props.onMessageSelect}
-          size="normal"
-          class="w-60"
-        />
-      </div>
-    </Show>
+    <div class="overflow-y-auto overflow-x-hidden max-h-72 h-full">
+      <MessageNav
+        messages={props.hoverMessages() ?? []}
+        current={undefined}
+        getLabel={props.messageLabel}
+        onMessageSelect={props.onMessageSelect}
+        size="normal"
+        class="w-60"
+      />
+    </div>
   </HoverCard>
 )
 
@@ -437,7 +424,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
         }
       }
       return {
-        status,
+        status: status?.type,
         isWorking: working,
         agent,
         childSummary: childSummary && childSummary.total > 0 ? childSummary : undefined,
@@ -466,13 +453,13 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     onCleanup(() => window.clearInterval(id))
   })
 
-  const agent = createMemo(() => view().agent)
+  const agent = createMemo(() => sessionAgentLabel(props.session, view().agent))
   const durationLabel = createMemo(() => duration(props.session, messages(), view().isWorking, now()))
 
   const hoverMessages = createMemo(() => messages()?.filter((m): m is UserMessage => m.role === "user"))
   const hoverReady = createMemo(() => hoverMessages() !== undefined)
   const hoverAllowed = createMemo(() => !props.mobile && props.sidebarExpanded())
-  const hoverEnabled = createMemo(() => (props.popover ?? true) && hoverAllowed())
+  const hoverEnabled = createMemo(() => (props.popover ?? true) && hoverAllowed() && hoverReady())
   const isActive = createMemo(() => props.session.id === params.id)
   const title = createMemo(() => {
     if (!props.session.parentID) return displaySessionTitle(props.session)
@@ -510,46 +497,6 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       })
   }
 
-  const warm = (span: number, priority: "high" | "low") => {
-    const nav = props.navList?.()
-    const list = nav?.some((item) => item.id === props.session.id && item.directory === props.session.directory)
-      ? nav
-      : props.list
-
-    props.prefetchSession(props.session, priority)
-
-    const idx = list.findIndex((item) => item.id === props.session.id && item.directory === props.session.directory)
-    if (idx === -1) return
-
-    for (let step = 1; step <= span; step++) {
-      const next = list[idx + step]
-      if (next) props.prefetchSession(next, step === 1 ? "high" : priority)
-
-      const prev = list[idx - step]
-      if (prev) props.prefetchSession(prev, step === 1 ? "high" : priority)
-    }
-  }
-
-  const hoverPrefetch = {
-    current: undefined as ReturnType<typeof setTimeout> | undefined,
-  }
-  const cancelHoverPrefetch = () => {
-    if (hoverPrefetch.current === undefined) return
-    clearTimeout(hoverPrefetch.current)
-    hoverPrefetch.current = undefined
-  }
-  const scheduleHoverPrefetch = () => {
-    if (props.collapseByDefault?.()) return
-    warm(1, "high")
-    if (hoverPrefetch.current !== undefined) return
-    hoverPrefetch.current = setTimeout(() => {
-      hoverPrefetch.current = undefined
-      warm(2, "low")
-    }, 80)
-  }
-
-  onCleanup(cancelHoverPrefetch)
-
   const messageLabel = (message: Message) => {
     const parts = sessionStore.part[message.id] ?? []
     const text = parts.find((part): part is TextPart => part?.type === "text" && !part.synthetic && !part.ignored)
@@ -565,7 +512,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       slug={props.slug}
       mobile={props.mobile}
       dense={props.dense}
-      status={() => status()?.type}
+      status={status}
       unseenCount={unseenCount}
       durationLabel={durationLabel}
       setHoverSession={props.setHoverSession}
@@ -576,10 +523,6 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
       isActive={isActive}
       expanded={expanded}
       toggle={toggle}
-      warmHover={scheduleHoverPrefetch}
-      warmPress={() => warm(2, "high")}
-      warmFocus={() => warm(2, "high")}
-      cancelHoverPrefetch={cancelHoverPrefetch}
     />
   )
 
@@ -618,9 +561,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
               hoverSession={props.hoverSession}
               session={props.session}
               sidebarHovering={props.sidebarHovering}
-              hoverReady={hoverReady}
               hoverMessages={hoverMessages}
-              language={language}
               isActive={isActive}
               slug={props.slug}
               setHoverSession={props.setHoverSession}

@@ -181,12 +181,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const reply = async (answers: QuestionAnswer[], response?: Response) => {
     if (store.sending) return
 
-    props.onSubmit()
     setStore("sending", true)
     try {
       await sdk.client.question.reply({ requestID: props.request.id, answers, response })
       replied = true
       cache.delete(props.request.id)
+      props.onSubmit()
     } catch (err) {
       fail(err)
     } finally {
@@ -197,12 +197,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const reject = async () => {
     if (store.sending) return
 
-    props.onSubmit()
     setStore("sending", true)
     try {
       await sdk.client.question.reject({ requestID: props.request.id })
       replied = true
       cache.delete(props.request.id)
+      props.onSubmit()
     } catch (err) {
       fail(err)
     } finally {

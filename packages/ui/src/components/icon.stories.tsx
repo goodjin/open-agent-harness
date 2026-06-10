@@ -43,6 +43,7 @@ const names = [
   "chevron-grabber-vertical",
   "chevron-double-right",
   "circle-x",
+  "circle-dot",
   "close",
   "close-small",
   "checklist",

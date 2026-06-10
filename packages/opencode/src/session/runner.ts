@@ -28,7 +28,6 @@ import { Storage } from "@/storage/storage"
 import { Truncate } from "@/tool/truncation"
 import { Question } from "@/question"
 import { SessionStatus } from "./status"
-import { AgentConcurrency } from "@/protocol/agent-concurrency"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -1054,7 +1053,6 @@ export namespace SessionRunner {
                 messageID: input.chat.message.id,
                 abort: input.stream.abort,
                 model: input.stream.model,
-                completed,
               })
             : action.executor.type === "human"
               ? human({
@@ -1617,15 +1615,15 @@ export namespace SessionRunner {
     return false
   }
 
-  async function final(
+	  async function final(
     input: {
       stream: LLM.StreamInput
       run: AgentProtocol.Result
     },
     retry: number,
     missing = 0,
-  ) {
-    const msg = (await Session.updateMessage({
+	  ) {
+	    const msg = (await Session.updateMessage({
       id: MessageID.ascending(),
       parentID: input.stream.user.id,
       role: "assistant",
@@ -1822,103 +1820,117 @@ export namespace SessionRunner {
           parsed: parsed.value,
         })
       }
-    } else {
-      const text = await textOf(msg.id)
-      if (parsed && missing < 1) {
-        await SessionLog.emit({
-          sessionID: SessionID.make(input.stream.sessionID),
-          messageID: msg.id,
-          level: "warn",
-          type: "protocol.final.retry",
-          data: { runID: input.run.run_id, reason: "invalid_protocol_tool_call", error: parsed.error },
-        })
-        msg.finish = "stop"
-        msg.time.completed = Date.now()
-        await Session.updateMessage(msg)
-        await final(input, retry, missing + 1)
-        return
-      }
-      if (text.trim().length > 0 && missing < 1) {
-        const parts = await MessageV2.parts(msg.id)
-        await Promise.all(
-          parts.flatMap((part) => {
-            if (part.type !== "text") return []
-            return [
-              Session.updatePart({
-                ...part,
-                ignored: true,
-                metadata: {
-                  ...part.metadata,
-                  kind: "protocol_final_missing_tool",
-                  retry: true,
-                },
-              }),
-            ]
-          }),
-        )
-        await SessionLog.emit({
-          sessionID: SessionID.make(input.stream.sessionID),
-          messageID: msg.id,
-          level: "warn",
-          type: "protocol.final.retry",
-          data: { runID: input.run.run_id, reason: "missing_tool_call", textBytes: text.length },
-        })
-        msg.finish = "stop"
-        msg.time.completed = Date.now()
-        await Session.updateMessage(msg)
-        await final(input, retry, missing + 1)
-        return
-      }
-      if (text.trim().length === 0) {
-        if (missing < 1) {
-          await SessionLog.emit({
-            sessionID: SessionID.make(input.stream.sessionID),
-            messageID: msg.id,
-            level: "warn",
-            type: "protocol.final.retry",
-            data: { runID: input.run.run_id, reason: "empty_final_output" },
-          })
-          msg.finish = "stop"
-          msg.time.completed = Date.now()
-          await Session.updateMessage(msg)
-          await final(input, retry, missing + 1)
-          return
-        }
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID: msg.id,
-          sessionID: SessionID.make(input.stream.sessionID),
-          type: "text",
-          text: "Protocol final response was empty or malformed.",
-          metadata: {
-            kind: "protocol_malformed",
-            action: "failed",
-            protocol: {
-              runID: input.run.run_id,
-            },
-          },
-          time: { start: Date.now(), end: Date.now() },
-        })
-        await SessionLog.emit({
-          sessionID: SessionID.make(input.stream.sessionID),
-          messageID: msg.id,
-          level: "warn",
-          type: "protocol.final.malformed",
-          data: { runID: input.run.run_id, reason: "empty_final_output" },
-        })
-        msg.finish = "error"
-        msg.time.completed = Date.now()
-        await Session.updateMessage(msg)
-        return
-      }
-      await SessionLog.emit({
-        sessionID: SessionID.make(input.stream.sessionID),
-        messageID: msg.id,
-        level: pseudo(text) ? "warn" : "info",
-        type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
-        data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
-      })
-    }
+	    } else {
+	      const text = await textOf(msg.id)
+	      const plain = AgentProtocolParser.parse(text)
+	      if (plain.ok && plain.value.declaration.intent !== "execute") {
+	        await hide(msg.id, "protocol_final_plain_json")
+	        await response({
+	          chat: processor,
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          parsed: plain.value,
+	        })
+	        await SessionLog.emit({
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          messageID: msg.id,
+	          level: "info",
+	          type: "protocol.final.plain_json",
+	          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
+	        })
+	      } else if (parsed && missing < 1) {
+	        await SessionLog.emit({
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          messageID: msg.id,
+	          level: "warn",
+	          type: "protocol.final.retry",
+	          data: { runID: input.run.run_id, reason: "invalid_protocol_tool_call", error: parsed.error },
+	        })
+	        msg.finish = "stop"
+	        msg.time.completed = Date.now()
+	        await Session.updateMessage(msg)
+	        await final(input, retry, missing + 1)
+	        return
+	      } else if (text.trim().length > 0 && missing < 1) {
+	        const parts = await MessageV2.parts(msg.id)
+	        await Promise.all(
+	          parts.flatMap((part) => {
+	            if (part.type !== "text") return []
+	            return [
+	              Session.updatePart({
+	                ...part,
+	                ignored: true,
+	                metadata: {
+	                  ...part.metadata,
+	                  kind: "protocol_final_missing_tool",
+	                  retry: true,
+	                },
+	              }),
+	            ]
+	          }),
+	        )
+	        await SessionLog.emit({
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          messageID: msg.id,
+	          level: "warn",
+	          type: "protocol.final.retry",
+	          data: { runID: input.run.run_id, reason: "missing_tool_call", textBytes: text.length },
+	        })
+	        msg.finish = "stop"
+	        msg.time.completed = Date.now()
+	        await Session.updateMessage(msg)
+	        await final(input, retry, missing + 1)
+	        return
+	      } else if (text.trim().length === 0) {
+	        if (missing < 1) {
+	          await SessionLog.emit({
+	            sessionID: SessionID.make(input.stream.sessionID),
+	            messageID: msg.id,
+	            level: "warn",
+	            type: "protocol.final.retry",
+	            data: { runID: input.run.run_id, reason: "empty_final_output" },
+	          })
+	          msg.finish = "stop"
+	          msg.time.completed = Date.now()
+	          await Session.updateMessage(msg)
+	          await final(input, retry, missing + 1)
+	          return
+	        }
+	        await Session.updatePart({
+	          id: PartID.ascending(),
+	          messageID: msg.id,
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          type: "text",
+	          text: "Protocol final response was empty or malformed.",
+	          metadata: {
+	            kind: "protocol_malformed",
+	            action: "failed",
+	            protocol: {
+	              runID: input.run.run_id,
+	            },
+	          },
+	          time: { start: Date.now(), end: Date.now() },
+	        })
+	        await SessionLog.emit({
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          messageID: msg.id,
+	          level: "warn",
+	          type: "protocol.final.malformed",
+	          data: { runID: input.run.run_id, reason: "empty_final_output" },
+	        })
+	        msg.finish = "error"
+	        msg.time.completed = Date.now()
+	        await Session.updateMessage(msg)
+	        return
+	      } else {
+	        await SessionLog.emit({
+	          sessionID: SessionID.make(input.stream.sessionID),
+	          messageID: msg.id,
+	          level: pseudo(text) ? "warn" : "info",
+	          type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
+	          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
+	        })
+	      }
+	    }
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
       messageID: msg.id,
@@ -2017,26 +2029,30 @@ export namespace SessionRunner {
     return (await MessageV2.parts(messageID)).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
   }
 
-  async function malformed(messageID: MessageID) {
-    const parts = await MessageV2.parts(messageID)
-    await Promise.all(
-      parts.flatMap((part) => {
-        if (part.type !== "text") return []
-        return [
-          Session.updatePart({
-            ...part,
-            ignored: true,
-            metadata: {
-              ...part.metadata,
-              kind: "protocol_malformed",
-              recovered: false,
-              retry: true,
-            },
-          }),
-        ]
-      }),
-    )
-  }
+	  async function malformed(messageID: MessageID) {
+	    await hide(messageID, "protocol_malformed")
+	  }
+
+	  async function hide(messageID: MessageID, kind: string) {
+	    const parts = await MessageV2.parts(messageID)
+	    await Promise.all(
+	      parts.flatMap((part) => {
+	        if (part.type !== "text") return []
+	        return [
+	          Session.updatePart({
+	            ...part,
+	            ignored: true,
+	            metadata: {
+	              ...part.metadata,
+	              kind,
+	              recovered: false,
+	              retry: true,
+	            },
+	          }),
+	        ]
+	      }),
+	    )
+	  }
 
   async function response(input: {
     chat: SessionProcessor.Info
@@ -2447,7 +2463,7 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
       status: "pending",
     })
-    const answers = await Question.ask({
+    const reply = await Question.askReply({
       sessionID: input.sessionID,
       questions: [
         {
@@ -2463,8 +2479,8 @@ export namespace SessionRunner {
       ],
       tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
     })
-    const answer = answers[0]?.[0] ?? ""
-    const ok = yes(answer)
+    const answer = reply.answers[0]?.[0] ?? ""
+    const ok = reply.response ? reply.response === "confirm" : yes(answer)
     await storeConfirm({
       action: input.action,
       messageID: input.messageID,
@@ -2556,7 +2572,6 @@ export namespace SessionRunner {
     messageID: MessageID
     abort: AbortSignal
     model: LLM.StreamInput["model"]
-    completed: ReadonlySet<string>
   }): Promise<AgentProtocolExecutor.ToolResult> {
     const selected = await fallback(input.action, input.parentAgent, "target_unavailable")
     if (!selected.ok) {
@@ -2620,41 +2635,6 @@ export namespace SessionRunner {
         metadata: { blocked: true, agentID: selected.agent.name, metadata: gate },
       }
     }
-    const throttle = await agentThrottle({
-      action: input.action,
-      agent: selected.agent,
-      sessionID: input.sessionID,
-      completed: input.completed,
-    })
-    if (throttle) {
-      await SessionLog.emit({
-        sessionID: input.sessionID,
-        messageID: input.messageID,
-        level: "info",
-        type: "protocol.agent.throttled",
-        data: {
-          actionID: input.action.id,
-          agent: selected.agent.name,
-          reason: throttle.reason,
-          limit: throttle.limit,
-          running: throttle.running,
-          depends_on: input.action.depends_on,
-        },
-      })
-      return {
-        title: input.action.title,
-        output: throttle.message,
-        metadata: {
-          blocked: true,
-          agentID: selected.agent.name,
-          reason: throttle.reason,
-          agentConcurrency: {
-            limit: throttle.limit,
-            running: throttle.running,
-          },
-        },
-      }
-    }
     const parent = await Session.get(input.sessionID)
     const source = await Agent.get(input.parentAgent)
     const rule = PermissionNext.evaluate(
@@ -2686,6 +2666,8 @@ export namespace SessionRunner {
     const child = await Session.create({
       parentID: parent.id,
       title: `Protocol: ${title} (@${selected.agent.name})`,
+      agent: selected.agent.name,
+      model: selected.agent.model,
       permission: [
         ...Agent.permissions(selected.agent, parent.permission),
         { permission: "workflow_create", pattern: "*", action: "deny" },
@@ -2866,37 +2848,6 @@ export namespace SessionRunner {
     if (!selected) return { ok: false as const, error: `Protocol agent not found: ${found}` }
     if (AgentDelegation.visible(selected, parent)) return { ok: true as const, agent: selected }
     return { ok: false as const, error: `Protocol agent not available from ${parent}: ${selected.name}` }
-  }
-
-  async function agentThrottle(input: {
-    action: AgentProtocol.Action
-    agent: Agent.Info
-    completed: ReadonlySet<string>
-    sessionID: SessionID
-  }) {
-    const info = await SessionDelegation.query({ sessionID: input.sessionID, output: false })
-    const pending = await projectPending(input.sessionID)
-    return AgentConcurrency.block({
-      action: input.action.id,
-      agent: input.agent.name,
-      kind: input.agent.kind,
-      depends: input.action.depends_on,
-      completed: input.completed,
-      done: info.completed,
-      pending: info.pending,
-      running: AgentConcurrency.running(input.agent.name, pending),
-      cfg: { concurrency: input.agent.concurrency },
-    })
-  }
-
-  async function projectPending(sessionID: SessionID) {
-    const session = await Session.get(sessionID)
-    const rows = await Promise.all(
-      [...Session.list({ directory: session.directory, limit: 5000 })].map((item) =>
-        SessionDelegation.query({ sessionID: item.id, output: false }),
-      ),
-    )
-    return rows.flatMap((item) => item.pending)
   }
 
   function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {
@@ -3273,9 +3224,14 @@ export namespace SessionRunner {
     }
     const found = runtime.catalog.find((item) => item.id === target)
     if (!found) {
+      const available = runtime.catalog.map((item) => item.id).filter((item) => item !== "invalid")
       return {
         ok: false,
-        error: `Action '${action.id}' references unavailable tool '${target}'.`,
+        error: [
+          `Action '${action.id}' references unavailable tool '${target}'.`,
+          `Available protocol tools: ${available.length ? available.join(", ") : "none"}.`,
+          "Use only listed protocol tools, or delegate repository read/search/review work to a suitable agent.",
+        ].join(" "),
       }
     }
     if (action.input) {
