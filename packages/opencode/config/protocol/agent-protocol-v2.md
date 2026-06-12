@@ -17,9 +17,7 @@ Use this shape:
 ```json
 {
   "version": "2",
-  "items": [
-    { "id": "inspect", "kind": "tool", "target": "<listed-tool-id>", "args": { "...": "..." } }
-  ]
+  "items": [{ "id": "inspect", "kind": "tool", "target": "<listed-tool-id>", "args": { "...": "..." } }]
 }
 ```
 
@@ -39,20 +37,29 @@ Do not wrap the package inside `input`. Do not stringify the package into one fi
 - `reply`: reply without claiming completion with `{ id, kind, message, summary, changed_files }`.
 
 Use `depends` only for real dependencies. Independent items can be listed together.
+Each `depends` id must either name an item in the current package or name a completed historical child-session action id from the current session. Do not invent dependency ids.
 
 For `agent` items whose target is a verifier (for example `backend-verifier`, `frontend-verifier`, `sisyphus-verifier`, `database-agent-verifier`):
-- Always set `depends` to the worker item id that the verifier must inspect. The runtime rejects the whole package before execution if a verifier does not explicitly depend on a worker.
-- For a `<worker>-verifier` target, `depends` must include the item id whose target is `<worker>`. Example: `backend-verifier` must depend on the `backend` item id.
-- For generic verifier targets such as `verifier`, `security-reviewer`, or `technical-reviewer`, `depends` must include the upstream worker item id(s).
-- Do not use `depends: ["none"]` for verifier items in a multi-agent task.
+
+- Use `depends` when the verifier needs a specific upstream action result. The runtime does not require verifier dependencies to point to worker agents.
+- Verifier `depends` are action-level edges. The verifier target name does not need to match the upstream target name; multiple actions may use the same agent target.
+- If a verifier `depends` id matches a completed child-session action, the runtime attaches that child session's prompt and summary as handoff context.
+- If no completed child-session handoff matches, the verifier still runs with its own prompt and the protocol context.
 
 When a worker is followed by a verifier:
 
-- The worker result must include `kind: success | failure | error | reply`.
+- Delegated worker and verifier sessions finish with the native `ActionResult` tool, not plain text.
+- A worker `ActionResult` uses `role: "worker"` and `status: success | failure | error | reply`. Worker `success` only means the worker claims the task is ready for verification; it is not final parent completion when verifier gates exist.
+- A verifier `ActionResult` uses `role: "verifier"`, `target_action_id`, `verification_role: test | review`, and `status: pass | fail | error | reply | skipped`.
+- Keep `changed_files`, `verification`, `blockers`, `issues`, `evidence`, and `worker_feedback` as short strings. Do not use arrays or nested objects in `ActionResult`.
 - For `success`, `failure`, and `error`, include task background, task content, completion summary, changed files, verification evidence, and blockers.
+- If a delegated session returns plain text instead of `ActionResult`, the runtime asks that session to retry with the result tool.
 - If a worker completes without that summary, the runtime may ask the worker to produce a structured task summary before verifier handoff.
 - The verifier receives the worker's original dispatch prompt plus the worker summary. It must return a formatted verification result with `kind`, `status`, `summary`, `issues`, `evidence`, and `worker_feedback`.
-- The verifier result is sent back to the worker.
+- Verifier gates run serially for a worker. Runtime starts the next verifier only after the previous required verifier returns `pass` or an allowed `skipped`.
+- If a verifier returns `fail` or `reply`, runtime sends its `worker_feedback` back to the worker for a bounded fix loop. If the loop exceeds the runtime limit, remaining verifiers are not started and the final worker/verifier package is returned to the parent as blocked.
+- After all required verifier gates pass, runtime attaches the verifier result descriptions to the worker result and only then sends the canonical result to the parent session.
+- If the latest worker result only describes verifier feedback, runtime asks the worker for a fresh complete task summary with `ActionResult` before notifying the parent.
 
 The runtime also enforces verification policy for worker agents:
 
@@ -82,7 +89,7 @@ Use `input` when the user's choice or additional information should affect the n
 
 Use `confirm` when a planner has designed a plan that must be approved before execution.
 
-The planner should emit the `confirm` item and the executable downstream items in the same protocol package. The runtime persists the `plan` and asks the user to approve or cancel. If the user confirms, downstream items that depend on the confirmation execute automatically from the persisted package without asking the model to regenerate the plan or emit another package. If the user cancels, downstream items do not execute.
+The planner should emit the `confirm` item and the executable items in the same protocol package. The runtime treats any `confirm` item as package-level approval: it asks the user before running the other items, regardless of the confirm item's `depends` value and regardless of whether other items depend on the confirm item. If the user confirms, the remaining items execute from the persisted package without asking the model to regenerate the plan or emit another package. If the user cancels, remaining items do not execute.
 
 Use `input`, not `confirm`, when the user must choose between multiple plans, provide parameters, or add details that the model must interpret before building the next package.
 
@@ -91,9 +98,9 @@ Planner agents must follow this order:
 1. Understand the initial task.
 2. Analyze goals, constraints, risks, unresolved questions, and task boundaries.
 3. Emit a `confirm` item whose `plan` summarizes the proposed plan.
-4. In the same package, emit executable `agent` or `tool` items and set each gated item to depend on the `confirm` item.
+4. In the same package, emit executable `agent` or `tool` items. They do not need to depend on the `confirm` item; the runtime gates the package automatically.
 
-After the user confirms, the runtime automatically executes the dependent items from the persisted package.
+After the user confirms, the runtime automatically executes the remaining items from the persisted package.
 
 ## Requirement Documents
 

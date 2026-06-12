@@ -874,6 +874,99 @@ describe("session.llm.stream", () => {
     })
   })
 
+  test("reports malformed ActionResult input without exposing invalid tool", async () => {
+    const server = state.server
+    if (!server) {
+      throw new Error("Server not initialized")
+    }
+
+    const providerID = "alibaba"
+    const modelID = "qwen-plus"
+    const fixture = await loadFixture(providerID, modelID)
+    const model = fixture.model
+
+    const request = waitRequest(
+      "/chat/completions",
+      new Response(createToolStream({}, LLM.ACTION_RESULT_TOOL), {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(
+          path.join(dir, "opencode.json"),
+          JSON.stringify({
+            $schema: "https://opencode.ai/config.json",
+            enabled_providers: [providerID],
+            provider: {
+              [providerID]: {
+                options: {
+                  apiKey: "test-key",
+                  baseURL: `${server.url.origin}/v1`,
+                },
+              },
+            },
+          }),
+        )
+      },
+    })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const resolved = await Provider.getModel(ProviderID.make(providerID), ModelID.make(model.id))
+        const sessionID = SessionID.make("session-action-result-malformed")
+        const agent = {
+          name: "verifier",
+          mode: "subagent",
+          kind: "verifier",
+          entry: ent,
+          capability: cap,
+          options: {},
+          permission: [{ permission: "*", pattern: "*", action: "allow" }],
+          inheritPermissions: false,
+        } satisfies Agent.Info
+
+        const user = {
+          id: MessageID.make("user-action-result-malformed"),
+          sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          agent: agent.name,
+          model: { providerID: ProviderID.make(providerID), modelID: resolved.id },
+        } satisfies MessageV2.User
+
+        const stream = await LLM.stream({
+          user,
+          sessionID,
+          model: resolved,
+          agent,
+          system: ["You are a verifier."],
+          abort: new AbortController().signal,
+          messages: [{ role: "user", content: "submit result" }],
+          tools: {},
+        })
+
+        const items: unknown[] = []
+        for await (const item of stream.fullStream) {
+          items.push(item)
+        }
+        const err = items.find(
+          (item): item is { type: "tool-error"; toolName: string; error: unknown } =>
+            !!item && typeof item === "object" && "type" in item && item.type === "tool-error",
+        )
+        expect(err?.toolName).toBe(LLM.ACTION_RESULT_TOOL)
+        expect(String(err?.error)).toContain("ActionResult input schema/parse failed")
+        expect(String(err?.error)).not.toContain("unavailable tool 'invalid'")
+        expect(JSON.stringify(items)).not.toContain('"toolName":"invalid"')
+
+        await request
+      },
+    })
+  })
+
   test("protocol runner exposes only AgentProtocolOutput as native tool", async () => {
     const server = state.server
     if (!server) {
@@ -1171,6 +1264,18 @@ describe("session.llm.stream", () => {
         })
       },
     })
+  })
+
+  test("protocol invalid output shows raw malformed AgentProtocolOutput", () => {
+    const bad = '{"version": "2", "items": .'
+    const result = LLM.invalid({
+      tool: LLM.PROTOCOL_OUTPUT_TOOL,
+      error: `Invalid input for tool AgentProtocolOutput: JSON parsing failed: Text: ${bad}. Error message: JSON Parse error: Unexpected EOF`,
+    })
+
+    expect(result.output).toContain("Raw protocol output:")
+    expect(result.output).toContain(bad)
+    expect(result.metadata.raw).toBe(bad)
   })
 
   test("sends responses API payload for OpenAI models", async () => {

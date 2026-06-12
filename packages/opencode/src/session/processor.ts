@@ -21,6 +21,7 @@ import { MemoryStore } from "@/memory"
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
   const PREFLIGHT_COMPACT_THRESHOLD = 3
+  const RAW_LIMIT = 64 * 1024
   const log = Log.create({ service: "session.processor" })
 
   export type Info = Awaited<ReturnType<typeof create>>
@@ -209,15 +210,38 @@ export namespace SessionProcessor {
                     })
                     break
 
-                  case "tool-input-delta":
+                  case "tool-input-delta": {
+                    const match = toolcalls[value.id]
+                    if (match?.state.status === "pending") {
+                      match.state.raw += value.delta
+                      await Session.updatePartDelta({
+                        sessionID: match.sessionID,
+                        messageID: match.messageID,
+                        partID: match.id,
+                        field: "state.raw",
+                        delta: value.delta,
+                      })
+                    }
                     break
+                  }
 
-                  case "tool-input-end":
+                  case "tool-input-end": {
+                    const match = toolcalls[value.id]
+                    if (match?.state.status === "pending") {
+                      await record("debug", "tool.input.end", {
+                        partID: match.id,
+                        callID: value.id,
+                        tool: match.tool,
+                        ...raw(match.state.raw),
+                      })
+                    }
                     break
+                  }
 
                   case "tool-call": {
                     const match = toolcalls[value.toolCallId]
                     if (match) {
+                      const text = match.state.status === "pending" ? raw(match.state.raw) : raw("")
                       const part = await Session.updatePart({
                         ...match,
                         tool: value.toolName,
@@ -236,6 +260,7 @@ export namespace SessionProcessor {
                         callID: value.toolCallId,
                         tool: value.toolName,
                         input: value.input,
+                        ...text,
                       })
 
                       const parts = await MessageV2.parts(input.assistantMessage.id)
@@ -606,6 +631,16 @@ export namespace SessionProcessor {
       },
     }
     return result
+  }
+
+  function raw(input: string) {
+    const buf = Buffer.from(input)
+    const truncated = buf.length > RAW_LIMIT
+    return {
+      raw: truncated ? buf.subarray(0, RAW_LIMIT).toString("utf8") : input,
+      rawBytes: buf.length,
+      truncated,
+    }
   }
 
   export async function shouldStopCompact(sessionID: SessionID, messageID: MessageID) {

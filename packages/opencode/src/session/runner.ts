@@ -391,11 +391,10 @@ export namespace SessionRunner {
     const parsedValue = valid ? parsed.value : fixed!
     const issues =
       parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
-        ? confirmGate(parsedValue.declaration.payload.actions)
-          ? []
-          : await verifierIssues(parsedValue.declaration.payload.actions)
+        ? await packageIssues(parsedValue.declaration.payload.actions, sessionID)
         : []
     if (issues.length > 0 && retry < 1) {
+      const kind = issueKind()
       await Promise.all(
         parts.flatMap((part) => {
           if (part.type !== "text") return []
@@ -419,8 +418,8 @@ export namespace SessionRunner {
         level: "warn",
         type: "protocol.retry",
         data: {
-          reason: "invalid_verifier_dependency",
-          error: { code: "invalid_verifier_dependency", issues },
+          reason: kind.code,
+          error: { code: kind.code, issues },
         },
       })
       const msg = await Session.updateMessage({
@@ -460,12 +459,11 @@ export namespace SessionRunner {
           system: [
             ...stream.system,
             [
-              "Your previous Agent Protocol DSL v2 package had invalid verifier dependencies.",
+              `Your previous Agent Protocol DSL v2 package had ${kind.label}.`,
               "The runtime did not execute any actions from that package.",
-              "Every verifier agent item must explicitly depend on the worker action it verifies.",
-              "For a `<worker>-verifier` target, depends must include the item id whose target is `<worker>`.",
+              ...issueHints(),
               "",
-              "Verifier dependency errors:",
+              "Protocol package errors:",
               ...issues.map((item) => `- ${item.id}: ${item.reason}`),
               "",
               `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with a regenerated package.`,
@@ -480,17 +478,14 @@ export namespace SessionRunner {
       )
     }
     if (issues.length > 0) {
+      const kind = issueKind()
       await malformed(chat.message.id)
       await Session.updatePart({
         id: PartID.ascending(),
         messageID: chat.message.id,
         sessionID,
         type: "text",
-        text: [
-          "Protocol verifier dependency validation failed.",
-          "",
-          ...issues.map((item) => `- ${item.id}: ${item.reason}`),
-        ].join("\n"),
+        text: [`${kind.title} failed.`, "", ...issues.map((item) => `- ${item.id}: ${item.reason}`)].join("\n"),
         metadata: {
           kind: "protocol_malformed",
           action: "failed",
@@ -502,7 +497,7 @@ export namespace SessionRunner {
         messageID: chat.message.id,
         level: "warn",
         type: "protocol.malformed",
-        data: { recovered: false, error: { code: "invalid_verifier_dependency", issues } },
+        data: { recovered: false, error: { code: kind.code, issues } },
       })
       chat.message.finish = "error"
       chat.message.time.completed = Date.now()
@@ -706,13 +701,23 @@ export namespace SessionRunner {
       return true
     }
     const status = SessionStatus.get(child)
-    if (SessionStatus.shouldContinue(status) || status.type === "waiting_user" || status.type === "waiting_permission") {
-      await note(input, `Recovered existing child session ${child}. It is currently ${status.type}; no duplicate child was created.`)
+    if (
+      SessionStatus.shouldContinue(status) ||
+      status.type === "waiting_user" ||
+      status.type === "waiting_permission"
+    ) {
+      await note(
+        input,
+        `Recovered existing child session ${child}. It is currently ${status.type}; no duplicate child was created.`,
+      )
       return true
     }
     const restorable = new Set(["idle", "aborted", "failed", "blocked", "timeout", "error", "paused"])
     if (!restorable.has(status.type)) {
-      await note(input, `Recovered existing child session ${child}, but its status is ${status.type}; no duplicate child was created.`)
+      await note(
+        input,
+        `Recovered existing child session ${child}, but its status is ${status.type}; no duplicate child was created.`,
+      )
       return true
     }
     void SessionPrompt.loop({ sessionID: child }).catch((err) => {
@@ -784,6 +789,7 @@ export namespace SessionRunner {
     await project(sessionID, run)
     chat.message.finish = run.status === "failed" ? "error" : "stop"
     chat.message.time.completed = Date.now()
+    const action = summaryAction(run)
     await Session.updateMessage(chat.message)
     if (run.status !== "blocked") {
       await Session.updatePart({
@@ -794,7 +800,7 @@ export namespace SessionRunner {
         text: await report(run),
         metadata: {
           kind: "protocol_summary",
-          action: run.status,
+          action,
           protocol: {
             runID: run.run_id,
             status: run.status,
@@ -823,7 +829,7 @@ export namespace SessionRunner {
         text: summarize(run),
         metadata: {
           kind: "protocol_summary",
-          action: run.status,
+          action,
           protocol: {
             runID: run.run_id,
             status: run.status,
@@ -834,89 +840,85 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
-      if (revision(run)) {
+      if (revision(run) || repairable(run)) {
         await final(
           {
             stream,
             run,
           },
           0,
+          0,
+          repairable(run),
         )
       }
     }
   }
 
-  async function verifierIssues(actions: AgentProtocol.Action[]) {
-    const targets = new Map<string, AgentProtocol.Action>()
-    const byID = new Map(actions.map((item) => [item.id, item] as const))
-    for (const item of actions) {
-      if (item.executor.type !== "agent") continue
-      targets.set(item.executor.target, item)
-    }
-    const kindByTarget = new Map<string, string | undefined>()
-    await Promise.all(
-      [...targets.keys()].map(async (target) => {
-        const agent = await Agent.get(target)
-        kindByTarget.set(target, agent?.kind)
-      }),
-    )
-    const kindByID = new Map(
-      actions.map(
-        (item) =>
-          [item.id, item.executor.type === "agent" ? kindByTarget.get(item.executor.target) : undefined] as const,
-      ),
-    )
-    const issues: { id: string; title: string; reason: string }[] = []
-    for (const item of actions) {
-      if (item.executor.type !== "agent") continue
-      if (kindByTarget.get(item.executor.target) !== "verifier") continue
+  type Issue = { id: string; title: string; reason: string; type: "dependency" }
 
-      const deps = item.depends_on.filter((dep) => byID.has(dep))
-      const workers = deps.filter((dep) => kindByID.get(dep) === "worker")
-      if (workers.length === 0) {
-        issues.push({
-          id: item.id,
-          title: item.title,
-          reason:
-            `Verifier '${item.executor.target}' must declare depends on the worker action it verifies. ` +
-            `Action '${item.id}' has depends_on [${item.depends_on.join(", ")}], but none of those actions are worker agents.`,
-        })
-        continue
-      }
-      if (!item.executor.target.endsWith("-verifier")) continue
-
-      const base = item.executor.target.slice(0, -"-verifier".length)
-      const worker = targets.get(base)
-      if (!worker || kindByTarget.get(worker.executor.target) !== "worker") {
-        issues.push({
-          id: item.id,
-          title: item.title,
-          reason:
-            `Verifier '${item.executor.target}' must verify the matching worker target '${base}', ` +
-            `but no worker action with that target is present in this package.`,
-        })
-        continue
-      }
-      if (!item.depends_on.includes(worker.id)) {
-        issues.push({
-          id: item.id,
-          title: item.title,
-          reason:
-            `Verifier '${item.executor.target}' must explicitly depend on worker action '${worker.id}'. ` +
-            `Set depends to ["${worker.id}"] or include that id with any additional real dependencies.`,
-        })
-      }
-    }
-    return issues
+  async function packageIssues(actions: AgentProtocol.Action[], sessionID: SessionID) {
+    if (confirms(actions).length > 0) return []
+    return dependencyIssues(actions, sessionID)
   }
 
-  function confirmGate(actions: AgentProtocol.Action[]) {
-    const action = actions[0]
-    if (!action) return
-    if (action.depends_on.length > 0) return
-    if (action.operation !== "confirm") return
-    if (action.executor.type !== "human") return
-    return action
+  async function dependencyIssues(actions: AgentProtocol.Action[], sessionID: SessionID): Promise<Issue[]> {
+    const ids = new Set(actions.map((item) => item.id))
+    const missing = actions.flatMap((item) =>
+      item.depends_on
+        .filter((dep) => !ids.has(dep))
+        .map((dep) => ({
+          id: item.id,
+          title: item.title,
+          dep,
+        })),
+    )
+    if (missing.length === 0) return []
+    const rows = await SessionDelegation.query({
+      sessionID,
+      status: "completed",
+      output: false,
+    })
+    const done = new Set(rows.completed.flatMap((item) => (item.action_id ? [item.action_id] : [])))
+    return missing.flatMap((item) => {
+      if (done.has(item.dep)) return []
+      return [
+        {
+          id: item.id,
+          title: item.title,
+          type: "dependency" as const,
+          reason:
+            `Action '${item.id}' depends on '${item.dep}', but that id is neither in the current package ` +
+            "nor present as a completed historical child-session action.",
+        },
+      ]
+    })
+  }
+
+  function issueKind() {
+    return {
+      code: "invalid_dependency",
+      label: "invalid dependencies",
+      title: "Protocol dependency validation",
+    }
+  }
+
+  function issueHints() {
+    return [
+      "Every depends id must refer to an item in the current package or a completed historical child-session action id.",
+      "When verifying historical work, use the exact historical action id shown by the session history.",
+      "If the historical action does not exist, include the item in the same package before the dependent item.",
+    ]
+  }
+
+  function confirms(actions: AgentProtocol.Action[]) {
+    return actions.filter((item) => item.operation === "confirm" && item.executor.type === "human")
+  }
+
+  function gated(actions: AgentProtocol.Action[]) {
+    const gates = confirms(actions)
+    if (gates.length === 0) return actions
+    const ids = new Set(gates.map((item) => item.id))
+    return [...gates, ...actions.filter((item) => !ids.has(item.id))]
   }
 
   async function execute(input: {
@@ -931,13 +933,14 @@ export namespace SessionRunner {
       input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
     const agents = AgentDelegation.list(await Agent.list(), input.stream.agent.name)
     const checked = AgentVerification.apply({ actions: base, agents })
+    const sorted = gated(checked.actions)
     let declaration: AgentProtocol.Declaration =
       input.parsed.declaration.payload.type === "action_graph"
         ? {
             ...input.parsed.declaration,
             payload: {
               ...input.parsed.declaration.payload,
-              actions: checked.actions,
+              actions: sorted,
             },
           }
         : input.parsed.declaration
@@ -955,26 +958,8 @@ export namespace SessionRunner {
         verification: { injected: checked.injected },
       },
     })
-    const issues = await verifierIssues(actions)
-    const gate = confirmGate(actions)
-    if (issues.length > 0) {
-      if (!gate) return rejected(runID, declaration, issues)
-      declaration = {
-        ...declaration,
-        payload: {
-          type: "action_graph",
-          actions: [gate],
-        },
-      }
-      actions = [gate]
-      await SessionLog.emit({
-        sessionID: input.sessionID,
-        messageID: input.chat.message.id,
-        level: "info",
-        type: "protocol.confirm.deferred_validation",
-        data: { runID, issues },
-      })
-    }
+    const issues = await packageIssues(actions, input.sessionID)
+    if (issues.length > 0) return rejected(runID, declaration, issues)
     const plan = actions
     const runtime =
       input.stream.runtimeTools ??
@@ -986,7 +971,7 @@ export namespace SessionRunner {
         processor: input.chat,
         bypassAgentCheck: false,
         messages: [],
-    }))
+      }))
     await pending(input.sessionID, runID, declaration)
     const completed = new Set<string>()
     const run = await AgentProtocolExecutor.run({
@@ -1011,13 +996,6 @@ export namespace SessionRunner {
             title: action.title,
             output: check.reason ?? "",
             metadata: { skipped: true, reason: "verification_no_change" },
-          }
-        }
-        if (!check.ok) {
-          return {
-            title: action.title,
-            output: check.reason,
-            metadata: { blocked: true, reason: "worker_summary_pending" },
           }
         }
         if (action.executor.type === "runtime" && action.executor.target === "wait") {
@@ -1134,14 +1112,11 @@ export namespace SessionRunner {
     return run
   }
 
-  function rejected(
-    runID: string,
-    declaration: AgentProtocol.Declaration,
-    issues: { id: string; title: string; reason: string }[],
-  ): AgentProtocol.Result {
+  function rejected(runID: string, declaration: AgentProtocol.Declaration, issues: Issue[]): AgentProtocol.Result {
     const now = Date.now()
+    const kind = issueKind()
     const summary = [
-      "Protocol verifier dependency validation failed before execution.",
+      `${kind.title} failed before execution.`,
       "",
       ...issues.map((item) => `- ${item.id}: ${item.reason}`),
     ].join("\n")
@@ -1184,16 +1159,7 @@ export namespace SessionRunner {
       output: true,
     })
     const rows = input.action.depends_on.flatMap((id) => info.completed.filter((row) => row.action_id === id))
-    if (rows.length === 0) {
-      return {
-        ok: false as const,
-        reason: [
-          `Verifier '${input.action.executor.target}' is waiting for completed worker summaries before it can run.`,
-          `Verifier action '${input.action.id}' depends on [${input.action.depends_on.join(", ")}], but none of those worker delegations have completed yet.`,
-          "The runtime did not start the verifier. Continue after the worker delegation result is available.",
-        ].join("\n"),
-      }
-    }
+    if (rows.length === 0) return { ok: true as const, prompt: input.prompt }
     const packs = await Promise.all(
       rows.map(async (row) => {
         const act = input.actions.find((item) => item.id === row.action_id)
@@ -1615,15 +1581,16 @@ export namespace SessionRunner {
     return false
   }
 
-	  async function final(
+  async function final(
     input: {
       stream: LLM.StreamInput
       run: AgentProtocol.Result
     },
     retry: number,
     missing = 0,
-	  ) {
-	    const msg = (await Session.updateMessage({
+    repair = false,
+  ) {
+    const msg = (await Session.updateMessage({
       id: MessageID.ascending(),
       parentID: input.stream.user.id,
       role: "assistant",
@@ -1665,6 +1632,7 @@ export namespace SessionRunner {
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
       "Only use tool, agent, input, or confirm items if another runtime call is truly required.",
       "If the previous run stopped on an input item, use the captured user input to decide the next package; do not re-ask the same question unless the answer is unusable.",
+      repairPrompt(input.run),
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       'The full conversation history is preserved. Resolve references like "these errors", "continue", or "fix them" from the earlier turns.',
       'Strictly follow the current protocol shape: `{ version: "2", items }`.',
@@ -1750,6 +1718,7 @@ export namespace SessionRunner {
           time: { start: Date.now(), end: Date.now() },
         })
         await project(sessionID, run)
+        const action = summaryAction(run)
         if (run.status !== "blocked") {
           await Session.updatePart({
             id: PartID.ascending(),
@@ -1759,7 +1728,7 @@ export namespace SessionRunner {
             text: await report(run),
             metadata: {
               kind: "protocol_summary",
-              action: run.status,
+              action,
               protocol: {
                 runID: run.run_id,
                 status: run.status,
@@ -1792,7 +1761,7 @@ export namespace SessionRunner {
             text: summarize(run),
             metadata: {
               kind: "protocol_summary",
-              action: run.status,
+              action,
               protocol: {
                 runID: run.run_id,
                 status: run.status,
@@ -1803,13 +1772,15 @@ export namespace SessionRunner {
             },
             time: { start: Date.now(), end: Date.now() },
           })
-          if (revision(run)) {
+          if (revision(run) || (repairable(run) && !repair && retry < 1)) {
             await final(
               {
                 stream: input.stream,
                 run,
               },
               retry + 1,
+              0,
+              repairable(run),
             )
           }
         }
@@ -1820,117 +1791,117 @@ export namespace SessionRunner {
           parsed: parsed.value,
         })
       }
-	    } else {
-	      const text = await textOf(msg.id)
-	      const plain = AgentProtocolParser.parse(text)
-	      if (plain.ok && plain.value.declaration.intent !== "execute") {
-	        await hide(msg.id, "protocol_final_plain_json")
-	        await response({
-	          chat: processor,
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          parsed: plain.value,
-	        })
-	        await SessionLog.emit({
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          messageID: msg.id,
-	          level: "info",
-	          type: "protocol.final.plain_json",
-	          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
-	        })
-	      } else if (parsed && missing < 1) {
-	        await SessionLog.emit({
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          messageID: msg.id,
-	          level: "warn",
-	          type: "protocol.final.retry",
-	          data: { runID: input.run.run_id, reason: "invalid_protocol_tool_call", error: parsed.error },
-	        })
-	        msg.finish = "stop"
-	        msg.time.completed = Date.now()
-	        await Session.updateMessage(msg)
-	        await final(input, retry, missing + 1)
-	        return
-	      } else if (text.trim().length > 0 && missing < 1) {
-	        const parts = await MessageV2.parts(msg.id)
-	        await Promise.all(
-	          parts.flatMap((part) => {
-	            if (part.type !== "text") return []
-	            return [
-	              Session.updatePart({
-	                ...part,
-	                ignored: true,
-	                metadata: {
-	                  ...part.metadata,
-	                  kind: "protocol_final_missing_tool",
-	                  retry: true,
-	                },
-	              }),
-	            ]
-	          }),
-	        )
-	        await SessionLog.emit({
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          messageID: msg.id,
-	          level: "warn",
-	          type: "protocol.final.retry",
-	          data: { runID: input.run.run_id, reason: "missing_tool_call", textBytes: text.length },
-	        })
-	        msg.finish = "stop"
-	        msg.time.completed = Date.now()
-	        await Session.updateMessage(msg)
-	        await final(input, retry, missing + 1)
-	        return
-	      } else if (text.trim().length === 0) {
-	        if (missing < 1) {
-	          await SessionLog.emit({
-	            sessionID: SessionID.make(input.stream.sessionID),
-	            messageID: msg.id,
-	            level: "warn",
-	            type: "protocol.final.retry",
-	            data: { runID: input.run.run_id, reason: "empty_final_output" },
-	          })
-	          msg.finish = "stop"
-	          msg.time.completed = Date.now()
-	          await Session.updateMessage(msg)
-	          await final(input, retry, missing + 1)
-	          return
-	        }
-	        await Session.updatePart({
-	          id: PartID.ascending(),
-	          messageID: msg.id,
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          type: "text",
-	          text: "Protocol final response was empty or malformed.",
-	          metadata: {
-	            kind: "protocol_malformed",
-	            action: "failed",
-	            protocol: {
-	              runID: input.run.run_id,
-	            },
-	          },
-	          time: { start: Date.now(), end: Date.now() },
-	        })
-	        await SessionLog.emit({
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          messageID: msg.id,
-	          level: "warn",
-	          type: "protocol.final.malformed",
-	          data: { runID: input.run.run_id, reason: "empty_final_output" },
-	        })
-	        msg.finish = "error"
-	        msg.time.completed = Date.now()
-	        await Session.updateMessage(msg)
-	        return
-	      } else {
-	        await SessionLog.emit({
-	          sessionID: SessionID.make(input.stream.sessionID),
-	          messageID: msg.id,
-	          level: pseudo(text) ? "warn" : "info",
-	          type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
-	          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
-	        })
-	      }
-	    }
+    } else {
+      const text = await textOf(msg.id)
+      const plain = AgentProtocolParser.parse(text)
+      if (plain.ok && plain.value.declaration.intent !== "execute") {
+        await hide(msg.id, "protocol_final_plain_json")
+        await response({
+          chat: processor,
+          sessionID: SessionID.make(input.stream.sessionID),
+          parsed: plain.value,
+        })
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "info",
+          type: "protocol.final.plain_json",
+          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
+        })
+      } else if (parsed && missing < 1) {
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.retry",
+          data: { runID: input.run.run_id, reason: "invalid_protocol_tool_call", error: parsed.error },
+        })
+        msg.finish = "stop"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        await final(input, retry, missing + 1)
+        return
+      } else if (text.trim().length > 0 && missing < 1) {
+        const parts = await MessageV2.parts(msg.id)
+        await Promise.all(
+          parts.flatMap((part) => {
+            if (part.type !== "text") return []
+            return [
+              Session.updatePart({
+                ...part,
+                ignored: true,
+                metadata: {
+                  ...part.metadata,
+                  kind: "protocol_final_missing_tool",
+                  retry: true,
+                },
+              }),
+            ]
+          }),
+        )
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.retry",
+          data: { runID: input.run.run_id, reason: "missing_tool_call", textBytes: text.length },
+        })
+        msg.finish = "stop"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        await final(input, retry, missing + 1)
+        return
+      } else if (text.trim().length === 0) {
+        if (missing < 1) {
+          await SessionLog.emit({
+            sessionID: SessionID.make(input.stream.sessionID),
+            messageID: msg.id,
+            level: "warn",
+            type: "protocol.final.retry",
+            data: { runID: input.run.run_id, reason: "empty_final_output" },
+          })
+          msg.finish = "stop"
+          msg.time.completed = Date.now()
+          await Session.updateMessage(msg)
+          await final(input, retry, missing + 1)
+          return
+        }
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: msg.id,
+          sessionID: SessionID.make(input.stream.sessionID),
+          type: "text",
+          text: "Protocol final response was empty or malformed.",
+          metadata: {
+            kind: "protocol_malformed",
+            action: "failed",
+            protocol: {
+              runID: input.run.run_id,
+            },
+          },
+          time: { start: Date.now(), end: Date.now() },
+        })
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.final.malformed",
+          data: { runID: input.run.run_id, reason: "empty_final_output" },
+        })
+        msg.finish = "error"
+        msg.time.completed = Date.now()
+        await Session.updateMessage(msg)
+        return
+      } else {
+        await SessionLog.emit({
+          sessionID: SessionID.make(input.stream.sessionID),
+          messageID: msg.id,
+          level: pseudo(text) ? "warn" : "info",
+          type: pseudo(text) ? "protocol.final.plain_tool_syntax" : "protocol.final.plain",
+          data: { runID: input.run.run_id, textBytes: text.length, fallback: missing > 0 },
+        })
+      }
+    }
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
       messageID: msg.id,
@@ -2029,30 +2000,30 @@ export namespace SessionRunner {
     return (await MessageV2.parts(messageID)).flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n")
   }
 
-	  async function malformed(messageID: MessageID) {
-	    await hide(messageID, "protocol_malformed")
-	  }
+  async function malformed(messageID: MessageID) {
+    await hide(messageID, "protocol_malformed")
+  }
 
-	  async function hide(messageID: MessageID, kind: string) {
-	    const parts = await MessageV2.parts(messageID)
-	    await Promise.all(
-	      parts.flatMap((part) => {
-	        if (part.type !== "text") return []
-	        return [
-	          Session.updatePart({
-	            ...part,
-	            ignored: true,
-	            metadata: {
-	              ...part.metadata,
-	              kind,
-	              recovered: false,
-	              retry: true,
-	            },
-	          }),
-	        ]
-	      }),
-	    )
-	  }
+  async function hide(messageID: MessageID, kind: string) {
+    const parts = await MessageV2.parts(messageID)
+    await Promise.all(
+      parts.flatMap((part) => {
+        if (part.type !== "text") return []
+        return [
+          Session.updatePart({
+            ...part,
+            ignored: true,
+            metadata: {
+              ...part.metadata,
+              kind,
+              recovered: false,
+              retry: true,
+            },
+          }),
+        ]
+      }),
+    )
+  }
 
   async function response(input: {
     chat: SessionProcessor.Info
@@ -2237,22 +2208,26 @@ export namespace SessionRunner {
 
   function summarize(run: AgentProtocol.Result) {
     const title = run.title ?? "Protocol run"
-    const head =
-      run.status === "completed"
-        ? `Protocol completed: ${title}`
-        : run.status === "blocked"
-          ? `Protocol blocked: ${title}`
-          : `Protocol failed: ${title}`
+    const got = receipt(run)
+    const head = headline(run, title, got)
     const actions = run.actions
       .map((item) => {
         const bytes = (item.output ?? item.error ?? item.summary).length
         const calls = item.tool_call_ids.length
-        return `- ${item.title}: ${item.status}${calls ? `, ${calls} internal tool call${calls === 1 ? "" : "s"}` : ""}, ${bytes} output bytes`
+        const status =
+          got && item.status === "blocked" && item.operation === got
+            ? got === "input"
+              ? "input received"
+              : "confirmation resolved"
+            : item.status
+        return `- ${item.title}: ${status}${calls ? `, ${calls} internal tool call${calls === 1 ? "" : "s"}` : ""}, ${bytes} output bytes`
       })
       .join("\n")
+    const details = run.actions.length === 0 ? run.summary : ""
     return [
       head,
       actions,
+      details,
       "",
       `Run ID: ${run.run_id}`,
       `Direct model tool calls: ${run.metrics.direct_model_tool_calls}`,
@@ -2323,13 +2298,56 @@ export namespace SessionRunner {
     )
   }
 
-  function revision(run: AgentProtocol.Result) {
+  function receipt(run: AgentProtocol.Result) {
+    if (run.status !== "blocked") return
+    const item = run.actions.find(
+      (item) => item.status === "blocked" && (item.operation === "confirm" || item.operation === "input"),
+    )
+    if (item?.operation === "confirm") return "confirm"
+    if (item?.operation === "input") return "input"
+  }
+
+  function headline(run: AgentProtocol.Result, title: string, got: "confirm" | "input" | undefined) {
+    if (run.status === "completed") return `Protocol completed: ${title}`
+    if (got === "input") return `Protocol input received: ${title}`
+    if (got === "confirm") return `Protocol confirmation resolved: ${title}`
+    if (run.status === "blocked") return `Protocol blocked: ${title}`
+    return `Protocol failed: ${title}`
+  }
+
+  function summaryAction(run: AgentProtocol.Result) {
+    const got = receipt(run)
+    if (got === "input") return "input_received"
+    if (got === "confirm") return "confirmation_resolved"
+    return run.status
+  }
+
+  function repairable(run: AgentProtocol.Result) {
     return (
       run.status === "blocked" &&
-      run.actions.some(
-        (item) => item.status === "blocked" && (item.operation === "confirm" || item.operation === "input"),
-      )
+      run.actions.length === 0 &&
+      run.summary.includes("Protocol dependency validation failed before execution.")
     )
+  }
+
+  function repairPrompt(run: AgentProtocol.Result) {
+    if (!repairable(run)) return ""
+    return [
+      "",
+      "Protocol package rejected before execution:",
+      run.summary,
+      "",
+      "Regenerate the Agent Protocol package now.",
+      "Do not repeat the rejected package.",
+      "Every depends id must refer to an item in the current package or a completed historical child-session action id.",
+      "Verifier items may decide their own dependencies; do not add worker dependencies only to satisfy runtime validation.",
+      "Confirm items are package-level approval gates; downstream items do not need to depend on the confirm id.",
+      `You must call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with the corrected package.`,
+    ].join("\n")
+  }
+
+  function revision(run: AgentProtocol.Result) {
+    return receipt(run) !== undefined
   }
 
   function pseudo(text: string) {
@@ -2385,6 +2403,9 @@ export namespace SessionRunner {
     messageID: MessageID
   }): Promise<AgentProtocolExecutor.ToolResult> {
     const data = object(input.action.input)
+    const fields = Array.isArray(data.fields)
+      ? data.fields.map(object).filter((item) => typeof item.id === "string")
+      : []
     const options = Array.isArray(data.options)
       ? data.options.flatMap((item) => {
           const opt = object(item)
@@ -2399,42 +2420,94 @@ export namespace SessionRunner {
         })
       : []
     const prompt = typeof data.prompt === "string" ? data.prompt : input.action.title
+    const form = data.mode === "form" && fields.length > 0
     const answers = await Question.ask({
       sessionID: input.sessionID,
-      questions: [
-        {
-          question: prompt,
-          header: input.action.title.slice(0, 30),
-          options,
-          multiple: data.mode === "multi",
-          custom: data.allow_custom !== false,
-        },
-      ],
+      questions: form
+        ? fields.map((field) => {
+            const opts = Array.isArray(field.options)
+              ? field.options.flatMap((item) => {
+                  const opt = object(item)
+                  const label = typeof opt.label === "string" ? opt.label.trim() : ""
+                  if (!label) return []
+                  return [
+                    {
+                      label,
+                      description: typeof opt.description === "string" ? opt.description : label,
+                    },
+                  ]
+                })
+              : []
+            const kind = typeof field.type === "string" ? field.type : "text"
+            const label = typeof field.label === "string" ? field.label : typeof field.id === "string" ? field.id : ""
+            return {
+              question: [label, prompt].filter(Boolean).join("\n\n"),
+              header: label.slice(0, 30),
+              options: opts,
+              multiple: kind === "multi",
+              custom: opts.length === 0,
+            }
+          })
+        : [
+            {
+              question: prompt,
+              header: input.action.title.slice(0, 30),
+              options,
+              multiple: data.mode === "multi",
+              custom: data.allow_custom !== false,
+            },
+          ],
       tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
     })
 
-    const valid = new Set(options.map((o) => o.label))
-    const parsed = parseInquireAnswer(answers[0], valid)
     const lines: string[] = []
-    if (parsed.selected.length) {
-      lines.push(`- Selected: ${parsed.selected.map((s) => `"${s}"`).join(", ")}`)
-    }
-    if (parsed.custom.length) {
-      lines.push(
-        `- Custom answer${parsed.custom.length > 1 ? "s" : ""}: ${parsed.custom.map((c) => `"${c}"`).join(", ")}`,
-      )
-    }
-    const noteEntries = Object.entries(parsed.notes)
-    if (noteEntries.length) {
-      lines.push("- Additional details provided by the user:")
-      for (const [label, note] of noteEntries) {
-        lines.push(`  - "${label}": "${note}"`)
+    if (form) {
+      fields.forEach((field, index) => {
+        const opts = Array.isArray(field.options) ? field.options.map(object) : []
+        const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
+        const parsed = parseInquireAnswer(answers[index], valid)
+        const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
+        const id = typeof field.id === "string" ? field.id : `field_${index + 1}`
+        const label = typeof field.label === "string" ? field.label : id
+        lines.push(`- ${id} (${label}):`)
+        if (parsed.selected.length) {
+          for (const selected of parsed.selected) {
+            const opt = labels.get(selected)
+            const value = typeof opt?.id === "string" ? opt.id : selected
+            lines.push(`  - selected: ${value} ("${selected}")`)
+          }
+        }
+        if (parsed.custom.length) {
+          lines.push(`  - custom: ${parsed.custom.map((item) => `"${item}"`).join(", ")}`)
+        }
+        for (const [selected, note] of Object.entries(parsed.notes)) {
+          lines.push(`  - details for "${selected}": "${note}"`)
+        }
+        if (!parsed.selected.length && !parsed.custom.length) lines.push("  - no answer")
+      })
+    } else {
+      const valid = new Set(options.map((item) => item.label))
+      const parsed = parseInquireAnswer(answers[0], valid)
+      if (parsed.selected.length) {
+        lines.push(`- Selected: ${parsed.selected.map((item) => `"${item}"`).join(", ")}`)
+      }
+      if (parsed.custom.length) {
+        lines.push(
+          `- Custom answer${parsed.custom.length > 1 ? "s" : ""}: ${parsed.custom.map((item) => `"${item}"`).join(", ")}`,
+        )
+      }
+      const notes = Object.entries(parsed.notes)
+      if (notes.length) {
+        lines.push("- Additional details provided by the user:")
+        for (const [label, note] of notes) {
+          lines.push(`  - "${label}": "${note}"`)
+        }
       }
     }
-    const header =
-      parsed.selected.length || parsed.custom.length
-        ? `User has answered your question "${prompt}" (this is the user's final answer; do not re-ask this question):`
-        : `The user did not provide an answer to "${prompt}". You may ask a different question or proceed with a reasonable default.`
+    const answered = form ? answers.some((item) => (item?.length ?? 0) > 0) : lines.length > 0
+    const header = answered
+      ? `User has answered your question "${prompt}" (this is the user's final answer; do not re-ask this question):`
+      : `The user did not provide an answer to "${prompt}". You may ask a different question or proceed with a reasonable default.`
     return {
       title: input.action.title,
       output: [
@@ -2493,16 +2566,13 @@ export namespace SessionRunner {
     if (ok) {
       return {
         title: input.action.title,
-        output: "Plan confirmed by user. Continue executing downstream actions in this run.",
+        output: "Plan confirmed by user. Continue executing the remaining package actions in this run.",
         metadata: { confirmed: true },
       }
     }
     return {
       title: input.action.title,
-      output: [
-        "User cancelled the plan confirmation.",
-        "The runtime did not execute downstream work that depends on this confirmation.",
-      ]
+      output: ["User cancelled the plan confirmation.", "The runtime did not execute the remaining package actions."]
         .filter((item) => item.length > 0)
         .join("\n"),
       metadata: { blocked: true, confirmed: false, cancelled: true },
@@ -2663,16 +2733,18 @@ export namespace SessionRunner {
       }
     }
     const title = input.action.title.trim()
+    const model =
+      selected.agent.model ??
+      parent.model ?? {
+        providerID: input.model.providerID,
+        modelID: input.model.id,
+      }
     const child = await Session.create({
       parentID: parent.id,
       title: `Protocol: ${title} (@${selected.agent.name})`,
       agent: selected.agent.name,
-      model: selected.agent.model,
-      permission: [
-        ...Agent.permissions(selected.agent, parent.permission),
-        { permission: "workflow_create", pattern: "*", action: "deny" },
-        { permission: "workflow_start", pattern: "*", action: "deny" },
-      ],
+      model,
+      permission: permissions(selected.agent, parent.permission),
     })
     await SessionLog.emit({
       sessionID: input.sessionID,
@@ -2698,15 +2770,12 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
     })
     setTimeout(() => {
-      SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent.name))
+      SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent))
         .then((parts) =>
           SessionPrompt.prompt({
             sessionID: child.id,
             agent: selected.agent.name,
-            model: {
-              providerID: input.model.providerID,
-              modelID: input.model.id,
-            },
+            model,
             parts,
           }),
         )
@@ -2850,14 +2919,65 @@ export namespace SessionRunner {
     return { ok: false as const, error: `Protocol agent not available from ${parent}: ${selected.name}` }
   }
 
-  function task(action: AgentProtocol.Action, prompt: string | undefined, agent: string) {
+  function permissions(agent: Agent.Info, parent: PermissionNext.Ruleset | undefined) {
+    return [
+      ...(Agent.permissions(agent, parent) ?? []),
+      ...(agent.kind === "verifier"
+        ? [
+            { permission: "bash", pattern: "*", action: "allow" as const },
+            { permission: "bash", pattern: "rm *", action: "deny" as const },
+            { permission: "bash", pattern: "cp *", action: "deny" as const },
+            { permission: "bash", pattern: "mv *", action: "deny" as const },
+            { permission: "bash", pattern: "mkdir *", action: "deny" as const },
+            { permission: "bash", pattern: "touch *", action: "deny" as const },
+            { permission: "bash", pattern: "chmod *", action: "deny" as const },
+            { permission: "bash", pattern: "chown *", action: "deny" as const },
+            { permission: "bash", pattern: "git add *", action: "deny" as const },
+            { permission: "bash", pattern: "git apply *", action: "deny" as const },
+            { permission: "bash", pattern: "git checkout *", action: "deny" as const },
+            { permission: "bash", pattern: "git clean *", action: "deny" as const },
+            { permission: "bash", pattern: "git commit *", action: "deny" as const },
+            { permission: "bash", pattern: "git merge *", action: "deny" as const },
+            { permission: "bash", pattern: "git rebase *", action: "deny" as const },
+            { permission: "bash", pattern: "git reset *", action: "deny" as const },
+            { permission: "bash", pattern: "git restore *", action: "deny" as const },
+            { permission: "bash", pattern: "git switch *", action: "deny" as const },
+            { permission: "bash", pattern: "bun install *", action: "deny" as const },
+            { permission: "bash", pattern: "npm install *", action: "deny" as const },
+            { permission: "bash", pattern: "pnpm install *", action: "deny" as const },
+            { permission: "bash", pattern: "yarn install *", action: "deny" as const },
+            { permission: "bash", pattern: "sed -i *", action: "deny" as const },
+            { permission: "bash", pattern: "perl -i *", action: "deny" as const },
+            { permission: "bash", pattern: "* > *", action: "deny" as const },
+            { permission: "bash", pattern: "* >> *", action: "deny" as const },
+            { permission: "edit", pattern: "*", action: "deny" as const },
+          ]
+        : []),
+      { permission: "workflow_create", pattern: "*", action: "deny" as const },
+      { permission: "workflow_start", pattern: "*", action: "deny" as const },
+    ]
+  }
+
+  function task(action: AgentProtocol.Action, prompt: string | undefined, agent: Agent.Info) {
+    const readonly =
+      agent.kind === "verifier"
+        ? [
+            "Verifier bash access is for read-only verification commands only.",
+            "Do not run commands that modify files, install packages, change git state, or mutate external systems.",
+            "",
+          ]
+        : []
     return [
       `Please handle this delegated task: ${action.title}.`,
       "Treat the task block below as your initial task for this session.",
       "",
+      ...readonly,
       "When you are done, return a task result for the parent session.",
+      "Finish by calling the native ActionResult tool exactly once; do not return plain text as the final delegated result.",
+      "Keep ActionResult descriptive fields as short strings. Do not use arrays or nested objects.",
+      "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
       "Use one result kind: success, failure, error, or reply.",
-      "For success/failure/error, include task_background, task_content, completion_summary, changed_files, verification, and blockers.",
+      "For success/failure/error, include result, task_background, task_content, changed_files, verification, and blockers.",
       "Use reply when you need to answer or ask for information instead of claiming the task is complete.",
       policy(action.result_policy),
       "",
@@ -2884,6 +3004,13 @@ export namespace SessionRunner {
     status: "completed" | "failed"
   }) {
     const item = await assignment(input.sessionID)
+    if (item?.result_tool === "ActionResult") {
+      await SessionDelegation.complete({
+        messageID: input.messageID,
+        sessionID: input.sessionID,
+      })
+      return
+    }
     await SessionDelegation.complete({
       ...input,
       ...(item
@@ -2920,6 +3047,7 @@ export namespace SessionRunner {
     if (typeof item.agent !== "string") return
     return {
       agent: item.agent,
+      result_tool: typeof item.result_tool === "string" ? item.result_tool : undefined,
     }
   }
 

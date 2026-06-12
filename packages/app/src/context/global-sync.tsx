@@ -39,7 +39,7 @@ import { formatServerError } from "@/utils/server-errors"
 type LoadMode = "current" | "running"
 
 const INITIAL_SESSION_LIMIT = 10
-const live = new Set(["queued", "rate_limited", "retry", "running", "starting", "waiting_permission", "waiting_user"])
+const live = new Set(["queued", "rate_limited", "retry", "running", "starting", "waiting_permission", "waiting_user", "waiting_child"])
 
 type GlobalStore = {
   ready: boolean

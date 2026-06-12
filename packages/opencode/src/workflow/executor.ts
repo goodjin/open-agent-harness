@@ -873,6 +873,8 @@ export namespace WorkflowExecutor {
       : await Session.create({
           parentID: input.parent.id,
           title: `${input.workflow.name}: #${input.step.index + 1} ${brief} (@${agent.name})`,
+          agent: agent.name,
+          model: agent.model ?? input.parent.model,
           permission: [
             ...Agent.permissions(agent, input.parent.permission),
             { permission: "workflow_create", pattern: "*", action: "deny" },

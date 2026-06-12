@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -7,9 +7,10 @@ import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
-import { MessageID, PartID } from "../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { SessionTimeline } from "../../src/session/timeline"
+import { SessionPrompt } from "../../src/session/prompt"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { WorkflowState } from "../../src/workflow/state"
 import { tmpdir } from "../fixture/fixture"
@@ -80,6 +81,87 @@ describe("workflow executor", () => {
           },
         }),
     })
+  })
+
+  test("workflow subagent sessions inherit parent model when agent has no model", async () => {
+    await using tmp = await tmpdir()
+    const space = WorkspaceID.ascending()
+    await workflow(tmp.path, {
+      id: "subagent-model",
+      name: "Subagent Model",
+      nodes: [{ id: "work", agent: "general-executor", prompt: "Work" }],
+    })
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        sessionID: input.sessionID,
+        messageID: assistant.id,
+        type: "text",
+        text: "done",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: space,
+            fn: async () => {
+              const session = await Session.create({
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              })
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const state = await WorkflowExecutor.run({ sessionID: session.id, workflowID: "subagent-model" })
+              const child = state.nodes.work?.sessionID
+                ? await Session.get(SessionID.make(state.nodes.work.sessionID))
+                : undefined
+
+              expect(state.error).toBeUndefined()
+              expect(state.status).toBe("completed")
+              expect(child?.agent).toBe("general-executor")
+              expect(child?.model).toEqual({
+                providerID: ProviderID.make("openai"),
+                modelID: ModelID.make("gpt-5.2"),
+              })
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
   })
 
   test("runs parallel ready DAG nodes in the same batch", async () => {

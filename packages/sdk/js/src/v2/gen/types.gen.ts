@@ -105,6 +105,10 @@ export type SessionStatus =
       type: "waiting_user"
     }
   | {
+      type: "waiting_child"
+      message?: string
+    }
+  | {
       type: "error"
       message: string
     }
@@ -2574,9 +2578,9 @@ export type AgentManageInfo = {
      */
     runner?: "chat" | "workflow" | "protocol"
     /**
-     * Maximum concurrent delegated sessions for this agent inside one project.
+     * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
-    concurrency?: number
+    concurrency?: -1 | number
     /**
      * How the agent executes workflows
      */
@@ -2832,9 +2836,9 @@ export type AgentManageValidateOutput = {
      */
     runner?: "chat" | "workflow" | "protocol"
     /**
-     * Maximum concurrent delegated sessions for this agent inside one project.
+     * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
-    concurrency?: number
+    concurrency?: -1 | number
     /**
      * How the agent executes workflows
      */
@@ -3095,9 +3099,9 @@ export type AgentManageSaveInput = {
      */
     runner?: "chat" | "workflow" | "protocol"
     /**
-     * Maximum concurrent delegated sessions for this agent inside one project.
+     * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
-    concurrency?: number
+    concurrency?: -1 | number
     /**
      * How the agent executes workflows
      */
@@ -3351,9 +3355,9 @@ export type AgentManagePatchInput = {
      */
     runner?: "chat" | "workflow" | "protocol"
     /**
-     * Maximum concurrent delegated sessions for this agent inside one project.
+     * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
-    concurrency?: number
+    concurrency?: -1 | number
     /**
      * How the agent executes workflows
      */
@@ -3482,7 +3486,7 @@ export type Agent = {
     skip_test_on_no_change?: boolean
   }
   runner?: "chat" | "workflow" | "protocol"
-  concurrency?: number
+  concurrency?: -1 | number
   native?: boolean
   hidden?: boolean
   topP?: number

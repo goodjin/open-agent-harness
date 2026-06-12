@@ -932,6 +932,20 @@ describe("AgentTemplate.Meta", () => {
         expect(result.data.permission_mode).toBe("strict")
       }
     })
+
+    test("concurrency negative one means unlimited", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        id: "coder",
+        name: "Coder Agent",
+        role: "coding",
+        description: "A coder agent",
+        concurrency: -1,
+      })
+      expect(result.success).toBe(true)
+      if (!result.success) return
+
+      expect(result.data.concurrency).toBe(-1)
+    })
   })
 
   describe("entry and capability fields", () => {

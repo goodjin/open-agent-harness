@@ -29,11 +29,13 @@ import { AgentProtocol } from "@/protocol/schema"
 import { LLMConcurrency } from "./llm-concurrency"
 import { AgentConcurrency } from "@/protocol/agent-concurrency"
 import type { SessionID } from "./schema"
+import { ActionResult } from "./action-result"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
   export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
   export const PROTOCOL_OUTPUT_TOOL = "AgentProtocolOutput"
+  export const ACTION_RESULT_TOOL = ActionResult.TOOL
   const PROTOCOL_REMINDER = [
     "Final protocol reminder:",
     "Strictly follow the Agent Protocol output requirements for this request.",
@@ -218,15 +220,12 @@ export namespace LLM {
                 inputSchema: z.object({
                   tool: z.string(),
                   error: z.string(),
+                  raw: z.string().optional(),
                 }),
-                execute: async (args) => ({
-                  title: "Invalid Protocol Tool Call",
-                  output: `Protocol violation: attempted to call native tool '${args.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${args.tool}' in an items[] entry with kind "tool", target "${args.tool}", and args matching that tool. ${args.error}`,
-                  metadata: { protocol: true, violation: "direct_tool_call", tool: args.tool },
-                }),
+                execute: async (args) => invalid(args),
               }),
             }
-          : await resolveTools(input)
+          : await attach(await resolveTools(input))
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
       // when message history contains tool calls, even if no tools are being used.
@@ -303,6 +302,9 @@ export namespace LLM {
               toolName: lower,
             }
           }
+          if (input.agent.runner !== "protocol" && failed.toolCall.toolName === ACTION_RESULT_TOOL) {
+            throw new Error(action(failed.error.message))
+          }
           if (NoSuchToolError.isInstance(failed.error)) {
             l.warn("tool call unavailable", {
               tool: failed.toolCall.toolName,
@@ -317,6 +319,7 @@ export namespace LLM {
             input: JSON.stringify({
               tool: failed.toolCall.toolName,
               error: failed.error.message,
+              raw: raw(failed.error.message),
             }),
             toolName: "invalid",
           }
@@ -409,6 +412,41 @@ export namespace LLM {
     return input.replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "tool"
   }
 
+  export function invalid(input: { tool: string; error: string; raw?: string }) {
+    const text = input.raw ?? raw(input.error)
+    return {
+      title: "Invalid Protocol Tool Call",
+      output: [
+        `Protocol violation: attempted to call native tool '${input.tool}'. Call '${PROTOCOL_OUTPUT_TOOL}' exactly once and put '${input.tool}' in an items[] entry with kind "tool", target "${input.tool}", and args matching that tool. ${input.error}`,
+        "",
+        "Raw protocol output:",
+        text,
+      ].join("\n"),
+      metadata: { protocol: true, violation: "direct_tool_call", tool: input.tool, raw: text },
+    }
+  }
+
+  function raw(error: string) {
+    const found = error.match(/\bText:\s*([\s\S]*?)(?:\.\s*Error message:|\s*Error message:|$)/)
+    return found?.[1]?.trim() || error
+  }
+
+  async function attach(input: Record<string, Tool>) {
+    return {
+      ...input,
+      [ACTION_RESULT_TOOL]: tool({
+        description:
+          "Submit the final delegated action result to the runtime. Use this once at the end of a delegated worker or verifier task.",
+        inputSchema: ActionResult.Schema,
+        execute: async (args) => ({
+          title: "Action Result",
+          output: "Action result received.",
+          metadata: { action_result: true, role: args.role, action_id: args.action_id },
+        }),
+      }),
+    }
+  }
+
   async function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" | "user">) {
     const rules =
       input.agent.inheritPermissions === true
@@ -444,6 +482,16 @@ export namespace LLM {
       off
         ? "Reason: this tool was disabled for the current model request."
         : `Reason: permission rule '${trace.rule.permission}' with pattern '${trace.rule.pattern}' returned '${trace.action}'.`,
+    ].join(" ")
+  }
+
+  function action(error: string) {
+    return [
+      "ActionResult input schema/parse failed.",
+      "Call the native ActionResult tool with direct arguments, not wrapped in an input field.",
+      "Required verifier fields: role, action_id, target_action_id, status, result.",
+      "Required worker fields: role, action_id, status, result.",
+      `Parser error: ${error}`,
     ].join(" ")
   }
 

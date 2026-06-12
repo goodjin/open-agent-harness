@@ -578,6 +578,15 @@ describe("session.prompt agent switch", () => {
               "Update the session agent before sending",
             )
 
+            const shell = await SessionPrompt.shell({
+              sessionID: session.id,
+              agent: "plan",
+              command: "echo wrong-agent",
+            }).catch((err) => err)
+            expect((shell as { data?: { message?: string } }).data?.message).toContain(
+              "Update the session agent before sending",
+            )
+
             await Session.remove(session.id)
           },
         }),

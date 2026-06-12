@@ -106,17 +106,6 @@ export namespace AgentProtocol {
         }
         ids.add(item.id)
       }
-      for (const item of actions) {
-        for (const dep of item.depends_on) {
-          if (!ids.has(dep)) {
-            ctx.addIssue({
-              code: "custom",
-              path: ["payload", "actions", item.id, "depends_on"],
-              message: `missing dependency '${dep}' for action '${item.id}'`,
-            })
-          }
-        }
-      }
     })
 
   const Policy = z.enum(["summary", "structured", "full", "on_failure", "on_demand", "adaptive"])

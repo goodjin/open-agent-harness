@@ -60,6 +60,147 @@ describe("agent protocol executor", () => {
     expect(result.metrics.internal_tool_calls).toBe(2)
   })
 
+  test("executes current package dependencies before dependents", async () => {
+    const actions = decl.payload.type === "action_graph" ? decl.payload.actions : []
+    const seen: string[] = []
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        ...decl,
+        payload: {
+          type: "action_graph",
+          actions: [actions[1]!, actions[0]!],
+        },
+      },
+      sections: { inspect: "Find source files" },
+      execute: async (action) => {
+        seen.push(action.id)
+        return {
+          title: action.title,
+          output: `ran ${action.id}`,
+          metadata: { callID: `call_${action.id}` },
+        }
+      },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(seen).toEqual(["inspect", "bad"])
+    expect(result.actions.map((item) => item.id)).toEqual(["inspect", "bad"])
+  })
+
+  test("does not execute dependents while a delegated action is still pending", async () => {
+    const seen: string[] = []
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        type: "agent.protocol",
+        version: "1",
+        intent: "execute",
+        persist: false,
+        title: "Delegate",
+        execution: { strategy: "sequential" },
+        payload: {
+          type: "action_graph",
+          actions: [
+            {
+              type: "action",
+              id: "build",
+              title: "Build",
+              operation: "implement",
+              executor: { type: "agent", target: "worker", capabilities: [] },
+              depends_on: [],
+              context_refs: [],
+              result_policy: "summary",
+            },
+            {
+              type: "action",
+              id: "verify",
+              title: "Verify",
+              operation: "verify",
+              executor: { type: "agent", target: "verifier", capabilities: [] },
+              depends_on: ["build"],
+              context_refs: [],
+              result_policy: "summary",
+            },
+          ],
+        },
+      },
+      execute: async (action) => {
+        seen.push(action.id)
+        if (action.id === "build") {
+          return {
+            title: action.title,
+            output: "Delegated to worker.\nChild session: child_1\nThe parent session will resume automatically when the child result is available.",
+            metadata: { delegated: true, childSessionID: "child_1" },
+          }
+        }
+        throw new Error("dependent action should not execute before delegated result is available")
+      },
+    })
+
+    expect(result.status).toBe("blocked")
+    expect(seen).toEqual(["build"])
+    expect(result.actions.map((item) => [item.id, item.status])).toEqual([
+      ["build", "blocked"],
+      ["verify", "blocked"],
+    ])
+    expect(result.actions[0]?.sessionID).toBe("child_1")
+    expect(result.actions[1]?.summary).toContain("waiting for unfinished dependencies")
+  })
+
+  test("records every dependent blocked by pending delegated workers", async () => {
+    const seen: string[] = []
+    const action = (id: string, target: string, depends_on: string[]): AgentProtocol.Action => ({
+      type: "action",
+      id,
+      title: id,
+      operation: target,
+      executor: { type: "agent", target, capabilities: [] },
+      depends_on,
+      context_refs: [],
+      result_policy: "structured",
+    })
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        type: "agent.protocol",
+        version: "1",
+        intent: "execute",
+        persist: false,
+        title: "Delegate two workers",
+        execution: { strategy: "sequential" },
+        payload: {
+          type: "action_graph",
+          actions: [
+            action("worker_a", "worker", []),
+            action("verify_a", "verifier", ["worker_a"]),
+            action("worker_b", "worker", []),
+            action("verify_b", "verifier", ["worker_b"]),
+          ],
+        },
+      },
+      execute: async (item) => {
+        seen.push(item.id)
+        if (item.id.startsWith("worker_")) {
+          return {
+            title: item.title,
+            output: `Delegated ${item.id}`,
+            metadata: { delegated: true, childSessionID: `child_${item.id}` },
+          }
+        }
+        throw new Error("verifier should wait for delegated worker result")
+      },
+    })
+
+    expect(result.status).toBe("blocked")
+    expect(seen).toEqual(["worker_a", "worker_b"])
+    expect(result.actions.map((item) => [item.id, item.status])).toEqual([
+      ["worker_a", "blocked"],
+      ["worker_b", "blocked"],
+      ["verify_a", "blocked"],
+      ["verify_b", "blocked"],
+    ])
+    expect(result.actions[2]?.summary).toContain("worker_a")
+    expect(result.actions[3]?.summary).toContain("worker_b")
+  })
+
   test("selects delegable agents by purpose and capability tags", async () => {
     const action: AgentProtocol.Action = {
       type: "action",

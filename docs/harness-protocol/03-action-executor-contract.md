@@ -141,39 +141,41 @@ Graph-level policy、Action-level policy、Runtime policy 和 Agent metadata / O
 
 核心字段：
 
-| 字段 | 含义 |
-|---|---|
-| `goal` / `criteria` | Action 要达成的目标和完成判定条件。 |
-| `constraints` | scope、兼容性、风格、权限、时间、成本和安全约束。 |
-| `depends_on` | 必须先满足的 Action、Artifact、Decision 或 Projection 条件。 |
-| `input` / `args` | executor 可见的结构化输入。 |
-| `artifacts` | 期望产生、读取、更新或引用的 Artifact。 |
-| `evidence` | 验收和审计需要保留的证据。 |
-| `budget` | cost、timeout、tokens、attempts、parallelism 等资源边界。 |
-| `failure` | failed、blocked、retry、ask_user、handoff、abort 等处理语义。 |
-| `handoff` | 后续 executor 接力时需要携带的目标、约束、证据、风险和未决问题。 |
-| `visibility` | 结果进入 model、user、logs、trace 和 future runs 的规则。 |
-| `loop` | 有边界的重复执行语义，必须有 attempt、预算、时间、条件或 Decision 边界。 |
+| 字段                | 含义                                                                     |
+| ------------------- | ------------------------------------------------------------------------ |
+| `goal` / `criteria` | Action 要达成的目标和完成判定条件。                                      |
+| `constraints`       | scope、兼容性、风格、权限、时间、成本和安全约束。                        |
+| `depends_on`        | 必须先满足的 Action、Artifact、Decision 或 Projection 条件。             |
+| `input` / `args`    | executor 可见的结构化输入。                                              |
+| `artifacts`         | 期望产生、读取、更新或引用的 Artifact。                                  |
+| `evidence`          | 验收和审计需要保留的证据。                                               |
+| `budget`            | cost、timeout、tokens、attempts、parallelism 等资源边界。                |
+| `failure`           | failed、blocked、retry、ask_user、handoff、abort 等处理语义。            |
+| `handoff`           | 后续 executor 接力时需要携带的目标、约束、证据、风险和未决问题。         |
+| `visibility`        | 结果进入 model、user、logs、trace 和 future runs 的规则。                |
+| `loop`              | 有边界的重复执行语义，必须有 attempt、预算、时间、条件或 Decision 边界。 |
 
 Action Contract 是 Runtime、Executor、UI 和后续 Agent Session 共同读取的治理对象。模型可以声明其中一部分，Runtime 根据上下文补齐可执行边界。
 
-## 依赖归一化与 Verifier 推断
+## 依赖归一化与 Verifier 处理
 
-Action Graph 在执行前要经过一次依赖归一化。归一化的对象是 `depends_on` 字段，目的是在保留模型显式声明的前提下，强制 verifier 不会在它要验证的 worker 完成前启动。
+Action Graph 在执行前要经过一次依赖归一化。归一化的对象是 `depends_on` 字段，目的是保留模型显式声明的 action 级执行顺序，并让系统主动补出的 verifier 挂到对应 worker 之后。
 
 归一化分两层：
 
-1. **Schema 层**：解析模型输出时移除 `depends_on` 中字符串字面量 `"none"`。`"none"` 是"verifier 故意不依赖任何 worker"的唯一哨兵；schema 在校验前过滤掉它，避免触发"缺少依赖"类错误。`AgentProtocol.NONE_DEPENDENCY` 暴露这个常量。
-2. **Runtime 层**：调用 `inferVerifierDependencies(actions)` 走一次 Action Graph。判断规则：
+1. **Schema 层**：解析模型输出时移除 `depends_on` 中字符串字面量 `"none"`。`"none"` 是历史兼容哨兵；schema 在校验前过滤掉它，让 Runtime 看到真实的空依赖。`AgentProtocol.NONE_DEPENDENCY` 暴露这个常量。
+2. **Runtime 层**：按 Action Graph 走依赖校验和系统校验补齐。判断规则：
+   - `depends_on` 非空：保持原样，模型已经显式声明 action 级执行顺序。
+   - `depends_on` 中的每个 id 必须指向当前包内 action，或已经完成的历史 child-session action id。
+   - 执行器按 `depends_on` 做 DAG 调度；当前包内依赖只有在前置 action 达到终态后才算满足。
+   - Agent delegation 只表示 child session 已创建，不表示 action 已完成。委托 action 在 child session 结果返回前投影为 blocked/waiting；依赖它的 verifier、tool 或其他 agent action 不会启动。
+   - 目标 Agent `kind` 为 `verifier` 时，Runtime 不要求 `depends_on` 指向 worker action，也不按 agent 类型判断依赖是否合法。
+   - Runtime 不用 verifier agent 名称和 worker agent 名称做会话级匹配；多个 action 可以使用同一个 agent target。
+   - 当系统发现 worker 缺少所需校验者时，由系统创建 verifier action，按 agent 模板能力和 `<worker-agent>-verifier` 命名约定选择默认 verifier，并把新 action 的 `depends_on` 指向被校验 worker action id。
 
-   - `depends_on` 非空：保持原样，模型已经显式声明。
-   - `depends_on` 为空且 `executor.type === "agent"`，目标 Agent `kind` 为 `verifier`，且 target 以 `-verifier` 结尾：在同一 Action Graph 中查找 `executor.target` 去掉 `-verifier` 后缀同名的 worker。命中则把 verifier 的 `depends_on` 写为 `[<worker.id>]`。
-   - `depends_on` 为空且目标 verifier 不带 `-verifier` 后缀（如 `security-reviewer`、`plan-reviewer`）：不自动推断。Runtime 把该 action 记为 `blocked`，错误信息提示模型显式声明 `depends_on`，或者写成 `["none"]` 表示该 verifier 故意不依赖 worker。
-   - `depends_on` 为空且带 `-verifier` 后缀但找不到同名 worker：同样标记为 `blocked`，错误信息提示补一个 base name 对应的 worker action，或显式写成 `["none"]`。
+如果 verifier 的 `depends_on` 命中已完成的历史 child-session action id，Runtime 会把对应 prompt 和 summary/output 附加到 verifier prompt。没有命中历史 handoff 时，verifier 仍按自身 prompt 和当前协议上下文执行。schema 层的 `"none"` 过滤后表示空依赖，不会触发 verifier worker 依赖校验。
 
-被 `blocked` 的 verifier 在当前轮不会进入执行队列；模型在下一次 LLM 调用时能在 transcript 里看到 blocked 原因，从而补上 worker 或调整 `depends_on`。schema 层的 `"none"` 过滤与 Runtime 层的推断组合后，verifier 既不会和 worker 并行启动，也不会因为依赖缺失被静默放过。
-
-`confirm` 是这个校验之前的人机边界。如果 Action Graph 以无依赖 `confirm` 开头，Runtime 先执行该 confirmation gate，并把后续 action 的 verifier dependency 校验延后到确认之后。这样 UI 能恢复确认框，也避免在用户确认前创建子会话或执行工具。确认提交必须携带明确 `response: "confirm" | "cancel"`，执行器不得把空答案或本地化文案猜测为用户意图。
+`confirm` 是包级人机边界。只要 Action Graph 内存在 `confirm`，Runtime 会先执行 confirmation gate，不检查 confirm 自身的 `depends_on`，也不要求其他 action 依赖 confirm。用户确认前，后续 `agent` / `tool` action 不应启动；用户确认后，Runtime 从同一个持久化 package 继续执行剩余 action。确认提交必须携带明确 `response: "confirm" | "cancel"`，执行器不得把空答案或本地化文案猜测为用户意图。
 
 ## Artifact 语义
 
@@ -223,14 +225,14 @@ Runtime 在执行前校验 Gate，在执行中更新消耗，在状态投影中�
 
 Runtime 支持的 executor class：
 
-| Type | 含义 | 执行语义 |
-|---|---|---|
-| `tool` | 有边界的 tool 或 MCP tool | 按 tool schema 执行，受 resource、side effect、permission 和 `result` 约束。 |
-| `agent` | 委托 LLM session | Runtime 创建 Assignment 和 Agent Session，并记录 child-session trace。 |
-| `runtime` | Harness 自有操作，例如 summarize、checkpoint、merge、wait | Runtime service 在同一状态事务模型中执行。 |
-| `human` | 用户/Owner 澄清、审批或决策 | Runtime 创建 pending decision，并由 UI/API 收集结果。 |
-| `pipeline` | 预定义确定性多步过程 | Pipeline 被视为一个 executor，内部步骤写入 trace。 |
-| `service` | 外部集成 | Service invocation 受 network、secret、approval、budget 和 artifact policy 约束。 |
+| Type       | 含义                                                      | 执行语义                                                                          |
+| ---------- | --------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `tool`     | 有边界的 tool 或 MCP tool                                 | 按 tool schema 执行，受 resource、side effect、permission 和 `result` 约束。      |
+| `agent`    | 委托 LLM session                                          | Runtime 创建 Assignment 和 Agent Session，并记录 child-session trace。            |
+| `runtime`  | Harness 自有操作，例如 summarize、checkpoint、merge、wait | Runtime service 在同一状态事务模型中执行。                                        |
+| `human`    | 用户/Owner 澄清、审批或决策                               | Runtime 创建 pending decision，并由 UI/API 收集结果。                             |
+| `pipeline` | 预定义确定性多步过程                                      | Pipeline 被视为一个 executor，内部步骤写入 trace。                                |
+| `service`  | 外部集成                                                  | Service invocation 受 network、secret、approval、budget 和 artifact policy 约束。 |
 
 ## 执行环境契约
 

@@ -22,6 +22,7 @@ describe("session state machine", () => {
           { type: "running" as const },
           { type: "waiting_permission" as const },
           { type: "waiting_user" as const },
+          { type: "waiting_child" as const, message: "waiting for child" },
           { type: "error" as const, message: "test error" },
           { type: "timeout" as const, message: "test timeout" },
           { type: "retry" as const, attempt: 1, message: "retry message", next: Date.now() + 2000 },
@@ -161,6 +162,23 @@ describe("session state machine", () => {
 
         expect(eventCount).toBe(1)
         expect(receivedStatus?.type).toBe("waiting_user")
+      },
+    })
+  })
+
+  test("running and completed sessions can wait for child sessions", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const active = "test-session-waiting-child-active" as SessionID
+        SessionStatus.set(active, { type: "running" })
+        SessionStatus.set(active, { type: "waiting_child", message: "waiting" })
+        expect(SessionStatus.get(active).type).toBe("waiting_child")
+
+        const done = "test-session-waiting-child-completed" as SessionID
+        SessionStatus.set(done, { type: "completed" })
+        SessionStatus.set(done, { type: "waiting_child", message: "late child result" })
+        expect(SessionStatus.get(done).type).toBe("waiting_child")
       },
     })
   })
@@ -491,6 +509,28 @@ describe("session state machine", () => {
         expect(SessionStatus.get(sessionID)).toEqual({ type: "completed" })
         SessionStatus.set(sessionID, { type: "idle" })
         await SessionStatus.flush()
+      },
+    })
+  })
+
+  test("allows a completed session to enter rate limited for a new request", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-completed-rate-limited" as SessionID
+        SessionStatus.set(sessionID, { type: "completed" })
+        SessionStatus.set(sessionID, {
+          type: "rate_limited",
+          providerID: "p",
+          modelID: "m",
+          scope: "model",
+          active: 1,
+          limit: 1,
+          queued: 1,
+        })
+
+        expect(SessionStatus.get(sessionID).type).toBe("rate_limited")
+        SessionStatus.set(sessionID, { type: "idle" })
       },
     })
   })

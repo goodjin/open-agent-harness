@@ -27,10 +27,10 @@ export namespace AgentConcurrency {
   const queue: Item[] = []
 
   export function limit(input: { agent: string; kind?: string; cfg?: AgentConcurrencyConfig }) {
-    if (input.cfg?.concurrency) return Math.max(1, input.cfg.concurrency)
+    if (input.cfg?.concurrency === -1) return
+    if (input.cfg?.concurrency) return input.cfg.concurrency
     if (input.agent === "feature-planner") return 2
     if (input.kind === "planner") return 1
-    if (input.kind === "worker") return 3
     return
   }
 

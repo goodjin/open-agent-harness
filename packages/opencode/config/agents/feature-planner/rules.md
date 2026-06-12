@@ -20,10 +20,9 @@
 - Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
-- Every verifier item must explicitly set `depends` to the worker item id it verifies. The runtime rejects the whole package before execution if a verifier does not depend on a worker.
-- For a verifier target that follows the `<name>-verifier` convention, set `depends` to the matching worker item id whose target is `<name>` (for example, `backend-verifier` must depend on the `backend` item id).
-- For generic verifier targets such as `security-reviewer`, `plan-reviewer`, or `verifier`, set `depends` to the upstream worker item id(s).
-- Do not use `depends: ["none"]` for verifier items in a multi-agent task.
+- Use `depends` to express verifier ordering when a verifier should wait for a specific upstream action.
+- Verifier `depends` are action-level edges. The verifier target name does not need to match the upstream target name; multiple items may use the same agent target.
+- Runtime does not reject a model-declared verifier only because it lacks a worker dependency. Missing verification for workers is handled by system-injected verifier actions.
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
 - Do not assign large feature work directly to implementation agents. Split it into smaller task calls first.

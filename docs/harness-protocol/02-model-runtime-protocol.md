@@ -73,11 +73,7 @@ Action Graph 通过 `calls[]` 表达 node，通过 `depends_on` 表达 dependenc
 模型到 Runtime 的输出有四种顶层 `kind`：
 
 ```ts
-type ProtocolOutput =
-  | TaskSummary
-  | Act
-  | Answer
-  | Done
+type ProtocolOutput = TaskSummary | Act | Answer | Done
 ```
 
 ### Task Summary
@@ -94,10 +90,7 @@ type ProtocolOutput =
     "title": "优化会话生命周期协议和 UI 状态展示",
     "summary": "补充父子会话状态展示、任务结果持久化、done 结果绑定和右侧任务栏规范。",
     "goal": "让 Runtime 能明确显示子会话状态、持久化子会话结果，并在主会话中汇总这些结果。",
-    "scope": [
-      "docs/harness-protocol",
-      "docs/harness-implementation/session-lifecycle-v1"
-    ],
+    "scope": ["docs/harness-protocol", "docs/harness-implementation/session-lifecycle-v1"],
     "criteria": [
       "协议定义 task_summary 和 done result。",
       "UI 规范包含底部子会话状态框和右侧任务栏。",
@@ -196,12 +189,8 @@ Runtime 处理：
   "result": {
     "status": "completed",
     "summary": "Updated the protocol and implementation plan for session lifecycle UI and result handling.",
-    "artifacts": [
-      "artifact://run_123/protocol_update"
-    ],
-    "changes": [
-      "change://run_123/session_lifecycle_docs"
-    ],
+    "artifacts": ["artifact://run_123/protocol_update"],
+    "changes": ["change://run_123/session_lifecycle_docs"],
     "criteria": [
       {
         "text": "Protocol defines done result persistence.",
@@ -254,7 +243,7 @@ Runtime 处理：
 - `name`：必填。具体 executor target。对 `tool` 来说是 tool id；对 `agent` 来说是 Agent id 或 `auto`；对 `runtime` 来说是 Runtime 内部操作名。
 - `title`：可选。短标签，用于 UI display 和 transcript heading。
 - `args`：可选 object。必须匹配目标 executor 的 input schema 或 delegation contract。
-- `depends_on`：可选 string 或 string array。声明该 call 必须等待哪些 call 完成。`verifier` 类 call 在 `depends_on` 留空时由 Runtime 按 `<name>-verifier` 命名约定自动链接到同图中的 `<name>` worker；如果确实不需要上游依赖，必须显式写 `["none"]` 才能跳过自动推断并避免被 Runtime 标记为 `blocked`。
+- `depends_on`：可选 string 或 string array。声明该 call 必须等待哪些 call 完成。`verifier` 类 call 的依赖由模型按协议语义决定；Runtime 不要求它指向 worker action，也不用 agent 名称判断 verifier 与 worker 是否匹配。多个 action 可以使用同一个 agent target。如果系统发现 worker 缺少所需校验者，会主动创建 verifier action，并让该 action 依赖对应 worker action id。
 - `result`：可选。Result return policy。可以使用 string 简写，也可以使用 object。string 允许值为 `summary`、`full`、`structured`、`on_failure`、`on_demand` 或 `adaptive`，默认 `summary`。
 - `criteria`：可选 string array。声明该 call 的成功标准，用于 Runtime 构造 Action / Assignment Contract。
 - `failure`：可选 object。声明失败偏好，例如 retry、block、ask_user、handoff 或 abort。Runtime 根据全局 policy 和 gate 解释。
@@ -306,23 +295,22 @@ Loop 必须有边界，例如 `max_attempts`、预算、时间限制、人工 De
 
 模型侧 `calls[]` 保持扁平，Runtime 在归一化阶段补齐更完整的治理对象。
 
-
 映射关系：
 
-| 模型侧字段 | Runtime 内部对象 | 语义 |
-|---|---|---|
-| `id` | Action id | 稳定引用、依赖和 Trace 关联。 |
-| `type` + `name` | Executor selector | 选择 tool、Agent Session、Runtime service、human、pipeline 或 service。 |
-| `args` | Action input / Contract input | 传给 executor 的结构化输入。 |
-| `depends_on` | Action Graph edge | 调度、阻塞、恢复和 fan-in 的依赖边。 |
-| `criteria` | Success Criteria / Contract acceptance | Runtime、Agent Session、Gate 和 UI 判断完成的依据。 |
-| `failure` | Failure Policy | retry、block、ask_user、handoff、abort 等失败处理偏好。 |
-| `budget` | Budget Policy | cost、timeout、tokens、attempts、parallelism 等资源约束。 |
-| `visibility` | Visibility Policy | 控制结果如何进入模型上下文、用户界面、日志、Trace 和未来运行。 |
-| `artifacts` | Artifact Contract | 声明输出产物、证据、索引和引用方式。 |
-| `handoff` | Handoff Contract | 将结果、约束、证据、风险和未决问题交给后续 executor。 |
-| `context` | Context Bundle request | 请求 Runtime 选择、展开或摘要上下文。 |
-| `gate` | Gate Policy | approval、verification、review、privacy、release gate 等状态迁移条件。 |
+| 模型侧字段      | Runtime 内部对象                       | 语义                                                                    |
+| --------------- | -------------------------------------- | ----------------------------------------------------------------------- |
+| `id`            | Action id                              | 稳定引用、依赖和 Trace 关联。                                           |
+| `type` + `name` | Executor selector                      | 选择 tool、Agent Session、Runtime service、human、pipeline 或 service。 |
+| `args`          | Action input / Contract input          | 传给 executor 的结构化输入。                                            |
+| `depends_on`    | Action Graph edge                      | 调度、阻塞、恢复和 fan-in 的依赖边。                                    |
+| `criteria`      | Success Criteria / Contract acceptance | Runtime、Agent Session、Gate 和 UI 判断完成的依据。                     |
+| `failure`       | Failure Policy                         | retry、block、ask_user、handoff、abort 等失败处理偏好。                 |
+| `budget`        | Budget Policy                          | cost、timeout、tokens、attempts、parallelism 等资源约束。               |
+| `visibility`    | Visibility Policy                      | 控制结果如何进入模型上下文、用户界面、日志、Trace 和未来运行。          |
+| `artifacts`     | Artifact Contract                      | 声明输出产物、证据、索引和引用方式。                                    |
+| `handoff`       | Handoff Contract                       | 将结果、约束、证据、风险和未决问题交给后续 executor。                   |
+| `context`       | Context Bundle request                 | 请求 Runtime 选择、展开或摘要上下文。                                   |
+| `gate`          | Gate Policy                            | approval、verification、review、privacy、release gate 等状态迁移条件。  |
 
 这些字段都是意图声明。Runtime 根据权限、当前 Projection、Executor Registry、Adapter Policy 和安全策略决定最终执行形态。
 
@@ -365,18 +353,18 @@ Loop 必须有边界，例如 `max_attempts`、预算、时间限制、人工 De
 }
 ```
 
-## Verifier 自动依赖推断
+## Verifier 依赖处理与系统补齐
 
-verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph，但模型侧 `depends_on` 容易漏写，导致 verifier 与 worker 并行启动、verifier 拿到空上下文。Runtime 接受 declaration 后会做一次显式归一化：
+verifier 类 call 经常被 Planner 派发到和 worker 同一个 Action Graph，也可能在后续轮次验证历史 child session 的结果。Runtime 接受 declaration 后会保留 action 级依赖，但不再把 verifier 依赖绑定到 worker 类型：
 
-1. 对每个 `kind === "agent"` 且 executor.target 末尾为 `-verifier` 的 call，如果 `depends_on` 为空，Runtime 在同一个 Action Graph 中查找 executor.target 与去掉 `-verifier` 后缀同名的 worker call，找到则把 verifier 的 `depends_on` 写为 `[<worker.id>]`。
-2. 如果找不到同名 worker，Runtime 把该 verifier 标记为 `blocked`，错误信息中提示模型补一个 `<name>` worker action，或者把 `depends_on` 显式写成 `["none"]` 表示 verifier 故意不依赖任何 worker。
-3. 对于不带 `-verifier` 后缀的 verifier（如 `security-reviewer`、`plan-reviewer`），Runtime 不做自动推断；模型必须显式声明 `depends_on`，否则同样会被标记为 `blocked` 并提示补依赖。
-4. `"none"` 是唯一的 "无依赖" 哨兵；只有 schema 校验通过后 Runtime 才会读到空 `depends_on`，再结合 worker 是否存在决定走自动推断还是报错。
+1. 对每个 `kind === "agent"` 且目标 Agent kind 为 `verifier` 的 call，Runtime 允许模型自行决定 `depends_on`，不要求它至少包含 worker action id。
+2. Runtime 不按 `<name>-verifier` 反推当前包内的同名 worker，也不要求 verifier target 和 worker target 名称匹配。
+3. 如果 worker action 缺少系统要求的校验者，Runtime 通过 Agent 模板能力和 `<worker-agent>-verifier` 命名约定选择默认 verifier，创建新的 verifier action，并把它的 `depends_on` 指向该 worker action id。
+4. `"none"` 是唯一的 "无依赖" 哨兵；schema 校验前会过滤掉它。过滤后 verifier 会以空依赖执行。
 
-这样无论 Planner 是否记得写 `depends_on`，verifier 都不会在 worker 完成前启动，也不会因为依赖缺失而静默执行空验证。
+如果 verifier 的 `depends_on` 命中已完成的历史 child-session action id，Runtime 会把该 child session 的 prompt 和 summary/output 附加给 verifier；没有命中时，verifier 按自己的 prompt 和当前协议上下文执行。模型输出的任务规划仍以显式 `depends_on` 边为准，不受 agent 名称碰撞影响。
 
-如果 Action Graph 的第一个 action 是无依赖 `confirm`，Runtime 要先建立 pending confirmation，而不能因为后续 verifier 依赖问题把整个 package 预先判为 blocked。用户确认前，后续 `agent` / `tool` action 不应启动；用户确认后，Runtime 或下一轮模型再基于当前状态继续执行和校验。客户端提交确认结果时必须带明确 `response: "confirm" | "cancel"`，不能只依赖按钮文案或本地化答案。
+如果 Action Graph 内存在 `confirm`，Runtime 要先建立 pending confirmation，不检查 confirm 自身的 `depends_on`，也不要求后续 action 依赖 confirm。用户确认前，后续 `agent` / `tool` action 不应启动；用户确认后，Runtime 从同一个持久化 package 继续执行剩余 action。客户端提交确认结果时必须带明确 `response: "confirm" | "cancel"`，不能只依赖按钮文案或本地化答案。
 
 ## Runtime 归一化
 
@@ -420,6 +408,8 @@ Runtime 可以在安全时把直接 tool request、delegation request 或文本 
 恢复后的对象等价于显式 `AgentProtocolOutput` declaration，并进入相同的 validation、permission、logging 和 projection path。Runtime 应记录 recovery event，用于观察模型协议遵循情况。
 
 不安全或模糊的请求会关闭执行路径，并返回 protocol error 或要求模型用协议格式重试。
+
+如果模型已经调用 `AgentProtocolOutput`，但 tool-call arguments 不是可解析 JSON，Runtime 将该轮记录为 invalid protocol tool result。这个结果应同时展示 parser error 和从错误中提取出的 raw protocol output fragment，并把 raw fragment 写入 metadata，便于 UI 展开、复制和后续优化协议提示词。Runtime 还应在解析或 repair 前记录 provider 流出的原始 tool-call arguments，至少包含 bounded `raw`、`rawBytes` 和 `truncated`，方便把展示片段和真实流式输出对照排查。
 
 ## Runtime 到模型：Request Transcript
 
@@ -473,6 +463,7 @@ Artifacts: artifact://call_read_extension
 ```md
 extension.ts registers the custom editor provider and command handlers.
 ```
+
 </turn>
 
 Based on all turns above, decide the next step.
@@ -552,6 +543,7 @@ Artifacts: artifact://run_123/review_toolbar
 ```md
 Found two issues: undo/redo state is not wired through, and the table dropdown can be hidden by a higher layer.
 ```
+
 </turn>
 ````
 
@@ -599,14 +591,14 @@ Observation 应区分两类状态：
 
 `task_status` 和 `session_status` 不能合并。常见差异：
 
-| 场景 | `task_status` | `session_status` | Runtime 含义 |
-|---|---|---|---|
-| 子会话完成并返回结果 | `completed` | `completed` | 可进入 parent fan-in 或下游 Action。 |
-| 会话空闲但父任务还没汇总 | `running` 或 `partial` | `idle` | Runtime 还要消费 result、评估 gate 或等待其他分支。 |
-| 会话被系统重启打断 | `interrupted` | `interrupted` | 先做恢复评估，不直接判失败。 |
-| 等用户确认权限 | `waiting_permission` | `waiting_permission` | 创建 pending permission decision。 |
-| 子任务已产出部分可用结果 | `partial` | `partial` 或 `idle` | 按 policy 决定接收、继续、repair 或 handoff。 |
-| 依赖失败导致无法执行 | `blocked` | `blocked` | 暴露 blocked reason 和 needs。 |
+| 场景                     | `task_status`          | `session_status`     | Runtime 含义                                        |
+| ------------------------ | ---------------------- | -------------------- | --------------------------------------------------- |
+| 子会话完成并返回结果     | `completed`            | `completed`          | 可进入 parent fan-in 或下游 Action。                |
+| 会话空闲但父任务还没汇总 | `running` 或 `partial` | `idle`               | Runtime 还要消费 result、评估 gate 或等待其他分支。 |
+| 会话被系统重启打断       | `interrupted`          | `interrupted`        | 先做恢复评估，不直接判失败。                        |
+| 等用户确认权限           | `waiting_permission`   | `waiting_permission` | 创建 pending permission decision。                  |
+| 子任务已产出部分可用结果 | `partial`              | `partial` 或 `idle`  | 按 policy 决定接收、继续、repair 或 handoff。       |
+| 依赖失败导致无法执行     | `blocked`              | `blocked`            | 暴露 blocked reason 和 needs。                      |
 
 当 Runtime 给模型提供 all-idle summary 时，应包含 run-level 判断依据：
 
@@ -760,9 +752,7 @@ Runtime 将扁平 `calls[]` 归一化为内部 Action records。内部 Action �
   },
   "context_refs": ["action:inspect_code.summary"],
   "artifacts": {
-    "expected": [
-      { "name": "review_report", "type": "review" }
-    ]
+    "expected": [{ "name": "review_report", "type": "review" }]
   },
   "handoff": {
     "target": { "type": "agent", "capability": "implementation" },

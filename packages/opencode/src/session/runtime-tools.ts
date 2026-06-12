@@ -19,6 +19,7 @@ import { Tool } from "@/tool/tool"
 import { Truncate } from "@/tool/truncation"
 import { PermissionNext } from "@/permission/next"
 import { ProtocolToolCatalog } from "@/protocol/tool-catalog"
+import { Storage } from "@/storage/storage"
 
 type McpResult = {
   content: (
@@ -694,8 +695,22 @@ export namespace RuntimeTools {
         status: SessionStatus.get(child),
         delegation: delegationOf(session),
       },
+      ...(await resultOf(session, opts.output)),
       delegations,
       ...(messages ? { messages } : {}),
+    }
+  }
+
+  async function resultOf(session: Session.Info, output: boolean) {
+    const found = object(session.dsl_context?.result)
+    if (found.type !== "session.action_result") return {}
+    const ref = reqString(found.output_ref)
+    const full = output && ref ? await Storage.read<{ output?: string }>(ref.split("/")).catch(() => undefined) : undefined
+    return {
+      result: {
+        ...found,
+        ...(output && full?.output !== undefined ? { output: full.output } : {}),
+      },
     }
   }
 

@@ -120,6 +120,30 @@ Agent A 可以提出 next Action 或 handoff request。Runtime 校验该请求�
 
 Handoff 应保留 contract boundary，避免把自由文本 transcript continuation 当作交接机制。
 
+Runtime-created worker / verifier child sessions use a unified `ActionResult` native tool as the handoff boundary. A worker `result` describes the task output. A verifier `result` describes whether one verifier gate passed for a target worker action. `result` is the single handoff payload field: it can contain a final answer, implementation report, review finding set, verification conclusion, blocker explanation, or next-step request. It must be available through `session_result`. Plain text is not a valid terminal handoff for new delegation assignments; Runtime should continue the child session with a protocol reminder and ask it to submit `ActionResult`.
+
+Worker completion routing is gate-aware:
+
+1. If the worker has no required verifier gate, Runtime may return the worker `ActionResult` to the parent.
+2. If verifier gates exist, Runtime starts verifier sessions as children of the worker session, one gate at a time.
+3. Runtime starts the next verifier only after the previous required verifier returns `pass` or an allowed `skipped`.
+4. If a verifier returns `fail` or `reply`, Runtime sends `worker_feedback` back to the worker and repeats the bounded fix / verify loop.
+5. If the loop exceeds its limit, Runtime stops remaining verifier gates, packages the worker result plus all executed verifier results and loop count, resets the loop state, and returns that blocked package to the parent.
+6. If all verifier gates pass, Runtime attaches verifier result descriptions to the worker result and then returns the canonical result to the parent.
+7. If the latest worker result only describes verifier feedback, Runtime asks the worker for a fresh complete task summary before returning to the parent.
+
+When a protocol package contains worker actions and verifier actions that depend on those workers, delegated workers are not treated as completed at dispatch time. Runtime records every verifier blocked by those delegated worker dependencies in the run state instead of dropping later blocked actions after the first blocked verifier. After the worker child session submits `ActionResult`, delegation routing reads the recorded run actions, starts the matching verifier gate as a child of the worker session, and keeps the original parent session as the orchestration owner.
+
+If a delegated child creates its own child sessions, the outer parent remains waiting. Runtime decides this from the delegated child's own `dsl_context.protocol.pending_delegations` and active `verification_cycles`, not from display text. While either state is non-empty, the delegated child is not moved to the outer parent's `completed_delegations` and the outer parent model is not notified. After nested children and verifier loops finish, Runtime resumes the delegated child with those results; that child must synthesize the complete handoff with `ActionResult`, and only then may the result be returned to its parent.
+
+If a child session calls `ActionResult` and then emits a final plain-text assistant message, Runtime still uses the latest completed `ActionResult` before that final message as the canonical delegated result. The plain-text tail is not allowed to overwrite the structured result or leave the assignment pending.
+
+For compatibility with older children, Runtime may map legacy `summary` input to `result`. If the completed `ActionResult` came from legacy summary-only input and the child emits final plain text after the tool call, Runtime may attach that trailing text to `action_result.result` as a compatibility fallback. New child sessions should put the full handoff payload directly in `ActionResult.result` instead of relying on trailing text.
+
+Verifier child sessions always receive bash access for verification commands, plus explicit denies for file edit tools and common mutating bash patterns such as file deletion/move/write redirection, dependency installation, and git state changes. The delegated verifier prompt must state that bash is only for read-only checks such as tests, grep, git diff, stat, and diagnostics, and that the verifier must not run commands that modify files, install packages, change git state, or mutate external systems.
+
+If a delegated child attempts to call `ActionResult` with malformed or missing arguments, Runtime reports an `ActionResult input schema/parse failed` error. The internal `invalid` repair tool is an implementation detail and must not be exposed as the user-facing cause for `ActionResult` failures.
+
 Handoff 字段：
 
 ```json
@@ -252,20 +276,20 @@ Runtime 展开 `orchestration_policy` 时遵循以下规则：
 
 用户将这类 Action Graph 保存为 Workflow，或主动创建 Workflow 时，它成为 Workflow 资产；执行能力仍来自同一套 Action Graph 和 Runtime 状态模型。
 
-## Verifier Routing 与 Worker 绑定
+## Verifier Routing 与协议依赖
 
-verifier 类的 Agent Session 经常被 Planner 派发到和 worker 同一个 Action Graph 里。如果 verifier 不带显式 `depends_on`，Runtime 默认假设它要验证某个 base name 相同的 worker，于是把 verifier 的执行时机绑到 worker 之后。
+verifier 类的 Agent Session 经常被 Planner 派发到和 worker 同一个 Action Graph 里，也可能在后续轮次验证历史 child session 的结果。Verifier 的 `depends_on` 由模型按协议语义决定；Runtime 不再要求 verifier 必须依赖 worker action，也不根据 agent 类型判断依赖是否合法。
 
-绑定规则：
+执行规则：
 
-- 仅对 `executor.type === "agent"` 且目标 Agent `kind === "verifier"` 的 action 生效。
-- 当 `executor.target` 形如 `<name>-verifier` 时，Runtime 在同一 Action Graph 中查找 `executor.target === "<name>"` 的 worker action；找到则把 verifier 的 `depends_on` 写为 `[<worker.id>]`，调度上确保 verifier 在 worker 完成后再启动。
-- 当 `executor.target` 不带 `-verifier` 后缀（典型如 `security-reviewer`、`plan-reviewer`、`technical-reviewer`）时，Runtime 不做自动绑定，因为这类 verifier 通常横跨多个 worker，没有单一上游；模型必须显式声明 `depends_on`，或者写成 `["none"]` 表示该 verifier 故意不依赖任何 worker。
-- 同名 worker 不存在或 verifier 的 target 退化为自身时，Runtime 把该 verifier 记为 `blocked`，并在 transcript 中给出修复提示，避免静默并行启动后 verifier 拿到空上下文。
+- Runtime 不用 agent 名称做会话级绑定。`executor.target` 形如 `<name>-verifier` 只参与系统主动补 verifier 时的 agent 选择，不用于判断模型显式输出的 verifier 是否匹配某个 worker。
+- `depends_on` 仍是 action-level edge。模型可以让 verifier 依赖当前包里的任意 action，也可以依赖历史 child-session action id。
+- 如果 verifier 的 `depends_on` 命中当前 parent session 已完成的 `completed_delegations.action_id`，Runtime 会把该 child session 的原始 dispatch prompt 和 summary/output 附加到 verifier prompt 里。
+- 如果没有命中历史 handoff，verifier 仍按自己的 prompt 和当前协议上下文启动；Runtime 不因为空 handoff 阻塞 verifier。
 
-`["none"]` 是 schema 层识别的字面量，校验前会被过滤掉，让 Runtime 真正读到空 `depends_on` 并按上面的规则走推断或报错；Agent Protocol 导出常量 `AgentProtocol.NONE_DEPENDENCY` 作为引用入口。
+`["none"]` 是 schema 层识别的字面量，校验前会被过滤掉，让 Runtime 真正读到空 `depends_on`；Agent Protocol 导出常量 `AgentProtocol.NONE_DEPENDENCY` 作为引用入口。
 
-这一约束配合 `## Runtime Orchestration Policy 展开` 一起工作：planner 编排出的 `on_completed` 阶段 verifier 调度，会因为上面这条绑定规则而不会在 worker 完成前抢先执行。
+这一规则配合 `## Runtime Orchestration Policy 展开` 一起工作：系统主动补出的 verifier 仍会按 policy 挂到 worker action 之后；模型显式输出的 verifier 则按协议包顺序和依赖信息执行，后续轮次的 verifier 可以在命中历史 child-session action id 时复用已有 summary/output。
 
 ## Delegation Request 恢复
 

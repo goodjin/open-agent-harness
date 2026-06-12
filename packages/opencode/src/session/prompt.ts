@@ -287,7 +287,18 @@ export namespace SessionPrompt {
     return
   }
 
-  function finish(sessionID: SessionID, after: MessageID | undefined) {
+  function object(input: unknown) {
+    if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>
+    return {}
+  }
+
+  async function waiting(sessionID: SessionID) {
+    const session = await Session.get(sessionID).catch(() => undefined)
+    const pending = object(object(session?.dsl_context).protocol).pending_delegations
+    return Object.keys(object(pending)).length
+  }
+
+  async function finish(sessionID: SessionID, after: MessageID | undefined) {
     const s = state()
     const status = SessionStatus.get(sessionID)
     const entry = s[sessionID]
@@ -299,7 +310,13 @@ export namespace SessionPrompt {
       return
     }
 
-    SessionStatus.set(sessionID, { type: "completed" })
+    const pending = await waiting(sessionID)
+    SessionStatus.set(
+      sessionID,
+      pending > 0
+        ? { type: "waiting_child", message: `Waiting for ${pending} delegated child session${pending === 1 ? "" : "s"}.` }
+        : { type: "completed" },
+    )
 
     if (entry.callbacks.length === 0) {
       delete s[sessionID]
@@ -336,7 +353,7 @@ export namespace SessionPrompt {
 
     let lastUserID: MessageID | undefined
 
-    using _ = defer(() => finish(sessionID, lastUserID))
+    await using _ = defer(() => finish(sessionID, lastUserID))
 
     // Structured output state
     // Note: On session resumption, state is reset but outputFormat is preserved
@@ -374,7 +391,7 @@ export namespace SessionPrompt {
       if (
         lastAssistant?.finish &&
         !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastUser.id < lastAssistant.id
+        lastAssistant.parentID === lastUser.id
       ) {
         log.info("exiting loop", { sessionID })
         break
@@ -382,12 +399,12 @@ export namespace SessionPrompt {
 
       step++
       if (step === 1)
-        ensureTitle({
+        void ensureTitle({
           session,
           modelID: lastUser.model.modelID,
           providerID: lastUser.model.providerID,
           history: msgs,
-        })
+        }).catch((error) => log.error("failed to generate title", { error }))
 
       const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID).catch((e) => {
         if (Provider.ModelNotFoundError.isInstance(e)) {
@@ -897,6 +914,13 @@ export namespace SessionPrompt {
     }
   }
 
+  function bound(session: Session.Info, agent: string | undefined) {
+    if (!session.agent || !agent || session.agent === agent) return
+    throw new ConflictError({
+      message: `Session ${session.id} has bound agent "${session.agent}". Update the session agent before sending with "${agent}".`,
+    })
+  }
+
   /** @internal Exported for testing */
   export async function resolveTools(input: {
     agent: Agent.Info
@@ -1056,14 +1080,10 @@ export namespace SessionPrompt {
     })
   }
 
-	  async function createUserMessage(input: PromptInput, session: Session.Info) {
-	    const sessionPref = pref(session)
-	    if (sessionPref.agent && input.agent && sessionPref.agent !== input.agent) {
-	      throw new ConflictError({
-	        message: `Session ${input.sessionID} has bound agent "${sessionPref.agent}". Update the session agent before sending with "${input.agent}".`,
-	      })
-	    }
-	    const agentName = sessionPref.agent ?? input.agent ?? (await Agent.defaultAgent())
+  async function createUserMessage(input: PromptInput, session: Session.Info) {
+    const sessionPref = pref(session)
+    bound(session, input.agent)
+    const agentName = sessionPref.agent ?? input.agent ?? (await Agent.defaultAgent())
     const agent = agentName ? await Agent.get(agentName) : undefined
 
     const model = input.model ?? sessionPref.model ?? agent?.model ?? (await lastModel(input.sessionID))
@@ -1588,6 +1608,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     })
 
     const session = await Session.get(input.sessionID)
+    bound(session, input.agent)
     if (session.revert) {
       await SessionRevert.cleanup(session)
     }
@@ -1842,6 +1863,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     log.info("command", input)
     const command = await Command.get(input.command)
     const session = await Session.get(input.sessionID)
+    bound(session, input.agent)
     const sessionPref = pref(session)
     const agentName = sessionPref.agent ?? command.agent ?? input.agent ?? (await Agent.defaultAgent())
 
@@ -1989,11 +2011,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     )
     if (firstRealUserIdx === -1) return
 
-    const isFirst =
-      input.history.filter((m) => m.info.role === "user" && !m.parts.every((p) => "synthetic" in p && p.synthetic))
-        .length === 1
-    if (!isFirst) return
-
     // Gather all messages up to and including the first real user message for context
     // This includes any shell/subtask executions that preceded the user's first prompt
     const contextMessages = input.history.slice(0, firstRealUserIdx + 1)
@@ -2043,6 +2060,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         if (!cleaned) return
 
         const title = cleaned.length > 100 ? cleaned.substring(0, 97) + "..." : cleaned
+        const session = await Session.get(input.session.id)
+        if (!Session.isDefaultTitle(session.title)) return
         return Session.setTitle({ sessionID: input.session.id, title })
       }
     } finally {

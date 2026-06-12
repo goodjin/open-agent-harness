@@ -32,7 +32,7 @@ export namespace Agent {
       capability: TemplateSchema.Capability,
       verification: TemplateSchema.Verification.optional(),
       runner: TemplateSchema.Runner.default("chat").optional(),
-      concurrency: z.number().int().positive().optional(),
+      concurrency: TemplateSchema.Concurrency.optional(),
       native: z.boolean().optional(),
       hidden: z.boolean().optional(),
       topP: z.number().optional(),

@@ -73,6 +73,8 @@ export namespace AgentTemplate {
     cost: "medium",
     writes: true,
   } as const satisfies Capability
+  export const Concurrency = z.union([z.literal(-1), z.number().int().positive()])
+  export type Concurrency = z.infer<typeof Concurrency>
 
   export const VerificationRole = z.enum(["test", "review"])
   export type VerificationRole = z.infer<typeof VerificationRole>
@@ -299,12 +301,9 @@ export namespace AgentTemplate {
       capability: Capability.default(CapabilityDefaults).describe("What the agent is good for"),
       hidden: z.boolean().default(false).describe("Whether to hide the agent from interactive pickers"),
       runner: Runner.default("chat").describe("Which session runtime handles this agent"),
-      concurrency: z
-        .number()
-        .int()
-        .positive()
+      concurrency: Concurrency
         .optional()
-        .describe("Maximum concurrent delegated sessions for this agent inside one project."),
+        .describe("Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited."),
       workflow_mode: WorkflowMode.default("auto").describe("How the agent executes workflows"),
       allowed_tools: z.array(Text).default([]).describe("List of tools the agent is allowed to use"),
       denied_tools: z.array(Text).default([]).describe("List of tools the agent is denied from using"),

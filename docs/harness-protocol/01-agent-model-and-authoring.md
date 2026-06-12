@@ -86,6 +86,7 @@ Agent id 使用直观的 `lower_snake_case`，形态为 `<domain>_<work_type>`�
 - `inherit_permissions`：默认 `false`。Agent 默认使用自身 permission profile；只有显式设为 `true` 时才继承或合并外部权限策略。
 - `permission_mode`：默认 `strict`。
 - `kind`：默认不存在。用于描述 Agent 在协作图中的粗粒度职责形态，不能替代 `capability`、`entry`、`runner` 或权限策略。
+- `concurrency`：默认不存在。正整数表示该 Agent 在同一 project 内的最大委托会话数，`-1` 表示不做 Agent 级并发限制。`worker` 默认不做 Agent 级限制，仍受 provider/model 层的 LLM 并发策略约束。
 - `relationships`：默认不存在。用于声明该 Agent 与其他 Agent 或 capability 的稳定协作关系，例如上游依赖、推荐下游、互斥关系或替代候选。
 - `orchestration_policy`：默认不存在。用于声明 Runtime 可以围绕该 Agent Session 评估和创建的前置、后置、恢复、审查、仲裁等后续 Action / Assignment。
 
@@ -97,12 +98,12 @@ Agent id 使用直观的 `lower_snake_case`，形态为 `<domain>_<work_type>`�
 
 推荐取值：
 
-| kind | 含义 | 适合创建的 Agent |
-|---|---|---|
-| `planner` | 把目标拆成计划、任务、依赖、验收条件或执行图，可能也负责分派和协调。 | `default`、`feature_planner`、`milestone_planner`、`workflow_runner` |
-| `worker` | 执行主任务并产出主要结果，可能修改代码、文档、数据、配置或外部系统。 | `frontend_developer`、`backend_developer`、`database_agent`、`release_runner`、`devops_agent` |
-| `verifier` | 对计划或执行结果做验证、审查、测试、复现、风险检查或证据确认。 | `verifier`、`technical_reviewer`、`security_reviewer`、`performance_reviewer`、`ux_reviewer` |
-| `helper` | 提供轻量辅助产物或上下文处理，不承担主流程责任，也不决定主接力链。 | `summary`、`title`、`compaction`、`librarian`、`agent_creator` |
+| kind       | 含义                                                                 | 适合创建的 Agent                                                                              |
+| ---------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `planner`  | 把目标拆成计划、任务、依赖、验收条件或执行图，可能也负责分派和协调。 | `default`、`feature_planner`、`milestone_planner`、`workflow_runner`                          |
+| `worker`   | 执行主任务并产出主要结果，可能修改代码、文档、数据、配置或外部系统。 | `frontend_developer`、`backend_developer`、`database_agent`、`release_runner`、`devops_agent` |
+| `verifier` | 对计划或执行结果做验证、审查、测试、复现、风险检查或证据确认。       | `verifier`、`technical_reviewer`、`security_reviewer`、`performance_reviewer`、`ux_reviewer`  |
+| `helper`   | 提供轻量辅助产物或上下文处理，不承担主流程责任，也不决定主接力链。   | `summary`、`title`、`compaction`、`librarian`、`agent_creator`                                |
 
 典型接力规则：
 
@@ -733,59 +734,61 @@ Context Bundle 由 Runtime 在每次模型调用前构造，包含 assignment co
 
 下表基于当前 `packages/opencode/config/agents/*/meta.json` 的实际内置 Agent。这里的 `kind` 是建议归类，用于接力策略和后续迁移；当前文档更新不等于这些 `meta.json` 已经写入 `kind` 字段。
 
-verifier 命名上区分两种用法，影响 Runtime 推断 verifier 依赖 worker 的方式：
+verifier 命名上区分两种用法，影响系统自动补 verifier 时的 agent 选择方式：
 
-- 形如 `<name>-verifier`（例如 `backend-verifier`、`frontend-verifier`）的 verifier 走"同 base name worker 自动绑定"，Runtime 会把 verifier 的 `depends_on` 自动接到对应 worker 上。
-- 不带 `-verifier` 后缀的 reviewer（如 `security-reviewer`、`plan-reviewer`、`ux-reviewer`）不绑定单一 worker，调用方必须显式声明 `depends_on` 或写成 `["none"]`。
+- 形如 `<name>-verifier`（例如 `backend-verifier`、`frontend-verifier`）的 verifier 可作为 `<name>` worker 的默认系统校验者。
+- 不带 `-verifier` 后缀的 reviewer（如 `security-reviewer`、`plan-reviewer`、`ux-reviewer`）表示独立审查能力，不绑定单一 worker。
 
-具体行为由 Runtime 在归一化阶段执行，详见 `02-model-runtime-protocol.md` 的 Verifier 自动依赖推断小节和 `03-action-executor-contract.md` 的依赖归一化与 Verifier 推断小节。
+模型显式输出的 Action Graph 以 `depends_on` 为准。Runtime 不用 agent 名称判断某个 verifier 是否“匹配”某个 worker；多个 worker action 可以使用同一个 agent target。只有当系统发现 worker 缺少校验者并主动补 verifier action 时，才按 agent 模板能力和命名约定选择默认 verifier，并把新 verifier action 的 `depends_on` 指向被校验的 worker action id。
 
-| Agent | 建议 kind | 依据 |
-|---|---|---|
-| `default` | `planner` | 默认入口，负责意图澄清、规模判断、DSL 任务拆解、路由和结果综合。 |
-| `epic-planner` | `planner` | 把 epic slice 拆成 feature，产出边界、依赖、验收信号和可调度 child calls。 |
-| `feature-planner` | `planner` | 把 feature 拆成 implementation、verification、review、docs、release 等具体任务。 |
-| `milestone-planner` | `planner` | 把 milestone 拆成 epic slices，给后续执行链提供任务图。 |
-| `plan` | `planner` | 只读规划、分析、设计、审查和 implementation plan。 |
-| `prometheus` | `planner` | 通过访谈、研究和整理创建可执行计划。 |
-| `protocol-runner` | `planner` | 以 Agent Protocol DSL 声明结构化执行和路由。 |
-| `requirements-clarifier` | `planner` | 在 planning 或 implementation 前澄清意图、隐藏需求、歧义和风险。 |
-| `workflow-runner` | `planner` | 管理 Workflow 资产并把 workflow materialize 为 Action Graph。 |
-| `agent-creator` | `worker` | 根据自然语言创建 project/user Agent 模板，产出可保存的 Agent artifact。 |
-| `atlas` | `worker` | 执行多步计划并协调完成与验证，主职责是推进交付。 |
-| `backend` | `worker` | 后端实现、API、数据模型、auth、permission 和 integration。 |
-| `build` | `worker` | 主开发 Agent，用于代码修改和验证。 |
-| `data-migration-runner` | `worker` | 数据迁移、schema transition、backfill、一致性检查和 rollback-aware plan。 |
-| `database-agent` | `worker` | 数据库 schema、migration、query、index、transaction 和数据一致性工作。 |
-| `dependency-maintainer` | `worker` | 依赖升级、lockfile、兼容性、breaking changes 和依赖安全修复。 |
-| `devops-agent` | `worker` | CI/CD、build scripts、deployment config、本地服务和环境配置。 |
-| `docs-maintainer` | `worker` | 维护工程文档，使其反映当前代码和 workflow。 |
-| `frontend` | `worker` | 前端实现、UI 行为、样式、可访问性和浏览器验证。 |
-| `general` | `worker` | 广泛研究、复杂代码库问题和并行 work unit；当它拥有主任务结果时按 worker 接力。 |
-| `hephaestus` | `worker` | 深度端到端实现，主职责是完整交付。 |
-| `incident-responder` | `worker` | 事故响应、outage triage、mitigation、verification 和 follow-up。 |
-| `migration-runner` | `worker` | 跨文件迁移、rename、API migration 和 architecture migration。 |
-| `observability-agent` | `worker` | logging、metrics、tracing、audit、health 和 diagnostics 的实现或修复。 |
-| `refactorer` | `worker` | 低风险、保持行为不变的重构。 |
-| `release-runner` | `worker` | release preparation、versioning、changelog、artifact、dry run、publish 和 post-release verification。 |
-| `sisyphus` | `worker` | 主 orchestrator，但对外承担完整交付，接力策略上更像 worker。 |
-| `sisyphus-junior` | `worker` | 聚焦 delegated implementation task。 |
-| `workflow-creator` | `worker` | 创建和更新持久化 workflow。 |
-| `accessibility-reviewer` | `verifier` | UI 语义、键盘访问、label、focus、contrast 和 assistive technology 审查。 |
-| `api-contract-reviewer` | `verifier` | API contract、schema、兼容性、SDK 影响、错误语义和边界审查。 |
-| `debugger` | `verifier` | 复现失败、缩小范围、定位根因和建议恢复步骤，通常接在失败 worker 后。 |
-| `performance-reviewer` | `verifier` | frontend、backend、runtime、database 和 build workflow 的性能审查。 |
-| `plan-reviewer` | `verifier` | 审查计划是否可执行、引用是否有效、阻塞是否真实。 |
-| `security-reviewer` | `verifier` | security、permission、sandbox、secret 和 data-access 审查。 |
-| `technical-reviewer` | `verifier` | 架构、复杂 debugging、tradeoff 和 post-implementation technical review。 |
-| `ux-reviewer` | `verifier` | UX flow、information architecture、interaction clarity、empty states 和摩擦审查。 |
-| `verifier` | `verifier` | 运行 validation commands、解释失败并建议下一步。 |
-| `compaction` | `helper` | 长会话 continuation summary，不拥有主流程责任。 |
-| `explore` | `helper` | 查文件、追代码路径、找模式，主要给 planner 或 worker 补上下文。 |
-| `librarian` | `helper` | 官方文档、远程仓库、外部库和实现示例研究。 |
-| `multimodal-looker` | `helper` | 分析 PDF、图片、diagram、chart 和视觉文档，为主流程补材料。 |
-| `summary` | `helper` | 隐藏系统 Agent，用于 session summaries。 |
-| `title` | `helper` | 根据首个用户 prompt 生成短 session title。 |
+具体行为由 Runtime 在归一化阶段执行，详见 `02-model-runtime-protocol.md` 的 Verifier 依赖处理与系统补齐小节和 `03-action-executor-contract.md` 的依赖归一化与 Verifier 处理小节。
+
+| Agent                    | 建议 kind  | 依据                                                                                                  |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
+| `default`                | `planner`  | 默认入口，负责意图澄清、规模判断、DSL 任务拆解、路由和结果综合。                                      |
+| `epic-planner`           | `planner`  | 把 epic slice 拆成 feature，产出边界、依赖、验收信号和可调度 child calls。                            |
+| `feature-planner`        | `planner`  | 把 feature 拆成 implementation、verification、review、docs、release 等具体任务。                      |
+| `milestone-planner`      | `planner`  | 把 milestone 拆成 epic slices，给后续执行链提供任务图。                                               |
+| `plan`                   | `planner`  | 只读规划、分析、设计、审查和 implementation plan。                                                    |
+| `prometheus`             | `planner`  | 通过访谈、研究和整理创建可执行计划。                                                                  |
+| `protocol-runner`        | `planner`  | 以 Agent Protocol DSL 声明结构化执行和路由。                                                          |
+| `requirements-clarifier` | `planner`  | 在 planning 或 implementation 前澄清意图、隐藏需求、歧义和风险。                                      |
+| `workflow-runner`        | `planner`  | 管理 Workflow 资产并把 workflow materialize 为 Action Graph。                                         |
+| `agent-creator`          | `worker`   | 根据自然语言创建 project/user Agent 模板，产出可保存的 Agent artifact。                               |
+| `atlas`                  | `worker`   | 执行多步计划并协调完成与验证，主职责是推进交付。                                                      |
+| `backend`                | `worker`   | 后端实现、API、数据模型、auth、permission 和 integration。                                            |
+| `build`                  | `worker`   | 主开发 Agent，用于代码修改和验证。                                                                    |
+| `data-migration-runner`  | `worker`   | 数据迁移、schema transition、backfill、一致性检查和 rollback-aware plan。                             |
+| `database-agent`         | `worker`   | 数据库 schema、migration、query、index、transaction 和数据一致性工作。                                |
+| `dependency-maintainer`  | `worker`   | 依赖升级、lockfile、兼容性、breaking changes 和依赖安全修复。                                         |
+| `devops-agent`           | `worker`   | CI/CD、build scripts、deployment config、本地服务和环境配置。                                         |
+| `docs-maintainer`        | `worker`   | 维护工程文档，使其反映当前代码和 workflow。                                                           |
+| `frontend`               | `worker`   | 前端实现、UI 行为、样式、可访问性和浏览器验证。                                                       |
+| `general`                | `worker`   | 广泛研究、复杂代码库问题和并行 work unit；当它拥有主任务结果时按 worker 接力。                        |
+| `hephaestus`             | `worker`   | 深度端到端实现，主职责是完整交付。                                                                    |
+| `incident-responder`     | `worker`   | 事故响应、outage triage、mitigation、verification 和 follow-up。                                      |
+| `migration-runner`       | `worker`   | 跨文件迁移、rename、API migration 和 architecture migration。                                         |
+| `observability-agent`    | `worker`   | logging、metrics、tracing、audit、health 和 diagnostics 的实现或修复。                                |
+| `refactorer`             | `worker`   | 低风险、保持行为不变的重构。                                                                          |
+| `release-runner`         | `worker`   | release preparation、versioning、changelog、artifact、dry run、publish 和 post-release verification。 |
+| `sisyphus`               | `worker`   | 主 orchestrator，但对外承担完整交付，接力策略上更像 worker。                                          |
+| `sisyphus-junior`        | `worker`   | 聚焦 delegated implementation task。                                                                  |
+| `workflow-creator`       | `worker`   | 创建和更新持久化 workflow。                                                                           |
+| `accessibility-reviewer` | `verifier` | UI 语义、键盘访问、label、focus、contrast 和 assistive technology 审查。                              |
+| `api-contract-reviewer`  | `verifier` | API contract、schema、兼容性、SDK 影响、错误语义和边界审查。                                          |
+| `debugger`               | `verifier` | 复现失败、缩小范围、定位根因和建议恢复步骤，通常接在失败 worker 后。                                  |
+| `performance-reviewer`   | `verifier` | frontend、backend、runtime、database 和 build workflow 的性能审查。                                   |
+| `plan-reviewer`          | `verifier` | 审查计划是否可执行、引用是否有效、阻塞是否真实。                                                      |
+| `security-reviewer`      | `verifier` | security、permission、sandbox、secret 和 data-access 审查。                                           |
+| `technical-reviewer`     | `verifier` | 架构、复杂 debugging、tradeoff 和 post-implementation technical review。                              |
+| `ux-reviewer`            | `verifier` | UX flow、information architecture、interaction clarity、empty states 和摩擦审查。                     |
+| `verifier`               | `verifier` | 运行 validation commands、解释失败并建议下一步。                                                      |
+| `compaction`             | `helper`   | 长会话 continuation summary，不拥有主流程责任。                                                       |
+| `explore`                | `helper`   | 查文件、追代码路径、找模式，主要给 planner 或 worker 补上下文。                                       |
+| `librarian`              | `helper`   | 官方文档、远程仓库、外部库和实现示例研究。                                                            |
+| `multimodal-looker`      | `helper`   | 分析 PDF、图片、diagram、chart 和视觉文档，为主流程补材料。                                           |
+| `summary`                | `helper`   | 隐藏系统 Agent，用于 session summaries。                                                              |
+| `title`                  | `helper`   | 根据首个用户 prompt 生成短 session title。                                                            |
 
 边界判断：
 
@@ -798,12 +801,12 @@ verifier 命名上区分两种用法，影响 Runtime 推断 verifier 依赖 wor
 
 按四类看，当前系统不是缺大类，而是缺一些具体 capability：
 
-| kind | 当前覆盖 | 主要缺口 |
-|---|---|---|
-| `planner` | 已覆盖默认路由、需求澄清、feature/epic/milestone 拆分、workflow materialization 和计划生成。 | 缺少讨论收敛类 planner，例如 `brainstorm_facilitator` 或 `decision_synthesizer`，把多人/多 Agent 讨论收束成选项、取舍、结论和后续任务。 |
-| `worker` | 已覆盖前端、后端、数据库、依赖、DevOps、文档、迁移、发布、事故响应、重构、深度实现和 agent/workflow authoring。 | 缺少浏览器自动化执行类 worker、数据分析/报表类 worker、Cloudflare/云资源专门 worker，以及把设计稿或视觉输入落成前端改动的 UI implementation worker。 |
-| `verifier` | 已覆盖通用验证、计划审查、技术审查、安全、性能、UX、可访问性和 API contract。 | 缺少 artifact contract verifier、release readiness verifier、data migration consistency verifier、browser E2E verifier，以及专门比较 PRD/architecture/implementation 是否一致的 alignment verifier。 |
-| `helper` | 已覆盖代码探索、外部资料、视觉文档、摘要、标题和上下文压缩。 | 缺少头脑风暴参与 agent、memory/context retriever、artifact indexer、trace summarizer，以及长任务/CI/log watcher 这类 monitor helper。 |
+| kind       | 当前覆盖                                                                                                        | 主要缺口                                                                                                                                                                                             |
+| ---------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `planner`  | 已覆盖默认路由、需求澄清、feature/epic/milestone 拆分、workflow materialization 和计划生成。                    | 缺少讨论收敛类 planner，例如 `brainstorm_facilitator` 或 `decision_synthesizer`，把多人/多 Agent 讨论收束成选项、取舍、结论和后续任务。                                                              |
+| `worker`   | 已覆盖前端、后端、数据库、依赖、DevOps、文档、迁移、发布、事故响应、重构、深度实现和 agent/workflow authoring。 | 缺少浏览器自动化执行类 worker、数据分析/报表类 worker、Cloudflare/云资源专门 worker，以及把设计稿或视觉输入落成前端改动的 UI implementation worker。                                                 |
+| `verifier` | 已覆盖通用验证、计划审查、技术审查、安全、性能、UX、可访问性和 API contract。                                   | 缺少 artifact contract verifier、release readiness verifier、data migration consistency verifier、browser E2E verifier，以及专门比较 PRD/architecture/implementation 是否一致的 alignment verifier。 |
+| `helper`   | 已覆盖代码探索、外部资料、视觉文档、摘要、标题和上下文压缩。                                                    | 缺少头脑风暴参与 agent、memory/context retriever、artifact indexer、trace summarizer，以及长任务/CI/log watcher 这类 monitor helper。                                                                |
 
 如果将来要加第五类，优先观察 `monitor`。只有当长期 watch agent 需要独立生命周期、订阅、唤醒和告警策略，且不能作为 helper 的 collaboration trigger 表达时，再把它提升为新 `kind`。现在先放在 `helper` 更稳。
 

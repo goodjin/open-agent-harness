@@ -31,6 +31,7 @@ const active = new Set([
   "retry",
   "waiting_permission",
   "waiting_user",
+  "waiting_child",
   "paused",
   "aborting",
 ])

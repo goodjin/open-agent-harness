@@ -218,6 +218,136 @@ describe("session processor lifecycle", () => {
     stream.mockRestore()
   })
 
+  test("records raw streamed tool input before invalid repair", async () => {
+    const bad = '{"version": "2", "items": .'
+    const err =
+      'Invalid input for tool AgentProtocolOutput: JSON parsing failed: Text: {"version": "2", "items": .\nError message: JSON Parse error: Unexpected EOF'
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "tool-input-start" as const, id: "call_invalid", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield { type: "tool-input-delta" as const, id: "call_invalid", delta: '{"version": "2", ' }
+          yield { type: "tool-input-delta" as const, id: "call_invalid", delta: '"items": .' }
+          yield { type: "tool-input-end" as const, id: "call_invalid" }
+          yield {
+            type: "tool-call" as const,
+            toolCallId: "call_invalid",
+            toolName: "invalid",
+            input: { tool: LLM.PROTOCOL_OUTPUT_TOOL, error: err },
+          }
+          yield {
+            type: "tool-result" as const,
+            toolCallId: "call_invalid",
+            toolName: "invalid",
+            input: { tool: LLM.PROTOCOL_OUTPUT_TOOL, error: err },
+            output: LLM.invalid({ tool: LLM.PROTOCOL_OUTPUT_TOOL, error: err }),
+          }
+          yield {
+            type: "finish-step" as const,
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" as const }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            const input = (await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)) as MessageV2.User
+
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "test",
+              agent: "test",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: projectRoot,
+                root: projectRoot,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            })) as MessageV2.Assistant
+
+            const model = {
+              id: "test",
+              providerID: "test",
+              api: { id: "openai", npm: "" },
+              limit: { context: 100_000, output: 32_000 },
+            } as Provider.Model
+
+            const processor = SessionProcessor.create({
+              assistantMessage: assistant,
+              sessionID: session.id,
+              model,
+              abort: new AbortController().signal,
+            })
+
+            await processor.process({
+              user: input,
+              sessionID: session.id,
+              model,
+              agent: {
+                name: "test",
+                mode: "primary",
+                permission: [],
+                options: {},
+              },
+              system: ["system prompt"],
+              abort: new AbortController().signal,
+              messages: [{ role: "user", content: "hello prompt" }],
+              tools: {},
+            } as unknown as LLM.StreamInput)
+
+            const logs = await SessionLog.list({ sessionID: session.id })
+            expect(logs.find((item) => item.type === "tool.input.end")?.data).toMatchObject({
+              tool: LLM.PROTOCOL_OUTPUT_TOOL,
+              raw: bad,
+              rawBytes: Buffer.byteLength(bad),
+              truncated: false,
+            })
+            expect(logs.find((item) => item.type === "tool.start")?.data).toMatchObject({
+              tool: "invalid",
+              input: { tool: LLM.PROTOCOL_OUTPUT_TOOL, error: err },
+              raw: bad,
+              rawBytes: Buffer.byteLength(bad),
+              truncated: false,
+            })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+
+    stream.mockRestore()
+  })
+
   test("stops repeated preflight compaction for the same user message", async () => {
     await Instance.provide({
       directory: projectRoot,

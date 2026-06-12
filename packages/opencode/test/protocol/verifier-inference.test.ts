@@ -1,50 +1,5 @@
 import { describe, expect, test } from "bun:test"
 import { AgentProtocol } from "../../src/protocol/schema"
-import { Agent } from "../../src/agent/agent"
-import { Instance } from "../../src/project/instance"
-import { tmpdir } from "../fixture/fixture"
-
-// Mirror of the runtime's verifier dependency validation logic. Kept in the test
-// file because the helper itself is private inside SessionRunner. If the
-// helper changes, this test must be updated to match.
-async function issues(actions: AgentProtocol.Action[]) {
-  const targets = new Map<string, AgentProtocol.Action>()
-  const byID = new Map(actions.map((item) => [item.id, item] as const))
-  for (const item of actions) {
-    if (item.executor.type !== "agent") continue
-    targets.set(item.executor.target, item)
-  }
-  const kindByTarget = new Map<string, string | undefined>()
-  await Promise.all(
-    [...targets.keys()].map(async (target) => {
-      const agent = await Agent.get(target)
-      kindByTarget.set(target, agent?.kind)
-    }),
-  )
-  const kindByID = new Map(actions.map((item) => [item.id, item.executor.type === "agent" ? kindByTarget.get(item.executor.target) : undefined] as const))
-  const out: { id: string; title: string; reason: string }[] = []
-  for (const item of actions) {
-    if (item.executor.type !== "agent") continue
-    if (kindByTarget.get(item.executor.target) !== "verifier") continue
-    const deps = item.depends_on.filter((dep) => byID.has(dep))
-    const workers = deps.filter((dep) => kindByID.get(dep) === "worker")
-    if (workers.length === 0) {
-      out.push({ id: item.id, title: item.title, reason: `missing worker dependency` })
-      continue
-    }
-    if (!item.executor.target.endsWith("-verifier")) continue
-    const base = item.executor.target.slice(0, -"-verifier".length)
-    const worker = targets.get(base)
-    if (!worker || kindByTarget.get(worker.executor.target) !== "worker") {
-      out.push({ id: item.id, title: item.title, reason: `missing worker '${base}'` })
-      continue
-    }
-    if (!item.depends_on.includes(worker.id)) {
-      out.push({ id: item.id, title: item.title, reason: `missing depends '${worker.id}'` })
-    }
-  }
-  return out
-}
 
 function parse(input: object) {
   const decl = AgentProtocol.parse(input)
@@ -124,145 +79,109 @@ describe("AgentProtocol schema strips the 'none' depends_on sentinel", () => {
   })
 })
 
-describe("verifier dependency validation (runtime contract)", () => {
-  test("rejects empty depends_on even when a matching worker exists", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const actions = parse({
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          title: "Test",
-          payload: {
-            type: "action_graph",
-            actions: [
-              { id: "impl_1", type: "action", title: "Backend", operation: "do",
-                executor: { type: "agent", target: "backend", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-              { id: "verify_1", type: "action", title: "Verify backend", operation: "verify",
-                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-            ],
+describe("verifier depends_on parsing (action-level contract)", () => {
+  test("preserves empty depends_on for verifier items", () => {
+    const actions = parse({
+      type: "agent.protocol",
+      version: "1",
+      intent: "execute",
+      title: "Test",
+      payload: {
+        type: "action_graph",
+        actions: [
+          {
+            id: "verify_1",
+            type: "action",
+            title: "Verify backend",
+            operation: "verify",
+            executor: { type: "agent", target: "backend-verifier", capabilities: [] },
+            depends_on: [],
+            context_refs: [],
+            result_policy: "summary",
           },
-        })
-        const r = await issues(actions)
-        expect(actions.find((a) => a.id === "verify_1")?.depends_on).toEqual([])
-        expect(r).toHaveLength(1)
-        expect(r[0]?.id).toBe("verify_1")
-        expect(r[0]?.reason).toContain("missing worker dependency")
+        ],
       },
     })
+    expect(actions.find((item) => item.id === "verify_1")?.depends_on).toEqual([])
   })
 
-  test("rejects verifier when no matching worker is present in the graph", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const actions = parse({
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          title: "Test",
-          payload: {
-            type: "action_graph",
-            actions: [
-              { id: "verify_1", type: "action", title: "Verify backend", operation: "verify",
-                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-            ],
+  test("preserves verifier dependency on a different agent target", () => {
+    const actions = parse({
+      type: "agent.protocol",
+      version: "1",
+      intent: "execute",
+      title: "Test",
+      payload: {
+        type: "action_graph",
+        actions: [
+          {
+            id: "impl_1",
+            type: "action",
+            title: "Frontend",
+            operation: "do",
+            executor: { type: "agent", target: "frontend", capabilities: [] },
+            depends_on: [],
+            context_refs: [],
+            result_policy: "summary",
           },
-        })
-        const r = await issues(actions)
-        expect(r).toHaveLength(1)
-        expect(r[0]?.id).toBe("verify_1")
-        expect(r[0]?.reason).toContain("missing worker dependency")
+          {
+            id: "verify_1",
+            type: "action",
+            title: "Verify backend",
+            operation: "verify",
+            executor: { type: "agent", target: "backend-verifier", capabilities: [] },
+            depends_on: ["impl_1"],
+            context_refs: [],
+            result_policy: "summary",
+          },
+        ],
       },
     })
+    expect(actions.find((item) => item.id === "verify_1")?.depends_on).toEqual(["impl_1"])
   })
 
-  test("accepts explicit depends_on for matching worker verifiers", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const actions = parse({
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          title: "Test",
-          payload: {
-            type: "action_graph",
-            actions: [
-              { id: "impl_1", type: "action", title: "Backend", operation: "do",
-                executor: { type: "agent", target: "backend", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-              { id: "review", type: "action", title: "Review", operation: "review",
-                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
-                depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
-            ],
+  test("preserves dependencies when multiple workers use the same agent target", () => {
+    const actions = parse({
+      type: "agent.protocol",
+      version: "1",
+      intent: "execute",
+      title: "Test",
+      payload: {
+        type: "action_graph",
+        actions: [
+          {
+            id: "complete_m4_e4_files",
+            type: "action",
+            title: "Complete M4",
+            operation: "do",
+            executor: { type: "agent", target: "sisyphus-junior", capabilities: [] },
+            depends_on: [],
+            context_refs: [],
+            result_policy: "summary",
           },
-        })
-        expect(await issues(actions)).toEqual([])
+          {
+            id: "verify_m4_e4_completion",
+            type: "action",
+            title: "Verify M4",
+            operation: "review",
+            executor: { type: "agent", target: "sisyphus-junior-verifier", capabilities: [] },
+            depends_on: ["complete_m4_e4_files"],
+            context_refs: [],
+            result_policy: "summary",
+          },
+          {
+            id: "finalize_m2_pipeline_doc",
+            type: "action",
+            title: "Finalize M2",
+            operation: "do",
+            executor: { type: "agent", target: "sisyphus-junior", capabilities: [] },
+            depends_on: [],
+            context_refs: [],
+            result_policy: "summary",
+          },
+        ],
       },
     })
-  })
-
-  test("rejects suffixed verifier that depends on the wrong worker", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const actions = parse({
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          title: "Test",
-          payload: {
-            type: "action_graph",
-            actions: [
-              { id: "impl_1", type: "action", title: "Frontend", operation: "do",
-                executor: { type: "agent", target: "frontend", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-              { id: "verify_1", type: "action", title: "Verify backend", operation: "verify",
-                executor: { type: "agent", target: "backend-verifier", capabilities: [] },
-                depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
-            ],
-          },
-        })
-        const r = await issues(actions)
-        expect(r).toHaveLength(1)
-        expect(r[0]?.reason).toContain("backend")
-      },
-    })
-  })
-
-  test("accepts generic verifier when it depends on a worker", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: async () => {
-        const actions = parse({
-          type: "agent.protocol",
-          version: "1",
-          intent: "execute",
-          title: "Test",
-          payload: {
-            type: "action_graph",
-            actions: [
-              { id: "impl_1", type: "action", title: "Backend", operation: "do",
-                executor: { type: "agent", target: "backend", capabilities: [] },
-                depends_on: [], context_refs: [], result_policy: "summary" },
-              { id: "review", type: "action", title: "Review", operation: "review",
-                executor: { type: "agent", target: "security-reviewer", capabilities: [] },
-                depends_on: ["impl_1"], context_refs: [], result_policy: "summary" },
-            ],
-          },
-        })
-        expect(await issues(actions)).toEqual([])
-      },
-    })
+    expect(actions.find((item) => item.id === "verify_m4_e4_completion")?.depends_on).toEqual(["complete_m4_e4_files"])
   })
 })

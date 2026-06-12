@@ -637,7 +637,7 @@ describe("agent protocol schema", () => {
     ).toThrow("execute intent requires action_graph payload")
   })
 
-  test("rejects duplicate action ids and missing dependencies", () => {
+  test("rejects duplicate action ids and preserves external dependencies for runtime validation", () => {
     expect(() =>
       AgentProtocol.parse({
         type: "agent.protocol",
@@ -648,14 +648,15 @@ describe("agent protocol schema", () => {
       }),
     ).toThrow("duplicate action id")
 
-    expect(() =>
-      AgentProtocol.parse({
-        type: "agent.protocol",
-        version: "1",
-        intent: "execute",
-        execution: { strategy: "sequential" },
-        payload: { type: "action_graph", actions: [{ ...action, depends_on: ["missing"] }] },
-      }),
-    ).toThrow("missing dependency")
+    const out = AgentProtocol.parse({
+      type: "agent.protocol",
+      version: "1",
+      intent: "execute",
+      execution: { strategy: "sequential" },
+      payload: { type: "action_graph", actions: [{ ...action, depends_on: ["missing"] }] },
+    })
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]?.depends_on).toEqual(["missing"])
   })
 })

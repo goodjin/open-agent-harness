@@ -27,13 +27,17 @@ describe("AgentConcurrency", () => {
     expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner" })).toBe(2)
   })
 
-  test("defaults workers to three concurrent tasks", () => {
-    expect(AgentConcurrency.limit({ agent: "backend", kind: "worker" })).toBe(3)
-    expect(AgentConcurrency.limit({ agent: "frontend", kind: "worker" })).toBe(3)
+  test("does not limit workers by default", () => {
+    expect(AgentConcurrency.limit({ agent: "backend", kind: "worker" })).toBeUndefined()
+    expect(AgentConcurrency.limit({ agent: "frontend", kind: "worker" })).toBeUndefined()
   })
 
   test("uses agent metadata override before defaults", () => {
     expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner", cfg: { concurrency: 4 } })).toBe(4)
+  })
+
+  test("treats negative agent metadata as unlimited", () => {
+    expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner", cfg: { concurrency: -1 } })).toBeUndefined()
   })
 
   test("waits for same project and same agent slot before request submission", async () => {

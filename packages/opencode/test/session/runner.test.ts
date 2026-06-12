@@ -198,7 +198,10 @@ describe("SessionRunner", () => {
       JSON.stringify({
         id: "sample",
         name: "Sample",
-        steps: [{ id: "first", outputs: { first: "$input" } }, { id: "second", outputs: { second: "$first" } }],
+        steps: [
+          { id: "first", outputs: { first: "$input" } },
+          { id: "second", outputs: { second: "$first" } },
+        ],
       }),
     )
 
@@ -282,7 +285,10 @@ describe("SessionRunner", () => {
       JSON.stringify({
         id: "stale",
         name: "Stale",
-        steps: [{ id: "first", outputs: { first: "done" } }, { id: "second", outputs: { second: "$first" } }],
+        steps: [
+          { id: "first", outputs: { first: "done" } },
+          { id: "second", outputs: { second: "$first" } },
+        ],
       }),
     )
 
@@ -306,25 +312,25 @@ describe("SessionRunner", () => {
                 variables: { first: "done" },
                 attempts: { first: 1 },
                 completed: ["first"],
-	                steps: [
-	                  {
-	                    id: "first",
-	                    type: "task",
-	                    agent: "auto",
-	                    capabilities: [],
-	                    mutates: false,
-	                    inputs: {},
-	                    outputs: { first: "done" },
-	                    guards: [],
-	                    depends_on: [],
-	                  },
-	                  {
-	                    id: "second",
-	                    type: "task",
-	                    agent: "auto",
-	                    capabilities: [],
-	                    mutates: false,
-	                    inputs: {},
+                steps: [
+                  {
+                    id: "first",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    mutates: false,
+                    inputs: {},
+                    outputs: { first: "done" },
+                    guards: [],
+                    depends_on: [],
+                  },
+                  {
+                    id: "second",
+                    type: "task",
+                    agent: "auto",
+                    capabilities: [],
+                    mutates: false,
+                    inputs: {},
                     outputs: { second: "$first" },
                     guards: [],
                     depends_on: ["first"],
@@ -463,7 +469,10 @@ describe("SessionRunner", () => {
                 statuses: { first: "completed", second: "running" },
                 time: { started: Date.now(), updated: Date.now() },
               }
-              const session = await Session.create({})
+              const session = await Session.create({
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              })
               await Session.setDslContext({
                 sessionID: session.id,
                 dsl_context: WorkflowState.write(undefined, state),
@@ -662,7 +671,9 @@ describe("SessionRunner", () => {
               const state = WorkflowState.read((await Session.get(session.id)).dsl_context)
 
               expect(result).toBe("stop")
-              expect(await Bun.file(path.join(tmp.path, ".opencode", "workflows", "generated.json")).exists()).toBe(true)
+              expect(await Bun.file(path.join(tmp.path, ".opencode", "workflows", "generated.json")).exists()).toBe(
+                true,
+              )
               expect(state?.workflowID).toBe("generated")
               expect(state?.variables.reviewed).toBe("review toolbar buttons")
             },
@@ -765,7 +776,10 @@ describe("SessionRunner", () => {
           yield { type: "start" }
           yield { type: "start-step" }
           yield { type: "text-start" }
-          yield { type: "text-delta", text: `\`\`\`json agent-protocol\n${JSON.stringify(data)}\n\`\`\`\n\n## inspect\npattern: protocol\ninclude: *.md` }
+          yield {
+            type: "text-delta",
+            text: `\`\`\`json agent-protocol\n${JSON.stringify(data)}\n\`\`\`\n\n## inspect\npattern: protocol\ninclude: *.md`,
+          }
           yield { type: "text-end" }
           yield {
             type: "finish-step",
@@ -776,7 +790,9 @@ describe("SessionRunner", () => {
         })(),
       } as never
     })
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts++
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -819,7 +835,6 @@ describe("SessionRunner", () => {
       done++
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
-
     try {
       await fs.mkdir(path.join(tmp.path, "docs"), { recursive: true })
       await Bun.write(path.join(tmp.path, "docs", "protocol-target.md"), "protocol target")
@@ -896,31 +911,45 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [
                   { role: "user", content: "old turn" },
-                  { role: "assistant", content: "[TOOL_CALL]\n{tool => \"read\"}\n[/TOOL_CALL]" },
+                  { role: "assistant", content: '[TOOL_CALL]\n{tool => "read"}\n[/TOOL_CALL]' },
                   { role: "user", content: "inspect" },
                 ],
                 tools: {},
               })
               const parts = await MessageV2.parts(assistant.id)
               const messages = await Session.messages({ sessionID: session.id })
-              const final = messages.find(
-                (item) => item.info.role === "assistant" && item.info.id !== assistant.id,
-              )
+              const final = messages.find((item) => item.info.role === "assistant" && item.info.id !== assistant.id)
               const finalParts = final ? await MessageV2.parts(final.info.id) : []
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { runID: string; total: number; actions: { id: string; status: string; output?: string }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      runID: string
+                      total: number
+                      actions: { id: string; status: string; output?: string }[]
+                    }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context" && part.ignored)).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored)).toBe(false)
+              expect(
+                parts.some(
+                  (part) => part.type === "text" && part.metadata?.kind === "protocol_context" && part.ignored,
+                ),
+              ).toBe(true)
+              expect(
+                parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
+              ).toBe(false)
               expect(parts.some((part) => part.type === "tool" && part.metadata?.protocol === true)).toBe(true)
               expect(finalParts.some((part) => part.type === "text" && part.text.includes("Final answer"))).toBe(false)
               expect(calls).toBe(1)
               expect(protocol?.runs?.[0]?.total).toBe(3)
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "delegate")?.output).toContain("The parent session will resume automatically")
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "read")?.output).toContain("protocol target")
+              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "delegate")?.output).toContain(
+                "The parent session will resume automatically",
+              )
+              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "read")?.output).toContain(
+                "protocol target",
+              )
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(prompts).toBeGreaterThanOrEqual(2)
               expect(done).toBeGreaterThanOrEqual(2)
@@ -1083,15 +1112,26 @@ describe("SessionRunner", () => {
               })
               const messages = await Session.messages({ sessionID: session.id })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { output?: string; summary?: string; tool_call_ids: string[] }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      status: string
+                      actions: { output?: string; summary?: string; tool_call_ids: string[] }[]
+                    }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
               expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.summary ?? protocol?.runs?.[0]?.actions[0]?.output).toContain("native-protocol")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Read package successfully.")))).toBe(true)
+              expect(protocol?.runs?.[0]?.actions[0]?.summary ?? protocol?.runs?.[0]?.actions[0]?.output).toContain(
+                "native-protocol",
+              )
+              expect(
+                messages.some((item) =>
+                  item.parts.some((part) => part.type === "text" && part.text.includes("Read package successfully.")),
+                ),
+              ).toBe(true)
             },
           }),
       })
@@ -1266,8 +1306,12 @@ describe("SessionRunner", () => {
               for (let i = 0; i < 20 && SessionStatus.get(session.id).type !== "blocked"; i++) await Bun.sleep(10)
               const parts = await MessageV2.parts(assistant.id)
 
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_recovery_hint")).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context")).toBe(false)
+              expect(
+                parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_recovery_hint"),
+              ).toBe(true)
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context")).toBe(
+                false,
+              )
               expect(SessionStatus.get(session.id).type).toBe("blocked")
             },
           }),
@@ -1347,7 +1391,10 @@ describe("SessionRunner", () => {
               } satisfies MessageV2.ToolPart)
               const declaration = AgentProtocol.parse(body)
               if (declaration.payload.type !== "action_graph") throw new Error("expected action graph")
-              const child = await Session.create({ parentID: session.id, title: "Protocol: plan_snap (@feature-planner)" })
+              const child = await Session.create({
+                parentID: session.id,
+                title: "Protocol: plan_snap (@feature-planner)",
+              })
               SessionStatus.set(child.id, { type: "running" })
               await SessionDelegation.assign({
                 action: declaration.payload.actions[0]!,
@@ -1433,7 +1480,8 @@ describe("SessionRunner", () => {
       }
       return {
         fullStream: (async function* () {
-          const err = "Invalid input for tool AgentProtocolOutput: JSON parsing failed: Text: {\"kind\":\"act\",\"calls\": . Error message: JSON Parse error: Unexpected EOF"
+          const err =
+            'Invalid input for tool AgentProtocolOutput: JSON parsing failed: Text: {"kind":"act","calls": . Error message: JSON Parse error: Unexpected EOF'
           yield { type: "start" }
           yield { type: "start-step" }
           yield { type: "text-start" }
@@ -1539,12 +1587,26 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored)).toBe(true)
-              expect(logs.some((item) => item.type === "protocol.retry" && item.data.reason === "invalid_protocol_tool_call")).toBe(true)
+              expect(
+                parts.some(
+                  (part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored,
+                ),
+              ).toBe(true)
+              expect(
+                logs.some(
+                  (item) => item.type === "protocol.retry" && item.data.reason === "invalid_protocol_tool_call",
+                ),
+              ).toBe(true)
               expect(JSON.stringify(inputs[1]?.system)).toContain("tool call was malformed")
               expect(JSON.stringify(inputs[1]?.system)).toContain("model did not strictly follow")
               expect(JSON.stringify(inputs[1]?.system)).toContain("JSON Parse error")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Retried with valid protocol output.")))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some(
+                    (part) => part.type === "text" && part.text.includes("Retried with valid protocol output."),
+                  ),
+                ),
+              ).toBe(true)
             },
           }),
       })
@@ -1566,15 +1628,16 @@ describe("SessionRunner", () => {
     const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
       calls++
       inputs.push(input)
-      const body = calls === 1
-        ? {
-            version: "2",
-            items: [{ id: "bad_tool", kind: "tool" }],
-          }
-        : {
-            version: "2",
-            items: [{ id: "answer", kind: "answer", message: "Recovered." }],
-          }
+      const body =
+        calls === 1
+          ? {
+              version: "2",
+              items: [{ id: "bad_tool", kind: "tool" }],
+            }
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Recovered." }],
+            }
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -1674,7 +1737,11 @@ describe("SessionRunner", () => {
               expect(err?.message).toContain("target")
               expect(err?.message).not.toContain("No native AgentProtocolOutput tool call found")
               expect(JSON.stringify(inputs[1]?.system)).toContain("tool call was malformed")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Recovered.")))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some((part) => part.type === "text" && part.text.includes("Recovered.")),
+                ),
+              ).toBe(true)
             },
           }),
       })
@@ -1683,7 +1750,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner retries verifier packages that do not depend on workers", async () => {
+  test("protocol runner allows verifier packages without worker dependencies", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1691,23 +1758,22 @@ describe("SessionRunner", () => {
       api: { id: "openai", npm: "" },
       limit: { context: 200_000 },
     } as never
-    const inputs: LLM.StreamInput[] = []
     let calls = 0
-    const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      inputs.push(input)
-      const body = calls === 1
-        ? {
-            version: "2",
-            items: [
-              { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change." },
-              { id: "verify", kind: "agent", target: "backend-verifier", prompt: "Verify backend change." },
-            ],
-          }
-        : {
-            version: "2",
-            items: [{ id: "answer", kind: "answer", message: "Regenerated without executing the bad package." }],
-          }
+      const body =
+        calls === 1
+          ? {
+              version: "2",
+              items: [
+                { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change." },
+                { id: "verify", kind: "agent", target: "backend-verifier", prompt: "Verify backend change." },
+              ],
+            }
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Regenerated without executing the bad package." }],
+            }
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -1739,7 +1805,72 @@ describe("SessionRunner", () => {
         })(),
       } as never
     })
-
+    const items = [
+      {
+        name: "backend",
+        kind: "worker",
+        capability: { purpose: "implement", tags: [], writes: true },
+        verification: { required: [], on_write: [], high_risk: [] },
+        entry: { delegable: true },
+        inheritPermissions: true,
+        permission: [],
+      },
+      {
+        name: "backend-verifier",
+        kind: "verifier",
+        capability: { purpose: "verify", tags: [], writes: false },
+        entry: { delegable: true },
+        inheritPermissions: true,
+        permission: [],
+      },
+    ] as const
+    const agent = spyOn(Agent, "get").mockImplementation(
+      async (name) => items.find((item) => item.name === name) as never,
+    )
+    const list = spyOn(Agent, "list").mockImplementation(async () => items as never)
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: `${input.agent}: completed`,
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
     try {
       await Instance.provide({
         directory: tmp.path,
@@ -1798,25 +1929,36 @@ describe("SessionRunner", () => {
               })
               const logs = await SessionLog.list({ sessionID: session.id })
               const children = await Session.children(session.id)
-              const messages = await Session.messages({ sessionID: session.id })
+              const child = children.find((item) => item.agent === "backend-verifier")
               const retry = logs.find((item) => item.type === "protocol.retry")
 
               expect(result).toBe("stop")
-              expect(calls).toBe(2)
-              expect(children).toHaveLength(0)
-              expect(retry?.data.reason).toBe("invalid_verifier_dependency")
-              expect(JSON.stringify(inputs[1]?.system)).toContain("invalid verifier dependencies")
-              expect(JSON.stringify(inputs[1]?.system)).toContain("backend-verifier")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Regenerated without executing")))).toBe(true)
+              expect(calls).toBe(1)
+              expect(retry).toBeUndefined()
+              expect(children.some((item) => item.agent === "backend")).toBe(true)
+              expect(child?.permission?.some((item) => item.permission === "bash" && item.action === "allow")).toBe(
+                true,
+              )
+              expect(child?.permission?.some((item) => item.permission === "edit" && item.action === "deny")).toBe(
+                true,
+              )
+              expect(
+                child?.permission?.some(
+                  (item) => item.permission === "bash" && item.pattern === "git reset *" && item.action === "deny",
+                ),
+              ).toBe(true)
             },
           }),
       })
     } finally {
       hook.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
+      prompt.mockRestore()
     }
   })
 
-  test("protocol runner preserves confirmation gate before verifier dependency validation", async () => {
+  test("protocol runner accepts verifier dependencies by action id, not agent target", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1827,47 +1969,629 @@ describe("SessionRunner", () => {
     const body = {
       version: "2",
       items: [
-        { id: "confirm_plan", kind: "confirm", prompt: "Approve?", plan: "Run backend work." },
-        { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change.", depends: ["confirm_plan"] },
+        { id: "complete_m4_e4_files", kind: "agent", target: "sisyphus-junior", prompt: "Complete M4.E4 files." },
+        {
+          id: "verify_m4_e4_completion",
+          kind: "agent",
+          target: "sisyphus-junior-verifier",
+          prompt: "Verify M4.E4 completion.",
+          depends: ["complete_m4_e4_files"],
+        },
+        { id: "finalize_m2_pipeline_doc", kind: "agent", target: "sisyphus-junior", prompt: "Finalize M2 doc." },
+      ],
+    }
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield { type: "tool-call", toolCallId: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL, input: body }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: body,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
+    const junior = {
+      name: "sisyphus-junior",
+      kind: "worker",
+      capability: { purpose: "implementation", tags: [], writes: false },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as never
+    const verify = {
+      name: "sisyphus-junior-verifier",
+      kind: "verifier",
+      capability: { purpose: "review", tags: [], writes: false },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as never
+    const parent = {
+      name: "protocol-runner",
+      kind: "planner",
+      capability: { purpose: "coordination", tags: [], writes: false },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    } as never
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name === "sisyphus-junior") return junior
+      if (name === "sisyphus-junior-verifier") return verify
+      if (name === "protocol-runner") return parent
+      return undefined
+    })
+    const list = spyOn(Agent, "list").mockImplementation(async () => [junior, verify, parent] as never)
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const msg = {
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "assistant",
+        mode: input.agent ?? "sisyphus-junior",
+        agent: input.agent ?? "sisyphus-junior",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      } as MessageV2.Assistant
+      return {
+        info: msg,
+        parts: [
+          {
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID: input.sessionID,
+            type: "text",
+            text: "kind: success\ntask_background: delegated\ncompletion_summary: done\nchanged_files: none",
+            time: { start: Date.now(), end: Date.now() },
+          } as MessageV2.TextPart,
+        ],
+      } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "run milestone work" }],
+                tools: {},
+              })
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const children = await Session.children(session.id)
+
+              expect(result).toBe("stop")
+              expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
+              expect(children.some((item) => item.agent === "sisyphus-junior")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
+      provider.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
+  test("protocol runner asks model to regenerate packages rejected during execution validation", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const inputs: LLM.StreamInput[] = []
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async (input) => {
+      calls++
+      inputs.push(input)
+      const body =
+        calls === 1
+          ? {
+              version: "2",
+              items: [
+                {
+                  id: "verify_only",
+                  kind: "agent",
+                  target: "verifier",
+                  prompt: "Verify prior evidence.",
+                  depends: ["missing_action"],
+                },
+              ],
+            }
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Rejected package regenerated into a safe response." }],
+            }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    let gets = 0
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name !== "verifier") return undefined
+      gets++
+      return gets === 1 ? undefined : ({ name, kind: "verifier" } as never)
+    })
+    const list = spyOn(Agent, "list").mockImplementation(async () => [])
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "verify evidence" }],
+                tools: {},
+              })
+              const messages = await Session.messages({ sessionID: session.id })
+              const text = messages
+                .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
+                .join("\n")
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(JSON.stringify(inputs[1]?.system)).toContain("invalid dependencies")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("verify_only")
+              expect(JSON.stringify(inputs[1]?.system)).toContain("Retry now by calling AgentProtocolOutput")
+              expect(text).toContain("Rejected package regenerated into a safe response.")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
+      provider.mockRestore()
+    }
+  })
+
+  test("protocol runner allows verifier dependencies on completed historical child actions", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const inputs: LLM.StreamInput[] = []
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async (input) => {
+      calls++
+      inputs.push(input)
+      const body = {
+        version: "2",
+        items: [
+          {
+            id: "verify_history",
+            kind: "agent",
+            target: "verifier",
+            prompt: "Verify historical worker evidence.",
+            depends: ["run_m2_e6_f5_v4_evidence"],
+          },
+        ],
+      }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name === "verifier")
+        return {
+          name,
+          kind: "verifier",
+          capability: { purpose: "review", tags: [], writes: false },
+          entry: { delegable: true },
+          inheritPermissions: true,
+          permission: [],
+        } as never
+      return undefined
+    })
+    const list = spyOn(Agent, "list").mockImplementation(
+      async () =>
+        [
+          {
+            name: "verifier",
+            kind: "verifier",
+            capability: { purpose: "review", tags: [], writes: false },
+            entry: { delegable: true },
+            inheritPermissions: true,
+            permission: [],
+          },
+        ] as never,
+    )
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    const prompt = spyOn(SessionPrompt, "prompt")
+    prompt.mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      const msg = {
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "assistant",
+        mode: input.agent ?? "verifier",
+        agent: input.agent ?? "verifier",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      } as MessageV2.Assistant
+      const part = {
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "kind: success\ntask_background: verifier\ncompletion_summary: verified\nchanged_files: none",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const child = await Session.create({ parentID: session.id, agent: "backend" })
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              await Session.setDslContext({
+                sessionID: session.id,
+                dsl_context: {
+                  protocol: {
+                    completed_delegations: [
+                      {
+                        type: "agent.delegation.result",
+                        version: "1",
+                        status: "completed",
+                        run_id: "apr_history",
+                        action_id: "run_m2_e6_f5_v4_evidence",
+                        action_title: "Run M2 evidence",
+                        parent_session_id: session.id,
+                        parent_message_id: user.id,
+                        parent_agent: "protocol-runner",
+                        child_session_id: child.id,
+                        agent: "backend",
+                        result_policy: "structured",
+                        completed_at: Date.now(),
+                        summary:
+                          "task_background: historical evidence\ncompletion_summary: completed\nchanged_files: none",
+                        output:
+                          "task_background: historical evidence\ncompletion_summary: completed\nchanged_files: none\nverification: tsc pass",
+                      },
+                    ],
+                  },
+                },
+              })
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "verify historical child" }],
+                tools: {},
+              })
+              await Bun.sleep(20)
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const messages = await Session.messages({ sessionID: session.id })
+              const text = messages
+                .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
+                .join("\n")
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(1)
+              expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
+              expect(text).toContain("Delegated to verifier")
+              expect(text).toContain("Status: completed")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
+      provider.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
+  test("protocol runner runs package-level confirmation before other actions", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        {
+          id: "impl",
+          kind: "agent",
+          target: "backend",
+          prompt: "Implement backend change.",
+        },
+        {
+          id: "confirm_plan",
+          kind: "confirm",
+          prompt: "Approve?",
+          plan: "Run backend work.",
+          depends: ["confirm_plan"],
+        },
         {
           id: "verify",
           kind: "agent",
           target: "backend-verifier",
           prompt: "Verify backend change.",
-          depends: ["confirm_plan"],
         },
       ],
     }
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      fullStream: (async function* () {
-        yield { type: "start" }
-        yield { type: "start-step" }
-        yield { type: "tool-input-start", id: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
-        yield {
-          type: "tool-call",
-          toolCallId: "call_1",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: body,
-        }
-        yield {
-          type: "tool-result",
-          toolCallId: "call_1",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: body,
-          output: {
-            output: "Agent Protocol package received.",
-            title: "Agent Protocol Output",
-            metadata: { protocol: true },
-          },
-        }
-        yield {
-          type: "finish-step",
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        yield { type: "finish" }
-      })(),
-    }) as never)
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_1",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: body,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_1",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: body,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
     const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
       if (name === "backend") return { name, kind: "worker" } as never
       if (name === "backend-verifier") return { name, kind: "verifier" } as never
@@ -1959,7 +2683,341 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner defers verifier until worker delegation completes", async () => {
+  test("protocol runner allows confirm-only packages", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const body =
+        calls === 1
+          ? {
+              version: "2",
+              items: [
+                {
+                  id: "confirm_plan_v2",
+                  kind: "confirm",
+                  prompt: "Confirm the plan.",
+                  plan: "Run backend implementation and verifier after confirmation.",
+                },
+              ],
+            }
+          : {
+              version: "2",
+              items: [
+                {
+                  id: "answer",
+                  kind: "answer",
+                  message: "Regenerated confirm-only package into a safe response.",
+                },
+              ],
+            }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const run = runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "confirm and execute plan" }],
+                tools: {},
+              })
+
+              let questions = await Question.list()
+              for (let i = 0; i < 20 && questions.length === 0; i++) {
+                await Bun.sleep(10)
+                questions = await Question.list()
+              }
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const retry = logs.find((item) => item.type === "protocol.retry")
+
+              expect(calls).toBe(1)
+              expect(questions).toHaveLength(1)
+              expect(retry).toBeUndefined()
+
+              await Question.reject(questions[0]!.id).catch(() => {})
+              await run.catch(() => undefined)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      provider.mockRestore()
+    }
+  })
+
+  test("protocol runner expands form input fields into selectable questions", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        {
+          id: "resolve_path_and_contracts",
+          kind: "input",
+          title: "Resolve path and provide contracts",
+          prompt: "Choose the path and contracts.",
+          mode: "form",
+          fields: [
+            {
+              id: "history_path",
+              label: "history.ts path",
+              type: "single",
+              options: [
+                { id: "src_visual_state", label: "src/visual-state/history.ts", description: "Create src path." },
+                { id: "packages_visual_editor", label: "packages/visual-editor/src/visual-state/history.ts" },
+              ],
+            },
+            {
+              id: "branching_policy",
+              label: "Branching policy",
+              type: "single",
+              options: [
+                { id: "truncate_redo", label: "Truncate redo branch" },
+                { id: "keep_redo", label: "Keep redo branch" },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const done = {
+      version: "2",
+      items: [
+        {
+          id: "answer",
+          kind: "answer",
+          message: "Proceeding with the selected path and policy.",
+        },
+      ],
+    }
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const input = calls === 1 ? body : done
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const run = runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "choose path" }],
+                tools: {},
+              })
+
+              let questions = await Question.list()
+              for (let i = 0; i < 20 && questions.length === 0; i++) {
+                await Bun.sleep(10)
+                questions = await Question.list()
+              }
+
+              expect(questions).toHaveLength(1)
+              expect(questions[0]?.questions).toHaveLength(2)
+              expect(questions[0]?.questions[0]?.header).toBe("history.ts path")
+              expect(questions[0]?.questions[0]?.options.map((item) => item.label)).toEqual([
+                "src/visual-state/history.ts",
+                "packages/visual-editor/src/visual-state/history.ts",
+              ])
+              expect(questions[0]?.questions[1]?.header).toBe("Branching policy")
+
+              await Question.reply({
+                requestID: questions[0]!.id,
+                answers: [["src/visual-state/history.ts"], ["Truncate redo branch"]],
+              })
+              expect(await run).toBe("stop")
+
+              const messages = await Session.messages({ sessionID: session.id })
+              const text = messages
+                .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
+                .join("\n")
+              const summary = messages
+                .flatMap((item) => item.parts)
+                .find((part) => part.type === "text" && part.metadata?.kind === "protocol_summary")
+              expect(calls).toBe(2)
+              expect(summary?.type === "text" ? summary.metadata?.action : undefined).toBe("input_received")
+              expect(text).toContain("Protocol input received: Resolve path and provide contracts")
+              expect(text).toContain("- Resolve path and provide contracts: input received")
+              expect(text).toContain("Proceeding with the selected path and policy.")
+              expect(text).not.toContain("Protocol blocked: Resolve path and provide contracts")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      provider.mockRestore()
+    }
+  })
+
+  test("protocol runner starts verifier without waiting for worker delegation completion", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1971,41 +3029,52 @@ describe("SessionRunner", () => {
       version: "2",
       items: [
         { id: "impl", kind: "agent", target: "backend", prompt: "Implement backend change." },
-        { id: "verify", kind: "agent", target: "backend-verifier", prompt: "Verify backend change.", depends: ["impl"] },
+        {
+          id: "verify",
+          kind: "agent",
+          target: "loose-verifier",
+          prompt: "Verify backend change.",
+          depends: ["impl"],
+        },
       ],
     }
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      fullStream: (async function* () {
-        yield { type: "start" }
-        yield { type: "start-step" }
-        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
-        yield {
-          type: "tool-call",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: body,
-        }
-        yield {
-          type: "tool-result",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: body,
-          output: {
-            output: "Agent Protocol package received.",
-            title: "Agent Protocol Output",
-            metadata: { protocol: true },
-          },
-        }
-        yield {
-          type: "finish-step",
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        yield { type: "finish" }
-      })(),
-    }) as never)
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: body,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: body,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
     const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -2055,6 +3124,27 @@ describe("SessionRunner", () => {
       } as MessageV2.TextPart)
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
+    const items = [
+      {
+        name: "backend",
+        kind: "worker",
+        capability: { purpose: "implement", tags: [], writes: true },
+        verification: { required: [], on_write: [], high_risk: [] },
+        entry: { delegable: true },
+        inheritPermissions: true,
+        permission: [],
+      },
+      {
+        name: "loose-verifier",
+        kind: "verifier",
+        capability: { purpose: "verify", tags: [], writes: false },
+        entry: { delegable: true },
+        inheritPermissions: true,
+        permission: [],
+      },
+    ] as const
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => items.find((item) => item.name === name) as never)
+    const list = spyOn(Agent, "list").mockImplementation(async () => items as never)
 
     try {
       await Instance.provide({
@@ -2118,23 +3208,33 @@ describe("SessionRunner", () => {
               })
               const children = await Session.children(session.id)
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { id: string; status: string; error?: string; output?: string }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      status: string
+                      actions: { id: string; status: string; error?: string; output?: string; summary: string }[]
+                    }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
-              expect(children).toHaveLength(1)
+              expect(children).toHaveLength(2)
               expect(children[0]?.title).toContain("@backend")
+              expect(children[1]?.title).toContain("@loose-verifier")
               expect(inputs[0]?.agent).toBe("backend")
-              expect(inputs.some((item) => item.agent === "backend-verifier")).toBe(false)
-              expect(protocol?.runs?.[0]?.status).toBe("blocked")
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "verify")?.error).toContain("waiting for completed worker summaries")
+              expect(inputs.some((item) => item.agent === "loose-verifier")).toBe(true)
+              expect(protocol?.runs?.[0]?.status).toBe("completed")
+              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "verify")?.summary).toContain(
+                "Delegated to loose-verifier.",
+              )
             },
           }),
       })
     } finally {
       stream.mockRestore()
       prompt.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
     }
   })
 
@@ -2212,7 +3312,9 @@ describe("SessionRunner", () => {
         })(),
       } as never
     })
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -2325,11 +3427,12 @@ describe("SessionRunner", () => {
               })
               const children = await Session.children(session.id)
               const after = await Session.get(session.id)
-              const protocol = after.dsl_context?.protocol as {
-                runs?: { actions: { output?: string }[] }[]
-              } | undefined
+              const protocol = after.dsl_context?.protocol as
+                | {
+                    runs?: { actions: { output?: string }[] }[]
+                  }
+                | undefined
               const parts = await MessageV2.parts(assistant.id)
-
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
               expect(children[0]?.parentID).toBe(session.id)
@@ -2339,8 +3442,17 @@ describe("SessionRunner", () => {
               expect(child.agent).toBe("backend")
               expect(child.dsl_context).not.toHaveProperty("session_tree")
               expect(JSON.stringify(child.dsl_context)).toContain('"parent_session_id"')
-              expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain("The parent session will resume automatically")
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_summary" && part.text.includes("The parent session will resume automatically"))).toBe(true)
+              expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain(
+                "The parent session will resume automatically",
+              )
+              expect(
+                parts.some(
+                  (part) =>
+                    part.type === "text" &&
+                    part.metadata?.kind === "protocol_summary" &&
+                    part.text.includes("The parent session will resume automatically"),
+                ),
+              ).toBe(true)
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("backend")
@@ -2349,16 +3461,212 @@ describe("SessionRunner", () => {
                 modelID: ModelID.make("gpt-5.2"),
               })
               expect(inputs[1]?.agent).toBe("protocol-runner")
-              expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(true)
-              expect(inputs[1]?.parts?.some((part) => part.type === "text" && part.text.includes('"action_id": "update_toolbar_backend"'))).toBe(true)
+              expect(
+                inputs[1]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                ),
+              ).toBe(true)
+              expect(
+                inputs[1]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes('"action_id": "update_toolbar_backend"'),
+                ),
+              ).toBe(true)
               expect(inputs[0]?.parts?.some((part) => part.type === "agent")).toBe(false)
-              const text = inputs[0]?.parts?.map((part) => part.type === "text" ? part.text : "").join("\n")
+              const text = inputs[0]?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
               expect(text).not.toContain("<agent-protocol-call>")
               expect(text).not.toContain("@default")
               expect(text).not.toContain("call the task tool")
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(logs.some((item) => item.type === "protocol.agent.started")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.agent.completed")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
+  test("protocol child sessions inherit parent model when agent has no model", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      kind: "act",
+      message: "Delegate backend work.",
+      calls: [
+        {
+          id: "inherit_model_backend",
+          type: "agent",
+          name: "backend",
+          args: { prompt: "Check inherited model" },
+          result: "summary",
+        },
+      ],
+    }
+    let calls = 0
+    let done = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      if (calls === 2) {
+        return {
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "text-start" }
+            yield { type: "text-delta", text: "Delegated work completed." }
+            yield { type: "text-end" }
+            yield {
+              type: "finish-step",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        } as never
+      }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "default",
+        agent: input.agent ?? "default",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "child done",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      done++
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              })
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+
+              expect(
+                await runner.process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: { name: "protocol-runner", runner: "protocol" } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [{ role: "user", content: "delegate review" }],
+                  tools: {},
+                }),
+              ).toBe("stop")
+              const child = (await Session.children(session.id))[0]
+
+              expect(child?.agent).toBe("backend")
+              expect(child?.model).toEqual({
+                providerID: ProviderID.make("openai"),
+                modelID: ModelID.make("gpt-5.2"),
+              })
+              for (let i = 0; i < 20 && done < 1; i++) await Bun.sleep(10)
+              expect(done).toBeGreaterThanOrEqual(1)
             },
           }),
       })
@@ -2438,7 +3746,9 @@ describe("SessionRunner", () => {
         })(),
       } as never
     })
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
         sessionID: input.sessionID,
@@ -2553,13 +3863,14 @@ describe("SessionRunner", () => {
               }
               const children = await Session.children(session.id)
               const messages = await Session.messages({ sessionID: session.id, limit: 10 })
-              const final = messages.findLast((item) =>
-                item.info.role === "assistant" &&
-                item.parts.some((part) => part.type === "text" && part.text.includes("Protocol blocked")),
+              const final = messages.findLast(
+                (item) =>
+                  item.info.role === "assistant" &&
+                  item.parts.some((part) => part.type === "text" && part.text.includes("Protocol blocked")),
               )
-              const text = messages.flatMap((item) =>
-                item.parts.flatMap((part) => part.type === "text" ? [part.text] : []),
-              ).join("\n")
+              const text = messages
+                .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
+                .join("\n")
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
@@ -2602,37 +3913,42 @@ describe("SessionRunner", () => {
     }
     let done = 0
     const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      fullStream: (async function* () {
-        yield { type: "start" }
-        yield { type: "start-step" }
-        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
-        yield {
-          type: "tool-call",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-        }
-        yield {
-          type: "tool-result",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-          output: {
-            output: "Agent Protocol package received.",
-            title: "Agent Protocol Output",
-            metadata: { protocol: true },
-          },
-        }
-        yield {
-          type: "finish-step",
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        yield { type: "finish" }
-      })(),
-    }) as never)
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -2738,9 +4054,11 @@ describe("SessionRunner", () => {
               })
               const children = await Session.children(session.id)
               const after = await Session.get(session.id)
-              const protocol = after.dsl_context?.protocol as {
-                runs?: { actions: { output?: string }[] }[]
-              } | undefined
+              const protocol = after.dsl_context?.protocol as
+                | {
+                    runs?: { actions: { output?: string }[] }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
@@ -2750,7 +4068,7 @@ describe("SessionRunner", () => {
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("general")
               expect(inputs[1]?.agent).toBe("default")
-              const text = inputs[0]?.parts?.map((part) => part.type === "text" ? part.text : "").join("\n")
+              const text = inputs[0]?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
               expect(text).not.toContain("@default")
             },
           }),
@@ -2773,39 +4091,44 @@ describe("SessionRunner", () => {
       kind: "answer",
       message: "Child final answer after nested delegation.",
     }
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      text: Promise.resolve("Child metadata follow-up"),
-      fullStream: (async function* () {
-        yield { type: "start" }
-        yield { type: "start-step" }
-        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
-        yield {
-          type: "tool-call",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-        }
-        yield {
-          type: "tool-result",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-          output: {
-            output: "Agent Protocol package received.",
-            title: "Agent Protocol Output",
-            metadata: { protocol: true },
-          },
-        }
-        yield {
-          type: "finish-step",
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        yield { type: "finish" }
-      })(),
-    }) as never)
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          text: Promise.resolve("Child metadata follow-up"),
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
     const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -2932,8 +4255,16 @@ describe("SessionRunner", () => {
               expect(inputs).toHaveLength(1)
               expect(inputs[0]?.sessionID).toBe(parent.id)
               expect(inputs[0]?.agent).toBe("protocol-runner")
-              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(true)
-              expect(inputs[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Child final answer after nested delegation."))).toBe(true)
+              expect(
+                inputs[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                ),
+              ).toBe(true)
+              expect(
+                inputs[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("Child final answer after nested delegation."),
+                ),
+              ).toBe(true)
               expect(JSON.stringify(ctx)).toContain('"status":"completed"')
             },
           }),
@@ -2956,37 +4287,40 @@ describe("SessionRunner", () => {
       kind: "answer",
       message: "Child final answer without required artifacts.",
     }
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      text: Promise.resolve("Child metadata follow-up"),
-      fullStream: (async function* () {
-        yield { type: "start" }
-        yield { type: "start-step" }
-        yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
-        yield {
-          type: "tool-call",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-        }
-        yield {
-          type: "tool-result",
-          toolCallId: "call_protocol",
-          toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-          input: data,
-          output: {
-            output: "Agent Protocol package received.",
-            title: "Agent Protocol Output",
-            metadata: { protocol: true },
-          },
-        }
-        yield {
-          type: "finish-step",
-          finishReason: "tool-calls",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        }
-        yield { type: "finish" }
-      })(),
-    }) as never)
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          text: Promise.resolve("Child metadata follow-up"),
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
     const meta = spyOn(AgentDelegation, "meta").mockImplementation(async () => ({
       contracts: {
         input: [],
@@ -3280,9 +4614,17 @@ describe("SessionRunner", () => {
               expect(inputs[1]?.toolChoice).toBeUndefined()
               expect(inputs[2]?.system.join("\n")).toContain("Protocol retry warning")
               expect(inputs[2]?.system.join("\n")).toContain('kind: "done"')
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Plain final answer.") && !part.ignored))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some(
+                    (part) => part.type === "text" && part.text.includes("Plain final answer.") && !part.ignored,
+                  ),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.retry")).toBe(true)
-              expect(logs.some((item) => item.type === "protocol.final.plain" && item.data.fallback === true)).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.final.plain" && item.data.fallback === true)).toBe(
+                true,
+              )
               expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
             },
           }),
@@ -3388,8 +4730,18 @@ describe("SessionRunner", () => {
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(result).toBe("stop")
               expect(calls).toBe(2)
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored))).toBe(true)
-              expect(messages.every((item) => item.parts.every((part) => part.type !== "text" || part.metadata?.kind !== "protocol_malformed" || part.ignored))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored),
+                ),
+              ).toBe(true)
+              expect(
+                messages.every((item) =>
+                  item.parts.every(
+                    (part) => part.type !== "text" || part.metadata?.kind !== "protocol_malformed" || part.ignored,
+                  ),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.plain")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.retry")).toBe(true)
             },
@@ -3554,7 +4906,13 @@ describe("SessionRunner", () => {
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(result).toBe("stop")
               expect(calls).toBe(2)
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Recovered from plain JSON answer.")))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some(
+                    (part) => part.type === "text" && part.text.includes("Recovered from plain JSON answer."),
+                  ),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.malformed")).toBe(false)
               expect(logs.some((item) => item.type === "protocol.final.retry")).toBe(false)
             },
@@ -3690,7 +5048,11 @@ describe("SessionRunner", () => {
               expect(result).toBe("stop")
               expect(calls).toBe(3)
               expect(inputs[2]?.system.join("\n")).toContain("Loop warning")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_loop_guard"))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_loop_guard"),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.loop_guard.triggered")).toBe(true)
             },
           }),
@@ -3854,7 +5216,13 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(calls).toBe(3)
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Checked package and TypeScript config.")))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some(
+                    (part) => part.type === "text" && part.text.includes("Checked package and TypeScript config."),
+                  ),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.loop_guard.triggered")).toBe(false)
             },
           }),
@@ -3896,7 +5264,10 @@ describe("SessionRunner", () => {
             yield { type: "start" }
             yield { type: "start-step" }
             yield { type: "text-start" }
-            yield { type: "text-delta", text: "Diagnosis: still missing the exact selector. Next step: inspect the rendered DOM once." }
+            yield {
+              type: "text-delta",
+              text: "Diagnosis: still missing the exact selector. Next step: inspect the rendered DOM once.",
+            }
             yield { type: "text-end" }
             yield {
               type: "finish-step",
@@ -4006,7 +5377,11 @@ describe("SessionRunner", () => {
               expect(result).toBe("stop")
               expect(calls).toBe(8)
               expect(inputs[7]?.system.join("\n")).toContain("Soft runtime limit reached")
-              expect(messages.some((item) => item.parts.some((part) => part.type === "text" && part.text.includes("Diagnosis: still missing")))).toBe(true)
+              expect(
+                messages.some((item) =>
+                  item.parts.some((part) => part.type === "text" && part.text.includes("Diagnosis: still missing")),
+                ),
+              ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.loop_guard.triggered")).toBe(false)
             },
           }),
@@ -4150,9 +5525,11 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { error?: string; output?: string; tool_call_ids: string[] }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { status: string; actions: { error?: string; output?: string; tool_call_ids: string[] }[] }[]
+                  }
+                | undefined
               const error = protocol?.runs?.[0]?.actions.map((item) => item.error).join("\n") ?? ""
 
               expect(result).toBe("stop")
@@ -4360,13 +5737,19 @@ describe("SessionRunner", () => {
               })
               const parts = await MessageV2.parts(assistant.id)
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { total: number; actions: { output?: string }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { total: number; actions: { output?: string }[] }[]
+                  }
+                | undefined
 
               expect(result).toBe("continue")
               expect(calls).toBe(2)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored)).toBe(true)
+              expect(
+                parts.some(
+                  (part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored,
+                ),
+              ).toBe(true)
               expect(protocol?.runs).toBeUndefined()
               expect(JSON.stringify(inputs[1]?.system)).toContain("previous response violated")
               expect(JSON.stringify(inputs[1]?.system)).toContain("provider-specific textual tool call")
@@ -4427,7 +5810,9 @@ describe("SessionRunner", () => {
         })(),
       } as never
     })
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
         sessionID: input.sessionID,
@@ -4539,9 +5924,15 @@ describe("SessionRunner", () => {
                 },
               })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { title?: string; status: string; actions: { operation: string; executor: { target: string } }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      title?: string
+                      status: string
+                      actions: { operation: string; executor: { target: string } }[]
+                    }[]
+                  }
+                | undefined
 
               expect(result).toBe("continue")
               expect(protocol?.runs).toBeUndefined()
@@ -4578,7 +5969,7 @@ describe("SessionRunner", () => {
               text: [
                 "<minimax:tool_call>",
                 '<invoke name="glob">',
-                "<parameter name=\"pattern\">**/*.vsix</parameter>",
+                '<parameter name="pattern">**/*.vsix</parameter>',
                 `<parameter name="path">${tmp.path}</parameter>`,
                 "</invoke>",
                 "</minimax:tool_call>",
@@ -4707,9 +6098,11 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { output?: string; error?: string; tool_call_ids: string[] }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { status: string; actions: { output?: string; error?: string; tool_call_ids: string[] }[] }[]
+                  }
+                | undefined
 
               expect(result).toBe("continue")
               expect(calls).toBe(2)
@@ -4882,9 +6275,14 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { operation: string; executor: { target: string }; output?: string; error?: string }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      status: string
+                      actions: { operation: string; executor: { target: string }; output?: string; error?: string }[]
+                    }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
               expect(calls).toBe(3)
@@ -5052,9 +6450,11 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { output?: string; error?: string; tool_call_ids: string[] }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { status: string; actions: { output?: string; error?: string; tool_call_ids: string[] }[] }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
               expect(calls).toBe(3)
@@ -5183,7 +6583,7 @@ describe("SessionRunner", () => {
               "## find",
               "Find package metadata.",
               "",
-              "<protocol-result>{\"status\":\"completed\"}</protocol-result>",
+              '<protocol-result>{"status":"completed"}</protocol-result>',
               "",
               "```json agent-protocol",
               JSON.stringify({ ...data, title: "Second fake run" }),
@@ -5264,15 +6664,23 @@ describe("SessionRunner", () => {
               })
               const parts = await MessageV2.parts(assistant.id)
               const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as {
-                runs?: { status: string; actions: { output?: string; tool_call_ids: string[] }[] }[]
-              } | undefined
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { status: string; actions: { output?: string; tool_call_ids: string[] }[] }[]
+                  }
+                | undefined
 
               expect(result).toBe("stop")
               expect(calls).toBe(3)
               expect(parts.some((part) => part.type === "reasoning" && part.text.includes("Need files."))).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored)).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored)).toBe(false)
+              expect(
+                parts.some(
+                  (part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored,
+                ),
+              ).toBe(true)
+              expect(
+                parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
+              ).toBe(false)
               expect(protocol?.runs?.[0]?.status).toBe("completed")
               expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("package.json")
               expect(protocol?.runs?.[0]?.actions[0]?.tool_call_ids.length).toBe(1)
@@ -5284,9 +6692,9 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("verifier dependency validation: schema leaves empty depends_on for runtime rejection", () => {
-    // A V2 protocol with no depends reaches the runtime untouched so the
-    // runtime can reject the package before execution and ask the model to regenerate it.
+  test("verifier dependency parsing leaves empty depends_on for runtime execution", () => {
+    // A V2 protocol with no depends reaches the runtime untouched so verifier
+    // actions can run with protocol context even without a worker handoff.
     const decl = AgentProtocol.parse({
       version: "2",
       items: [
@@ -5299,18 +6707,15 @@ describe("SessionRunner", () => {
     expect(verify?.depends_on).toEqual([])
   })
 
-  test("verifier dependency validation: 'none' sentinel is stripped before runtime rejection", () => {
-    // The schema strips the legacy sentinel before validation. For verifier
-    // items, the runtime now treats the resulting empty depends_on as invalid.
+  test("verifier dependency parsing strips the 'none' sentinel", () => {
+    // The schema strips the legacy sentinel before execution. For verifier
+    // items, the runtime now treats the resulting empty depends_on as allowed.
     const decl = AgentProtocol.parse({
       version: "2",
-      items: [
-        { id: "review", kind: "agent", target: "security-reviewer", prompt: "review", depends: ["none"] },
-      ],
+      items: [{ id: "review", kind: "agent", target: "security-reviewer", prompt: "review", depends: ["none"] }],
     })
     if (decl.payload?.type !== "action_graph") throw new Error("not action_graph")
     const review = decl.payload.actions.find((a) => a.id === "review")
     expect(review?.depends_on).toEqual([])
   })
-
 })
