@@ -19,4 +19,10 @@ describe("isShellCommand", () => {
     expect(isShellCommand("please run the tests")).toBe(false)
     expect(isShellCommand("explain git status")).toBe(false)
   })
+
+  test("requires a shell command at the beginning", () => {
+    expect(isShellCommand("帮我运行 rg foo | head")).toBe(false)
+    expect(isShellCommand("please run npm test && bun typecheck")).toBe(false)
+    expect(isShellCommand("content includes shell: git status")).toBe(false)
+  })
 })

@@ -37,13 +37,12 @@ const cmds = new Set([
   "yarn",
 ])
 
-const ops = /(^|\s)(&&|\|\||\||>|>>|<|2>|2>&1)(\s|$)/
 const assign = /^[A-Za-z_][A-Za-z0-9_]*=.*\s+\S+/
 
 export function isShellCommand(text: string) {
   const value = text.trim()
   if (!value) return false
-  if (ops.test(value) || assign.test(value)) return true
+  if (assign.test(value)) return true
   const head = value.match(/^([A-Za-z0-9_.-]+)/)?.[1]
   if (!head) return false
   return cmds.has(head)
