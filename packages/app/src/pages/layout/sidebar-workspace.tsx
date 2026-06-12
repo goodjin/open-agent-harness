@@ -36,6 +36,8 @@ import {
   effectiveSessionExpansion,
   sessionCompleted,
   sessionLineage,
+  sessionScrollRestore,
+  sessionScrollWrite,
   sessionWorking,
   sortedRootSessions,
   visibleSessionTree,
@@ -72,6 +74,8 @@ export type WorkspaceSidebarContext = {
   isBusy: (directory: string) => boolean
   workspaceExpanded: (directory: string, local: boolean) => boolean
   setWorkspaceExpanded: (directory: string, value: boolean) => void
+  sessionScroll: (directory: string) => number
+  setSessionScroll: (directory: string, top: number) => void
   showResetWorkspaceDialog: (root: string, directory: string) => void
   showDeleteWorkspaceDialog: (root: string, directory: string) => void
   setScrollContainerRef: (el: HTMLDivElement | undefined, mobile?: boolean) => void
@@ -258,6 +262,7 @@ const WorkspaceActions = (props: {
 )
 
 const WorkspaceSessionList = (props: {
+  directory: string
   slug: Accessor<string>
   mobile?: boolean
   popover?: boolean
@@ -276,9 +281,12 @@ const WorkspaceSessionList = (props: {
   const notification = useNotification()
   const permission = usePermission()
   const [expanded, setExpanded] = createStore<Record<string, boolean>>({})
-  const [scroll, setScroll] = createSignal(0)
+  const [scroll, setScroll] = createSignal(props.ctx.sessionScroll(props.directory))
   const [height, setHeight] = createSignal(0)
   let el: HTMLDivElement | undefined
+  let restoring = false
+  let settling = false
+  let route = params.id
   const lineage = createMemo(() => sessionLineage(props.all(), params.id))
   const large = createMemo(() => props.all().length > 200)
   const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
@@ -358,6 +366,18 @@ const WorkspaceSessionList = (props: {
   const row = 30
   const over = 8
   const measure = () => setHeight(el?.clientHeight ?? 0)
+  const target = () => sessionScrollRestore({ current: props.ctx.sessionScroll(props.directory) })
+  const restore = () => {
+    const top = target()
+    if (!el || top <= 0) return
+    restoring = true
+    el.scrollTop = top
+    setScroll(el.scrollTop)
+    props.ctx.setSessionScroll(props.directory, el.scrollTop)
+    requestAnimationFrame(() => {
+      restoring = false
+    })
+  }
   const range = createMemo(() => {
     const count = tree().length
     const start = Math.max(0, Math.floor(scroll() / row) - over)
@@ -369,10 +389,24 @@ const WorkspaceSessionList = (props: {
 
   onMount(() => {
     measure()
+    restore()
     if (typeof ResizeObserver === "undefined" || !el) return
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     onCleanup(() => ro.disconnect())
+  })
+
+  createEffect(() => {
+    const id = params.id
+    if (id === route) return
+    route = id
+    settling = true
+    requestAnimationFrame(() => {
+      if (el?.scrollTop === 0) restore()
+      requestAnimationFrame(() => {
+        settling = false
+      })
+    })
   })
 
   return (
@@ -393,7 +427,17 @@ const WorkspaceSessionList = (props: {
       <div
         ref={el}
         class="min-h-0 max-h-[70vh] overflow-y-auto overflow-x-hidden [overflow-anchor:none]"
-        onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
+        onScroll={(event) => {
+          const top = sessionScrollWrite({
+            top: event.currentTarget.scrollTop,
+            current: scroll(),
+            settling,
+            restoring,
+          })
+          if (top === undefined) return
+          setScroll(top)
+          props.ctx.setSessionScroll(props.directory, top)
+        }}
       >
         <div style={{ height: `${range().start * row}px` }} />
         <For each={slice()}>
@@ -452,7 +496,6 @@ export const SortableWorkspace = (props: {
   ctx: WorkspaceSidebarContext
   directory: string
   project: LocalProject
-  sortNow: Accessor<number>
   mobile?: boolean
   popover?: boolean
 }): JSX.Element => {
@@ -467,7 +510,7 @@ export const SortableWorkspace = (props: {
     pendingRename: false,
   })
   const slug = createMemo(() => base64Encode(props.directory))
-  const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
+  const sessions = createMemo(() => sortedRootSessions(workspaceStore))
   const children = createMemo(() => childMapByParent(workspaceStore.session))
   const local = createMemo(() => props.directory === props.project.worktree)
   const active = createMemo(() => props.ctx.currentDir() === props.directory)
@@ -584,6 +627,7 @@ export const SortableWorkspace = (props: {
 
         <Collapsible.Content>
           <WorkspaceSessionList
+            directory={props.directory}
             slug={slug}
             mobile={props.mobile}
             popover={props.popover}
@@ -606,7 +650,6 @@ export const SortableWorkspace = (props: {
 export const LocalWorkspace = (props: {
   ctx: WorkspaceSidebarContext
   project: LocalProject
-  sortNow: Accessor<number>
   mobile?: boolean
   popover?: boolean
 }): JSX.Element => {
@@ -617,7 +660,7 @@ export const LocalWorkspace = (props: {
     return { store, setStore }
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
-  const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const sessions = createMemo(() => sortedRootSessions(workspace().store))
   const children = createMemo(() => childMapByParent(workspace().store.session))
   const booted = createMemo((prev) => prev || workspace().store.status === "complete", false)
   const loading = createMemo(() => !booted() && sessions().length === 0)
@@ -633,6 +676,7 @@ export const LocalWorkspace = (props: {
       class="size-full flex flex-col py-2 overflow-y-auto [overflow-anchor:none]"
     >
       <WorkspaceSessionList
+        directory={props.project.worktree}
         slug={slug}
         mobile={props.mobile}
         popover={props.popover}

@@ -22,8 +22,11 @@ import {
   sessionCompleted,
   sessionAgentLabel,
   sessionLineage,
+  sessionScrollRestore,
+  sessionScrollWrite,
   sessionTitleHasAgent,
   sessionWorking,
+  sortedRootSessions,
   visibleSessionTree,
   workspaceKey,
 } from "./helpers"
@@ -162,10 +165,25 @@ describe("layout workspace helpers", () => {
           ],
         },
       ],
-      120_000,
     )
 
     expect(result?.id).toBe("workspace")
+  })
+
+  test("sorts root sessions by created time instead of updated time", () => {
+    const result = sortedRootSessions(
+      {
+        path: { directory: "/root" },
+        session: [
+          session({ id: "old-active", directory: "/root", time: { created: 1, updated: 100, archived: undefined } }),
+          session({ id: "new-idle", directory: "/root", time: { created: 2, updated: 2, archived: undefined } }),
+          session({ id: "child", directory: "/root", parentID: "new-idle", time: { created: 3, updated: 3 } }),
+          session({ id: "other", directory: "/other", time: { created: 4, updated: 4 } }),
+        ],
+      },
+    )
+
+    expect(result.map((item) => item.id)).toEqual(["new-idle", "old-active"])
   })
 
   test("detects project permissions with a filter", () => {
@@ -216,7 +234,6 @@ describe("layout workspace helpers", () => {
           ],
         },
       ],
-      120_000,
     )
 
     expect(result?.id).toBe("root")
@@ -348,6 +365,11 @@ describe("layout workspace helpers", () => {
     expect(sessionCompleted(item, undefined, undefined)).toBe(false)
     expect(sessionCompleted(item, undefined, { type: "idle" })).toBe(false)
     expect(sessionCompleted(item, undefined, { type: "waiting_user" })).toBe(false)
+    expect(sessionCompleted(item, undefined, { type: "waiting_child" })).toBe(false)
+  })
+
+  test("treats child waiting status as working", () => {
+    expect(sessionWorking(undefined, { type: "waiting_child" })).toBe(true)
   })
 
   test("keeps terminal statuses out of working summaries", () => {
@@ -488,6 +510,19 @@ describe("layout workspace helpers", () => {
       "grand",
       "other",
     ])
+  })
+
+  test("ignores transient zero scroll while a session route is settling", () => {
+    expect(sessionScrollWrite({ top: 0, current: 420, settling: true, restoring: false })).toBeUndefined()
+    expect(sessionScrollWrite({ top: 0, current: 420, settling: false, restoring: false })).toBe(0)
+    expect(sessionScrollWrite({ top: 120, current: 420, settling: true, restoring: false })).toBe(120)
+    expect(sessionScrollWrite({ top: 120, current: 420, settling: true, restoring: true })).toBeUndefined()
+  })
+
+  test("restores saved session scroll without chasing the active row", () => {
+    expect(sessionScrollRestore({ current: 240, active: 4, row: 30, over: 8 })).toBe(240)
+    expect(sessionScrollRestore({ current: 240, active: 28, row: 30, over: 8 })).toBe(240)
+    expect(sessionScrollRestore({ current: 0, active: 28, row: 30, over: 8 })).toBe(0)
   })
 
   test("formats child session title with sibling sequence first", () => {

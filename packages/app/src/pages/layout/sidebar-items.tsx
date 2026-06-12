@@ -51,7 +51,7 @@ const StatusBadge = (props: {
   const bad = createMemo(() => ["aborting", "aborted", "blocked", "error", "failed", "interrupted", "timeout"].includes(type()))
   const done = createMemo(() => ["archived", "completed"].includes(type()))
   const idle = createMemo(() => type() === "idle")
-  const active = createMemo(() => ["queued", "rate_limited", "retry", "running", "starting"].includes(type()))
+  const active = createMemo(() => ["queued", "rate_limited", "retry", "running", "starting", "waiting_child"].includes(type()))
   const icon = createMemo(() => {
     const value = type()
     if (value === "completed") return "check-small"
@@ -64,6 +64,7 @@ const StatusBadge = (props: {
     if (value === "retry") return "reset"
     if (value === "waiting_user") return "prompt"
     if (value === "waiting_permission") return "shield"
+    if (value === "waiting_child") return "hourglass"
     if (value === "paused") return "pause"
     if (value === "blocked") return "circle-ban-sign"
     if (value === "interrupted") return "warning"
@@ -272,7 +273,7 @@ const SessionRow = (props: {
     </Show>
     <A
       href={`/${props.slug}/session/${props.session.id}`}
-      class={`flex h-full min-w-0 flex-1 items-center gap-2 text-left focus:outline-none ${props.dense ? "py-0.5" : "py-1"}`}
+      class={`flex h-full min-w-0 flex-1 items-center gap-2 pr-2 text-left focus:outline-none ${props.dense ? "py-0.5" : "py-1"}`}
       onClick={() => {
         props.setHoverSession(undefined)
         if (props.sidebarOpened()) return
@@ -280,18 +281,19 @@ const SessionRow = (props: {
       }}
     >
       <StatusBadge label={props.durationLabel} status={props.status} unseenCount={props.unseenCount} />
-      <Tooltip value={props.titleTip()} placement="top">
-        <span class="grow min-w-0 overflow-hidden">
+      <span data-session-title class="flex-1 min-w-0 overflow-hidden">
+        <Tooltip value={props.titleTip()} placement="top" class="w-full min-w-0 overflow-hidden">
           <span
-            class="inline-block max-w-full truncate rounded-sm px-1 -mx-1 align-bottom text-14-regular text-text-strong transition-colors"
+            data-session-title-text
+            class="block w-fit max-w-full truncate rounded-sm px-1 -mx-1 text-14-regular text-text-strong transition-colors"
             classList={{
               "bg-surface-base-active": props.isActive(),
             }}
           >
             {props.titleLabel()}
           </span>
-        </span>
-      </Tooltip>
+        </Tooltip>
+      </span>
       <Show when={props.agentLabel()}>
         {(agent) => <span class="shrink-0 text-12-regular text-text-weak">({agent()})</span>}
       </Show>

@@ -8,30 +8,24 @@ export const workspaceKey = (directory: string) => {
   return directory.replace(/[\\/]+$/, "")
 }
 
-function sortSessions(now: number) {
-  const oneMinuteAgo = now - 60 * 1000
+function sortSessions() {
   return (a: Session, b: Session) => {
-    const aUpdated = a.time.updated ?? a.time.created
-    const bUpdated = b.time.updated ?? b.time.created
-    const aRecent = aUpdated > oneMinuteAgo
-    const bRecent = bUpdated > oneMinuteAgo
-    if (aRecent && bRecent) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-    if (aRecent && !bRecent) return -1
-    if (!aRecent && bRecent) return 1
-    return bUpdated - aUpdated
+    const diff = b.time.created - a.time.created
+    if (diff !== 0) return diff
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
   }
 }
 
 const isRootVisibleSession = (session: Session, directory: string) =>
   workspaceKey(session.directory) === workspaceKey(directory) && !session.parentID && !session.time?.archived
 
-export const sortedRootSessions = (store: { session: Session[]; path: { directory: string } }, now: number) =>
-  store.session.filter((session) => isRootVisibleSession(session, store.path.directory)).sort(sortSessions(now))
+export const sortedRootSessions = (store: { session: Session[]; path: { directory: string } }) =>
+  store.session.filter((session) => isRootVisibleSession(session, store.path.directory)).sort(sortSessions())
 
-export const latestRootSession = (stores: { session: Session[]; path: { directory: string } }[], now: number) =>
+export const latestRootSession = (stores: { session: Session[]; path: { directory: string } }[]) =>
   stores
     .flatMap((store) => store.session.filter((session) => isRootVisibleSession(session, store.path.directory)))
-    .sort(sortSessions(now))[0]
+    .sort(sortSessions())[0]
 
 export function hasProjectPermissions<T>(
   request: Record<string, T[] | undefined>,
@@ -195,12 +189,21 @@ export const effectiveSessionExpansion = (expanded: Record<string, boolean>, lin
     ...lineage,
   ])
 
+export const sessionScrollWrite = (input: { top: number; current: number; settling: boolean; restoring: boolean }) => {
+  if (input.restoring) return
+  if (input.settling && input.top === 0 && input.current > 0) return
+  return Math.max(0, input.top)
+}
+
+export const sessionScrollRestore = (input: { current: number; active?: number; row?: number; over?: number }) =>
+  Math.max(0, input.current)
+
 type Status = {
   type?: string
 }
 
 const closed = ["idle", "completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
-const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "paused", "aborting"]
+const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "waiting_child", "paused", "aborting"]
 const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 
 export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {

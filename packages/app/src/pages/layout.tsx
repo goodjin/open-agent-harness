@@ -97,6 +97,7 @@ export default function Layout(props: ParentProps) {
   const pageReady = createMemo(() => ready())
 
   let scrollContainerRef: HTMLDivElement | undefined
+  const sessionScroll = new Map<string, number>()
 
   const params = useParams()
   const globalSDK = useGlobalSDK()
@@ -133,7 +134,6 @@ export default function Layout(props: ParentProps) {
     hoverProject: undefined as string | undefined,
     scrollSessionKey: undefined as string | undefined,
     nav: undefined as HTMLElement | undefined,
-    sortNow: Date.now(),
     sizing: false,
     peek: undefined as string | undefined,
     peeked: false,
@@ -156,16 +156,7 @@ export default function Layout(props: ParentProps) {
   }
   const isBusy = (directory: string) => !!state.busyWorkspaces[workspaceKey(directory)]
   const navLeave = { current: undefined as number | undefined }
-  const sortNow = () => state.sortNow
   let sizet: number | undefined
-  let sortNowInterval: ReturnType<typeof setInterval> | undefined
-  const sortNowTimeout = setTimeout(
-    () => {
-      setState("sortNow", Date.now())
-      sortNowInterval = setInterval(() => setState("sortNow", Date.now()), 60_000)
-    },
-    60_000 - (Date.now() % 60_000),
-  )
 
   const aim = createAim({
     enabled: () => !layout.sidebar.opened(),
@@ -180,8 +171,6 @@ export default function Layout(props: ParentProps) {
 
   onCleanup(() => {
     if (navLeave.current !== undefined) clearTimeout(navLeave.current)
-    clearTimeout(sortNowTimeout)
-    if (sortNowInterval) clearInterval(sortNowInterval)
     if (sizet !== undefined) clearTimeout(sizet)
     if (peekt !== undefined) clearTimeout(peekt)
     aim.reset()
@@ -528,11 +517,14 @@ export default function Layout(props: ParentProps) {
   useUpdatePolling()
   useSDKNotificationToasts()
 
-  function scrollToSession(sessionId: string, sessionKey: string) {
+  function scrollToSession(sessionId: string, sessionKey: string, retry = true) {
     if (!scrollContainerRef) return
     if (state.scrollSessionKey === sessionKey) return
     const element = scrollContainerRef.querySelector(`[data-session-id="${sessionId}"]`)
-    if (!element) return
+    if (!element) {
+      if (retry) requestAnimationFrame(() => scrollToSession(sessionId, sessionKey, false))
+      return
+    }
     const containerRect = scrollContainerRef.getBoundingClientRect()
     const elementRect = element.getBoundingClientRect()
     if (elementRect.top >= containerRect.top && elementRect.bottom <= containerRect.bottom) {
@@ -666,14 +658,13 @@ export default function Layout(props: ParentProps) {
   })
 
   const currentSessions = createMemo(() => {
-    const now = Date.now()
     const dirs = visibleSessionDirs()
     if (dirs.length === 0) return [] as Session[]
 
     const result: Session[] = []
     for (const dir of dirs) {
       const [dirStore] = globalSync.child(dir, { bootstrap: true })
-      const dirSessions = sortedRootSessions(dirStore, now)
+      const dirSessions = sortedRootSessions(dirStore)
       result.push(...dirSessions)
     }
     return result
@@ -1032,10 +1023,7 @@ export default function Layout(props: ParentProps) {
       clearLastProjectSession(root)
     }
 
-    const latest = latestRootSession(
-      dirs.map((item) => globalSync.child(item, { bootstrap: false })[0]),
-      Date.now(),
-    )
+    const latest = latestRootSession(dirs.map((item) => globalSync.child(item, { bootstrap: false })[0]))
     if (latest && (await openSession(latest))) {
       return
     }
@@ -1050,7 +1038,6 @@ export default function Layout(props: ParentProps) {
             .catch(() => []),
         })),
       ),
-      Date.now(),
     )
     if (fetched && (await openSession(fetched))) {
       return
@@ -1664,6 +1651,8 @@ export default function Layout(props: ParentProps) {
     isBusy,
     workspaceExpanded: (directory, local) => store.workspaceExpanded[directory] ?? local,
     setWorkspaceExpanded: (directory, value) => setStore("workspaceExpanded", directory, value),
+    sessionScroll: (directory) => sessionScroll.get(workspaceKey(directory)) ?? 0,
+    setSessionScroll: (directory, top) => sessionScroll.set(workspaceKey(directory), Math.max(0, top)),
     showResetWorkspaceDialog: (root, directory) =>
       dialog.show(() => <DialogResetWorkspace root={root} directory={directory} />),
     showDeleteWorkspaceDialog: (root, directory) =>
@@ -1889,7 +1878,6 @@ export default function Layout(props: ParentProps) {
                       <LocalWorkspace
                         ctx={workspaceSidebarCtx}
                         project={project()!}
-                        sortNow={sortNow}
                         mobile={panelProps.mobile}
                         popover={popover()}
                       />
@@ -1934,7 +1922,6 @@ export default function Layout(props: ParentProps) {
                                 ctx={workspaceSidebarCtx}
                                 directory={directory}
                                 project={project()!}
-                                sortNow={sortNow}
                                 mobile={panelProps.mobile}
                                 popover={popover()}
                               />
@@ -1998,7 +1985,7 @@ export default function Layout(props: ParentProps) {
       aimMove={aim.move}
       projects={projects}
       renderProject={(project) => (
-        <SortableProject ctx={projectSidebarCtx} project={project} sortNow={sortNow} mobile={mobile} />
+        <SortableProject ctx={projectSidebarCtx} project={project} mobile={mobile} />
       )}
       handleDragStart={handleDragStart}
       handleDragEnd={handleDragEnd}
