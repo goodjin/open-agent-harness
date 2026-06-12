@@ -2,7 +2,7 @@ import { useFilteredList } from "@open-agent-harness/ui/hooks"
 import { useSpring } from "@open-agent-harness/ui/motion-spring"
 import { createEffect, on, Component, Show, onCleanup, Switch, Match, createMemo, createSignal } from "solid-js"
 import { createStore } from "solid-js/store"
-import { useLocal } from "@/context/local"
+import { type ModelKey, useLocal } from "@/context/local"
 import { selectionFromLines, type SelectedLineRange, useFile } from "@/context/file"
 import {
   ContentPart,
@@ -58,6 +58,7 @@ import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { isShellCommand } from "./prompt-input/shell-detect"
 import { ImagePreview } from "@open-agent-harness/ui/image-preview"
+import { showToast } from "@open-agent-harness/ui/toast"
 
 const active = new Set([
   "queued",
@@ -67,6 +68,7 @@ const active = new Set([
   "retry",
   "waiting_permission",
   "waiting_user",
+  "waiting_child",
   "paused",
   "aborting",
 ])
@@ -557,6 +559,96 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const desc = (name: string | undefined) => agents().find((agent) => agent.name === name)?.description
   const [changingAgent, setChangingAgent] = createSignal(false)
   const lockedAgent = createMemo(() => Boolean(params.id) && !changingAgent())
+  type ModelState = ReturnType<typeof useLocal>["model"]
+  const error = (err: unknown) => {
+    if (err && typeof err === "object" && "data" in err) {
+      const data = (err as { data?: { message?: string } }).data
+      if (data?.message) return data.message
+    }
+    if (err instanceof Error) return err.message
+    return language.t("common.requestFailed")
+  }
+  const code = (err: unknown) => {
+    const item = err as { status?: number; response?: { status?: number } }
+    return item.status ?? item.response?.status
+  }
+  const selectAgent = async (name: string) => {
+    const id = params.id
+    const apply = () => {
+      const model = id ? local.model.current() : undefined
+      local.agent.set(name, { force: true })
+      if (model) local.model.set({ providerID: model.provider.id, modelID: model.id })
+      setChangingAgent(false)
+    }
+    if (!id) {
+      apply()
+      return
+    }
+    const bind = (confirm = false) =>
+      sdk.client.session.tree2.update({
+        body_directory: sdk.directory,
+        ids: [id],
+        agent: name,
+        confirm,
+      })
+    try {
+      await bind()
+    } catch (err) {
+      if (code(err) !== 409) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: error(err),
+        })
+        setChangingAgent(false)
+        return
+      }
+      const current = info()?.agent ?? local.agent.current()?.name ?? "another agent"
+      const ok = globalThis.confirm?.(`This session is bound to ${current}. Switch it to ${name}?`) ?? false
+      if (!ok) {
+        setChangingAgent(false)
+        return
+      }
+      try {
+        await bind(true)
+      } catch (next) {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: error(next),
+        })
+        setChangingAgent(false)
+        return
+      }
+    }
+    apply()
+    await sync.session.sync(id, { force: true }).catch(() => undefined)
+  }
+  const selectModel = (item: ModelKey | undefined, options?: { recent?: boolean }) => {
+    const id = params.id
+    if (!id || !item) {
+      local.model.set(item, options)
+      return
+    }
+    void sdk.client.session.tree2
+      .update({
+        body_directory: sdk.directory,
+        ids: [id],
+        model: item,
+      })
+      .then(async () => {
+        await sync.session.sync(id, { force: true }).catch(() => undefined)
+        local.model.set(item, options)
+      })
+      .catch((err) => {
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: error(err),
+        })
+      })
+  }
+  const sessionModel = {
+    ...local.model,
+    set: selectModel,
+  } satisfies ModelState
 
   createEffect(
     on(
@@ -1529,8 +1621,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                         options={agentNames()}
                         current={local.agent.current()?.name ?? ""}
                         onSelect={(name) => {
-                          local.agent.set(name, { force: true })
-                          setChangingAgent(false)
+                          if (!name) return
+                          void selectAgent(name)
                         }}
                         onOpenChange={(open) => {
                           if (!open && params.id) setChangingAgent(false)
@@ -1573,7 +1665,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                           size="normal"
                           class="min-w-0 max-w-[320px] text-13-regular text-text-base group"
                           style={control()}
-                          onClick={() => dialog.show(() => <DialogSelectModelUnpaid model={local.model} />)}
+                          onClick={() => dialog.show(() => <DialogSelectModelUnpaid model={sessionModel} />)}
                         >
                           <Show when={local.model.current()?.provider?.id}>
                             <ProviderIcon
@@ -1597,7 +1689,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                       keybind={command.keybind("model.choose")}
                     >
                       <ModelSelectorPopover
-                        model={local.model}
+                        model={sessionModel}
                         triggerAs={Button}
                         triggerProps={{
                           variant: "ghost",

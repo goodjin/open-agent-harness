@@ -76,6 +76,7 @@ const statuses = [
   "timeout",
   "waiting_permission",
   "waiting_user",
+  "waiting_child",
 ]
 
 function rows(nodes: Node[]) {
@@ -101,7 +102,7 @@ function statusClass(type: string) {
   if (type === "running" || type === "starting" || type === "queued" || type === "retry") return "bg-icon-info-base"
   if (type === "completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
-  if (type === "waiting_user" || type === "waiting_permission" || type === "rate_limited" || type === "blocked")
+  if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"
   return "bg-icon-critical-base"
 }
@@ -149,8 +150,10 @@ export default function SessionTreeManager() {
     busy: false,
     title: "",
     agent: "",
+    agentChanged: false,
     providerID: "",
     modelID: "",
+    modelChanged: false,
     statusDraft: allStatus,
     status: allStatus,
     includeDone: false,
@@ -193,6 +196,7 @@ export default function SessionTreeManager() {
     set(item: { providerID: string; modelID: string } | undefined, options?: { recent?: boolean }) {
       setStore("providerID", item?.providerID ?? "")
       setStore("modelID", item?.modelID ?? "")
+      setStore("modelChanged", true)
       if (!item) return
       models.setVisibility(item, true)
       if (options?.recent) models.recent.push(item)
@@ -306,7 +310,7 @@ export default function SessionTreeManager() {
           const data = parseConflict(text)
           if (data) {
             options.onConflict(data)
-            return
+            return false
           }
         }
         throw new Error(text)
@@ -317,8 +321,10 @@ export default function SessionTreeManager() {
         variant: "success",
         title: language.t("sessionTree.updated", { count: ids.length }),
       })
+      return true
     } catch (err) {
       fail(err)
+      return false
     } finally {
       setStore("busy", false)
     }
@@ -338,8 +344,8 @@ export default function SessionTreeManager() {
   const update = (confirm = false) => {
     const body: Record<string, unknown> = {}
     if (store.title.trim()) body.title = store.title.trim()
-    if (store.agent) body.agent = store.agent
-    if (store.providerID.trim() && store.modelID.trim()) {
+    if (store.agentChanged && store.agent) body.agent = store.agent
+    if (store.modelChanged && store.providerID.trim() && store.modelID.trim()) {
       body.model = { providerID: store.providerID.trim(), modelID: store.modelID.trim() }
     }
     if (Object.keys(body).length === 0) return
@@ -348,7 +354,7 @@ export default function SessionTreeManager() {
     void post(
       "/session/tree/sessions",
       body,
-      confirm
+      confirm || body.agent === undefined
         ? undefined
         : {
             onConflict: ({ current }) => {
@@ -356,7 +362,11 @@ export default function SessionTreeManager() {
               dialog.show(() => <DialogAgentConflict />)
             },
           },
-    )
+    ).then((ok) => {
+      if (!ok) return
+      if (body.agent !== undefined) setStore("agentChanged", false)
+      if (body.model !== undefined) setStore("modelChanged", false)
+    })
   }
 
   const abort = () => void post("/session/tree/abort", { source_session: params.id })
@@ -514,7 +524,10 @@ export default function SessionTreeManager() {
             options={agent()}
             current={store.agent}
             placeholder={language.t("sessionTree.agentPlaceholder")}
-            onSelect={(name) => setStore("agent", name ?? "")}
+            onSelect={(name) => {
+              setStore("agent", name ?? "")
+              setStore("agentChanged", true)
+            }}
             class="h-8 min-w-0"
             valueClass="truncate text-12-regular"
           />
