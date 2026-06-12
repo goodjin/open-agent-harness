@@ -1,6 +1,6 @@
 import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
-import type { Message, SessionStatus } from "@open-agent-harness/sdk/v2/client"
+import type { AssistantMessage, Message, SessionStatus } from "@open-agent-harness/sdk/v2/client"
 import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []
@@ -26,7 +26,24 @@ export const getSessionKey = (dir: string | undefined, id: string | undefined) =
 
 export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Message[]) => {
   const type = status?.type ?? "idle"
-  return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user"
+  return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user" || type === "waiting_child"
+}
+
+export const turnDone = (messages: Message[], id: string, status: SessionStatus | undefined) => {
+  const type = status?.type ?? "idle"
+  if (type !== "idle" && type !== "completed") return false
+  const idx = messages.findIndex((item) => item.id === id)
+  if (idx === -1) return false
+  const list: AssistantMessage[] = []
+  for (let i = idx + 1; i < messages.length; i++) {
+    const item = messages[i]
+    if (!item) continue
+    if (item.role === "user") break
+    if (item.role === "assistant" && item.parentID === id) list.push(item)
+  }
+  const last = list.at(-1)
+  if (!last) return false
+  return typeof last.time.completed === "number" && !last.error
 }
 
 export const createSessionTabs = (input: TabsInput) => {

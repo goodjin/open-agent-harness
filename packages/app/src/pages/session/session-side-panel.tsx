@@ -4,7 +4,7 @@ import { createMediaQuery } from "@solid-primitives/media"
 import { useNavigate } from "@solidjs/router"
 import { Tabs } from "@open-agent-harness/ui/tabs"
 import { IconButton } from "@open-agent-harness/ui/icon-button"
-import { TooltipKeybind } from "@open-agent-harness/ui/tooltip"
+import { Tooltip, TooltipKeybind } from "@open-agent-harness/ui/tooltip"
 import { Mark } from "@open-agent-harness/ui/logo"
 import { DragDropProvider, DragDropSensors, DragOverlay, SortableProvider, closestCenter } from "@thisbeyond/solid-dnd"
 import type { DragEvent } from "@thisbeyond/solid-dnd"
@@ -754,7 +754,16 @@ export function SessionSidePanel(props: {
                       <SortableProvider ids={openedTabs()}>
                         <For each={openedTabs()}>{(tab) => <SortableTab tab={tab} onTabClose={tabs().close} />}</For>
                       </SortableProvider>
-                      <div class="bg-background-stronger h-full shrink-0 sticky right-0 z-10 flex items-center justify-center pr-3">
+                      <div class="bg-background-stronger h-full shrink-0 sticky right-0 z-10 flex items-center justify-center gap-1 pr-3">
+                        <Tooltip placement="bottom" value={language.t("session.panel.collapse")}>
+                          <IconButton
+                            icon="chevron-right"
+                            variant="ghost"
+                            class="!rounded-md"
+                            onClick={() => view().reviewPanel.close()}
+                            aria-label={language.t("session.panel.collapse")}
+                          />
+                        </Tooltip>
                         <TooltipKeybind
                           title={language.t("command.file.open")}
                           keybind={command.keybind("file.open")}

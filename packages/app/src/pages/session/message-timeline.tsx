@@ -12,7 +12,6 @@ import { Spinner } from "@open-agent-harness/ui/spinner"
 import { SessionTurn, SessionTurnDiffs, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
-import { Tooltip, TooltipKeybind } from "@open-agent-harness/ui/tooltip"
 import type {
   AssistantMessage,
   Message as MessageType,
@@ -29,10 +28,7 @@ import { getFilename } from "@open-agent-harness/util/path"
 import { Popover as KobaltePopover } from "@kobalte/core/popover"
 import { shouldMarkBoundaryGesture, normalizeWheelDelta } from "@/pages/session/message-gesture"
 import { SessionContextUsage } from "@/components/session-context-usage"
-import { StatusPopover } from "@/components/status-popover"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
-import { useCommand } from "@/context/command"
-import { useLayout } from "@/context/layout"
 import { useLanguage } from "@/context/language"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useGlobalSDK } from "@/context/global-sdk"
@@ -40,10 +36,9 @@ import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
-import { useTerminal } from "@/context/terminal"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
+import { isSessionBusy, turnDone } from "@/pages/session/helpers"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { lastAssistant, lastUser, modelName, statusName, totals } from "@/pages/session/session-insight-banner-helpers"
@@ -70,7 +65,7 @@ const idle = { type: "idle" as const }
 const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
 const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "error"])
-const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user"])
+const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
@@ -150,26 +145,12 @@ const match = (
 }
 
 const dot = (type: string) => {
-  if (type === "waiting_user" || type === "waiting_permission" || type === "rate_limited" || type === "blocked")
+  if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"
   if (live.has(type)) return "bg-icon-info-base"
   if (type === "completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   return "bg-icon-critical-base"
-}
-
-const done = (messages: MessageType[], id: string) => {
-  const idx = messages.findIndex((item) => item.id === id)
-  if (idx === -1) return false
-  const assistants: AssistantMessage[] = []
-  for (let i = idx + 1; i < messages.length; i++) {
-    const item = messages[i]
-    if (!item) continue
-    if (item.role === "user") break
-    if (item.role === "assistant" && item.parentID === id) assistants.push(item as AssistantMessage)
-  }
-  if (assistants.length === 0) return false
-  return assistants.every((item) => typeof item.time.completed === "number")
 }
 
 type UserActions = {
@@ -346,13 +327,9 @@ export function MessageTimeline(props: {
   const sync = useSync()
   const settings = useSettings()
   const dialog = useDialog()
-  const command = useCommand()
-  const layout = useLayout()
   const language = useLanguage()
-  const terminal = useTerminal()
-  const { params, sessionKey, tabs, view } = useSessionLayout()
+  const { params, sessionKey } = useSessionLayout()
   const platform = usePlatform()
-  const tab = createMemo(() => tabs().active())
 
   const sessionID = createMemo(() => params.id)
   const sessionMessages = createMemo(() => {
@@ -741,30 +718,6 @@ export function MessageTimeline(props: {
     navigate(`/${params.dir}/session/${id}`)
   }
 
-  const openTree = () => {
-    const id = sessionID()
-    if (!id) return
-    navigate(`/${params.dir}/session/${id}/tree`)
-  }
-
-  const term = () => {
-    const next = !view().terminal.opened()
-    view().terminal.toggle()
-    if (!next) return
-    const id = terminal.active()
-    if (id) focusTerminalById(id)
-  }
-
-  const review = () => {
-    view().reviewPanel.open()
-    tabs().setActive("review")
-  }
-
-  const files = () => {
-    layout.fileTree.open()
-    tabs().setActive(layout.fileTree.tab())
-  }
-
   const post = (id: string, path: string, body: Record<string, unknown>) => {
     setOp("child", id, path)
     return sdk
@@ -1024,74 +977,6 @@ export function MessageTimeline(props: {
                 <Show when={sessionID()}>
                   {(id) => (
                     <div class="shrink-0 flex items-center gap-3">
-                      <div class="hidden md:flex items-center gap-1">
-                        <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
-                          <StatusPopover />
-                        </Tooltip>
-                        <Tooltip placement="bottom" value={language.t("sessionTree.open")}>
-                          <Button
-                            variant="ghost"
-                            class="h-6 w-7 p-0 box-border shrink-0"
-                            onClick={openTree}
-                            disabled={!id()}
-                            aria-label={language.t("sessionTree.open")}
-                          >
-                            <Icon size="small" name="branch" />
-                          </Button>
-                        </Tooltip>
-                        <TooltipKeybind
-                          title={language.t("command.terminal.toggle")}
-                          keybind={command.keybind("terminal.toggle")}
-                        >
-                          <Button
-                            variant="ghost"
-                            class="h-6 w-7 p-0 box-border shrink-0"
-                            onClick={term}
-                            aria-label={language.t("command.terminal.toggle")}
-                            aria-expanded={view().terminal.opened()}
-                            aria-controls="terminal-panel"
-                          >
-                            <Icon size="small" name={view().terminal.opened() ? "terminal-active" : "terminal"} />
-                          </Button>
-                        </TooltipKeybind>
-                        <TooltipKeybind
-                          title={language.t("command.review.toggle")}
-                          keybind={command.keybind("review.toggle")}
-                        >
-                          <Button
-                            variant="ghost"
-                            class="h-6 w-7 p-0 box-border shrink-0"
-                            onClick={review}
-                            aria-label={language.t("command.review.toggle")}
-                            aria-expanded={tab() === "review"}
-                            aria-controls="review-panel"
-                          >
-                            <Icon size="small" name={tab() === "review" ? "review-active" : "review"} />
-                          </Button>
-                        </TooltipKeybind>
-                        <TooltipKeybind
-                          title={language.t("command.fileTree.toggle")}
-                          keybind={command.keybind("fileTree.toggle")}
-                        >
-                          <Button
-                            variant="ghost"
-                            class="h-6 w-7 p-0 box-border shrink-0"
-                            onClick={files}
-                            aria-label={language.t("command.fileTree.toggle")}
-                            aria-expanded={layout.fileTree.opened() && (tab() === "changes" || tab() === "all")}
-                            aria-controls="file-tree-panel"
-                          >
-                            <Icon
-                              size="small"
-                              name={
-                                layout.fileTree.opened() && (tab() === "changes" || tab() === "all")
-                                  ? "file-tree-active"
-                                  : "file-tree"
-                              }
-                            />
-                          </Button>
-                        </TooltipKeybind>
-                      </div>
                       <SessionContextUsage placement="bottom" />
                       <DropdownMenu
                         gutter={4}
@@ -1348,9 +1233,7 @@ export function MessageTimeline(props: {
                   const commentCount = createMemo(() => comments().length)
                   const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID, sessionMessages()))
                   const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
-                  const completed = createMemo(
-                    () => sessionStatus().type === "idle" && done(sessionMessages(), messageID),
-                  )
+                  const completed = createMemo(() => turnDone(sessionMessages(), messageID, sessionStatus()))
                   const turn = createMemo(() =>
                     sessionMessages().find(
                       (item): item is UserMessage => item.id === messageID && item.role === "user",

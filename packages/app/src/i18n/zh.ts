@@ -513,6 +513,8 @@ export const dict = {
   "session.tab.context": "上下文",
   "session.tab.logs": "日志",
   "session.panel.reviewAndFiles": "审查和文件",
+  "session.panel.collapse": "收起面板",
+  "session.panel.expand": "展开面板",
   "session.logs.title": "会话日志",
   "session.logs.count": "{{count}} 条日志",
   "session.logs.loading": "正在加载日志...",

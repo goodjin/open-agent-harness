@@ -8,7 +8,9 @@ import {
   focusTerminalById,
   getTabReorderIndex,
   isSessionBusy,
+  turnDone,
 } from "./helpers"
+import type { Message } from "@open-agent-harness/sdk/v2/client"
 
 describe("isSessionBusy", () => {
   test("uses session status as the source of truth", () => {
@@ -32,8 +34,58 @@ describe("isSessionBusy", () => {
     ).toBe(false)
 
     expect(isSessionBusy({ type: "running" })).toBe(true)
+    expect(isSessionBusy({ type: "waiting_child" })).toBe(true)
     expect(isSessionBusy({ type: "timeout", message: "timed out" })).toBe(false)
     expect(isSessionBusy(undefined)).toBe(false)
+  })
+})
+
+describe("turnDone", () => {
+  const user = (id: string) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "user",
+      time: { created: 1 },
+    }) as Message
+  const assistant = (input: {
+    id: string
+    parentID: string
+    completed?: number
+    error?: boolean
+  }) =>
+    ({
+      id: input.id,
+      sessionID: "ses_1",
+      role: "assistant",
+      parentID: input.parentID,
+      time: { created: 2, completed: input.completed },
+      error: input.error ? { name: "UnknownError", data: { message: "failed" } } : undefined,
+    }) as Message
+
+  test("uses the last assistant in the user turn and ignores stale shells", () => {
+    expect(
+      turnDone(
+        [
+          user("u1"),
+          assistant({ id: "a1", parentID: "u1" }),
+          assistant({ id: "a2", parentID: "u1" }),
+          assistant({ id: "a3", parentID: "u1", completed: 4 }),
+        ],
+        "u1",
+        { type: "completed" },
+      ),
+    ).toBe(true)
+  })
+
+  test("does not mark failed final assistants as complete", () => {
+    expect(
+      turnDone(
+        [user("u1"), assistant({ id: "a1", parentID: "u1", completed: 3, error: true })],
+        "u1",
+        { type: "completed" },
+      ),
+    ).toBe(false)
   })
 })
 

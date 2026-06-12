@@ -14,6 +14,7 @@ import {
   onMount,
   untrack,
 } from "solid-js"
+import { Portal } from "solid-js/web"
 import { createMediaQuery } from "@solid-primitives/media"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useLocal } from "@/context/local"
@@ -26,11 +27,15 @@ import { Tabs } from "@open-agent-harness/ui/tabs"
 import { createAutoScroll } from "@open-agent-harness/ui/hooks"
 import { previewSelectedLines } from "@open-agent-harness/ui/pierre/selection-bridge"
 import { Button } from "@open-agent-harness/ui/button"
+import { Icon } from "@open-agent-harness/ui/icon"
+import { Tooltip, TooltipKeybind } from "@open-agent-harness/ui/tooltip"
 import type { SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { showToast } from "@open-agent-harness/ui/toast"
 import { base64Encode, checksum } from "@open-agent-harness/util/encode"
 import { useNavigate, useSearchParams } from "@solidjs/router"
+import { StatusPopover } from "@/components/status-popover"
 import { NewSessionView } from "@/components/session"
+import { useCommand } from "@/context/command"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
 import { useGlobalSync } from "@/context/global-sync"
@@ -331,6 +336,7 @@ export default function Page() {
   const globalSync = useGlobalSync()
   const layout = useLayout()
   const local = useLocal()
+  const command = useCommand()
   const file = useFile()
   const sync = useSync()
   const dialog = useDialog()
@@ -413,6 +419,7 @@ export default function Page() {
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const size = createSizing()
   const [frame, setFrame] = createSignal<HTMLDivElement>()
+  const [topbar, setTopbar] = createSignal<HTMLElement>()
   const [wide, setWide] = createSignal(0)
   const paneMin = 320
   const sideMin = 320
@@ -453,6 +460,41 @@ export default function Page() {
 
   const openReviewPanel = () => {
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
+  }
+
+  const openTree = () => {
+    if (!params.id) return
+    navigate(`/${params.dir}/session/${params.id}/tree`)
+  }
+
+  const toggleTerminal = () => {
+    const next = !view().terminal.opened()
+    view().terminal.toggle()
+    if (!next) return
+
+    const id = terminal.active()
+    if (!id) return
+    focusTerminalById(id)
+  }
+
+  const openReview = () => {
+    view().reviewPanel.open()
+    tabs().setActive("review")
+  }
+
+  const openFiles = () => {
+    view().reviewPanel.open()
+    layout.fileTree.open()
+    tabs().setActive(layout.fileTree.tab())
+  }
+
+  const toggleSidePanel = () => {
+    if (view().reviewPanel.opened()) {
+      view().reviewPanel.close()
+      return
+    }
+    view().reviewPanel.open()
+    if (!activeTab()) tabs().setActive("review")
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
@@ -1937,6 +1979,7 @@ export default function Page() {
   })
 
   onMount(() => {
+    setTopbar(document.getElementById("opencode-titlebar-right") ?? undefined)
     document.addEventListener("keydown", handleKeyDown)
   })
 
@@ -1952,6 +1995,87 @@ export default function Page() {
 
   return (
     <div class="relative bg-background-base size-full overflow-hidden flex flex-col">
+      <Show when={topbar()}>
+        {(mount) => (
+          <Portal mount={mount()}>
+            <Show when={isDesktop() && params.id}>
+              <div class="flex items-center gap-1">
+                <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
+                  <StatusPopover />
+                </Tooltip>
+                <Tooltip placement="bottom" value={language.t("sessionTree.open")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={openTree}
+                    aria-label={language.t("sessionTree.open")}
+                  >
+                    <Icon size="small" name="branch" />
+                  </Button>
+                </Tooltip>
+                <TooltipKeybind title={language.t("command.terminal.toggle")} keybind={command.keybind("terminal.toggle")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={toggleTerminal}
+                    aria-label={language.t("command.terminal.toggle")}
+                    aria-expanded={view().terminal.opened()}
+                    aria-controls="terminal-panel"
+                  >
+                    <Icon size="small" name={view().terminal.opened() ? "terminal-active" : "terminal"} />
+                  </Button>
+                </TooltipKeybind>
+                <TooltipKeybind title={language.t("command.review.toggle")} keybind={command.keybind("review.toggle")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={openReview}
+                    aria-label={language.t("command.review.toggle")}
+                    aria-expanded={desktopSidePanelOpen() && activeTab() === "review"}
+                    aria-controls="review-panel"
+                  >
+                    <Icon size="small" name={desktopSidePanelOpen() && activeTab() === "review" ? "review-active" : "review"} />
+                  </Button>
+                </TooltipKeybind>
+                <TooltipKeybind title={language.t("command.fileTree.toggle")} keybind={command.keybind("fileTree.toggle")}>
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={openFiles}
+                    aria-label={language.t("command.fileTree.toggle")}
+                    aria-expanded={desktopSidePanelOpen() && layout.fileTree.opened() && (activeTab() === "changes" || activeTab() === "all")}
+                    aria-controls="file-tree-panel"
+                  >
+                    <Icon
+                      size="small"
+                      name={
+                        desktopSidePanelOpen() && layout.fileTree.opened() && (activeTab() === "changes" || activeTab() === "all")
+                          ? "file-tree-active"
+                          : "file-tree"
+                      }
+                    />
+                  </Button>
+                </TooltipKeybind>
+                <Tooltip
+                  placement="bottom"
+                  value={language.t(desktopSidePanelOpen() ? "session.panel.collapse" : "session.panel.expand")}
+                >
+                  <Button
+                    variant="ghost"
+                    class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
+                    onClick={toggleSidePanel}
+                    aria-label={language.t(desktopSidePanelOpen() ? "session.panel.collapse" : "session.panel.expand")}
+                    aria-expanded={desktopSidePanelOpen()}
+                    aria-controls="review-panel"
+                  >
+                    <Icon size="small" name={desktopSidePanelOpen() ? "chevron-right" : "chevron-left"} />
+                  </Button>
+                </Tooltip>
+              </div>
+            </Show>
+          </Portal>
+        )}
+      </Show>
       <div ref={setFrame} class="flex-1 min-h-0 flex flex-col md:flex-row">
         <Show when={!isDesktop() && !!params.id}>
           <Tabs value={store.mobileTab} class="h-auto">

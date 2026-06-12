@@ -533,6 +533,8 @@ export const dict = {
   "session.tab.context": "Context",
   "session.tab.logs": "Logs",
   "session.panel.reviewAndFiles": "Review and files",
+  "session.panel.collapse": "Collapse panel",
+  "session.panel.expand": "Expand panel",
   "session.logs.title": "Session logs",
   "session.logs.count": "{{count}} log entries",
   "session.logs.loading": "Loading logs...",
