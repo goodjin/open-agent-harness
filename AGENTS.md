@@ -2,7 +2,18 @@
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
-- Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
+- Prefer automation after the workflow below has been followed.
+
+## Requirement Workflow
+
+For every user request:
+
+1. Understand the intent first. Clarify scope, constraints, expected behavior, and any missing details before choosing an implementation path.
+2. Think through the approach carefully. Identify the affected modules, expected files, verification path, and documentation impact.
+3. Present the approach to the user and wait for confirmation before execution.
+4. After confirmation, create a feature document under `docs/features/` before making implementation changes. The document should capture the user goal, agreed scope, implementation plan, affected modules, and verification plan.
+5. Execute the confirmed plan.
+6. After execution, organize the documentation. Based on the actual changes and implementation plan, decide which module the work belongs to and update the corresponding document under `docs/harness-module/`. If no suitable module document exists, create one.
 
 ## Style Guide
 
