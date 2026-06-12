@@ -33,7 +33,7 @@ type Section = {
   label: string
   data: unknown
 }
-type Filter = "all" | "protocol"
+type Filter = "all" | "protocol" | "status"
 type Stats = {
   requests: number
   tools: number
@@ -41,6 +41,7 @@ type Stats = {
     runs: number
     internalTools: number
   }
+  status: number
   tokens: {
     input: number
     output: number
@@ -146,6 +147,12 @@ export function describeLog(record: Log): Summary {
         title: "Restore completed",
         detail: text(data.hash),
         meta: [],
+      }
+    case "session.status.changed":
+      return {
+        title: "Session status changed",
+        detail: text(data.reason),
+        meta: [`${text(data.from) ?? "unknown"} -> ${text(data.to) ?? "unknown"}`],
       }
     case "workflow.started":
       return {
@@ -358,6 +365,7 @@ export function mergeLogs(current: Log[], incoming: Log[]) {
 }
 
 const protocol = (log: Log) => log.type.startsWith("protocol.") || log.type.startsWith("agent.metadata.") || log.data.protocol === true
+const status = (log: Log) => log.type === "session.status.changed"
 const noisy = (log: Log) => {
   if (log.type === "protocol.action.tool_call") return false
   if (log.type === "agent.metadata.output_validation_failed") return true
@@ -378,6 +386,7 @@ export function groupLogs(logs: Log[], filter: Filter = "all"): Row[] {
 
   for (const log of sorted) {
     if (filter === "protocol" && !protocol(log)) continue
+    if (filter === "status" && !status(log)) continue
     if (filter === "all" && noisy(log)) continue
     const key = log.messageID
     if (filter === "all" && finals.has(log.type)) {
@@ -688,6 +697,7 @@ export function summarizeLogs(logs: Log[]): Stats {
         }
       }
       if (log.type === "protocol.action.tool_call") acc.protocol.internalTools += 1
+      if (log.type === "session.status.changed") acc.status += 1
       if (log.type === "step.finish") {
         const tokens = object(log.data.tokens)
         const cache = object(tokens?.cache)
@@ -713,6 +723,7 @@ export function summarizeLogs(logs: Log[]): Stats {
         runs: 0,
         internalTools: 0,
       },
+      status: 0,
       tokens: {
         input: 0,
         output: 0,
@@ -904,8 +915,20 @@ export function SessionLogTimeline(props: { sessionID: string }) {
           >
             Protocol
           </button>
+          <button
+            type="button"
+            class="rounded px-2 py-1 text-11-regular transition-colors"
+            classList={{
+              "bg-surface-base text-text-strong": store.filter === "status",
+              "text-text-weak hover:bg-surface-base": store.filter !== "status",
+            }}
+            onClick={() => setStore("filter", "status")}
+          >
+            Status
+          </button>
           <Stat label={language.t("session.logs.stats.requests")} value={num().format(stats().requests)} />
           <Stat label={language.t("session.logs.stats.tools")} value={num().format(stats().tools)} />
+          <Stat label={language.t("session.logs.stats.status")} value={num().format(stats().status)} />
           <Stat label={language.t("session.logs.stats.tokens")} value={num().format(stats().tokens.total)} />
           <Stat label={language.t("session.logs.stats.input")} value={num().format(stats().tokens.input)} />
           <Stat label={language.t("session.logs.stats.output")} value={num().format(stats().tokens.output)} />

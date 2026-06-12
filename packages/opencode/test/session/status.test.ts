@@ -1,8 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { WorkspaceID } from "../../src/control-plane/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
+import { Session } from "../../src/session"
+import { SessionLog } from "../../src/session/log"
 import { SessionID } from "../../src/session/schema"
 
 const projectRoot = path.join(__dirname, "../..")
@@ -66,6 +70,44 @@ describe("session state machine", () => {
         expect(eventCount).toBe(1)
         expect(receivedStatus?.type).toBe("running")
       },
+    })
+  })
+
+  test("records session status transition logs with reason", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-log"),
+          fn: async () => {
+            const session = await Session.create({})
+            const sessionID = session.id
+            const log = Promise.race([
+              new Promise<SessionLog.Info>((resolve) => {
+                const unsub = Bus.subscribe(SessionLog.Event.Created, (event) => {
+                  const info = event.properties.info
+                  if (info.sessionID !== sessionID) return
+                  if (info.type !== "session.status.changed") return
+                  if (info.data.to !== "waiting_permission") return
+                  unsub()
+                  resolve(info)
+                })
+              }),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error("Timed out waiting for status log")), 1000),
+              ),
+            ])
+
+            SessionStatus.set(sessionID, { type: "running" })
+            SessionStatus.set(sessionID, { type: "waiting_permission" })
+
+            const info = await log
+            expect(info.data.from).toBe("running")
+            expect(info.data.to).toBe("waiting_permission")
+            expect(info.data.reason).toBe("Session status changed to waiting_permission.")
+            await Session.remove(sessionID)
+          },
+        }),
     })
   })
 

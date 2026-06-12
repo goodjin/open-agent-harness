@@ -542,6 +542,7 @@ export const dict = {
   "session.logs.details": "Details",
   "session.logs.stats.requests": "Requests",
   "session.logs.stats.tools": "Tools",
+  "session.logs.stats.status": "Status",
   "session.logs.stats.tokens": "Tokens",
   "session.logs.stats.input": "In",
   "session.logs.stats.output": "Out",

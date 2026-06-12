@@ -250,6 +250,27 @@ describe("session log timeline", () => {
     })
   })
 
+  test("describes and filters session status transitions", () => {
+    const logs = [
+      record("a", 1, "session.status.changed", {
+        from: "idle",
+        to: "running",
+        reason: "User submitted a prompt.",
+      }),
+      record("b", 2, "llm.start", {}),
+      record("c", 3, "protocol.started", { runID: "apr_1" }),
+    ]
+
+    expect(describeLog(logs[0]!)).toEqual({
+      title: "Session status changed",
+      detail: "User submitted a prompt.",
+      meta: ["idle -> running"],
+    })
+    expect(groupLogs(logs).map((row) => row.id)).toEqual(["b", "a"])
+    expect(groupLogs(logs, "status").map((row) => row.id)).toEqual(["a"])
+    expect(summarizeLogs(logs).status).toBe(1)
+  })
+
   test("merges records by id and orders the timeline newest first", () => {
     const logs = mergeLogs(
       [
@@ -373,6 +394,7 @@ describe("session log timeline", () => {
         runs: 0,
         internalTools: 0,
       },
+      status: 0,
       tokens: {
         input: 150,
         output: 50,

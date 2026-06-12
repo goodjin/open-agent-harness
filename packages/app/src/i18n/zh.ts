@@ -522,6 +522,7 @@ export const dict = {
   "session.logs.details": "详情",
   "session.logs.stats.requests": "请求",
   "session.logs.stats.tools": "工具",
+  "session.logs.stats.status": "状态",
   "session.logs.stats.tokens": "Tokens",
   "session.logs.stats.input": "输入",
   "session.logs.stats.output": "输出",

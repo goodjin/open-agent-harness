@@ -5,6 +5,7 @@ import { Metrics } from "@/observability/metrics"
 import { SessionID } from "./schema"
 import { Storage } from "@/storage/storage"
 import z from "zod"
+import { SessionLog } from "./log"
 
 export namespace SessionStatus {
   export const Info = z
@@ -331,11 +332,41 @@ export namespace SessionStatus {
     return out
   }
 
-  export function set(sessionID: SessionID, status: Info) {
+  function reason(status: Info) {
+    if ("message" in status && status.message) return status.message
+    if (status.type === "rate_limited") {
+      return `Waiting for ${status.scope} concurrency slot ${status.providerID}/${status.modelID}.`
+    }
+    if (status.type === "retry") return status.message
+    if (status.type === "interrupted" && status.prior) return `Process stopped while ${status.prior}.`
+    return `Session status changed to ${status.type}.`
+  }
+
+  function changed(a: Info, b: Info) {
+    return JSON.stringify(a) !== JSON.stringify(b)
+  }
+
+  function record(sessionID: SessionID, from: Info, to: Info, why?: string) {
+    void SessionLog.emit({
+      sessionID,
+      level: to.type === "error" || to.type === "timeout" || to.type === "failed" ? "warn" : "info",
+      type: "session.status.changed",
+      data: {
+        from: from.type,
+        to: to.type,
+        reason: why ?? reason(to),
+        fromStatus: from,
+        toStatus: to,
+      },
+    }).catch(() => {})
+  }
+
+  export function set(sessionID: SessionID, status: Info, opts?: { reason?: string }) {
     const current = get(sessionID)
     if (!transitions[current.type].includes(status.type)) {
       throw new InvalidTransitionError(current.type, status.type)
     }
+    const diff = changed(current, status)
     Metrics.emit("opencode_session_lifecycle_total", {
       event: "status",
       status: status.type,
@@ -351,10 +382,12 @@ export namespace SessionStatus {
       })
       delete state()[sessionID]
       save(sessionID, status)
+      if (diff) record(sessionID, current, status, opts?.reason)
       return
     }
     state()[sessionID] = status
     save(sessionID, status)
+    if (diff) record(sessionID, current, status, opts?.reason)
   }
 
   export function dismiss(sessionID: SessionID) {

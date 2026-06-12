@@ -46,6 +46,7 @@ import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { focusTerminalById, isSessionBusy } from "@/pages/session/helpers"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
+import { lastAssistant, lastUser, modelName, statusName, totals } from "@/pages/session/session-insight-banner-helpers"
 import {
   confirmationKey,
   protocolConfirmationRequest,
@@ -368,6 +369,21 @@ export function MessageTimeline(props: {
     const id = sessionID()
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
+  })
+  const usage = createMemo(() => totals(sessionMessages()))
+  const num = createMemo(() => new Intl.NumberFormat(language.intl(), { notation: "compact", maximumFractionDigits: 1 }))
+  const usd = createMemo(() => new Intl.NumberFormat(language.intl(), { style: "currency", currency: "USD" }))
+  const model = createMemo(() =>
+    modelName({
+      user: lastUser(sessionMessages()),
+      assistant: lastAssistant(sessionMessages()),
+      providers: sync.data.provider.all,
+    }),
+  )
+  const state = createMemo(() => statusName(sessionStatus()))
+  const token = createMemo(() => {
+    const total = usage().input + usage().output + usage().reasoning + usage().cache
+    return `${num().format(total)} tokens`
   })
   const working = createMemo(() => !!pending() || isSessionBusy(sessionStatus()))
   const tint = createMemo(() => messageAgentColor(sessionMessages(), sync.data.agent))
@@ -928,9 +944,9 @@ export function MessageTimeline(props: {
             <div
               data-session-title
               classList={{
-                "sticky top-0 z-30 bg-[linear-gradient(to_bottom,var(--background-stronger)_48px,transparent)]": true,
+                "sticky top-0 z-30 border-b border-border-weaker-base bg-background-stronger": true,
                 "w-full": true,
-                "pb-4": true,
+                "pb-2": true,
                 "pl-2 pr-3 md:pl-4 md:pr-3": true,
                 "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": props.centered,
               }}
@@ -1263,7 +1279,23 @@ export function MessageTimeline(props: {
                   )}
                 </Show>
               </div>
-              <div class="flex w-full items-center gap-1 overflow-x-auto no-scrollbar pb-1">
+              <div class="flex w-full min-w-0 items-center gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                <div class="shrink-0 rounded-md border border-border-weak-base bg-surface-base px-2 py-1 text-11-medium text-text-base">
+                  <span class="text-text-weaker">Model</span>
+                  <span class="ml-1">{model()}</span>
+                </div>
+                <div class="shrink-0 rounded-md border border-border-weak-base bg-surface-base px-2 py-1 text-11-medium text-text-base">
+                  <span class="text-text-weaker">Status</span>
+                  <span class="ml-1">{state()}</span>
+                </div>
+                <div class="shrink-0 rounded-md border border-border-weak-base bg-surface-base px-2 py-1 text-11-medium text-text-base tabular-nums">
+                  {token()}
+                </div>
+                <div class="shrink-0 rounded-md border border-border-weak-base bg-surface-base px-2 py-1 text-11-medium text-text-base tabular-nums">
+                  {usd().format(usage().cost)}
+                </div>
+              </div>
+              <div class="flex w-full items-center gap-1 overflow-x-auto no-scrollbar pt-1">
                 <For each={filterOptions}>
                   {(item) => (
                     <button
