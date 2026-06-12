@@ -63,6 +63,47 @@ test("custom provider form shows validation errors", async ({ page, gotoSession 
   await closeDialog(page, settings)
 })
 
+test("custom provider can be edited after saving", async ({ page, gotoSession }) => {
+  await gotoSession()
+
+  const settings = await openSettings(page)
+  await settings.getByRole("tab", { name: "Providers" }).click()
+
+  const customProviderSection = settings.locator('[data-component="custom-provider-section"]')
+  await customProviderSection.getByRole("button", { name: "Connect" }).click()
+
+  const providerDialog = page.getByRole("dialog").filter({ has: page.getByText("Custom provider") })
+  await expect(providerDialog).toBeVisible()
+
+  await providerDialog.getByLabel("Provider ID").fill("editable-provider")
+  await providerDialog.getByLabel("Display name").fill("Editable Provider")
+  await providerDialog.getByLabel("Base URL").fill("http://localhost:9999/edit")
+  await providerDialog.getByPlaceholder("model-id").first().fill("edit-model")
+  await providerDialog.getByPlaceholder("Display Name").first().fill("Edit Model")
+  await providerDialog.getByRole("button", { name: /submit|save/i }).click()
+
+  await expect(providerDialog).toHaveCount(0)
+
+  const row = settings.locator('[data-provider-id="editable-provider"]')
+  await expect(row).toBeVisible()
+  await row.getByRole("button", { name: "Edit" }).click()
+
+  const editDialog = page.getByRole("dialog").filter({ has: page.getByText("Custom provider") })
+  await expect(editDialog).toBeVisible()
+  await expect(editDialog.getByRole("textbox", { name: "Provider ID" })).toHaveValue("editable-provider")
+  await expect(editDialog.getByRole("textbox", { name: "Provider ID" })).toHaveAttribute("readonly", "")
+  await expect(editDialog.getByRole("textbox", { name: "Base URL" })).toHaveValue("http://localhost:9999/edit")
+
+  await editDialog.getByLabel("Display name").fill("Updated Provider")
+  await editDialog.getByLabel("Base URL").fill("http://localhost:9999/updated")
+  await editDialog.getByRole("button", { name: /save/i }).click()
+
+  await expect(editDialog).toHaveCount(0)
+  await expect(row).toContainText("Updated Provider")
+
+  await closeDialog(page, settings)
+})
+
 test("custom provider form can add and remove models", async ({ page, gotoSession }) => {
   await gotoSession()
 

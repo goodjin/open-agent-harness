@@ -51,6 +51,7 @@ type ValidateArgs = {
   t: Translator
   disabledProviders: string[]
   existingProviderIDs: Set<string>
+  editProviderID?: string
 }
 
 export function validateCustomProvider(input: ValidateArgs) {
@@ -84,7 +85,7 @@ export function validateCustomProvider(input: ValidateArgs) {
   const disabled = input.disabledProviders.includes(providerID)
   const existsError = idError
     ? undefined
-    : input.existingProviderIDs.has(providerID) && !disabled
+    : input.existingProviderIDs.has(providerID) && !disabled && providerID !== input.editProviderID
       ? input.t("provider.custom.error.providerID.exists")
       : undefined
 

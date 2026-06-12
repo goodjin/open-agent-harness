@@ -174,6 +174,12 @@ export async function openPalette(page: Page) {
 }
 
 export async function closeDialog(page: Page, dialog: Locator) {
+  if ((await dialog.getAttribute("data-component").catch(() => undefined)) === "settings-panel") {
+    await dialog.getByRole("button", { name: "Back" }).click()
+    await expect(dialog).toHaveCount(0)
+    return
+  }
+
   await page.keyboard.press("Escape")
   const closed = await dialog
     .waitFor({ state: "detached", timeout: 1500 })
@@ -243,18 +249,26 @@ export async function openSettings(page: Page) {
   await defocus(page)
 
   const dialog = page.getByRole("dialog")
+  const panel = page.locator('[data-component="settings-panel"]')
   await page.keyboard.press(`${modKey}+Comma`).catch(() => undefined)
 
-  const opened = await dialog
+  const opened = await panel
     .waitFor({ state: "visible", timeout: 3000 })
     .then(() => true)
     .catch(() => false)
 
-  if (opened) return dialog
+  if (opened) return panel
+
+  const legacy = await dialog
+    .waitFor({ state: "visible", timeout: 3000 })
+    .then(() => true)
+    .catch(() => false)
+
+  if (legacy) return dialog
 
   await page.getByRole("button", { name: "Settings" }).first().click()
-  await expect(dialog).toBeVisible()
-  return dialog
+  await expect(panel).toBeVisible()
+  return panel
 }
 
 export async function seedProjects(page: Page, input: { directory: string; extra?: string[] }) {

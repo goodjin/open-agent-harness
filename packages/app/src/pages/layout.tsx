@@ -2121,27 +2121,17 @@ export default function Layout(props: ParentProps) {
                 }}
               >
                 <Show when={!autoselecting()} fallback={<div class="size-full" />}>
-                  <div class="flex size-full min-w-0">
-                    <div
-                      class="min-w-0 flex-1"
-                      classList={{
-                        "hidden lg:block": !!state.settings,
-                      }}
-                    >
-                      {props.children}
-                    </div>
-                    <Show when={state.settings}>
-                      {(settings) => (
-                        <aside class="h-full min-w-0 flex-1 border-l border-border-weak-base bg-background-base lg:max-w-[780px]">
-                          <SettingsPanel
-                            defaultTab={settings().defaultTab}
-                            agent={settings().agent}
-                            onClose={() => setState("settings", undefined)}
-                          />
-                        </aside>
-                      )}
-                    </Show>
-                  </div>
+                  <Show when={state.settings} fallback={<div class="size-full min-w-0">{props.children}</div>}>
+                    {(settings) => (
+                      <div class="size-full min-w-0 bg-background-base">
+                        <SettingsPanel
+                          defaultTab={settings().defaultTab}
+                          agent={settings().agent}
+                          onClose={() => setState("settings", undefined)}
+                        />
+                      </div>
+                    )}
+                  </Show>
                 </Show>
               </main>
             </div>

@@ -16,6 +16,7 @@ import { DialogSelectProvider } from "./dialog-select-provider"
 
 type Props = {
   back?: "providers" | "close"
+  providerID?: string
 }
 
 export function DialogCustomProvider(props: Props) {
@@ -23,15 +24,27 @@ export function DialogCustomProvider(props: Props) {
   const globalSync = useGlobalSync()
   const globalSDK = useGlobalSDK()
   const language = useLanguage()
+  const cfg = props.providerID ? globalSync.data.config.provider?.[props.providerID] : undefined
+  const opts = cfg?.options ?? {}
+  const heads =
+    opts.headers && typeof opts.headers === "object" && !Array.isArray(opts.headers)
+      ? Object.entries(opts.headers).filter((item): item is [string, string] => typeof item[1] === "string")
+      : []
+  const rows = Object.entries(cfg?.models ?? {}).map(([id, model]) => ({
+    ...modelRow(),
+    id,
+    name: typeof model.name === "string" ? model.name : id,
+    concurrency: Number.isInteger(model.concurrency) ? String(model.concurrency) : "",
+  }))
 
   const [form, setForm] = createStore<FormState>({
-    providerID: "",
-    name: "",
-    baseURL: "",
-    apiKey: "",
-    concurrency: "",
-    models: [modelRow()],
-    headers: [headerRow()],
+    providerID: props.providerID ?? "",
+    name: cfg?.name ?? "",
+    baseURL: typeof opts.baseURL === "string" ? opts.baseURL : "",
+    apiKey: cfg?.env?.[0] ? `{env: ${cfg.env[0]}}` : "",
+    concurrency: Number.isInteger(cfg?.concurrency) ? String(cfg?.concurrency) : "",
+    models: rows.length ? rows : [modelRow()],
+    headers: heads.length ? heads.map(([key, value]) => ({ ...headerRow(), key, value })) : [headerRow()],
     saving: false,
     err: {},
   })
@@ -108,6 +121,7 @@ export function DialogCustomProvider(props: Props) {
       t: language.t,
       disabledProviders: globalSync.data.config.disabled_providers ?? [],
       existingProviderIDs: new Set(globalSync.data.provider.all.map((p) => p.id)),
+      editProviderID: props.providerID,
     })
     batch(() => {
       setForm("err", output.err)
@@ -140,9 +154,15 @@ export function DialogCustomProvider(props: Props) {
       : Promise.resolve()
 
     auth
-      .then(() =>
-        globalSync.updateConfig({ provider: { [result.providerID]: result.config }, disabled_providers: nextDisabled }),
-      )
+      .then(() => {
+        const config = (() => {
+          if (!props.providerID || !cfg) return result.config
+          const options = { ...(cfg.options ?? {}), ...result.config.options }
+          if (!("headers" in result.config.options)) delete options.headers
+          return { ...cfg, ...result.config, options }
+        })()
+        return globalSync.updateConfig({ provider: { [result.providerID]: config }, disabled_providers: nextDisabled })
+      })
       .then(() => {
         dialog.close()
         showToast({
@@ -199,6 +219,7 @@ export function DialogCustomProvider(props: Props) {
               onChange={(v) => setField("providerID", v)}
               validationState={form.err.providerID ? "invalid" : undefined}
               error={form.err.providerID}
+              readOnly={!!props.providerID}
             />
             <TextField
               label={language.t("provider.custom.field.name.label")}
@@ -334,7 +355,7 @@ export function DialogCustomProvider(props: Props) {
           </div>
 
           <Button class="w-auto self-start" type="submit" size="large" variant="primary" disabled={form.saving}>
-            {form.saving ? language.t("common.saving") : language.t("common.submit")}
+            {form.saving ? language.t("common.saving") : language.t(props.providerID ? "common.save" : "common.submit")}
           </Button>
         </form>
       </div>

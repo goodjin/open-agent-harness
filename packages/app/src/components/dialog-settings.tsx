@@ -28,7 +28,7 @@ export const SettingsPanel: Component<SettingsPanelDetail & { onClose: () => voi
   const platform = usePlatform()
 
   return (
-    <div class="flex h-full min-w-0 flex-col bg-background-base">
+    <div data-component="settings-panel" class="flex h-full min-w-0 flex-col bg-background-base">
       <div class="flex h-12 shrink-0 items-center gap-2 border-b border-border-weak-base px-3">
         <Button size="large" variant="ghost" icon="arrow-left" onClick={props.onClose}>
           Back

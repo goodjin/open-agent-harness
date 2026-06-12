@@ -83,4 +83,27 @@ describe("validateCustomProvider", () => {
       value: undefined,
     })
   })
+
+  test("allows the current provider id while editing", () => {
+    const result = validateCustomProvider({
+      form: {
+        providerID: "custom-provider",
+        name: "Provider",
+        baseURL: "https://api.example.com",
+        apiKey: "",
+        concurrency: "",
+        models: [{ row: "m0", id: "model-a", name: "Model A", concurrency: "", err: {} }],
+        headers: [{ row: "h0", key: "", value: "", err: {} }],
+        saving: false,
+        err: {},
+      },
+      t,
+      disabledProviders: [],
+      existingProviderIDs: new Set(["custom-provider"]),
+      editProviderID: "custom-provider",
+    })
+
+    expect(result.err.providerID).toBeUndefined()
+    expect(result.result?.providerID).toBe("custom-provider")
+  })
 })
