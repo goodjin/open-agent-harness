@@ -1,4 +1,4 @@
-import { type ComponentProps, createMemo, Show, splitProps } from "solid-js"
+import { For, type ComponentProps, createMemo, Show, splitProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Card, CardDescription } from "./card"
 import { Collapsible } from "./collapsible"
@@ -13,6 +13,8 @@ export interface ToolErrorCardProps extends Omit<ComponentProps<typeof Card>, "c
   defaultOpen?: boolean
   subtitle?: string
   href?: string
+  metadata?: Record<string, unknown>
+  onExportPayload?: (payloadID: string) => Promise<unknown>
 }
 
 export function ToolErrorCard(props: ToolErrorCardProps) {
@@ -20,10 +22,20 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
   const [state, setState] = createStore({
     open: props.defaultOpen ?? false,
     copied: false,
+    exporting: false,
+    exportError: "",
   })
   const open = () => state.open
   const copied = () => state.copied
-  const [split, rest] = splitProps(props, ["tool", "error", "defaultOpen", "subtitle", "href"])
+  const [split, rest] = splitProps(props, [
+    "tool",
+    "error",
+    "defaultOpen",
+    "subtitle",
+    "href",
+    "metadata",
+    "onExportPayload",
+  ])
   const name = createMemo(() => {
     const map: Record<string, string> = {
       read: "ui.tool.read",
@@ -66,12 +78,33 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
     return parts.slice(1).join(": ").trim() || cleaned()
   })
 
+  const evidence = createMemo(() =>
+    [
+      detail("Raw tool input", split.metadata?.rawInput),
+      detail("Raw response", split.metadata?.rawResponse, stats(split.metadata)),
+      detail("Response payload", split.metadata?.responsePayload),
+    ].filter((item): item is { label: string; value: string } => item !== undefined),
+  )
+
   const copy = async () => {
-    const text = cleaned()
+    const text = [cleaned(), ...evidence().map((item) => `${item.label}:\n${item.value}`)].filter(Boolean).join("\n\n")
     if (!text) return
     await navigator.clipboard.writeText(text)
     setState("copied", true)
     setTimeout(() => setState("copied", false), 2000)
+  }
+
+  const exportFull = async (payloadID: string) => {
+    if (!split.onExportPayload) return
+    setState({ exporting: true, exportError: "" })
+    try {
+      const data = await split.onExportPayload(payloadID)
+      download(`llm-response-${payloadID}.json`, JSON.stringify(data, null, 2))
+    } catch (err) {
+      setState("exportError", err instanceof Error ? err.message : String(err))
+    } finally {
+      setState("exporting", false)
+    }
   }
 
   return (
@@ -136,9 +169,79 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
               </div>
             </Show>
             <Show when={body()}>{(value) => <CardDescription>{value()}</CardDescription>}</Show>
+            <For each={evidence()}>
+              {(item) => (
+                <div data-slot="tool-error-card-evidence">
+                  <div data-slot="tool-error-card-evidence-heading">
+                    <div data-slot="tool-error-card-evidence-label">{item.label}</div>
+                    <Show
+                      when={
+                        item.label.startsWith("Raw response") && split.onExportPayload
+                          ? split.metadata?.responsePayload
+                          : undefined
+                      }
+                    >
+                      {(payload) => (
+                        <Tooltip value="Export full response" placement="top" gutter={4}>
+                          <IconButton
+                            icon="download"
+                            size="small"
+                            variant="ghost"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              void exportFull(String(payload()))
+                            }}
+                            aria-label="Export full response"
+                          />
+                        </Tooltip>
+                      )}
+                    </Show>
+                  </div>
+                  <pre>{item.value}</pre>
+                  <Show when={item.label.startsWith("Raw response") && state.exportError}>
+                    <div data-slot="tool-error-card-export-error">{state.exportError}</div>
+                  </Show>
+                </div>
+              )}
+            </For>
           </div>
         </Collapsible.Content>
       </Collapsible>
     </Card>
   )
+}
+
+function detail(label: string, value: unknown, suffix?: string) {
+  const name = suffix ? `${label} ${suffix}` : label
+  if (typeof value === "string" && value.trim()) return { label: name, value }
+  if (typeof value === "number" || typeof value === "boolean") return { label: name, value: String(value) }
+  return undefined
+}
+
+function stats(input: Record<string, unknown> | undefined) {
+  const total = number(input?.rawResponseChars)
+  const preview = number(input?.rawResponsePreviewChars)
+  const truncated = input?.rawResponseTruncated === true
+  if (total === undefined) return truncated ? "(truncated)" : undefined
+  const shown = preview ?? Math.min(total, String(input?.rawResponse ?? "").length)
+  if (!truncated && shown >= total) return `(${format(total)} chars)`
+  return `(${format(shown)} / ${format(total)} chars, ${format(Math.max(0, total - shown))} more)`
+}
+
+function number(input: unknown) {
+  return typeof input === "number" && Number.isFinite(input) ? input : undefined
+}
+
+function format(input: number) {
+  return new Intl.NumberFormat().format(input)
+}
+
+function download(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "application/json;charset=utf-8" }))
+  const a = document.createElement("a")
+  a.href = url
+  a.download = name
+  a.click()
+  URL.revokeObjectURL(url)
 }

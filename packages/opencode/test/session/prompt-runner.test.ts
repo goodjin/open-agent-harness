@@ -10,12 +10,15 @@ import { MessageID, PartID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRunner } from "../../src/session/runner"
+import { SessionTurn } from "../../src/session/turn"
+import { SessionStatus } from "../../src/session/status"
 import { LLM } from "../../src/session/llm"
 import { resetRegistry } from "../../src/agent/registry"
 import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { SessionLog } from "../../src/session/log"
 import { Storage } from "../../src/storage/storage"
+import { ActionResult } from "../../src/session/action-result"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -200,6 +203,89 @@ describe("SessionPrompt runner wiring", () => {
                 await SessionPrompt.loop({ sessionID: session.id })
 
                 expect(seen).toEqual(["bound-worker"])
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop closes terminal text response when processor returns continue", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "bound-worker", {
+            kind: "worker",
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-terminal-turn"),
+            fn: async () => {
+              resetRegistry()
+              let calls = 0
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    calls++
+                    input.assistantMessage.finish = "stop"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    return calls === 1 ? "continue" : "stop"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Terminal turn loop test" })
+                await Session.setAgent({ sessionID: session.id, agent: "bound-worker" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "default",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "complete with a normal text response",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+                const current = await MessageV2.get({ sessionID: session.id, messageID: user })
+
+                expect(calls).toBe(1)
+                expect(msg.info.role).toBe("assistant")
+                if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+                expect(msg.info.parentID).toBe(user)
+                expect(SessionTurn.done(current.info)).toBe(true)
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()
@@ -954,6 +1040,228 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).toContain("## read")
                 expect(seen[0]?.prompt).toContain("## grep")
                 expect(seen[0]?.prompt).not.toContain("## edit")
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop blocks after repeated failed ActionResult calls", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "worker", {
+            runner: "chat",
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-action-result-limit"),
+            fn: async () => {
+              resetRegistry()
+              let count = 0
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    count++
+                    input.assistantMessage.finish = "tool-calls"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    await Session.updatePart({
+                      id: PartID.ascending(),
+                      messageID: input.assistantMessage.id,
+                      sessionID: input.sessionID,
+                      type: "tool",
+                      callID: `call-${count}`,
+                      tool: ActionResult.TOOL,
+                      state: {
+                        status: "error",
+                        input: {},
+                        error: "Missing discriminator property 'role'",
+                        time: {
+                          start: Date.now(),
+                          end: Date.now(),
+                        },
+                      },
+                    } satisfies MessageV2.ToolPart)
+                    return "continue"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "ActionResult failure limit test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "worker",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "finish through ActionResult",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+                const logs = await SessionLog.list({ sessionID: session.id })
+                const current = await MessageV2.get({ sessionID: session.id, messageID: user })
+
+                expect(count).toBe(4)
+                expect(msg.info.role).toBe("assistant")
+                if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+                expect(msg.info.error?.data.message).toContain("failed ActionResult")
+                expect(SessionTurn.get(current.info)?.outcome).toBe("blocked")
+                expect(SessionStatus.get(session.id).type).toBe("blocked")
+                expect(logs).toContainEqual(
+                  expect.objectContaining({
+                    type: "tool.action_result_limit",
+                    data: expect.objectContaining({
+                      limit: 3,
+                      count: 4,
+                    }),
+                  }),
+                )
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
+  test("session loop blocks after agent max tool calls", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "worker", {
+            runner: "chat",
+            maxToolCalls: 1,
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-tool-call-limit"),
+            fn: async () => {
+              resetRegistry()
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    input.assistantMessage.finish = "tool-calls"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    await Promise.all(
+                      ["Read", "Grep"].map((tool) =>
+                        Session.updatePart({
+                          id: PartID.ascending(),
+                          messageID: input.assistantMessage.id,
+                          sessionID: input.sessionID,
+                          type: "tool",
+                          callID: `${tool}-call`,
+                          tool,
+                          state: {
+                            status: "completed",
+                            input: {},
+                            output: "",
+                            title: tool,
+                            metadata: {},
+                            time: {
+                              start: Date.now(),
+                              end: Date.now(),
+                            },
+                          },
+                        } satisfies MessageV2.ToolPart),
+                      ),
+                    )
+                    return "continue"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const session = await Session.create({ title: "Tool call limit test" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "worker",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "use tools",
+                })
+
+                const msg = await SessionPrompt.loop({ sessionID: session.id })
+                const logs = await SessionLog.list({ sessionID: session.id })
+
+                expect(msg.info.role).toBe("assistant")
+                if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+                expect(msg.info.error?.data.message).toContain("configured limit is 1")
+                expect(SessionStatus.get(session.id).type).toBe("blocked")
+                expect(logs).toContainEqual(
+                  expect.objectContaining({
+                    type: "tool.loop_limit",
+                    data: expect.objectContaining({
+                      limit: 1,
+                      count: 2,
+                    }),
+                  }),
+                )
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()

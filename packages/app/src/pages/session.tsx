@@ -1854,16 +1854,42 @@ export default function Page() {
     }
   }
 
+  const code = (err: unknown) => {
+    const item = err as { status?: number; response?: { status?: number } }
+    return item.status ?? item.response?.status
+  }
+
+  const modelChange = (model: { providerID: string; modelID: string }) => {
+    const bound = info()?.model
+    if (!bound) return
+    if (bound.providerID === model.providerID && bound.modelID === model.modelID) return
+    const label = (item: { providerID: string; modelID: string }) => `${item.providerID}/${item.modelID}`
+    const ok =
+      globalThis.confirm?.(`This session is bound to ${label(bound)}. Switch it to ${label(model)} before sending?`) ??
+      false
+    if (ok) return { model, confirm: true }
+    local.model.set(bound)
+    return { model: bound, confirm: false }
+  }
+
   const addShellContext = async (input: { sessionID: string; text: string }) => {
     const model = shellModel()
     const agent = local.agent.current()?.name
     if (!model || !agent) return
-    await sdk.client.session.prompt({
-      sessionID: input.sessionID,
-      agent,
-      model,
-      noReply: true,
-      parts: [shellText(input)],
+    const send = (item: { model: typeof model; confirm?: boolean }) => {
+      return sdk.client.session.prompt({
+        sessionID: input.sessionID,
+        agent,
+        model: item.model,
+        confirm: item.confirm,
+        noReply: true,
+        parts: [shellText(input)],
+      })
+    }
+    await send({ model }).catch((err) => {
+      const next = code(err) === 409 ? modelChange(model) : undefined
+      if (next) return send(next)
+      throw err
     })
     showToast({
       variant: "success",
@@ -1877,11 +1903,19 @@ export default function Page() {
     const model = shellModel()
     const agent = local.agent.current()?.name
     if (!model || !agent) return
-    await sdk.client.session.promptAsync({
-      sessionID: input.sessionID,
-      agent,
-      model,
-      parts: [shellText(input)],
+    const send = (item: { model: typeof model; confirm?: boolean }) => {
+      return sdk.client.session.promptAsync({
+        sessionID: input.sessionID,
+        agent,
+        model: item.model,
+        confirm: item.confirm,
+        parts: [shellText(input)],
+      })
+    }
+    await send({ model }).catch((err) => {
+      const next = code(err) === 409 ? modelChange(model) : undefined
+      if (next) return send(next)
+      throw err
     })
   }
 

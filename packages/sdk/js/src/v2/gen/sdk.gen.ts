@@ -205,6 +205,8 @@ import type {
   SessionCommandResponses,
   SessionCreateErrors,
   SessionCreateResponses,
+  SessionDelegationsSubmitErrors,
+  SessionDelegationsSubmitResponses,
   SessionDeleteErrors,
   SessionDeleteMessageErrors,
   SessionDeleteMessageResponses,
@@ -225,6 +227,8 @@ import type {
   SessionInitResponses,
   SessionListResponses,
   SessionLogErrors,
+  SessionLogPayloadErrors,
+  SessionLogPayloadResponses,
   SessionLogResponses,
   SessionMessageErrors,
   SessionMessageResponses,
@@ -1726,6 +1730,40 @@ export class Tree extends HeyApiClient {
   }
 }
 
+export class Log extends HeyApiClient {
+  /**
+   * Get session log payload
+   *
+   * Retrieve a large payload referenced by a session log record.
+   */
+  public payload<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      payloadID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "payloadID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionLogPayloadResponses, SessionLogPayloadErrors, ThrowOnError>({
+      url: "/session/{sessionID}/log/payload/{payloadID}",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Protocol extends HeyApiClient {
   /**
    * Get protocol trace
@@ -1760,6 +1798,61 @@ export class Protocol extends HeyApiClient {
       url: "/session/{sessionID}/protocol/{runID}/trace",
       ...options,
       ...params,
+    })
+  }
+}
+
+export class Delegations extends HeyApiClient {
+  /**
+   * Submit delegated child results
+   *
+   * Submit the current delegated child results and statuses for a parent session run.
+   */
+  public submit<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      query_directory?: string
+      body_directory?: string
+      force?: boolean
+      run_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "force" },
+            { in: "body", key: "run_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionDelegationsSubmitResponses,
+      SessionDelegationsSubmitErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/delegations/submit",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }
@@ -2523,6 +2616,7 @@ export class Session3 extends HeyApiClient {
         providerID: string
         modelID: string
       }
+      confirm?: boolean
       agent?: string
       noReply?: boolean
       tools?: {
@@ -2547,6 +2641,7 @@ export class Session3 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "messageID" },
             { in: "body", key: "model" },
+            { in: "body", key: "confirm" },
             { in: "body", key: "agent" },
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
@@ -2653,6 +2748,7 @@ export class Session3 extends HeyApiClient {
         providerID: string
         modelID: string
       }
+      confirm?: boolean
       agent?: string
       noReply?: boolean
       tools?: {
@@ -2677,6 +2773,7 @@ export class Session3 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "messageID" },
             { in: "body", key: "model" },
+            { in: "body", key: "confirm" },
             { in: "body", key: "agent" },
             { in: "body", key: "noReply" },
             { in: "body", key: "tools" },
@@ -2713,6 +2810,7 @@ export class Session3 extends HeyApiClient {
       messageID?: string
       agent?: string
       model?: string
+      confirm?: boolean
       arguments?: string
       command?: string
       variant?: string
@@ -2737,6 +2835,7 @@ export class Session3 extends HeyApiClient {
             { in: "body", key: "messageID" },
             { in: "body", key: "agent" },
             { in: "body", key: "model" },
+            { in: "body", key: "confirm" },
             { in: "body", key: "arguments" },
             { in: "body", key: "command" },
             { in: "body", key: "variant" },
@@ -2771,6 +2870,7 @@ export class Session3 extends HeyApiClient {
         providerID: string
         modelID: string
       }
+      confirm?: boolean
       command?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -2784,6 +2884,7 @@ export class Session3 extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "body", key: "agent" },
             { in: "body", key: "model" },
+            { in: "body", key: "confirm" },
             { in: "body", key: "command" },
           ],
         },
@@ -3026,9 +3127,19 @@ export class Session3 extends HeyApiClient {
     return (this._tree ??= new Tree({ client: this.client }))
   }
 
+  private _log?: Log
+  get log2(): Log {
+    return (this._log ??= new Log({ client: this.client }))
+  }
+
   private _protocol?: Protocol
   get protocol(): Protocol {
     return (this._protocol ??= new Protocol({ client: this.client }))
+  }
+
+  private _delegations?: Delegations
+  get delegations(): Delegations {
+    return (this._delegations ??= new Delegations({ client: this.client }))
   }
 }
 

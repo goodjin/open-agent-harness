@@ -27,10 +27,12 @@ export namespace SessionStatus {
         providerID: z.string(),
         modelID: z.string(),
         scope: z.enum(["provider", "model", "agent"]),
+        kind: z.enum(["concurrency", "rpm"]).optional(),
         agent: z.string().optional(),
         active: z.number().int().nonnegative(),
         limit: z.number().int().positive(),
         queued: z.number().int().positive(),
+        reset: z.number().int().positive().optional(),
       }),
       z.object({
         type: z.literal("waiting_permission"),

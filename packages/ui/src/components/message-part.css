@@ -280,7 +280,7 @@
 
   [data-slot="text-part-body"] {
     margin-top: 0;
-    max-height: min(72dvh, 760px);
+    max-height: min(200dvh, 1440px);
     overflow-y: auto;
     padding: 12px;
     scrollbar-width: none;
@@ -412,7 +412,7 @@
   }
 
   [data-slot="reasoning-part-body"] {
-    max-height: 180px;
+    max-height: min(200dvh, 1440px);
     overflow-y: auto;
     padding: 10px 12px 12px;
     scrollbar-width: none;

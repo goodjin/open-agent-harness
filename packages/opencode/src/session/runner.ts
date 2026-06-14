@@ -28,6 +28,8 @@ import { Storage } from "@/storage/storage"
 import { Truncate } from "@/tool/truncation"
 import { Question } from "@/question"
 import { SessionStatus } from "./status"
+import { SessionTurn } from "./turn"
+import { ActionResult } from "./action-result"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -524,6 +526,16 @@ export namespace SessionRunner {
         chat,
         sessionID,
         parsed: parsedValue,
+        user: stream.user,
+      })
+      await mark({
+        assistant: chat.message,
+        outcome:
+          parsedValue.declaration.outcome === "failure" || parsedValue.declaration.outcome === "error"
+            ? "failed"
+            : "completed",
+        reason: "protocol",
+        user: stream.user,
       })
       await completeAssigned({
         messageID: chat.message.id,
@@ -535,6 +547,14 @@ export namespace SessionRunner {
     }
     const run = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: !!fixed })
     await settle({ chat, stream, sessionID, run })
+    await mark({
+      assistant: chat.message,
+      outcome: outcome(run),
+      reason: reason(run),
+      runID: run.run_id,
+      stats: stats(run),
+      user: stream.user,
+    })
     return "stop"
   }
 
@@ -557,9 +577,11 @@ export namespace SessionRunner {
         item.info.role === "user" && item.info.id < message.info.id,
     )
     if (!user) return
+    const session = await Session.get(sessionID)
     const agent = await Agent.get(message.info.agent || user.info.agent)
     if (!agent || agent.runner !== "protocol") return
-    const model = await Provider.getModel(user.info.model.providerID, user.info.model.modelID).catch(() => undefined)
+    const pref = session.model ?? user.info.model
+    const model = await Provider.getModel(pref.providerID, pref.modelID).catch(() => undefined)
     if (!model) return
     return { agent, message, messages, model, parsed: parsed.value, sessionID, user }
   }
@@ -611,7 +633,7 @@ export namespace SessionRunner {
       })
     }
     if (input.parsed.declaration.intent !== "execute") {
-      await response({ chat, sessionID: input.sessionID, parsed: input.parsed })
+      await response({ chat, sessionID: input.sessionID, parsed: input.parsed, user: input.user.info })
       await completeAssigned({
         messageID: input.message.info.id,
         output: await textOf(input.message.info.id),
@@ -1789,6 +1811,7 @@ export namespace SessionRunner {
           chat: processor,
           sessionID,
           parsed: parsed.value,
+          user: input.stream.user,
         })
       }
     } else {
@@ -1800,6 +1823,7 @@ export namespace SessionRunner {
           chat: processor,
           sessionID: SessionID.make(input.stream.sessionID),
           parsed: plain.value,
+          user: input.stream.user,
         })
         await SessionLog.emit({
           sessionID: SessionID.make(input.stream.sessionID),
@@ -2029,6 +2053,7 @@ export namespace SessionRunner {
     chat: SessionProcessor.Info
     sessionID: SessionID
     parsed: AgentProtocolParser.Parsed
+    user: MessageV2.User
   }) {
     const ref = input.parsed.declaration.response_ref
     const text = ref?.startsWith("md:") ? input.parsed.sections[ref.slice(3)] : input.parsed.declaration.message
@@ -2054,6 +2079,50 @@ export namespace SessionRunner {
       input.parsed.declaration.outcome === "failure" || input.parsed.declaration.outcome === "error" ? "error" : "stop"
     input.chat.message.time.completed = Date.now()
     await Session.updateMessage(input.chat.message)
+  }
+
+  async function mark(input: {
+    assistant: MessageV2.Assistant
+    outcome: SessionTurn.Outcome
+    reason: SessionTurn.Reason
+    runID?: string
+    stats?: SessionTurn.Stats
+    user: MessageV2.User
+  }) {
+    await SessionTurn.finish({
+      assistantID: input.assistant.id,
+      outcome: input.outcome,
+      reason: input.reason,
+      runID: input.runID,
+      stats: input.stats,
+      user: input.user,
+    })
+  }
+
+  function outcome(run: AgentProtocol.Result): SessionTurn.Outcome {
+    if (delegated(run)) return "waiting_child"
+    if (receipt(run)) return "waiting_user"
+    if (run.status === "failed") return "failed"
+    if (run.status === "blocked") return "blocked"
+    return "completed"
+  }
+
+  function reason(run: AgentProtocol.Result): SessionTurn.Reason {
+    if (delegated(run)) return "waiting_child"
+    if (receipt(run)) return "waiting_user"
+    if (run.status === "failed") return "error"
+    if (run.status === "blocked") return "malformed"
+    return "protocol"
+  }
+
+  function stats(run: AgentProtocol.Result): SessionTurn.Stats {
+    return {
+      actions: run.actions.length,
+      children: run.actions.filter((item) => item.sessionID).length,
+      confirmations: run.actions.filter((item) => item.operation === "confirm" || item.operation === "input").length,
+      duration_ms: run.metrics.duration_ms,
+      tools: run.metrics.internal_tool_calls + run.metrics.direct_model_tool_calls,
+    }
   }
 
   async function intro(input: {
@@ -2733,8 +2802,7 @@ export namespace SessionRunner {
       }
     }
     const title = input.action.title.trim()
-    const model =
-      selected.agent.model ??
+    const model = selected.agent.model ??
       parent.model ?? {
         providerID: input.model.providerID,
         modelID: input.model.id,
@@ -2973,11 +3041,14 @@ export namespace SessionRunner {
       "",
       ...readonly,
       "When you are done, return a task result for the parent session.",
-      "Finish by calling the native ActionResult tool exactly once; do not return plain text as the final delegated result.",
-      "Keep ActionResult descriptive fields as short strings. Do not use arrays or nested objects.",
       "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
       "Use one result kind: success, failure, error, or reply.",
       "For success/failure/error, include result, task_background, task_content, changed_files, verification, and blockers.",
+      ...ActionResult.protocol({
+        verifier: agent.kind === "verifier",
+        action: action.id,
+        target: action.depends_on[0] ?? "worker_action_id",
+      }),
       "Use reply when you need to answer or ask for information instead of claiming the task is complete.",
       policy(action.result_policy),
       "",

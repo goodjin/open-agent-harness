@@ -12,7 +12,8 @@ describe("validateCustomProvider", () => {
         baseURL: "https://api.example.com ",
         apiKey: " {env: CUSTOM_PROVIDER_KEY} ",
         concurrency: "2",
-        models: [{ row: "m0", id: " model-a ", name: " Model A ", concurrency: "1", err: {} }],
+        rpm: "60",
+        models: [{ row: "m0", id: " model-a ", name: " Model A ", concurrency: "1", rpm: "30", err: {} }],
         headers: [
           { row: "h0", key: " X-Test ", value: " enabled ", err: {} },
           { row: "h1", key: "", value: "", err: {} },
@@ -34,6 +35,7 @@ describe("validateCustomProvider", () => {
         name: "Custom Provider",
         env: ["CUSTOM_PROVIDER_KEY"],
         concurrency: 2,
+        rpm: 60,
         options: {
           baseURL: "https://api.example.com",
           headers: {
@@ -41,7 +43,7 @@ describe("validateCustomProvider", () => {
           },
         },
         models: {
-          "model-a": { name: "Model A", concurrency: 1 },
+          "model-a": { name: "Model A", concurrency: 1, rpm: 30 },
         },
       },
     })
@@ -55,9 +57,10 @@ describe("validateCustomProvider", () => {
         baseURL: "https://api.example.com",
         apiKey: "secret",
         concurrency: "",
+        rpm: "",
         models: [
-          { row: "m0", id: "model-a", name: "Model A", concurrency: "", err: {} },
-          { row: "m1", id: "model-a", name: "Model A 2", concurrency: "", err: {} },
+          { row: "m0", id: "model-a", name: "Model A", concurrency: "", rpm: "", err: {} },
+          { row: "m1", id: "model-a", name: "Model A 2", concurrency: "", rpm: "", err: {} },
         ],
         headers: [
           { row: "h0", key: "Authorization", value: "one", err: {} },
@@ -77,6 +80,7 @@ describe("validateCustomProvider", () => {
       id: "provider.custom.error.duplicate",
       name: undefined,
       concurrency: undefined,
+      rpm: undefined,
     })
     expect(result.headers[1]).toEqual({
       key: "provider.custom.error.duplicate",
@@ -92,7 +96,8 @@ describe("validateCustomProvider", () => {
         baseURL: "https://api.example.com",
         apiKey: "",
         concurrency: "",
-        models: [{ row: "m0", id: "model-a", name: "Model A", concurrency: "", err: {} }],
+        rpm: "",
+        models: [{ row: "m0", id: "model-a", name: "Model A", concurrency: "", rpm: "", err: {} }],
         headers: [{ row: "h0", key: "", value: "", err: {} }],
         saving: false,
         err: {},

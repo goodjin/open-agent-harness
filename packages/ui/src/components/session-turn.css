@@ -82,6 +82,15 @@
     }
   }
 
+  [data-slot="session-turn-part-status"] {
+    align-self: flex-start;
+    color: var(--text-weaker);
+    font-family: var(--font-family-sans);
+    font-size: var(--font-size-small);
+    font-weight: var(--font-weight-regular);
+    line-height: var(--line-height-small);
+  }
+
   [data-component="text-reveal"].session-turn-thinking-heading {
     flex: 1 1 auto;
     min-width: 0;

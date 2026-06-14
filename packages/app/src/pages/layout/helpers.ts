@@ -206,12 +206,25 @@ const closed = ["idle", "completed", "archived", "failed", "blocked", "interrupt
 const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "waiting_child", "paused", "aborting"]
 const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 
+const record = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input)
+
+const turnDone = (message: Message | undefined) => {
+  if (!message || message.role !== "user") return false
+  const metadata = (message as { metadata?: unknown }).metadata
+  if (!record(metadata)) return false
+  const turn = metadata.turn
+  if (!record(turn)) return false
+  return turn.status === "done"
+}
+
 export const sessionWorking = (messages: Message[] | undefined, status: Status | undefined) => {
   if (!status?.type) return false
   if (closed.includes(status.type)) return false
   if (status.type !== "running") return active.includes(status.type)
 
   const user = (messages ?? []).findLast((message) => message.role === "user")
+  if (turnDone(user)) return false
   const assistant = (messages ?? []).findLast((message) => message.role === "assistant")
   const done = typeof (assistant as { time?: { completed?: unknown } } | undefined)?.time?.completed === "number"
   const stale =
@@ -231,6 +244,7 @@ export const sessionCompleted = (session: Session, messages: Message[] | undefin
   if (!messages) return false
   const index = messages.findLastIndex((message) => message.role === "user")
   if (index === -1) return false
+  if (turnDone(messages[index])) return true
   return messages.slice(index + 1).some((message) => {
     if (message.role !== "assistant") return false
     return typeof (message as { time?: { completed?: unknown } }).time?.completed === "number"

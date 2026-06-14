@@ -477,6 +477,11 @@ export const SettingsAgents: Component<{ selected?: string }> = (props) => {
                   value={form.concurrency}
                   onChange={(value) => setForm("concurrency", value.replace(/[^\d]/g, ""))}
                 />
+                <Field
+                  label="Max tool calls"
+                  value={form.maxToolCalls}
+                  onChange={(value) => setForm("maxToolCalls", value.replace(/[^\d]/g, ""))}
+                />
                 <Check label="Hidden" checked={form.hidden} onChange={(value) => setForm("hidden", value)} />
                 <Check label="Entry primary" checked={form.primary} onChange={(value) => setForm("primary", value)} />
                 <Check

@@ -372,6 +372,29 @@ describe("layout workspace helpers", () => {
     expect(sessionWorking(undefined, { type: "waiting_child" })).toBe(true)
   })
 
+  test("uses explicit turn completion before running status fallback", () => {
+    expect(
+      sessionWorking(
+        [
+          message({
+            id: "user",
+            sessionID: "pending",
+            role: "user",
+            metadata: {
+              turn: {
+                kind: "user",
+                status: "done",
+                outcome: "waiting_child",
+                time: { queued: 1, started: 2, completed: 3 },
+              },
+            },
+          }),
+        ],
+        { type: "running" },
+      ),
+    ).toBe(false)
+  })
+
   test("keeps terminal statuses out of working summaries", () => {
     expect(sessionWorking(undefined, { type: "completed" })).toBe(false)
     expect(sessionWorking(undefined, { type: "blocked" })).toBe(false)

@@ -76,6 +76,19 @@ const bind = (input: unknown): State | undefined => {
   }
 }
 
+const merge = (...items: (State | undefined)[]) => {
+  const next = items.reduce<State>((acc, item) => {
+    if (!item) return acc
+    return {
+      agent: item.agent ?? acc.agent,
+      model: item.model ?? acc.model,
+      variant: item.variant ?? acc.variant,
+    }
+  }, {})
+  if (!next.agent && !next.model && next.variant === undefined) return
+  return next
+}
+
 export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
   name: "Local",
   init: () => {
@@ -158,7 +171,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
           } satisfies State
         : undefined
       const info = sync.session.get(session)
-      return bind(info) ?? saved.session[session] ?? handoff.get(handoffKey(sdk.directory, session)) ?? bound
+      return merge(bound, handoff.get(handoffKey(sdk.directory, session)), bind(info), saved.session[session])
     })
 
     const started = createMemo(() => {

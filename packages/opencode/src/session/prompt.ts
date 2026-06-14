@@ -45,6 +45,7 @@ import { PermissionNext } from "@/permission/next"
 import { SessionStatus } from "./status"
 import { SessionLog } from "./log"
 import { LLM } from "./llm"
+import { SessionTurn } from "./turn"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { decodeDataUrl } from "@/util/data-url"
@@ -54,6 +55,7 @@ import { resolveInstructions } from "@/agent/instructions"
 import { Global } from "@/global"
 import { Storage } from "@/storage/storage"
 import { ConflictError } from "@/storage/db"
+import { ActionResult } from "./action-result"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -71,6 +73,8 @@ const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested struc
 export namespace SessionPrompt {
   const log = Log.create({ service: "session.prompt" })
   const MAX_AUTO_OVERFLOW_COMPACTIONS = 2
+  const MAX_TOOL_CALLS = 1000
+  const ACTION_RESULT_FAILURES = 3
 
   const state = Instance.state(
     () => {
@@ -79,6 +83,7 @@ export namespace SessionPrompt {
         {
           abort: AbortController
           callbacks: {
+            messageID?: MessageID
             resolve(input: MessageV2.WithParts): void
             reject(reason?: any): void
           }[]
@@ -107,6 +112,7 @@ export namespace SessionPrompt {
         modelID: ModelID.zod,
       })
       .optional(),
+    confirm: z.boolean().optional(),
     agent: z.string().optional(),
     noReply: z.boolean().optional(),
     tools: z
@@ -167,8 +173,13 @@ export namespace SessionPrompt {
   export type PromptInput = z.infer<typeof PromptInput>
 
   export const prompt = fn(PromptInput, async (input) => {
-    const session = await Session.get(input.sessionID)
-    await SessionRevert.cleanup(session)
+    const base = await Session.get(input.sessionID)
+    await SessionRevert.cleanup(base)
+    await repair(base)
+    const session =
+      input.model && !equal(base.model, input.model)
+        ? await Session.setModel({ sessionID: input.sessionID, model: input.model, confirm: input.confirm })
+        : base
 
     const message = await createUserMessage(input, session)
     await Session.touch(input.sessionID)
@@ -192,7 +203,7 @@ export namespace SessionPrompt {
       return message
     }
 
-    return loop({ sessionID: input.sessionID })
+    return loop({ sessionID: input.sessionID, messageID: message.info.id })
   })
 
   export async function resolvePromptParts(template: string): Promise<PromptInput["parts"]> {
@@ -309,6 +320,10 @@ export namespace SessionPrompt {
       delete s[sessionID]
       return
     }
+    if (status.type === "blocked") {
+      delete s[sessionID]
+      return
+    }
 
     const pending = await waiting(sessionID)
     SessionStatus.set(
@@ -333,6 +348,7 @@ export namespace SessionPrompt {
 
   export const LoopInput = z.object({
     sessionID: SessionID.zod,
+    messageID: MessageID.zod.optional(),
     resume_existing: z.boolean().optional(),
   })
   export const loop = fn(LoopInput, async (input) => {
@@ -347,7 +363,7 @@ export namespace SessionPrompt {
       const entry = state()[sessionID]
       return new Promise<MessageV2.WithParts>((resolve, reject) => {
         const callbacks = state()[sessionID].callbacks
-        callbacks.push({ resolve, reject })
+        callbacks.push({ messageID: input.messageID, resolve, reject })
       })
     }
 
@@ -361,52 +377,47 @@ export namespace SessionPrompt {
     let structuredOutput: unknown | undefined
 
     let step = 0
-    const session = await Session.get(sessionID)
+    let calls = 0
+    let failures = 0
+    await repair(await Session.get(sessionID))
     while (true) {
+      const session = await Session.get(sessionID)
       SessionStatus.set(sessionID, { type: "running" })
       log.info("loop", { step, sessionID })
       if (abort.aborted) break
       let msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
 
-      let lastUser: MessageV2.User | undefined
       let lastAssistant: MessageV2.Assistant | undefined
       let lastFinished: MessageV2.Assistant | undefined
-      let tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
+      const next = turn(msgs)
       for (let i = msgs.length - 1; i >= 0; i--) {
         const msg = msgs[i]
-        if (!lastUser && msg.info.role === "user") lastUser = msg.info as MessageV2.User
         if (!lastAssistant && msg.info.role === "assistant") lastAssistant = msg.info as MessageV2.Assistant
         if (!lastFinished && msg.info.role === "assistant" && msg.info.finish)
           lastFinished = msg.info as MessageV2.Assistant
-        if (lastUser && lastFinished) break
-        const task = msg.parts.filter((part) => part.type === "compaction" || part.type === "subtask")
-        if (task && !lastFinished) {
-          tasks.push(...task)
-        }
+        if (lastFinished) break
       }
 
-      if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
-      lastUserID = lastUser.id
-      const agentName = pref(session).agent ?? lastUser.agent
-      if (
-        lastAssistant?.finish &&
-        !["tool-calls", "unknown"].includes(lastAssistant.finish) &&
-        lastAssistant.parentID === lastUser.id
-      ) {
+      if (!next) {
         log.info("exiting loop", { sessionID })
         break
       }
+      const tasks = next.tasks
+      const lastUser = await SessionTurn.run({ user: next.info })
+      lastUserID = lastUser.id
+      const agentName = pref(session).agent ?? lastUser.agent
+      const selected = pref(session).model ?? lastUser.model
 
       step++
       if (step === 1)
         void ensureTitle({
           session,
-          modelID: lastUser.model.modelID,
-          providerID: lastUser.model.providerID,
+          modelID: selected.modelID,
+          providerID: selected.providerID,
           history: msgs,
         }).catch((error) => log.error("failed to generate title", { error }))
 
-      const model = await Provider.getModel(lastUser.model.providerID, lastUser.model.modelID).catch((e) => {
+      const model = await Provider.getModel(selected.providerID, selected.modelID).catch((e) => {
         if (Provider.ModelNotFoundError.isInstance(e)) {
           const hint = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
           Bus.publish(Session.Event.Error, {
@@ -565,7 +576,7 @@ export namespace SessionPrompt {
               created: Date.now(),
             },
             agent: lastUser.agent,
-            model: lastUser.model,
+            model: selected,
           }
           await Session.updateMessage(summaryUserMsg)
           await Session.updatePart({
@@ -604,7 +615,7 @@ export namespace SessionPrompt {
         await SessionCompaction.create({
           sessionID,
           agent: agentName,
-          model: lastUser.model,
+          model: selected,
           auto: true,
         })
         continue
@@ -768,6 +779,40 @@ export namespace SessionPrompt {
         model,
         toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
+      const parts = await MessageV2.parts(processor.message.id)
+      const count = parts.filter((part) => part.type === "tool").length
+      calls += count
+      if (calls > (agent.maxToolCalls ?? MAX_TOOL_CALLS)) {
+        await stopTools({
+          sessionID,
+          assistant: processor.message,
+          user: lastUser,
+          type: "tool.loop_limit",
+          message: `Stopped after ${calls} consecutive tool calls. The configured limit is ${agent.maxToolCalls ?? MAX_TOOL_CALLS}.`,
+          data: {
+            limit: agent.maxToolCalls ?? MAX_TOOL_CALLS,
+            count: calls,
+          },
+        })
+        break
+      }
+      for (const item of actionResults(parts)) {
+        failures = item.ok ? 0 : failures + 1
+      }
+      if (failures > ACTION_RESULT_FAILURES) {
+        await stopTools({
+          sessionID,
+          assistant: processor.message,
+          user: lastUser,
+          type: "tool.action_result_limit",
+          message: `Stopped after ${failures} consecutive failed ActionResult calls.`,
+          data: {
+            limit: ACTION_RESULT_FAILURES,
+            count: failures,
+          },
+        })
+        break
+      }
 
       // If structured output was captured, save it and exit immediately
       // This takes priority because the StructuredOutput tool was called successfully
@@ -775,6 +820,13 @@ export namespace SessionPrompt {
         processor.message.structured = structuredOutput
         processor.message.finish = processor.message.finish ?? "stop"
         await Session.updateMessage(processor.message)
+        await done({
+          sessionID,
+          user: lastUser,
+          assistant: processor.message,
+          outcome: "completed",
+          reason: "assistant",
+        })
         break
       }
 
@@ -789,11 +841,43 @@ export namespace SessionPrompt {
             retries: 0,
           }).toObject()
           await Session.updateMessage(processor.message)
+          await done({
+            sessionID,
+            user: lastUser,
+            assistant: processor.message,
+            outcome: "failed",
+            reason: "error",
+          })
           break
         }
+        await done({
+          sessionID,
+          user: lastUser,
+          assistant: processor.message,
+          outcome: "completed",
+          reason: "assistant",
+        })
+        continue
       }
 
-      if (result === "stop") break
+      if (result === "stop") {
+        const fresh = await MessageV2.get({ sessionID, messageID: lastUser.id }).catch(() => undefined)
+        const current = fresh?.info.role === "user" ? fresh.info : lastUser
+        if (SessionTurn.done(current)) {
+          await resolve(sessionID, current.id, { info: processor.message, parts })
+          continue
+        }
+        if (processor.message.time.completed) {
+          await done({
+            sessionID,
+            user: current,
+            assistant: processor.message,
+            outcome: processor.message.error ? "error" : "completed",
+            reason: processor.message.error ? "error" : "assistant",
+          })
+        }
+        continue
+      }
       if (result === "compact") {
         const overflow = !processor.message.finish
         if (shouldStopCompact({ messages: msgs, overflow })) {
@@ -803,7 +887,7 @@ export namespace SessionPrompt {
         await SessionCompaction.create({
           sessionID,
           agent: agentName,
-          model: lastUser.model,
+          model: selected,
           auto: true,
           overflow,
         })
@@ -811,15 +895,114 @@ export namespace SessionPrompt {
       continue
     }
     SessionCompaction.prune({ sessionID })
-    for await (const item of MessageV2.stream(sessionID)) {
-      if (item.info.role === "user") continue
-      const queued = state()[sessionID]?.callbacks ?? []
-      for (const q of queued) {
-        q.resolve(item)
-      }
-      return item
+    const found = await response(sessionID, input.messageID)
+    if (found) return found
+    throw new Error("Session loop ended before this prompt produced a response.")
+  }
+
+  function turn(messages: MessageV2.WithParts[]) {
+    const found: { index: number; info: MessageV2.User; internal: boolean }[] = []
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i]
+      if (msg?.info.role !== "user") continue
+      if (SessionTurn.done(msg.info)) continue
+      if (SessionTurn.fallback({ messages, user: msg.info })) continue
+      found.push({ index: i, info: msg.info, internal: SessionTurn.get(msg.info)?.kind === "internal" })
     }
-    throw new Error("Impossible")
+    const picked = found.find((item) => !item.internal) ?? found[0]
+    if (!picked) return
+    const tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
+    for (let j = picked.index + 1; j < messages.length; j++) {
+      const next = messages[j]
+      if (!next || next.info.role === "user") break
+      tasks.push(...next.parts.filter((part) => part.type === "compaction" || part.type === "subtask"))
+    }
+    return {
+      info: picked.info,
+      tasks,
+    }
+  }
+
+  async function repair(session: Session.Info) {
+    const ctx = object(session.dsl_context)
+    const res = object(ctx.result)
+    if (res.type !== "session.action_result") return
+    const item = object(object(ctx.protocol).delegation)
+    if (item.type !== "agent.delegation.assignment") return
+    const status = item.status
+    if (status !== "completed" && status !== "partial" && status !== "blocked" && status !== "failed") return
+    const close = async (user: MessageV2.User, msg?: MessageV2.WithParts) =>
+      SessionTurn.finish({
+        assistantID: msg?.info.id,
+        outcome: status === "failed" ? "failed" : status === "blocked" ? "blocked" : "completed",
+        reason: "action_result",
+        stats: msg ? SessionTurn.stats({ message: msg }) : undefined,
+        user,
+      })
+    if (typeof item.completed_message_id === "string") {
+      const msg = await MessageV2.get({
+        sessionID: session.id,
+        messageID: MessageID.make(item.completed_message_id),
+      }).catch(() => undefined)
+      if (msg?.info.role === "assistant") {
+        const user = await MessageV2.get({
+          sessionID: session.id,
+          messageID: msg.info.parentID,
+        }).catch(() => undefined)
+        if (user?.info.role === "user" && !SessionTurn.done(user.info)) await close(user.info, msg)
+        return
+      }
+    }
+    const at = typeof item.completed_at === "number" ? item.completed_at : Date.now()
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(session.id))
+    await Promise.all(
+      msgs.map(async (msg) => {
+        if (msg.info.role !== "user") return
+        if (msg.info.time.created > at) return
+        if (SessionTurn.done(msg.info)) return
+        await close(msg.info)
+      }),
+    )
+  }
+
+  async function done(input: {
+    assistant: MessageV2.Assistant
+    outcome: SessionTurn.Outcome
+    reason: SessionTurn.Reason
+    sessionID: SessionID
+    user: MessageV2.User
+  }) {
+    const parts = await MessageV2.parts(input.assistant.id)
+    const user = await SessionTurn.finish({
+      assistantID: input.assistant.id,
+      outcome: input.outcome,
+      reason: input.reason,
+      stats: SessionTurn.stats({ message: { info: input.assistant, parts } }),
+      user: input.user,
+    })
+    await resolve(input.sessionID, user.id, { info: input.assistant, parts })
+  }
+
+  async function resolve(sessionID: SessionID, messageID: MessageID, msg: MessageV2.WithParts) {
+    const entry = state()[sessionID]
+    if (!entry) return
+    const keep = entry.callbacks.filter((item) => {
+      if (item.messageID && item.messageID !== messageID) return true
+      item.resolve(msg)
+      return false
+    })
+    entry.callbacks = keep
+  }
+
+  async function response(sessionID: SessionID, messageID?: MessageID) {
+    const messages = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]
+      if (!msg || msg.info.role !== "assistant") continue
+      if (messageID && msg.info.parentID !== messageID) continue
+      return msg
+    }
+    return
   }
 
   export function shouldStopCompact(input: { messages: MessageV2.WithParts[]; overflow: boolean }) {
@@ -840,6 +1023,7 @@ export namespace SessionPrompt {
     if (!user || (after && user.info.id <= after)) {
       const callbacks = entry.callbacks
       callbacks.forEach((item) => item.reject(new Error("Session loop ended before pending user was processed.")))
+      delete state()[sessionID]
       return
     }
 
@@ -864,6 +1048,48 @@ export namespace SessionPrompt {
       level: "error",
       type: "llm.compact_limit",
       data: { limit: MAX_AUTO_OVERFLOW_COMPACTIONS, error: text },
+    })
+  }
+
+  function actionResults(parts: MessageV2.Part[]) {
+    return parts
+      .filter((part): part is MessageV2.ToolPart => part.type === "tool" && part.tool === ActionResult.TOOL)
+      .map((part) => {
+        if (part.state.status === "completed") return { ok: true, part }
+        if (part.state.status !== "error") return { ok: false, part, error: part.state.status }
+        return { ok: false, part, error: part.state.error }
+      })
+  }
+
+  async function stopTools(input: {
+    sessionID: SessionID
+    assistant: MessageV2.Assistant
+    user: MessageV2.User
+    type: string
+    message: string
+    data: Record<string, unknown>
+  }) {
+    input.assistant.error = MessageV2.fromError(new Error(input.message), { providerID: input.assistant.providerID })
+    input.assistant.finish = "error"
+    input.assistant.time.completed = Date.now()
+    await Session.updateMessage(input.assistant)
+    SessionStatus.set(input.sessionID, { type: "blocked", message: input.message })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.assistant.id,
+      level: "error",
+      type: input.type,
+      data: {
+        ...input.data,
+        error: input.message,
+      },
+    }).catch((err) => log.warn("session log failed", { err }))
+    await done({
+      sessionID: input.sessionID,
+      user: input.user,
+      assistant: input.assistant,
+      outcome: "blocked",
+      reason: "error",
     })
   }
 
@@ -905,6 +1131,13 @@ export namespace SessionPrompt {
       if (item.info.role === "user" && item.info.model) return item.info.model
     }
     return Provider.defaultModel()
+  }
+
+  function equal(
+    left: { providerID: ProviderID; modelID: ModelID } | undefined,
+    right: { providerID: ProviderID; modelID: ModelID },
+  ) {
+    return left?.providerID === right.providerID && left.modelID === right.modelID
   }
 
   function pref(session: Session.Info) {
@@ -1093,12 +1326,13 @@ export namespace SessionPrompt {
         : undefined
     const variant = input.variant ?? (agent?.variant && full?.variants?.[agent?.variant] ? agent?.variant : undefined)
 
-    const info: MessageV2.Info = {
+    const now = Date.now()
+    const info: MessageV2.User = {
       id: input.messageID ?? MessageID.ascending(),
       role: "user",
       sessionID: input.sessionID,
       time: {
-        created: Date.now(),
+        created: now,
       },
       tools: input.tools,
       agent: agent?.name ?? agentName ?? "unknown",
@@ -1106,7 +1340,14 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
-      metadata: input.metadata,
+      metadata: {
+        ...input.metadata,
+        turn: input.metadata?.turn ?? {
+          kind: input.metadata?.internal === true ? "internal" : "user",
+          status: "queued",
+          time: { queued: now },
+        },
+      },
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1585,6 +1826,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         modelID: ModelID.zod,
       })
       .optional(),
+    confirm: z.boolean().optional(),
     command: z.string(),
   })
   export type ShellInput = z.infer<typeof ShellInput>
@@ -1616,6 +1858,9 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     if (!agent) throw new Error(`Agent not found: ${input.agent}`)
     const sessionPref = pref(session)
     const model = input.model ?? sessionPref.model ?? agent.model ?? (await lastModel(input.sessionID))
+    if (input.model && !equal(session.model, input.model)) {
+      await Session.setModel({ sessionID: input.sessionID, model: input.model, confirm: input.confirm })
+    }
     const userMsg: MessageV2.User = {
       id: MessageID.ascending(),
       sessionID: input.sessionID,
@@ -1831,6 +2076,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     sessionID: SessionID.zod,
     agent: z.string().optional(),
     model: z.string().optional(),
+    confirm: z.boolean().optional(),
     arguments: z.string(),
     command: z.string(),
     variant: z.string().optional(),
@@ -1981,6 +2227,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       sessionID: input.sessionID,
       messageID: input.messageID,
       model: userModel,
+      confirm: input.confirm,
       agent: userAgent,
       parts,
       variant: input.variant,

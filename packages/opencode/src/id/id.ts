@@ -12,6 +12,7 @@ export namespace Identifier {
     pty: "pty",
     tool: "tool",
     log: "log",
+    payload: "payload",
     workspace: "wrk",
   } as const
 

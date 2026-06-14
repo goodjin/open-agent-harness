@@ -144,4 +144,64 @@ describe("LLMConcurrency", () => {
       },
     })
   })
+
+  test("queues by rpm and resumes when the window opens", async () => {
+    const prior = process.env.OPENCODE_LLM_RPM_WINDOW_MS
+    process.env.OPENCODE_LLM_RPM_WINDOW_MS = "50"
+    const rpmProvider = {
+      id: "lease-provider-rpm",
+      concurrency: 5,
+      rpm: 1,
+    } as Provider.Info
+    const rpmModel = {
+      id: "lease-model-rpm",
+      providerID: "lease-provider-rpm",
+      concurrency: 5,
+    } as Provider.Model
+
+    try {
+      await Instance.provide({
+        directory: __dirname,
+        fn: async () => {
+          const one = await LLMConcurrency.acquire({
+            model: rpmModel,
+            provider: rpmProvider,
+            sessionID: SessionID.make("ses_lease_rpm_one"),
+            abort: new AbortController().signal,
+          })
+          one()
+
+          const id = SessionID.make("ses_lease_rpm_two")
+          let ran = false
+          const two = LLMConcurrency.acquire({
+            model: rpmModel,
+            provider: rpmProvider,
+            sessionID: id,
+            abort: new AbortController().signal,
+          }).then((release) => {
+            ran = true
+            release()
+          })
+
+          await wait(10)
+          const status = SessionStatus.get(id)
+          expect(ran).toBe(false)
+          expect(status.type).toBe("rate_limited")
+          if (status.type === "rate_limited") {
+            expect(status.kind).toBe("rpm")
+            expect(status.scope).toBe("provider")
+            expect(status.active).toBe(1)
+            expect(status.limit).toBe(1)
+            expect(typeof status.reset).toBe("number")
+          }
+
+          await two
+          expect(ran).toBe(true)
+        },
+      })
+    } finally {
+      if (prior === undefined) delete process.env.OPENCODE_LLM_RPM_WINDOW_MS
+      else process.env.OPENCODE_LLM_RPM_WINDOW_MS = prior
+    }
+  })
 })

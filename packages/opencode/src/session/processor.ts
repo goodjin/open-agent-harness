@@ -17,6 +17,7 @@ import { Question } from "@/question"
 import { PartID } from "./schema"
 import type { SessionID, MessageID } from "./schema"
 import { MemoryStore } from "@/memory"
+import { ActionResult } from "./action-result"
 
 export namespace SessionProcessor {
   const DOOM_LOOP_THRESHOLD = 3
@@ -34,6 +35,7 @@ export namespace SessionProcessor {
     abort: AbortSignal
   }) {
     const toolcalls: Record<string, MessageV2.ToolPart> = {}
+    const raws: Record<string, ReturnType<typeof raw>> = {}
     let snapshot: string | undefined
     let blocked = false
     let attempt = 0
@@ -63,6 +65,10 @@ export namespace SessionProcessor {
         const prompt = (input: LLM.StreamInput) => {
           const systemText = system(input)
           const messages = LLM.prepareMessages(input)
+          const tools =
+            input.agent.runner === "protocol"
+              ? [LLM.PROTOCOL_OUTPUT_TOOL]
+              : [...Object.keys(input.tools), LLM.ACTION_RESULT_TOOL]
           return {
             systemBytes: systemText.length,
             systemInputCount: input.system.length,
@@ -74,7 +80,7 @@ export namespace SessionProcessor {
               runner: input.agent.runner,
             },
             toolChoice: input.toolChoice,
-            tools: input.agent.runner === "protocol" ? [LLM.PROTOCOL_OUTPUT_TOOL] : Object.keys(input.tools),
+            tools,
           }
         }
         needsCompaction = false
@@ -87,7 +93,14 @@ export namespace SessionProcessor {
             let hasOther = false
             let noTextDelta = false
             let reasoningMap: Record<string, MessageV2.ReasoningPart> = {}
-            const req = prompt(streamInput)
+            const payload = SessionLog.payloadID()
+            const output = SessionLog.payloadID()
+            const response = capture()
+            const req = {
+              ...prompt(streamInput),
+              payload,
+              responsePayload: output,
+            }
             await record("info", "llm.start", {
               providerID: input.model.providerID,
               modelID: input.model.id,
@@ -95,7 +108,7 @@ export namespace SessionProcessor {
               mode: streamInput.agent.mode,
               attempt,
               messages: streamInput.messages.length,
-              tools: streamInput.agent.runner === "protocol" ? 1 : Object.keys(streamInput.tools).length,
+              tools: req.tools.length,
               request: req,
             })
             if (
@@ -121,10 +134,11 @@ export namespace SessionProcessor {
               needsCompaction = true
               break
             }
-            const stream = await LLM.stream(streamInput)
+            const stream = await LLM.stream({ ...streamInput, payload: { id: payload } })
 
             try {
               for await (const value of stream.fullStream) {
+                response.add(value)
                 input.abort.throwIfAborted()
                 if (currentText && !["text-start", "text-delta", "text-end"].includes(value.type)) hasOther = true
                 switch (value.type) {
@@ -242,6 +256,7 @@ export namespace SessionProcessor {
                     const match = toolcalls[value.toolCallId]
                     if (match) {
                       const text = match.state.status === "pending" ? raw(match.state.raw) : raw("")
+                      raws[value.toolCallId] = text
                       const part = await Session.updatePart({
                         ...match,
                         tool: value.toolName,
@@ -319,7 +334,17 @@ export namespace SessionProcessor {
                         output: value.output.output,
                         metadata: value.output.metadata,
                       })
+                      if (match.tool === ActionResult.TOOL) {
+                        await record("info", "tool.action_result", {
+                          partID: match.id,
+                          callID: value.toolCallId,
+                          tool: match.tool,
+                          outcome: "success",
+                          input: value.input ?? match.state.input,
+                        })
+                      }
 
+                      delete raws[value.toolCallId]
                       delete toolcalls[value.toolCallId]
                     }
                     break
@@ -327,16 +352,31 @@ export namespace SessionProcessor {
 
                   case "tool-error": {
                     const match = toolcalls[value.toolCallId]
-                    if (match && match.state.status === "running") {
+                    if (match && (match.state.status === "running" || match.state.status === "pending")) {
+                      const at = Date.now()
+                      const source =
+                        raws[value.toolCallId] ?? (match.state.status === "pending" ? raw(match.state.raw) : raw(""))
+                      const input = value.input ?? match.state.input
                       await Session.updatePart({
                         ...match,
                         state: {
                           status: "error",
-                          input: value.input ?? match.state.input,
-                          error: (value.error as any).toString(),
+                          input,
+                          error: String(value.error),
+                          metadata: {
+                            rawInput: source.raw,
+                            rawInputBytes: source.rawBytes,
+                            rawInputTruncated: source.truncated,
+                            rawResponse: response.text(),
+                            rawResponseBytes: response.bytes(),
+                            rawResponseChars: response.chars(),
+                            rawResponsePreviewChars: response.text().length,
+                            rawResponseTruncated: response.truncated(),
+                            responsePayload: output,
+                          },
                           time: {
-                            start: match.state.time.start,
-                            end: Date.now(),
+                            start: match.state.status === "running" ? match.state.time.start : at,
+                            end: at,
                           },
                         },
                       })
@@ -344,8 +384,36 @@ export namespace SessionProcessor {
                         partID: match.id,
                         callID: value.toolCallId,
                         tool: match.tool,
+                        rawInput: source.raw,
+                        rawInputBytes: source.rawBytes,
+                        rawInputTruncated: source.truncated,
+                        rawResponse: response.text(),
+                        rawResponseBytes: response.bytes(),
+                        rawResponseChars: response.chars(),
+                        rawResponsePreviewChars: response.text().length,
+                        rawResponseTruncated: response.truncated(),
+                        responsePayload: output,
                         error: (value.error as Error).toString(),
                       })
+                      if (match.tool === ActionResult.TOOL) {
+                        await record("warn", "tool.action_result", {
+                          partID: match.id,
+                          callID: value.toolCallId,
+                          tool: match.tool,
+                          outcome: "failure",
+                          input,
+                          rawInput: source.raw,
+                          rawInputBytes: source.rawBytes,
+                          rawInputTruncated: source.truncated,
+                          rawResponse: response.text(),
+                          rawResponseBytes: response.bytes(),
+                          rawResponseChars: response.chars(),
+                          rawResponsePreviewChars: response.text().length,
+                          rawResponseTruncated: response.truncated(),
+                          responsePayload: output,
+                          error: (value.error as Error).toString(),
+                        })
+                      }
 
                       if (
                         value.error instanceof PermissionNext.RejectedError ||
@@ -353,6 +421,7 @@ export namespace SessionProcessor {
                       ) {
                         blocked = shouldBreak
                       }
+                      delete raws[value.toolCallId]
                       delete toolcalls[value.toolCallId]
                     }
                     break
@@ -496,6 +565,11 @@ export namespace SessionProcessor {
                 if (needsCompaction) break
               }
             } finally {
+              await SessionLog.savePayload({
+                id: output,
+                sessionID: input.sessionID,
+                data: response.full(),
+              }).catch((err) => log.warn("response payload log failed", { err, payload: output }))
               stream.release?.()
             }
             if (currentText && !hadTextDelta && !currentText.text && !hasOther) noTextDelta = true
@@ -621,11 +695,14 @@ export namespace SessionProcessor {
           if (needsCompaction) return "compact"
           if (blocked) return "stop"
           if (input.assistantMessage.error) return "stop"
+          if (p.some(action)) return "stop"
           if (!input.assistantMessage.summary) {
             await MemoryStore.capture({ sessionID: input.sessionID }).catch((err) => {
               log.warn("memory capture failed", { err })
             })
           }
+          if (input.assistantMessage.finish && !["tool-calls", "unknown"].includes(input.assistantMessage.finish))
+            return "stop"
           return "continue"
         }
       },
@@ -641,6 +718,160 @@ export namespace SessionProcessor {
       rawBytes: buf.length,
       truncated,
     }
+  }
+
+  function action(part: MessageV2.Part) {
+    if (part.type !== "tool") return false
+    if (part.tool !== LLM.ACTION_RESULT_TOOL) return false
+    return part.state.status === "completed"
+  }
+
+  function capture() {
+    const limit = 128 * 1024
+    const item = 16 * 1024
+    const events: unknown[] = []
+    const full: unknown[] = []
+    let bytes = 0
+    let chars = 0
+    let preview = 0
+    let over = false
+    let clipped = false
+    const data = () => ({
+      type: "llm.response",
+      events,
+      bytes,
+      chars,
+      previewChars: preview,
+      truncated: over || clipped,
+    })
+    return {
+      add(input: unknown) {
+        const value = plain(input)
+        const source = JSON.stringify(value)
+        const total = Buffer.byteLength(source, "utf8")
+        full.push(value)
+        bytes += total
+        chars += source.length
+        if (over) return
+        const next = pack(value, item)
+        const text = JSON.stringify(next)
+        const size = Buffer.byteLength(text, "utf8")
+        if (source !== text) clipped = true
+        if (preview + size > limit) {
+          over = true
+          const mark = { type: "capture-truncated", reason: "response capture limit reached" }
+          const json = JSON.stringify(mark)
+          if (preview + json.length <= limit) {
+            preview += json.length
+            events.push(mark)
+          }
+          return
+        }
+        preview += text.length
+        events.push(next)
+      },
+      bytes() {
+        return bytes
+      },
+      chars() {
+        return chars
+      },
+      truncated() {
+        return over || clipped
+      },
+      data() {
+        return data()
+      },
+      full() {
+        return {
+          type: "llm.response.full",
+          events: full,
+          bytes,
+          chars,
+          previewChars: preview,
+          truncated: over || clipped,
+        }
+      },
+      text() {
+        return JSON.stringify(data(), null, 2)
+      },
+    }
+  }
+
+  function pack(input: unknown, limit: number): unknown {
+    const item = plain(input)
+    const text = JSON.stringify(item)
+    const bytes = Buffer.byteLength(text, "utf8")
+    if (bytes <= limit) return item
+    return mini(item, bytes)
+  }
+
+  function mini(input: unknown, bytes: number) {
+    const item = obj(input)
+    return clean({
+      type: typeof item.type === "string" ? item.type : typeof input,
+      id: str(item.id),
+      toolCallId: str(item.toolCallId),
+      toolName: str(item.toolName),
+      finishReason: str(item.finishReason),
+      input: small(item.input),
+      output: small(item.output),
+      delta: small(item.delta),
+      text: small(item.text),
+      error: small(item.error),
+      bytes,
+      truncated: true,
+    })
+  }
+
+  function small(input: unknown): unknown {
+    if (input === undefined) return undefined
+    if (typeof input === "string") return clip(input)
+    if (typeof input === "number" || typeof input === "boolean" || input === null) return input
+    const text = JSON.stringify(input)
+    if (Buffer.byteLength(text, "utf8") <= 4096) return input
+    return {
+      preview: clip(text),
+      truncated: true,
+    }
+  }
+
+  function clip(input: string) {
+    const buf = Buffer.from(input)
+    if (buf.length <= 4096) return input
+    return buf.subarray(0, 4096).toString("utf8")
+  }
+
+  function str(input: unknown) {
+    return typeof input === "string" ? input : undefined
+  }
+
+  function obj(input: unknown) {
+    if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>
+    return {}
+  }
+
+  function clean(input: Record<string, unknown>) {
+    return Object.fromEntries(Object.entries(input).filter((entry) => entry[1] !== undefined))
+  }
+
+  function plain(input: unknown, seen = new WeakSet<object>()): unknown {
+    if (input instanceof Error) {
+      return {
+        name: input.name,
+        message: input.message,
+        stack: input.stack,
+      }
+    }
+    if (!input || typeof input !== "object") return input
+    if (seen.has(input)) return "[Circular]"
+    seen.add(input)
+    if (Array.isArray(input)) return input.map((item) => plain(item, seen))
+    return Object.fromEntries(
+      Object.entries(input as Record<string, unknown>)
+        .filter((item) => typeof item[1] !== "function")
+        .map((item) => [item[0], plain(item[1], seen)]),
+    )
   }
 
   export async function shouldStopCompact(sessionID: SessionID, messageID: MessageID) {

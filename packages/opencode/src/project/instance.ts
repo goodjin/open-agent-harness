@@ -110,8 +110,11 @@ export const Instance = {
     const ctx = context.use()
     return ((...args: any[]) => context.provide(ctx, () => fn(...args))) as F
   },
-  state<S>(init: () => S, dispose?: (state: Awaited<S>) => Promise<void>): () => S {
+  state<S>(init: () => S, dispose?: (state: Awaited<S>) => Promise<void>): State.Accessor<S> {
     return State.create(() => Instance.directory, init, dispose)
+  },
+  directories() {
+    return [...cache.keys()]
   },
   async reload(input: { directory: string; init?: () => Promise<any>; project?: Project.Info; worktree?: string }) {
     const directory = Filesystem.resolve(input.directory)

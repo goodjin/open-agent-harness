@@ -1,6 +1,6 @@
 import path from "path"
 import fs from "fs/promises"
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { fileURLToPath } from "url"
 import { Instance } from "../../src/project/instance"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -8,6 +8,7 @@ import { Session } from "../../src/session"
 import { getRegistry, resetRegistry } from "../../src/agent/registry"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionLog } from "../../src/session/log"
+import { LLM } from "../../src/session/llm"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
@@ -15,8 +16,16 @@ import { Log } from "../../src/util/log"
 import { tmpdir } from "../fixture/fixture"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
+import { Provider } from "../../src/provider/provider"
 
 Log.init({ print: false })
+
+afterEach(() => {
+  // @ts-expect-error Bun mock restore is present on spies
+  LLM.stream.mockRestore?.()
+  // @ts-expect-error Bun mock restore is present on spies
+  Provider.getModel.mockRestore?.()
+})
 
 async function agent(dir: string, id: string, cfg: Record<string, unknown> = {}) {
   const root = path.join(dir, ".opencode", "agents", id)
@@ -194,6 +203,178 @@ describe("session.prompt missing file", () => {
             const msg = await SessionPrompt.loop({ sessionID: session.id })
             expect(msg.info.role).toBe("assistant")
             expect(SessionStatus.get(session.id).type).toBe("completed")
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("loop skips legacy errored completed turns before processing newer user turns", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const old = MessageID.ascending()
+            await Session.updateMessage({
+              id: old,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: "deepseek", modelID: "deepseek-v4-flash" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: old,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("deepseek-v4-flash"),
+              providerID: ProviderID.make("deepseek"),
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              error: new MessageV2.APIError({
+                message: "Insufficient Balance",
+                isRetryable: false,
+              }).toObject(),
+              time: { created: Date.now(), completed: Date.now() },
+              sessionID: session.id,
+            } as unknown as MessageV2.Assistant)
+
+            const user = MessageID.ascending()
+            await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            const assistant = MessageID.ascending()
+            await Session.updateMessage({
+              id: assistant,
+              parentID: user,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              finish: "stop",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              time: { created: Date.now(), completed: Date.now() },
+              sessionID: session.id,
+            })
+
+            const msg = await SessionPrompt.loop({ sessionID: session.id })
+            expect(msg.info.id).toBe(assistant)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("loop uses session model before queued user message model", async () => {
+    const seen: { providerID: string; modelID: string }[] = []
+    spyOn(Provider, "getModel").mockImplementation(async (providerID, modelID) => {
+      seen.push({ providerID, modelID })
+      return {
+        id: modelID,
+        providerID,
+        limit: { context: 100_000, output: 32_000 },
+      } as Provider.Model
+    })
+    spyOn(LLM, "stream").mockImplementation(async () => ({
+      fullStream: (async function* () {
+        yield { type: "start" as const }
+        yield { type: "start-step" as const }
+        yield { type: "text-start" as const }
+        yield { type: "text-delta" as const, text: "ok" }
+        yield { type: "text-end" as const }
+        yield {
+          type: "finish-step" as const,
+          finishReason: "stop" as const,
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        }
+        yield { type: "finish" as const }
+      })(),
+    }) as unknown as Awaited<ReturnType<typeof LLM.stream>>)
+
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            resetRegistry()
+            const session = await Session.create({})
+            await Session.setModel({
+              sessionID: session.id,
+              model: {
+                providerID: ProviderID.make("minimax-cn-coding-plan"),
+                modelID: ModelID.make("MiniMax-M3"),
+              },
+            })
+            const user = MessageID.ascending()
+            await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: {
+                providerID: ProviderID.make("deepseek"),
+                modelID: ModelID.make("deepseek-v4-flash"),
+              },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+
+            const msg = await SessionPrompt.loop({ sessionID: session.id, messageID: user })
+            expect(msg.info.role).toBe("assistant")
+            if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+            expect(msg.info.providerID).toBe(ProviderID.make("minimax-cn-coding-plan"))
+            expect(msg.info.modelID).toBe(ModelID.make("MiniMax-M3"))
+            expect(seen).toContainEqual({
+              providerID: ProviderID.make("minimax-cn-coding-plan"),
+              modelID: ModelID.make("MiniMax-M3"),
+            })
+            expect(seen).not.toContainEqual({
+              providerID: ProviderID.make("deepseek"),
+              modelID: ModelID.make("deepseek-v4-flash"),
+            })
 
             await Session.remove(session.id)
           },
@@ -390,7 +571,7 @@ describe("session.prompt special characters", () => {
 })
 
 describe("session.prompt agent variant", () => {
-  test("applies agent variant only when using agent model", async () => {
+  test("keeps explicit session model before agent variant model", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"
 
@@ -432,8 +613,11 @@ describe("session.prompt agent variant", () => {
                 parts: [{ type: "text", text: "hello again" }],
               })
               if (match.info.role !== "user") throw new Error("expected user message")
-              expect(match.info.model).toEqual({ providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") })
-              expect(match.info.variant).toBe("xhigh")
+              expect(match.info.model).toEqual({
+                providerID: ProviderID.make("opencode"),
+                modelID: ModelID.make("kimi-k2.5-free"),
+              })
+              expect(match.info.variant).toBeUndefined()
 
               const override = await SessionPrompt.prompt({
                 sessionID: session.id,
@@ -493,15 +677,33 @@ describe("session.prompt agent switch", () => {
               modelID: ModelID.make("kimi-k2.5-free"),
             })
 
-            const explicit = await SessionPrompt.prompt({
+            const err = await SessionPrompt.prompt({
               sessionID: session.id,
               agent: "build",
               model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-sonnet-4") },
               noReply: true,
               parts: [{ type: "text", text: "explicit model" }],
+            }).catch((err) => err)
+            expect((err as { data?: { message?: string } }).data?.message).toContain("kimi-k2.5-free")
+            expect((await Session.get(session.id)).model).toEqual({
+              providerID: ProviderID.make("opencode"),
+              modelID: ModelID.make("kimi-k2.5-free"),
+            })
+
+            const explicit = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              model: { providerID: ProviderID.make("anthropic"), modelID: ModelID.make("claude-sonnet-4") },
+              confirm: true,
+              noReply: true,
+              parts: [{ type: "text", text: "explicit model" }],
             })
             if (explicit.info.role !== "user") throw new Error("expected user message")
             expect(explicit.info.model).toEqual({
+              providerID: ProviderID.make("anthropic"),
+              modelID: ModelID.make("claude-sonnet-4"),
+            })
+            expect((await Session.get(session.id)).model).toEqual({
               providerID: ProviderID.make("anthropic"),
               modelID: ModelID.make("claude-sonnet-4"),
             })

@@ -23,8 +23,16 @@ The session title row also shows compact runtime statistics for the active conve
 
 The turn filter row for all, thinking, input, output, and tool calls is part of the sticky title area and must use an opaque background. Timeline content should not be visible through the filter row while scrolling.
 
+When a turn creates delegated child sessions, the timeline renders the child session list from the parent session protocol state. Pending and completed delegation rows share one list, and each row reads the live `session.status` map so running, waiting, interrupted, failed, blocked, and completed children update without waiting for a parent reply. Every child row keeps an Open action so ended sessions remain inspectable. Live children expose Pause; interrupted children expose Restore. Ended children do not show a generic Continue action.
+
+The child session list footer includes a submit action for the current delegation run. It calls the parent-session delegation submit route, which sends the current child results and statuses back to the parent as one aggregate handoff. This gives the user a manual unblock path when a child ended without a structured `ActionResult`.
+
 The right-side session panel owns Review, Logs, Graph or Protocol, file tree, context, and file tabs. Its tab strip includes a collapse control that closes the whole right panel through `reviewPanel.close()`, allowing the timeline and composer to reclaim the width. The topbar keeps a side-panel toggle next to the file-tree control, so a collapsed panel still has a visible expand entry. Topbar Review and file-tree controls also reopen the panel before selecting their target tab.
 
 ## Session Logs
 
 Session status transitions emit `session.status.changed` log records. Each record includes the previous status type, new status type, full previous and new status payloads, and a reason derived from the transition context or status message. The logs panel exposes a Status filter so state-machine changes can be inspected separately from LLM, tool, and protocol activity.
+
+LLM request rows keep the timeline lightweight by showing the provider/model summary, message count, tool count, logged byte count, and a large-payload reference in the list. The expanded detail view still treats logs as inspectable records: when a request log only contains persisted message IDs and summary byte counts, the Messages and User sections expose a full-content action that fetches the corresponding session messages and renders their parts on demand.
+
+The final provider request payload is stored outside the log row under a session-scoped payload id. The Payload section loads it on demand and shows the transformed provider params plus the final active tool list, including native runtime tools such as `ActionResult`. This keeps large system prompts, message arrays, and tool schemas out of the default list render while preserving the exact request evidence needed for request forensics.

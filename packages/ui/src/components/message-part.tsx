@@ -1407,6 +1407,12 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
                   defaultOpen={props.defaultOpen}
                   subtitle={taskSubtitle()}
                   href={taskHref()}
+                  metadata={partMetadata()}
+                  onExportPayload={
+                    data.sessionLogPayload
+                      ? (payloadID) => data.sessionLogPayload!({ sessionID: part().sessionID, payloadID })
+                      : undefined
+                  }
                 />
               )
             }}
@@ -1607,7 +1613,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
               >
                 <span data-slot="part-header-title">
                   <Icon name="bubble-5" size="small" />
-                  <span>{i18n.t("ui.sessionTurn.summary.response")}</span>
+                  <span>{i18n.t("ui.sessionTurn.summary.textOutput")}</span>
                   <span data-slot="part-header-meta">{chars()}</span>
                 </span>
                 <span data-slot="part-header-toggle">
@@ -1667,6 +1673,9 @@ PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
   const part = () => props.part as ReasoningPart
   const text = () => part().text.trim()
   const throttledText = createThrottledValue(text)
+  const done = createMemo(
+    () => typeof part().time.end === "number" || typeof (props.message as AssistantMessage).time?.completed === "number",
+  )
   const [open, setOpen] = createSignal(true)
 
   return (
@@ -1680,7 +1689,11 @@ PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
         >
           <span data-slot="part-header-title">
             <Icon name="brain" size="small" />
-            <span>{i18n.t("ui.messagePart.collapsed.reasoning.title")}</span>
+            <span>
+              {done()
+                ? i18n.t("ui.sessionTurn.status.thinkingDone")
+                : i18n.t("ui.messagePart.collapsed.reasoning.title")}
+            </span>
           </span>
           <span data-slot="part-header-toggle">
             <Icon name="chevron-down" size="small" />

@@ -304,6 +304,7 @@ export namespace AgentTemplate {
       concurrency: Concurrency
         .optional()
         .describe("Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited."),
+      maxToolCalls: z.number().int().positive().optional().describe("Maximum consecutive tool calls before the session is stopped."),
       workflow_mode: WorkflowMode.default("auto").describe("How the agent executes workflows"),
       allowed_tools: z.array(Text).default([]).describe("List of tools the agent is allowed to use"),
       denied_tools: z.array(Text).default([]).describe("List of tools the agent is denied from using"),
@@ -379,5 +380,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "maxToolCalls" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
 }

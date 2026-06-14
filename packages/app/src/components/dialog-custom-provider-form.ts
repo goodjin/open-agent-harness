@@ -7,6 +7,7 @@ export type ModelErr = {
   id?: string
   name?: string
   concurrency?: string
+  rpm?: string
 }
 
 export type HeaderErr = {
@@ -19,6 +20,7 @@ export type ModelRow = {
   id: string
   name: string
   concurrency: string
+  rpm: string
   err: ModelErr
 }
 
@@ -35,6 +37,7 @@ export type FormState = {
   baseURL: string
   apiKey: string
   concurrency: string
+  rpm: string
   models: ModelRow[]
   headers: HeaderRow[]
   saving: boolean
@@ -43,6 +46,7 @@ export type FormState = {
     name?: string
     baseURL?: string
     concurrency?: string
+    rpm?: string
   }
 }
 
@@ -60,6 +64,7 @@ export function validateCustomProvider(input: ValidateArgs) {
   const baseURL = input.form.baseURL.trim()
   const apiKey = input.form.apiKey.trim()
   const concurrency = input.form.concurrency.trim()
+  const rpm = input.form.rpm.trim()
 
   const env = apiKey.match(/^\{env:([^}]+)\}$/)?.[1]?.trim()
   const key = apiKey && !env ? apiKey : undefined
@@ -80,6 +85,11 @@ export function validateCustomProvider(input: ValidateArgs) {
   const concurrencyError =
     concurrency && (concurrencyValue === undefined || !Number.isInteger(concurrencyValue) || concurrencyValue < 1)
       ? input.t("provider.custom.error.concurrency")
+      : undefined
+  const rpmValue = rpm ? Number(rpm) : undefined
+  const rpmError =
+    rpm && (rpmValue === undefined || !Number.isInteger(rpmValue) || rpmValue < 1)
+      ? input.t("provider.custom.error.rpm")
       : undefined
 
   const disabled = input.disabledProviders.includes(providerID)
@@ -107,15 +117,22 @@ export function validateCustomProvider(input: ValidateArgs) {
       concurrency && (value === undefined || !Number.isInteger(value) || value < 1)
         ? input.t("provider.custom.error.concurrency")
         : undefined
-    return { id: idError, name: nameError, concurrency: concurrencyError }
+    const rpm = m.rpm.trim()
+    const rpmValue = rpm ? Number(rpm) : undefined
+    const rpmError =
+      rpm && (rpmValue === undefined || !Number.isInteger(rpmValue) || rpmValue < 1)
+        ? input.t("provider.custom.error.rpm")
+        : undefined
+    return { id: idError, name: nameError, concurrency: concurrencyError, rpm: rpmError }
   })
-  const modelsValid = models.every((m) => !m.id && !m.name && !m.concurrency)
+  const modelsValid = models.every((m) => !m.id && !m.name && !m.concurrency && !m.rpm)
   const modelConfig = Object.fromEntries(
     input.form.models.map((m) => [
       m.id.trim(),
       {
         name: m.name.trim(),
         ...(m.concurrency.trim() ? { concurrency: Number(m.concurrency.trim()) } : {}),
+        ...(m.rpm.trim() ? { rpm: Number(m.rpm.trim()) } : {}),
       },
     ]),
   )
@@ -150,9 +167,11 @@ export function validateCustomProvider(input: ValidateArgs) {
     name: nameError,
     baseURL: urlError,
     concurrency: concurrencyError,
+    rpm: rpmError,
   }
 
-  const ok = !idError && !existsError && !nameError && !urlError && !concurrencyError && modelsValid && headersValid
+  const ok =
+    !idError && !existsError && !nameError && !urlError && !concurrencyError && !rpmError && modelsValid && headersValid
   if (!ok) return { err, models, headers }
 
   return {
@@ -168,6 +187,7 @@ export function validateCustomProvider(input: ValidateArgs) {
         name,
         ...(env ? { env: [env] } : {}),
         ...(concurrencyValue ? { concurrency: concurrencyValue } : {}),
+        ...(rpmValue ? { rpm: rpmValue } : {}),
         options: {
           baseURL,
           ...(Object.keys(headerConfig).length ? { headers: headerConfig } : {}),
@@ -182,5 +202,5 @@ let row = 0
 
 const nextRow = () => `row-${row++}`
 
-export const modelRow = (): ModelRow => ({ row: nextRow(), id: "", name: "", concurrency: "", err: {} })
+export const modelRow = (): ModelRow => ({ row: nextRow(), id: "", name: "", concurrency: "", rpm: "", err: {} })
 export const headerRow = (): HeaderRow => ({ row: nextRow(), key: "", value: "", err: {} })

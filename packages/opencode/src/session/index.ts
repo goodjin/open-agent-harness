@@ -655,6 +655,7 @@ export namespace Session {
         providerID: ProviderID.zod,
         modelID: ModelID.zod,
       }),
+      confirm: z.boolean().optional(),
     }),
     async (input) => {
       return Database.use((db) => {
@@ -667,6 +668,16 @@ export namespace Session {
         if (old.directory !== Instance.directory) {
           throw new ForbiddenError({
             message: `Session ${input.sessionID} does not belong to the current directory`,
+          })
+        }
+        const current = old.model
+        if (
+          current !== undefined &&
+          (current.providerID !== input.model.providerID || current.modelID !== input.model.modelID) &&
+          input.confirm !== true
+        ) {
+          throw new ConflictError({
+            message: `Session ${input.sessionID} has bound model "${current.providerID}/${current.modelID}". Pass confirm=true to overwrite it with "${input.model.providerID}/${input.model.modelID}".`,
           })
         }
         const row = db
@@ -741,7 +752,6 @@ export namespace Session {
         tokens_input: number
         tokens_output: number
         tool_calls: number
-        model?: { provider_id: ProviderID; model_id: ModelID }
         agent?: string
       }
     >()
@@ -768,17 +778,9 @@ export namespace Session {
       item.messages++
       if (data.role === "user") {
         item.agent = data.agent
-        item.model = {
-          provider_id: data.model.providerID,
-          model_id: data.model.modelID,
-        }
       }
       if (data.role === "assistant") {
         item.agent = data.agent
-        item.model = {
-          provider_id: data.providerID,
-          model_id: data.modelID,
-        }
         item.tokens_input += data.tokens.input
         item.tokens_output += data.tokens.output
       }
@@ -797,7 +799,7 @@ export namespace Session {
                 provider_id: item.model.providerID,
                 model_id: item.model.modelID,
               }
-            : stat.model,
+            : undefined,
         status: SessionStatus.get(item.id),
         stats: {
           messages: stat.messages,

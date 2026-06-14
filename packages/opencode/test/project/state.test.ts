@@ -72,6 +72,37 @@ test("Instance.state is disposed on instance reload", async () => {
   expect(seen).toEqual(["1"])
 })
 
+test("Instance.state reset only disposes the selected state", async () => {
+  await using tmp = await tmpdir()
+  const seen: string[] = []
+  let n = 0
+  const one = Instance.state(
+    () => ({ n: ++n, key: "one" }),
+    async (value) => {
+      seen.push(value.key)
+    },
+  )
+  const two = Instance.state(
+    () => ({ n: ++n, key: "two" }),
+    async (value) => {
+      seen.push(value.key)
+    },
+  )
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const a = one()
+      const b = two()
+      await one.reset()
+      expect(one()).not.toBe(a)
+      expect(two()).toBe(b)
+    },
+  })
+
+  expect(seen).toEqual(["one"])
+})
+
 test("Instance.state is disposed on disposeAll", async () => {
   await using a = await tmpdir()
   await using b = await tmpdir()

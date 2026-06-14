@@ -75,6 +75,24 @@ export type EventServerInstanceDisposed = {
   }
 }
 
+export type EventSessionLogCreated = {
+  type: "session.log.created"
+  properties: {
+    info: {
+      id: string
+      sessionID: string
+      messageID?: string
+      partID?: string
+      level: "debug" | "info" | "warn" | "error"
+      type: string
+      data: {
+        [key: string]: unknown
+      }
+      time: number
+    }
+  }
+}
+
 export type SessionStatus =
   | {
       type: "idle"
@@ -93,10 +111,12 @@ export type SessionStatus =
       providerID: string
       modelID: string
       scope: "provider" | "model" | "agent"
+      kind?: "concurrency" | "rpm"
       agent?: string
       active: number
       limit: number
       queued: number
+      reset?: number
     }
   | {
       type: "waiting_permission"
@@ -244,24 +264,6 @@ export type EventQuestionRejected = {
   properties: {
     sessionID: string
     requestID: string
-  }
-}
-
-export type EventSessionLogCreated = {
-  type: "session.log.created"
-  properties: {
-    info: {
-      id: string
-      sessionID: string
-      messageID?: string
-      partID?: string
-      level: "debug" | "info" | "warn" | "error"
-      type: string
-      data: {
-        [key: string]: unknown
-      }
-      time: number
-    }
   }
 }
 
@@ -1199,12 +1201,12 @@ export type Event =
   | EventGlobalDisposed
   | EventProjectUpdated
   | EventServerInstanceDisposed
+  | EventSessionLogCreated
   | EventSessionStatus
   | EventSessionIdle
   | EventQuestionAsked
   | EventQuestionReplied
   | EventQuestionRejected
-  | EventSessionLogCreated
   | EventObservabilityAuditRecorded
   | EventPermissionAsked
   | EventPermissionReplied
@@ -1352,6 +1354,10 @@ export type AgentConfig = {
    */
   steps?: number
   /**
+   * Maximum consecutive tool calls before stopping the session
+   */
+  maxToolCalls?: number
+  /**
    * @deprecated Use 'steps' field instead.
    */
   maxSteps?: number
@@ -1453,12 +1459,20 @@ export type ProviderConfig = {
        * Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.
        */
       concurrency?: number
+      /**
+       * Maximum LLM requests per minute allowed for this model.
+       */
+      rpm?: number
     }
   }
   /**
    * Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally.
    */
   concurrency?: number
+  /**
+   * Maximum LLM requests per minute allowed for this provider. Requests above this limit wait locally.
+   */
+  rpm?: number
   whitelist?: Array<string>
   blacklist?: Array<string>
   options?: {
@@ -1877,6 +1891,7 @@ export type Model = {
     output: number
   }
   concurrency?: number
+  rpm?: number
   status: "alpha" | "beta" | "deprecated" | "active"
   options: {
     [key: string]: unknown
@@ -1902,6 +1917,7 @@ export type Provider = {
     [key: string]: unknown
   }
   concurrency?: number
+  rpm?: number
   models: {
     [key: string]: Model
   }
@@ -2325,6 +2341,7 @@ export type AgentManageEffective = {
     writes?: boolean
   }
   runner: "chat" | "workflow" | "protocol"
+  maxToolCalls?: number
   hidden: boolean
   disabled: boolean
   model?: string
@@ -2581,6 +2598,10 @@ export type AgentManageInfo = {
      * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
     concurrency?: -1 | number
+    /**
+     * Maximum consecutive tool calls before the session is stopped.
+     */
+    maxToolCalls?: number
     /**
      * How the agent executes workflows
      */
@@ -2839,6 +2860,10 @@ export type AgentManageValidateOutput = {
      * Maximum concurrent delegated sessions for this agent inside one project. Use -1 for unlimited.
      */
     concurrency?: -1 | number
+    /**
+     * Maximum consecutive tool calls before the session is stopped.
+     */
+    maxToolCalls?: number
     /**
      * How the agent executes workflows
      */
@@ -3103,6 +3128,10 @@ export type AgentManageSaveInput = {
      */
     concurrency?: -1 | number
     /**
+     * Maximum consecutive tool calls before the session is stopped.
+     */
+    maxToolCalls?: number
+    /**
      * How the agent executes workflows
      */
     workflow_mode?: "auto" | "manual" | "supervision"
@@ -3359,6 +3388,10 @@ export type AgentManagePatchInput = {
      */
     concurrency?: -1 | number
     /**
+     * Maximum consecutive tool calls before the session is stopped.
+     */
+    maxToolCalls?: number
+    /**
      * How the agent executes workflows
      */
     workflow_mode?: "auto" | "manual" | "supervision"
@@ -3487,6 +3520,7 @@ export type Agent = {
   }
   runner?: "chat" | "workflow" | "protocol"
   concurrency?: -1 | number
+  maxToolCalls?: number
   native?: boolean
   hidden?: boolean
   topP?: number
@@ -5060,6 +5094,46 @@ export type SessionLogResponses = {
 
 export type SessionLogResponse = SessionLogResponses[keyof SessionLogResponses]
 
+export type SessionLogPayloadData = {
+  body?: never
+  path: {
+    sessionID: string
+    payloadID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/log/payload/{payloadID}"
+}
+
+export type SessionLogPayloadErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionLogPayloadError = SessionLogPayloadErrors[keyof SessionLogPayloadErrors]
+
+export type SessionLogPayloadResponses = {
+  /**
+   * Session log payload
+   */
+  200: {
+    id: string
+    sessionID: string
+    data: unknown
+    time: number
+    bytes: number
+  }
+}
+
+export type SessionLogPayloadResponse = SessionLogPayloadResponses[keyof SessionLogPayloadResponses]
+
 export type SessionProtocolTraceData = {
   body?: never
   path: {
@@ -5251,6 +5325,50 @@ export type SessionChildrenResponses = {
 }
 
 export type SessionChildrenResponse = SessionChildrenResponses[keyof SessionChildrenResponses]
+
+export type SessionDelegationsSubmitData = {
+  body?: {
+    directory?: string
+    force?: boolean
+    run_id: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/delegations/submit"
+}
+
+export type SessionDelegationsSubmitErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDelegationsSubmitError = SessionDelegationsSubmitErrors[keyof SessionDelegationsSubmitErrors]
+
+export type SessionDelegationsSubmitResponses = {
+  /**
+   * Delegation results submitted
+   */
+  200: {
+    submitted: boolean
+  }
+}
+
+export type SessionDelegationsSubmitResponse =
+  SessionDelegationsSubmitResponses[keyof SessionDelegationsSubmitResponses]
 
 export type SessionDescendantsData = {
   body?: never
@@ -5619,6 +5737,7 @@ export type SessionPromptData = {
       providerID: string
       modelID: string
     }
+    confirm?: boolean
     agent?: string
     noReply?: boolean
     /**
@@ -5653,6 +5772,10 @@ export type SessionPromptErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type SessionPromptError = SessionPromptErrors[keyof SessionPromptErrors]
@@ -5817,6 +5940,7 @@ export type SessionPromptAsyncData = {
       providerID: string
       modelID: string
     }
+    confirm?: boolean
     agent?: string
     noReply?: boolean
     /**
@@ -5851,6 +5975,10 @@ export type SessionPromptAsyncErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type SessionPromptAsyncError = SessionPromptAsyncErrors[keyof SessionPromptAsyncErrors]
@@ -5869,6 +5997,7 @@ export type SessionCommandData = {
     messageID?: string
     agent?: string
     model?: string
+    confirm?: boolean
     arguments: string
     command: string
     variant?: string
@@ -5899,6 +6028,10 @@ export type SessionCommandErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type SessionCommandError = SessionCommandErrors[keyof SessionCommandErrors]
@@ -5922,6 +6055,7 @@ export type SessionShellData = {
       providerID: string
       modelID: string
     }
+    confirm?: boolean
     command: string
   }
   path: {
@@ -5942,6 +6076,10 @@ export type SessionShellErrors = {
    * Not found
    */
   404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
 }
 
 export type SessionShellError = SessionShellErrors[keyof SessionShellErrors]

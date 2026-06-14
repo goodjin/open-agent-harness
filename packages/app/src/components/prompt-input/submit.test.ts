@@ -16,14 +16,24 @@ const optimistic: Array<{
   }
 }> = []
 const optimisticSeeded: boolean[] = []
-const storedSessions: Record<string, Array<{ id: string; title?: string; agent?: string }>> = {}
+const storedSessions: Record<
+  string,
+  Array<{ id: string; title?: string; agent?: string; model?: { providerID: string; modelID: string } }>
+> = {}
 const promoted: Array<{ directory: string; sessionID: string }> = []
-const sentPrompt: Array<{ directory: string; sessionID: string }> = []
+const sentPrompt: Array<{
+  directory: string
+  sessionID: string
+  model?: { providerID: string; modelID: string }
+  confirm?: boolean
+}> = []
 const sentShell: string[] = []
 const syncedDirectories: string[] = []
 const toasts: Array<{ title?: string; description?: string }> = []
 const treeUpdates: Array<{ directory: string; ids?: string[]; agent?: string; confirm?: boolean }> = []
 const treeConflicts: Array<{ directory: string; sessionID: string; agent: string }> = []
+const promptConflicts: Array<{ directory: string; sessionID: string; model: { providerID: string; modelID: string } }> = []
+const modelSets: Array<{ providerID: string; modelID: string } | undefined> = []
 let confirmNext = false
 
 let params: { id?: string } = {}
@@ -52,8 +62,24 @@ const clientFor = (directory: string) => {
         return { data: undefined }
       },
       prompt: async () => ({ data: undefined }),
-      promptAsync: async (input: { sessionID: string }) => {
-        sentPrompt.push({ directory, sessionID: input.sessionID })
+      promptAsync: async (input: {
+        sessionID: string
+        model?: { providerID: string; modelID: string }
+        confirm?: boolean
+      }) => {
+        sentPrompt.push({ directory, sessionID: input.sessionID, model: input.model, confirm: input.confirm })
+        const hit = promptConflicts.some(
+          (item) =>
+            item.directory === directory &&
+            item.sessionID === input.sessionID &&
+            item.model.providerID === input.model?.providerID &&
+            item.model.modelID === input.model?.modelID,
+        )
+        if (hit && !input.confirm) {
+          const err = new Error("conflict") as Error & { status?: number }
+          err.status = 409
+          throw err
+        }
         return { data: undefined }
       },
       command: async () => ({ data: undefined }),
@@ -112,6 +138,10 @@ beforeAll(async () => {
     useLocal: () => ({
       model: {
         current: () => currentModel,
+        set: (item: { providerID: string; modelID: string } | undefined) => {
+          modelSets.push(item)
+          currentModel = item ? { id: item.modelID, provider: { id: item.providerID } } : undefined
+        },
         variant: { current: () => variant },
       },
       agent: {
@@ -247,6 +277,8 @@ beforeEach(() => {
   toasts.length = 0
   treeUpdates.length = 0
   treeConflicts.length = 0
+  promptConflicts.length = 0
+  modelSets.length = 0
   confirmNext = false
   selected = "/repo/worktree-a"
   variant = undefined
@@ -393,7 +425,7 @@ describe("prompt submit worktree selection", () => {
     await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
+    expect(sentPrompt).toMatchObject([{ directory: "/repo/main", sessionID: "child" }])
     expect(optimistic[0]?.sessionID).toBe("child")
   })
 
@@ -422,7 +454,7 @@ describe("prompt submit worktree selection", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(treeUpdates[0]).toMatchObject({ directory: "/repo/main", ids: ["child"], agent: "build", confirm: false })
-    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
+    expect(sentPrompt).toMatchObject([{ directory: "/repo/main", sessionID: "child" }])
     expect(optimistic[0]?.message.agent).toBe("build")
   })
 
@@ -483,7 +515,91 @@ describe("prompt submit worktree selection", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(treeUpdates.map((item) => item.confirm)).toEqual([false, true])
-    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "child" }])
+    expect(sentPrompt).toMatchObject([{ directory: "/repo/main", sessionID: "child" }])
+  })
+
+  test("retries model conflicts with confirmation before sending", async () => {
+    params = { id: "child" }
+    currentModel = { id: "next", provider: { id: "provider" } }
+    confirmNext = true
+    promptConflicts.push({
+      directory: "/repo/main",
+      sessionID: "child",
+      model: { providerID: "provider", modelID: "next" },
+    })
+
+    const submit = createPromptSubmit({
+      info: () =>
+        ({
+          id: "child",
+          model: { providerID: "provider", modelID: "old" },
+        }) as never,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(sentPrompt.map((item) => item.confirm)).toEqual([undefined, true])
+    expect(sentPrompt.map((item) => item.model)).toEqual([
+      { providerID: "provider", modelID: "next" },
+      { providerID: "provider", modelID: "next" },
+    ])
+  })
+
+  test("retries model conflicts with the bound model when confirmation is declined", async () => {
+    params = { id: "child" }
+    currentModel = { id: "next", provider: { id: "provider" } }
+    promptConflicts.push({
+      directory: "/repo/main",
+      sessionID: "child",
+      model: { providerID: "provider", modelID: "next" },
+    })
+
+    const submit = createPromptSubmit({
+      info: () =>
+        ({
+          id: "child",
+          model: { providerID: "provider", modelID: "old" },
+        }) as never,
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(modelSets).toEqual([{ providerID: "provider", modelID: "old" }])
+    expect(sentPrompt.map((item) => item.model)).toEqual([
+      { providerID: "provider", modelID: "next" },
+      { providerID: "provider", modelID: "old" },
+    ])
+    expect(sentPrompt.map((item) => item.confirm)).toEqual([undefined, false])
   })
 
   test("can submit shell text as a normal prompt", async () => {
@@ -510,7 +626,7 @@ describe("prompt submit worktree selection", () => {
     await submit.handleSubmit({ preventDefault: () => undefined } as unknown as Event, { mode: "normal" })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(sentPrompt).toEqual([{ directory: "/repo/main", sessionID: "session-1" }])
+    expect(sentPrompt).toMatchObject([{ directory: "/repo/main", sessionID: "session-1" }])
     expect(sentShell).toEqual([])
   })
 

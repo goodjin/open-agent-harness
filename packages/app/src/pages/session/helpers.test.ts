@@ -5,12 +5,13 @@ import {
   createOpenReviewFile,
   createOpenSessionFileTab,
   createSessionTabs,
+  deriveTurnStats,
   focusTerminalById,
   getTabReorderIndex,
   isSessionBusy,
   turnDone,
 } from "./helpers"
-import type { Message } from "@open-agent-harness/sdk/v2/client"
+import type { Message, Part } from "@open-agent-harness/sdk/v2/client"
 
 describe("isSessionBusy", () => {
   test("uses session status as the source of truth", () => {
@@ -86,6 +87,61 @@ describe("turnDone", () => {
         { type: "completed" },
       ),
     ).toBe(false)
+  })
+
+  test("uses explicit turn metadata as request completion", () => {
+    expect(
+      turnDone(
+        [
+          {
+            ...user("u1"),
+            metadata: {
+              turn: {
+                kind: "user",
+                status: "done",
+                outcome: "waiting_child",
+                time: { queued: 1, started: 2, completed: 3 },
+              },
+            },
+          } as Message,
+        ],
+        "u1",
+        { type: "running" },
+      ),
+    ).toBe(true)
+  })
+})
+
+describe("deriveTurnStats", () => {
+  const user = (id: string) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "user",
+      time: { created: 1 },
+    }) as Message
+  const assistant = (id: string, parentID: string) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "assistant",
+      parentID,
+      time: { created: 2, completed: 3 },
+    }) as Message
+
+  test("counts assistant tools and protocol actions in the same turn", () => {
+    expect(
+      deriveTurnStats([user("u1"), assistant("a1", "u1"), user("u2"), assistant("a2", "u2")], "u1", {
+        a1: [
+          { id: "p1", sessionID: "ses_1", messageID: "a1", type: "tool" },
+          { id: "p2", sessionID: "ses_1", messageID: "a1", type: "text", text: "done", metadata: { protocol: true } },
+        ] as Part[],
+        a2: [{ id: "p3", sessionID: "ses_1", messageID: "a2", type: "tool" }] as Part[],
+      }),
+    ).toEqual({
+      actions: 1,
+      tools: 1,
+    })
   })
 })
 

@@ -1,10 +1,12 @@
 import type { Message } from "@open-agent-harness/sdk/v2"
 
+export type DelegationItem = { id: string; label: string; run?: string }
+
 export type DelegationState = {
   total: number
   done: number
-  active: { id: string; label: string }[]
-  completed: { id: string; label: string }[]
+  active: DelegationItem[]
+  completed: DelegationItem[]
 }
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
@@ -12,7 +14,15 @@ const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 
-const item = (input: unknown): input is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+const child = (input: { child_session_id: string; action_title?: unknown; run_id?: unknown }): DelegationItem => ({
+  id: input.child_session_id,
+  label: text(input.action_title) || `子会话 ${String(input.child_session_id)}`,
+  ...(text(input.run_id) ? { run: text(input.run_id) } : {}),
+})
+
+const item = (
+  input: unknown,
+): input is { parent_message_id: string; child_session_id: string; action_title?: unknown; run_id?: unknown } =>
   record(input) && typeof input.parent_message_id === "string" && typeof input.child_session_id === "string"
 
 export const turn = (messages: Message[], root: string, target: string) => {
@@ -26,15 +36,14 @@ const rows = (input: unknown, messageID: string, messages: Message[]) => {
   if (!Array.isArray(input)) return []
   const vals = input
     .filter(
-      (value): value is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+      (value): value is { parent_message_id: string; child_session_id: string; action_title?: unknown; run_id?: unknown } =>
         item(value) && turn(messages, messageID, value.parent_message_id),
     )
-    .reduce((acc: Map<string, { id: string; label: string }>, value) => {
+    .reduce((acc: Map<string, DelegationItem>, value) => {
       if (acc.has(value.child_session_id)) return acc
-      const label = text(value.action_title) || `子会话 ${String(value.child_session_id)}`
-      acc.set(value.child_session_id, { id: value.child_session_id, label })
+      acc.set(value.child_session_id, child(value))
       return acc
-    }, new Map<string, { id: string; label: string }>())
+    }, new Map<string, DelegationItem>())
   return Array.from(vals.values())
 }
 
@@ -54,13 +63,10 @@ export const delegationProgress = (input: unknown, messageID: string, messages: 
 
   const active = Object.values(record(protocol.pending_delegations) ? protocol.pending_delegations : {})
     .filter(
-      (value): value is { parent_message_id: string; child_session_id: string; action_title?: unknown } =>
+      (value): value is { parent_message_id: string; child_session_id: string; action_title?: unknown; run_id?: unknown } =>
         item(value) && turn(messages, messageID, value.parent_message_id),
     )
-    .map((value) => ({
-      id: String(value.child_session_id),
-      label: text(value.action_title) || `子会话 ${String(value.child_session_id)}`,
-    }))
+    .map(child)
 
   const completed = rows(protocol.completed_delegations, messageID, messages)
   const ids = new Set(active.map((value) => value.id).concat(completed.map((value) => value.id)))

@@ -51,4 +51,43 @@
     background: var(--surface-critical-base);
     color: var(--text-on-critical-base);
   }
+
+  [data-slot="tool-error-card-evidence"] {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 8px;
+  }
+
+  [data-slot="tool-error-card-evidence-heading"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  [data-slot="tool-error-card-evidence-label"] {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-weak);
+    text-transform: uppercase;
+  }
+
+  [data-slot="tool-error-card-evidence"] pre {
+    max-height: 260px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    border-radius: 6px;
+    padding: 8px;
+    background: var(--surface-inset-base);
+    color: var(--text-base);
+  }
+
+  [data-slot="tool-error-card-export-error"] {
+    color: var(--text-weak);
+    font-size: 12px;
+    line-height: 1.4;
+  }
 }

@@ -12,6 +12,7 @@ import { SessionRevert } from "../../session/revert"
 import { SessionLog } from "../../session/log"
 import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
+import { SessionDelegation } from "@/session/delegation"
 import { SessionTimeline } from "../../session/timeline"
 import { Todo } from "../../session/todo"
 import { Agent } from "../../agent/agent"
@@ -360,7 +361,7 @@ export const SessionRoutes = lazy(() =>
               if (body.title !== undefined) await Session.setTitle({ sessionID: id, title: body.title })
               if (body.agent !== undefined)
                 await Session.setAgent({ sessionID: id, agent: body.agent, confirm: body.confirm })
-              if (body.model) await Session.setModel({ sessionID: id, model: body.model })
+              if (body.model) await Session.setModel({ sessionID: id, model: body.model, confirm: body.confirm })
             }),
           )
         })
@@ -574,6 +575,40 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .get(
+      "/:sessionID/log/payload/:payloadID",
+      describeRoute({
+        summary: "Get session log payload",
+        description: "Retrieve a large payload referenced by a session log record.",
+        tags: ["Session"],
+        operationId: "session.log.payload",
+        responses: {
+          200: {
+            description: "Session log payload",
+            content: {
+              "application/json": {
+                schema: resolver(SessionLog.Payload),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: Session.get.schema,
+          payloadID: z.string().startsWith("payload_"),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        await Session.get(params.sessionID)
+        const payload = await SessionLog.readPayload({ sessionID: params.sessionID, id: params.payloadID })
+        if (!payload) throw new NotFoundError({ message: `Session log payload not found: ${params.payloadID}` })
+        return c.json(payload)
+      },
+    )
+    .get(
       "/:sessionID/protocol/:runID/trace",
       describeRoute({
         summary: "Get protocol trace",
@@ -666,6 +701,52 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         const session = await Session.children(sessionID)
         return c.json(session.map(slim))
+      },
+    )
+    .post(
+      "/:sessionID/delegations/submit",
+      describeRoute({
+        summary: "Submit delegated child results",
+        tags: ["Session"],
+        description: "Submit the current delegated child results and statuses for a parent session run.",
+        operationId: "session.delegations.submit",
+        responses: {
+          200: {
+            description: "Delegation results submitted",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ submitted: z.boolean() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          directory: z.string().optional(),
+          force: z.boolean().optional(),
+          run_id: z.string().min(1),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const submitted = await scoped(body.directory, () =>
+          SessionDelegation.submit({
+            sessionID,
+            runID: body.run_id,
+            force: body.force,
+          }),
+        )
+        return c.json({ submitted })
       },
     )
     .get(
@@ -1378,7 +1459,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 404, 409),
         },
       }),
       validator(
@@ -1410,7 +1491,7 @@ export const SessionRoutes = lazy(() =>
           204: {
             description: "Prompt accepted",
           },
-          ...errors(400, 404),
+          ...errors(400, 404, 409),
         },
       }),
       validator(
@@ -1421,11 +1502,18 @@ export const SessionRoutes = lazy(() =>
       ),
       validator("json", SessionPrompt.PromptInput.omit({ sessionID: true })),
       async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const session = await Session.get(sessionID)
+        if (
+          body.model &&
+          (session.model?.providerID !== body.model.providerID || session.model.modelID !== body.model.modelID)
+        ) {
+          await Session.setModel({ sessionID, model: body.model, confirm: body.confirm })
+        }
         c.status(204)
         c.header("Content-Type", "application/json")
         return stream(c, async () => {
-          const sessionID = c.req.valid("param").sessionID
-          const body = c.req.valid("json")
           SessionPrompt.prompt({ ...body, sessionID })
         })
       },
@@ -1450,7 +1538,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 404, 409),
         },
       }),
       validator(
@@ -1482,7 +1570,7 @@ export const SessionRoutes = lazy(() =>
               },
             },
           },
-          ...errors(400, 404),
+          ...errors(400, 404, 409),
         },
       }),
       validator(

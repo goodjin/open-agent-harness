@@ -30,6 +30,7 @@ import { LLMConcurrency } from "./llm-concurrency"
 import { AgentConcurrency } from "@/protocol/agent-concurrency"
 import type { SessionID } from "./schema"
 import { ActionResult } from "./action-result"
+import { SessionLog } from "./log"
 
 export namespace LLM {
   const log = Log.create({ service: "llm" })
@@ -86,6 +87,9 @@ export namespace LLM {
     toolChoice?: ToolChoice<ToolSet>
     runtimeTools?: RuntimeTools.Info
     structuredOutput?: boolean
+    payload?: {
+      id: string
+    }
   }
 
   export type StreamOutput = StreamTextResult<ToolSet, unknown> & { release?: () => void }
@@ -258,6 +262,21 @@ export namespace LLM {
                 if (input.agent.runner === "protocol" && deepseek(input.model)) {
                   delete (args.params as { toolChoice?: unknown }).toolChoice
                 }
+                if (input.payload) {
+                  await SessionLog.savePayload({
+                    id: input.payload.id,
+                    sessionID: input.sessionID,
+                    data: {
+                      type: args.type,
+                      providerID: input.model.providerID,
+                      modelID: input.model.id,
+                      agent: input.agent.name,
+                      mode: input.agent.mode,
+                      activeTools: Object.keys(tools).filter((item) => item !== "invalid"),
+                      params: args.params,
+                    },
+                  }).catch((err) => l.warn("request payload log failed", { err, payload: input.payload?.id }))
+                }
               }
               return args.params
             },
@@ -303,7 +322,7 @@ export namespace LLM {
             }
           }
           if (input.agent.runner !== "protocol" && failed.toolCall.toolName === ACTION_RESULT_TOOL) {
-            throw new Error(action(failed.error.message))
+            throw new Error(action(failed.error.message, failed.toolCall.input))
           }
           if (NoSuchToolError.isInstance(failed.error)) {
             l.warn("tool call unavailable", {
@@ -311,7 +330,8 @@ export namespace LLM {
               inherited: input.agent.inheritPermissions === true,
             })
             throw new Error(
-              denied(input, failed.toolCall.toolName, all, tools) ?? unavailable(input, failed.toolCall.toolName, failed.error),
+              denied(input, failed.toolCall.toolName, all, tools) ??
+                unavailable(input, failed.toolCall.toolName, failed.error),
             )
           }
           return {
@@ -470,7 +490,9 @@ export namespace LLM {
     const tool = all[name] ? name : all[name.toLowerCase()] ? name.toLowerCase() : undefined
     if (!tool || active[tool]) return
     const inherited = input.agent.inheritPermissions === true
-    const rules = inherited ? PermissionNext.merge(input.agent.permission, input.permission ?? []) : input.agent.permission
+    const rules = inherited
+      ? PermissionNext.merge(input.agent.permission, input.permission ?? [])
+      : input.agent.permission
     const trace = PermissionNext.trace(tool, "*", rules)
     const off = input.user.tools?.[tool] === false
     if (!off && trace.action !== "deny") return
@@ -485,14 +507,16 @@ export namespace LLM {
     ].join(" ")
   }
 
-  function action(error: string) {
+  function action(error: string, input?: string) {
     return [
       "ActionResult input schema/parse failed.",
-      "Call the native ActionResult tool with direct arguments, not wrapped in an input field.",
-      "Required verifier fields: role, action_id, target_action_id, status, result.",
-      "Required worker fields: role, action_id, status, result.",
+      "The previous ActionResult call was rejected. Retry by calling ActionResult again and follow this protocol exactly.",
+      ...ActionResult.protocol(),
+      input ? `Raw tool input: ${raw(input)}` : "",
       `Parser error: ${error}`,
-    ].join(" ")
+    ]
+      .filter((item) => item.length > 0)
+      .join(" ")
   }
 
   function unavailable(input: Pick<StreamInput, "agent">, name: string, error: NoSuchToolError) {

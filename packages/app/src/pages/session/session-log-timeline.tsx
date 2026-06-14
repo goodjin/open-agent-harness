@@ -32,6 +32,16 @@ type Section = {
   id: string
   label: string
   data: unknown
+  load?: {
+    key: string
+    messageIDs?: string[]
+    payloadID?: string
+  }
+}
+type Full = {
+  loading: boolean
+  error?: string
+  data?: unknown
 }
 type Filter = "all" | "protocol" | "status"
 type Stats = {
@@ -281,9 +291,16 @@ export function describeLog(record: Log): Summary {
         meta: [],
       }
     case "llm.start":
+      const req = object(data.request)
       return {
         title: "LLM Request",
-        meta: [],
+        detail: text(data.agent),
+        meta: [
+          text(data.modelID),
+          count(data.messages) !== undefined ? `${count(data.messages)} messages` : undefined,
+          count(data.tools) !== undefined ? `${count(data.tools)} tools` : undefined,
+          count(req?.messageBytes) !== undefined ? `${count(req?.messageBytes)} bytes` : undefined,
+        ].filter(filled),
       }
     case "llm.finish":
       return {
@@ -568,6 +585,10 @@ export function detailSections(logs: Log[]): Section[] {
   if (start) {
     const data = start.data
     const req = object(data.request) ?? {}
+    const user = text(req.user)
+    const payload = text(req.payload)
+    const response = text(req.responsePayload)
+    const ids = [...new Set([user, start.messageID].filter(filled))]
     return [
       {
         id: "overview",
@@ -582,6 +603,38 @@ export function detailSections(logs: Log[]): Section[] {
           error: err?.data.error,
         }),
       },
+      ...(payload
+        ? [
+            {
+              id: "payload",
+              label: "Payload",
+              data: {
+                payload,
+                message: "Full provider request payload is stored separately.",
+              },
+              load: {
+                key: `${start.id}:payload`,
+                payloadID: payload,
+              },
+            },
+          ]
+        : []),
+      ...(response
+        ? [
+            {
+              id: "response",
+              label: "Response",
+              data: {
+                payload: response,
+                message: "Full provider response events are stored separately.",
+              },
+              load: {
+                key: `${start.id}:response`,
+                payloadID: response,
+              },
+            },
+          ]
+        : []),
       {
         id: "system",
         label: "System",
@@ -590,12 +643,31 @@ export function detailSections(logs: Log[]): Section[] {
       {
         id: "messages",
         label: "Messages",
-        data: req.messages ?? [],
+        data:
+          req.messages ??
+          compact({
+            messageCount: req.messageCount,
+            messageBytes: req.messageBytes,
+            user: req.user,
+            assistant: start.messageID,
+          }),
+        load: ids.length
+          ? {
+              key: `${start.id}:messages`,
+              messageIDs: ids,
+            }
+          : undefined,
       },
       {
         id: "user",
         label: "User",
         data: req.user ?? {},
+        load: user
+          ? {
+              key: `${start.id}:user`,
+              messageIDs: [user],
+            }
+          : undefined,
       },
       {
         id: "tools",
@@ -775,32 +847,56 @@ function Preview(props: { data: unknown }) {
   )
 }
 
-function Data(props: { section: Section; sections: Section[]; onSection: (id: string) => void }) {
+function Data(props: {
+  section: Section
+  sections: Section[]
+  full?: Full
+  onLoad?: (section: Section) => void
+  onSection: (id: string) => void
+}) {
+  const data = () => props.full?.data ?? props.section.data
   return (
     <div class="flex h-full min-h-0 flex-col">
       <Show when={props.sections.length > 1}>
         <div class="shrink-0 border-b border-border-weaker-base bg-background-base pb-2">
           <div class="flex flex-wrap gap-1.5">
-          <For each={props.sections}>
-            {(section) => (
-              <button
-                type="button"
-                class="rounded px-2 py-1 text-11-regular transition-colors"
-                classList={{
-                  "bg-surface-base text-text-strong": props.section.id === section.id,
-                  "text-text-weak hover:bg-surface-base": props.section.id !== section.id,
-                }}
-                onClick={() => props.onSection(section.id)}
-              >
-                {section.label}
-              </button>
-            )}
-          </For>
+            <For each={props.sections}>
+              {(section) => (
+                <button
+                  type="button"
+                  class="rounded px-2 py-1 text-11-regular transition-colors"
+                  classList={{
+                    "bg-surface-base text-text-strong": props.section.id === section.id,
+                    "text-text-weak hover:bg-surface-base": props.section.id !== section.id,
+                  }}
+                  onClick={() => props.onSection(section.id)}
+                >
+                  {section.label}
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+      <Show when={props.section.load}>
+        <div class="shrink-0 border-b border-border-weaker-base py-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="rounded bg-surface-base px-2 py-1 text-11-regular text-text-strong transition-colors hover:bg-surface-hover-base disabled:opacity-60"
+              disabled={props.full?.loading}
+              onClick={() => props.onLoad?.(props.section)}
+            >
+              {props.full?.loading ? "Loading full content..." : props.full?.data ? "Reload full content" : "Load full content"}
+            </button>
+            <Show when={props.full?.error}>
+              {(err) => <span class="text-11-regular text-danger-base break-words">{err()}</span>}
+            </Show>
           </div>
         </div>
       </Show>
       <div class="min-h-0 flex-1 overflow-auto pt-2">
-        <Preview data={props.section.data} />
+        <Preview data={data()} />
       </div>
     </div>
   )
@@ -819,6 +915,47 @@ export function preserveScroll(
   })
 }
 
+function part(input: unknown) {
+  const data = object(input) ?? {}
+  const type = text(data.type)
+  if (type === "text") {
+    return compact({
+      id: data.id,
+      type,
+      text: data.text,
+      metadata: data.metadata,
+      ignored: data.ignored,
+    })
+  }
+  if (type === "tool") {
+    const state = object(data.state) ?? {}
+    return compact({
+      id: data.id,
+      type,
+      tool: data.tool,
+      callID: data.callID,
+      status: state.status,
+      input: state.input,
+      output: state.output,
+      error: state.error,
+      title: state.title,
+      metadata: data.metadata,
+      time: state.time,
+    })
+  }
+  return data
+}
+
+function message(input: unknown) {
+  const data = object(input) ?? {}
+  const info = object(data.info) ?? {}
+  const parts = Array.isArray(data.parts) ? data.parts : []
+  return {
+    info,
+    parts: parts.map(part),
+  }
+}
+
 export function SessionLogTimeline(props: { sessionID: string }) {
   const sdk = useSDK()
   const language = useLanguage()
@@ -829,6 +966,7 @@ export function SessionLogTimeline(props: { sessionID: string }) {
     logs: [] as Log[],
     open: {} as Record<string, boolean>,
     detail: {} as Record<string, string>,
+    full: {} as Record<string, Full>,
     filter: "all" as Filter,
   })
 
@@ -857,10 +995,41 @@ export function SessionLogTimeline(props: { sessionID: string }) {
     setStore("loading", false)
   }
 
+  const loadFull = async (section: Section) => {
+    const cfg = section.load
+    if (!cfg) return
+    setStore("full", cfg.key, { loading: true, error: undefined, data: store.full[cfg.key]?.data })
+    try {
+      if (cfg.payloadID) {
+        const res = await sdk.client.session.log2.payload({ sessionID: props.sessionID, payloadID: cfg.payloadID })
+        setStore("full", cfg.key, {
+          loading: false,
+          data: res.data,
+        })
+        return
+      }
+      const ids = cfg.messageIDs ?? []
+      const res = await Promise.all(ids.map((id) => sdk.client.session.message({ sessionID: props.sessionID, messageID: id })))
+      setStore("full", cfg.key, {
+        loading: false,
+        data: {
+          messageIDs: ids,
+          messages: res.map((item) => message(item.data)),
+        },
+      })
+    } catch (err) {
+      setStore("full", cfg.key, {
+        loading: false,
+        error: formatServerError(err, language.t, "Failed to load full content"),
+        data: store.full[cfg.key]?.data,
+      })
+    }
+  }
+
   createEffect(() => {
     let active = true
     props.sessionID
-    setStore({ loading: true, error: undefined, logs: [], open: {}, detail: {} })
+    setStore({ loading: true, error: undefined, logs: [], open: {}, detail: {}, full: {} })
     void load().catch((err) => {
       if (!active) return
       setStore({
@@ -973,6 +1142,12 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                     const sections = detailSections(row.logs)
                     const current = () => sections.find((item) => item.id === store.detail[row.id]) ?? sections[0]
                     const section = () => current() ?? { id: "raw", label: "Raw", data: raw(row.logs) }
+                    const key = () => section().load?.key
+                    const full = () => {
+                      const id = key()
+                      if (!id) return undefined
+                      return store.full[id]
+                    }
                     const open = () => store.open[row.id] === true
                     const spent = () => durationLabel(duration(row.logs))
                     const toggle = () => setStore("open", row.id, !open())
@@ -1014,6 +1189,8 @@ export function SessionLogTimeline(props: { sessionID: string }) {
                             <Data
                               sections={sections}
                               section={section()}
+                              full={full()}
+                              onLoad={loadFull}
                               onSection={(id) => setStore("detail", row.id, id)}
                             />
                           </div>

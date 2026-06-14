@@ -3373,6 +3373,13 @@ describe("SessionRunner", () => {
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
               const session = await Session.create({})
+              await Session.setModel({
+                sessionID: session.id,
+                model: {
+                  providerID: ProviderID.make("minimax-cn-coding-plan"),
+                  modelID: ModelID.make("MiniMax-M3"),
+                },
+              })
               await Session.setPermission({
                 sessionID: session.id,
                 permission: [{ permission: "*", pattern: "*", action: "allow" }],
@@ -3383,7 +3390,10 @@ describe("SessionRunner", () => {
                 role: "user",
                 time: { created: Date.now() },
                 agent: "protocol-runner",
-                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                model: {
+                  providerID: ProviderID.make("deepseek"),
+                  modelID: ModelID.make("deepseek-v4-flash"),
+                },
                 tools: {},
                 mode: "",
               } as MessageV2.User)) as MessageV2.User
@@ -3440,6 +3450,10 @@ describe("SessionRunner", () => {
               const child = await Session.get(children[0]!.id)
               expect(JSON.stringify(child.dsl_context)).toContain("agent.delegation.assignment")
               expect(child.agent).toBe("backend")
+              expect(child.model).toEqual({
+                providerID: ProviderID.make("minimax-cn-coding-plan"),
+                modelID: ModelID.make("MiniMax-M3"),
+              })
               expect(child.dsl_context).not.toHaveProperty("session_tree")
               expect(JSON.stringify(child.dsl_context)).toContain('"parent_session_id"')
               expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain(
@@ -3457,8 +3471,8 @@ describe("SessionRunner", () => {
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("backend")
               expect(inputs[0]?.model).toEqual({
-                providerID: ProviderID.make("openai"),
-                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("minimax-cn-coding-plan"),
+                modelID: ModelID.make("MiniMax-M3"),
               })
               expect(inputs[1]?.agent).toBe("protocol-runner")
               expect(

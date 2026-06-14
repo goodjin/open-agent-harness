@@ -9,6 +9,8 @@ import { SessionStatus } from "../../src/session/status"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { ModelID, ProviderID } from "../../src/provider/schema"
+import { MessageID } from "../../src/session/schema"
+import type { MessageV2 } from "../../src/session/message-v2"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -86,6 +88,53 @@ describe("Session tree projection", () => {
             expect(body.nodes.find((item) => item.id === child.id)).toMatchObject({
               agent: "build",
               model: { provider_id: "anthropic", model_id: "claude-sonnet-4" },
+            })
+
+            await Session.remove(parent.id)
+          },
+        }),
+    })
+  })
+
+  test("does not project historical message model as session model", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const parent = await Session.create({ title: "tree-root" })
+            const child = await Session.create({ title: "tree-child", parentID: parent.id })
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: {
+                providerID: ProviderID.make("deepseek"),
+                modelID: ModelID.make("deepseek-v4-flash"),
+              },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)
+            const app = Server.Default()
+
+            const first = await app.request(`/session/tree?root=${parent.id}`)
+            const stale = (await first.json()) as { nodes: Record<string, unknown>[] }
+            expect(stale.nodes.find((item) => item.id === child.id)).not.toHaveProperty("model")
+
+            await Session.setModel({
+              sessionID: child.id,
+              model: {
+                providerID: ProviderID.make("minimax-cn-coding-plan"),
+                modelID: ModelID.make("MiniMax-M3"),
+              },
+            })
+            const next = await app.request(`/session/tree?root=${parent.id}`)
+            const body = (await next.json()) as { nodes: Record<string, unknown>[] }
+            expect(body.nodes.find((item) => item.id === child.id)).toMatchObject({
+              model: { provider_id: "minimax-cn-coding-plan", model_id: "MiniMax-M3" },
             })
 
             await Session.remove(parent.id)
@@ -284,6 +333,127 @@ describe("Session tree projection", () => {
               body: JSON.stringify({ ids: [session.id], agent: "plan", confirm: true }),
             })
             expect(confirmed.status).toBe(200)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("rejects model change without confirm when a bound model already exists", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "model-conflict" })
+            const app = Server.Default()
+
+            const first = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ids: [session.id],
+                model: { providerID: "opencode", modelID: "kimi-k2.5-free" },
+              }),
+            })
+            expect(first.status).toBe(200)
+
+            const conflict = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ids: [session.id],
+                model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+              }),
+            })
+            expect(conflict.status).toBe(409)
+            const body = (await conflict.json()) as { data?: { message?: string }; message?: string }
+            const msg = body.data?.message ?? body.message ?? ""
+            expect(msg).toContain("opencode/kimi-k2.5-free")
+            expect(msg).toContain("anthropic/claude-sonnet-4")
+
+            const same = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ids: [session.id],
+                model: { providerID: "opencode", modelID: "kimi-k2.5-free" },
+              }),
+            })
+            expect(same.status).toBe(200)
+
+            const confirmed = await app.request("/session/tree/sessions", {
+              method: "PATCH",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ids: [session.id],
+                model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+                confirm: true,
+              }),
+            })
+            expect(confirmed.status).toBe(200)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("rejects async prompt model changes before accepting the request", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "prompt-model-conflict" })
+            await Session.setModel({
+              sessionID: session.id,
+              model: {
+                providerID: ProviderID.make("opencode"),
+                modelID: ModelID.make("kimi-k2.5-free"),
+              },
+            })
+            const app = Server.Default()
+
+            const conflict = await app.request(`/session/${session.id}/prompt_async`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                agent: "build",
+                model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+                noReply: true,
+                parts: [{ type: "text", text: "wrong model" }],
+              }),
+            })
+            expect(conflict.status).toBe(409)
+            expect((await Session.get(session.id)).model).toEqual({
+              providerID: ProviderID.make("opencode"),
+              modelID: ModelID.make("kimi-k2.5-free"),
+            })
+
+            const confirmed = await app.request(`/session/${session.id}/prompt_async`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                agent: "build",
+                model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+                confirm: true,
+                noReply: true,
+                parts: [{ type: "text", text: "confirmed model" }],
+              }),
+            })
+            expect(confirmed.status).toBe(204)
+            expect((await Session.get(session.id)).model).toEqual({
+              providerID: ProviderID.make("anthropic"),
+              modelID: ModelID.make("claude-sonnet-4"),
+            })
+            for (let i = 0; i < 10; i++) {
+              if ((await Session.messages({ sessionID: session.id })).length > 0) break
+              await new Promise((resolve) => setTimeout(resolve, 10))
+            }
 
             await Session.remove(session.id)
           },

@@ -721,6 +721,7 @@ export namespace Provider {
         output: z.number(),
       }),
       concurrency: z.number().int().positive().optional(),
+      rpm: z.number().int().positive().optional(),
       status: z.enum(["alpha", "beta", "deprecated", "active"]),
       options: z.record(z.string(), z.any()),
       headers: z.record(z.string(), z.string()),
@@ -741,6 +742,7 @@ export namespace Provider {
       key: z.string().optional(),
       options: z.record(z.string(), z.any()),
       concurrency: z.number().int().positive().optional(),
+      rpm: z.number().int().positive().optional(),
       models: z.record(z.string(), Model),
     })
     .meta({
@@ -878,6 +880,7 @@ export namespace Provider {
         env: provider.env ?? existing?.env ?? [],
         options: mergeDeep(existing?.options ?? {}, provider.options ?? {}),
         concurrency: provider.concurrency ?? existing?.concurrency,
+        rpm: provider.rpm ?? existing?.rpm,
         source: "config",
         models: existing?.models ?? {},
       }
@@ -935,6 +938,7 @@ export namespace Provider {
           },
           options: mergeDeep(mergeDeep(existingModel?.options ?? {}, model.options ?? {}), { configured: true }),
           concurrency: model.concurrency ?? existingModel?.concurrency,
+          rpm: model.rpm ?? existingModel?.rpm,
           limit: {
             context: model.limit?.context ?? existingModel?.limit?.context ?? 0,
             output: model.limit?.output ?? existingModel?.limit?.output ?? 0,
@@ -1064,6 +1068,18 @@ export namespace Provider {
   export async function list() {
     return state().then((state) => state.providers)
   }
+
+  export async function invalidate(directory?: string) {
+    await state.reset(directory)
+  }
+
+  export async function invalidateAll() {
+    await Promise.all(Instance.directories().map((dir) => state.reset(dir)))
+  }
+
+  Config.onInvalidate(async (dirs) => {
+    await Promise.all(dirs.map((dir) => state.reset(dir)))
+  })
 
   async function getSDK(model: Model) {
     try {

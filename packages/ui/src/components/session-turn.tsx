@@ -447,17 +447,40 @@ export function SessionTurn(
       )
     }, 0),
   )
-  const assistantTailVisible = createMemo(() =>
-    assistantMessages()
-      .flatMap((message) => list(data.store.part?.[message.id], emptyParts))
-      .flatMap((part) => {
+  const visibleItems = createMemo(() =>
+    assistantMessages().flatMap((message) =>
+      list(data.store.part?.[message.id], emptyParts).flatMap((part) => {
         if (!filterPart(part, filter(), "assistant")) return []
         if (partState(part, showReasoningSummaries()) !== "visible") return []
-        if (part.type === "text") return ["text" as const]
-        return ["other" as const]
-      })
-      .at(-1),
+        return [{ message, part }]
+      }),
+    ),
   )
+  const visibleParts = createMemo(() => visibleItems().map((item) => item.part))
+  const messageDone = (message: AssistantMessage) =>
+    typeof message.time.completed === "number" || !!message.error
+  const partDone = (part: PartType) => {
+    const value = (part as { time?: unknown }).time
+    return record(value) && typeof value.end === "number"
+  }
+  const partStatus = createMemo(() => {
+    const item = visibleItems().at(-1)
+    if (!item) return ""
+    const part = item.part
+    if (part.type === "reasoning") {
+      if (working() && !partDone(part) && !messageDone(item.message)) return thinking()
+      return i18n.t("ui.sessionTurn.status.thinkingDone")
+    }
+    if (part.type === "text") {
+      if (working() && !messageDone(item.message)) return i18n.t("ui.sessionTurn.status.responseStreaming")
+      return i18n.t("ui.sessionTurn.status.responseDone")
+    }
+    if (part.type === "tool") {
+      if (part.state.status === "running" || part.state.status === "pending") return i18n.t("ui.sessionTurn.status.toolStreaming")
+      return i18n.t("ui.sessionTurn.status.toolDone")
+    }
+    return ""
+  })
   const reasoningHeading = createMemo(() =>
     assistantMessages()
       .flatMap((message) => list(data.store.part?.[message.id], emptyParts))
@@ -477,8 +500,7 @@ export function SessionTurn(
     if (!working() || !!error()) return false
     if (status().type === "retry") return false
     if (status().type === "rate_limited") return false
-    if (showReasoningSummaries()) return assistantVisible() === 0
-    return true
+    return visibleParts().some((part) => part.type === "reasoning")
   })
 
   const autoScroll = createAutoScroll({
@@ -534,6 +556,9 @@ export function SessionTurn(
                     filter={filter()}
                     actions={props.actions}
                   />
+                  <Show when={partStatus()}>
+                    <div data-slot="session-turn-part-status">{partStatus()}</div>
+                  </Show>
                 </div>
               </Show>
               <Show when={filter() !== "input" && filter() !== "output" && filter() !== "tool" && showThinking()}>

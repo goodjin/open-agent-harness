@@ -50,4 +50,23 @@ describe("session delegations", () => {
 
     expect(pendingDelegation(ctx, "user_1", messages)).toBe(true)
   })
+
+  test("keeps run id on child session rows", () => {
+    const ctx = {
+      protocol: {
+        pending_delegations: {
+          task: {
+            parent_message_id: "assistant_1",
+            child_session_id: "child_2",
+            action_title: "run child",
+            run_id: "run_1",
+          },
+        },
+      },
+    }
+
+    expect(delegationProgress(ctx, "user_1", messages).active).toEqual([
+      { id: "child_2", label: "run child", run: "run_1" },
+    ])
+  })
 })

@@ -35,6 +35,7 @@ export function DialogCustomProvider(props: Props) {
     id,
     name: typeof model.name === "string" ? model.name : id,
     concurrency: Number.isInteger(model.concurrency) ? String(model.concurrency) : "",
+    rpm: Number.isInteger(model.rpm) ? String(model.rpm) : "",
   }))
 
   const [form, setForm] = createStore<FormState>({
@@ -43,6 +44,7 @@ export function DialogCustomProvider(props: Props) {
     baseURL: typeof opts.baseURL === "string" ? opts.baseURL : "",
     apiKey: cfg?.env?.[0] ? `{env: ${cfg.env[0]}}` : "",
     concurrency: Number.isInteger(cfg?.concurrency) ? String(cfg?.concurrency) : "",
+    rpm: Number.isInteger(cfg?.rpm) ? String(cfg?.rpm) : "",
     models: rows.length ? rows : [modelRow()],
     headers: heads.length ? heads.map(([key, value]) => ({ ...headerRow(), key, value })) : [headerRow()],
     saving: false,
@@ -95,13 +97,13 @@ export function DialogCustomProvider(props: Props) {
     )
   }
 
-  const setField = (key: "providerID" | "name" | "baseURL" | "apiKey" | "concurrency", value: string) => {
+  const setField = (key: "providerID" | "name" | "baseURL" | "apiKey" | "concurrency" | "rpm", value: string) => {
     setForm(key, value)
     if (key === "apiKey") return
     setForm("err", key, undefined)
   }
 
-  const setModel = (index: number, key: "id" | "name" | "concurrency", value: string) => {
+  const setModel = (index: number, key: "id" | "name" | "concurrency" | "rpm", value: string) => {
     batch(() => {
       setForm("models", index, key, value)
       setForm("models", index, "err", key, undefined)
@@ -253,6 +255,15 @@ export function DialogCustomProvider(props: Props) {
               validationState={form.err.concurrency ? "invalid" : undefined}
               error={form.err.concurrency}
             />
+            <TextField
+              label={language.t("provider.custom.field.rpm.label")}
+              placeholder={language.t("provider.custom.field.rpm.placeholder")}
+              description={language.t("provider.custom.field.rpm.description")}
+              value={form.rpm}
+              onChange={(v) => setField("rpm", v)}
+              validationState={form.err.rpm ? "invalid" : undefined}
+              error={form.err.rpm}
+            />
           </div>
 
           <div class="flex flex-col gap-3">
@@ -291,6 +302,17 @@ export function DialogCustomProvider(props: Props) {
                       onChange={(v) => setModel(i(), "concurrency", v)}
                       validationState={m.err.concurrency ? "invalid" : undefined}
                       error={m.err.concurrency}
+                    />
+                  </div>
+                  <div class="w-24">
+                    <TextField
+                      label={language.t("provider.custom.models.rpm.label")}
+                      hideLabel
+                      placeholder={language.t("provider.custom.models.rpm.placeholder")}
+                      value={m.rpm}
+                      onChange={(v) => setModel(i(), "rpm", v)}
+                      validationState={m.err.rpm ? "invalid" : undefined}
+                      error={m.err.rpm}
                     />
                   </div>
                   <IconButton

@@ -38,6 +38,8 @@ import { Lock } from "@/util/lock"
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
+  type Hook = (dirs: string[]) => Promise<void> | void
+  const hooks = new Set<Hook>()
 
   const log = Log.create({ service: "config" })
 
@@ -647,6 +649,12 @@ export namespace Config {
         .positive()
         .optional()
         .describe("Maximum number of agentic iterations before forcing text-only response"),
+      maxToolCalls: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum consecutive tool calls before stopping the session"),
       maxSteps: z.number().int().positive().optional().describe("@deprecated Use 'steps' field instead."),
       permission: Permission.optional(),
     })
@@ -664,6 +672,7 @@ export namespace Config {
         "hidden",
         "color",
         "steps",
+        "maxToolCalls",
         "maxSteps",
         "options",
         "permission",
@@ -697,6 +706,7 @@ export namespace Config {
         options?: Record<string, unknown>
         permission?: Permission
         steps?: number
+        maxToolCalls?: number
       }
     })
     .meta({
@@ -889,6 +899,12 @@ export namespace Config {
         .positive()
         .optional()
         .describe("Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally."),
+      rpm: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum LLM requests per minute allowed for this provider. Requests above this limit wait locally."),
       whitelist: z.array(z.string()).optional(),
       blacklist: z.array(z.string()).optional(),
       models: z
@@ -903,6 +919,12 @@ export namespace Config {
               .describe(
                 "Maximum concurrent LLM requests allowed for this model. Overrides the provider-level concurrency limit.",
               ),
+            rpm: z
+              .number()
+              .int()
+              .positive()
+              .optional()
+              .describe("Maximum LLM requests per minute allowed for this model."),
             variants: z
               .record(
                 z.string(),
@@ -1249,10 +1271,23 @@ export namespace Config {
   }
 
   export async function update(config: Info) {
+    const dir = Instance.directory
     const filepath = path.join(Instance.directory, "config.json")
     const existing = await loadFile(filepath)
     await Filesystem.writeJson(filepath, mergeDeep(existing, config))
-    await Instance.dispose()
+    await invalidate([dir])
+  }
+
+  async function invalidate(dirs: string[]) {
+    await Promise.all(dirs.map((dir) => state.reset(dir)))
+    await Promise.all([...hooks].map((hook) => hook(dirs)))
+  }
+
+  export function onInvalidate(hook: Hook) {
+    hooks.add(hook)
+    return () => {
+      hooks.delete(hook)
+    }
   }
 
   function globalConfigFile() {
@@ -1342,18 +1377,15 @@ export namespace Config {
     })()
 
     global.reset()
+    await invalidate(Instance.directories())
 
-    void Instance.disposeAll()
-      .catch(() => undefined)
-      .finally(() => {
-        GlobalBus.emit("event", {
-          directory: "global",
-          payload: {
-            type: Event.Disposed.type,
-            properties: {},
-          },
-        })
-      })
+    GlobalBus.emit("event", {
+      directory: "global",
+      payload: {
+        type: Event.Disposed.type,
+        properties: {},
+      },
+    })
 
     return next
   }

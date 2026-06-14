@@ -47,4 +47,18 @@ describe("ActionResult", () => {
     expect(parsed.success).toBe(true)
     expect(parsed.success ? parsed.data.result : "").toBe("Legacy summary-only result.")
   })
+
+  test("describes strict worker and verifier protocol", () => {
+    const text = ActionResult.protocol({ action: "impl" }).join("\n")
+    expect(text).toContain("The top-level JSON object must contain role.")
+    expect(text).toContain("role selects the protocol branch")
+    expect(text).toContain("Worker required fields: role, action_id, status, result.")
+    expect(text).toContain('"role": "worker"')
+    expect(text).toContain('"action_id": "impl"')
+
+    const verifier = ActionResult.protocol({ verifier: true, action: "review", target: "impl" }).join("\n")
+    expect(verifier).toContain("Verifier required fields: role, action_id, target_action_id, status, result.")
+    expect(verifier).toContain('"role": "verifier"')
+    expect(verifier).toContain('"target_action_id": "impl"')
+  })
 })

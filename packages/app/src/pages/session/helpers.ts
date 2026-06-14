@@ -1,6 +1,6 @@
 import { batch, createMemo, onCleanup, onMount, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
-import type { AssistantMessage, Message, SessionStatus } from "@open-agent-harness/sdk/v2/client"
+import type { AssistantMessage, Message, Part, SessionStatus } from "@open-agent-harness/sdk/v2/client"
 import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []
@@ -29,11 +29,25 @@ export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Mes
   return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user" || type === "waiting_child"
 }
 
+const record = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input)
+
+const turn = (input: Message | undefined) => {
+  if (!input || input.role !== "user") return
+  const metadata = (input as { metadata?: unknown }).metadata
+  if (!record(metadata)) return
+  const value = metadata.turn
+  if (!record(value)) return
+  return value
+}
+
 export const turnDone = (messages: Message[], id: string, status: SessionStatus | undefined) => {
   const type = status?.type ?? "idle"
-  if (type !== "idle" && type !== "completed") return false
   const idx = messages.findIndex((item) => item.id === id)
   if (idx === -1) return false
+  const state = turn(messages[idx])
+  if (state?.status === "done") return true
+  if (type !== "idle" && type !== "completed") return false
   const list: AssistantMessage[] = []
   for (let i = idx + 1; i < messages.length; i++) {
     const item = messages[i]
@@ -44,6 +58,27 @@ export const turnDone = (messages: Message[], id: string, status: SessionStatus 
   const last = list.at(-1)
   if (!last) return false
   return typeof last.time.completed === "number" && !last.error
+}
+
+export const deriveTurnStats = (messages: Message[], id: string, parts: Record<string, Part[] | undefined>) => {
+  const idx = messages.findIndex((item) => item.id === id)
+  if (idx === -1) return {}
+  let tools = 0
+  let actions = 0
+  for (let i = idx + 1; i < messages.length; i++) {
+    const msg = messages[i]
+    if (!msg) continue
+    if (msg.role === "user") break
+    if (msg.role !== "assistant" || msg.parentID !== id) continue
+    for (const part of parts[msg.id] ?? []) {
+      if (part.type === "tool") tools++
+      if (part.type === "text" && record(part.metadata) && part.metadata.protocol) actions++
+    }
+  }
+  return {
+    actions: actions > 0 ? actions : undefined,
+    tools: tools > 0 ? tools : undefined,
+  }
 }
 
 export const createSessionTabs = (input: TabsInput) => {

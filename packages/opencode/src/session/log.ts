@@ -6,6 +6,9 @@ import { z } from "zod"
 import { Bus } from "@/bus"
 import { SessionLogTable } from "./session.sql"
 import { MessageID, PartID, SessionID } from "./schema"
+import path from "path"
+import { Global } from "@/global"
+import { Filesystem } from "@/util/filesystem"
 
 export namespace SessionLog {
   export const retention = 7 * 24 * 60 * 60 * 1000
@@ -23,6 +26,15 @@ export namespace SessionLog {
     time: z.number(),
   })
   export type Info = z.infer<typeof Info>
+
+  export const Payload = z.object({
+    id: Identifier.schema("payload"),
+    sessionID: SessionID.zod,
+    data: z.unknown(),
+    time: z.number(),
+    bytes: z.number(),
+  })
+  export type Payload = z.infer<typeof Payload>
 
   export const Event = {
     Created: BusEvent.define("session.log.created", z.object({ info: Info })),
@@ -69,6 +81,7 @@ export namespace SessionLog {
   const state = {
     cleanup: 0,
   }
+  const dir = path.join(Global.Path.data, "session-log-payload")
 
   export async function emit(input: Emit) {
     const row = Database.use((tx) =>
@@ -130,6 +143,14 @@ export namespace SessionLog {
     Database.use((tx) =>
       tx.delete(SessionLogTable).where(lt(SessionLogTable.time_created, now - retention)).run(),
     )
+    const cutoff = now - retention
+    const entries = await Array.fromAsync(new Bun.Glob("payload_*").scan({ cwd: dir, onlyFiles: true })).catch(
+      () => [] as string[],
+    )
+    for (const entry of entries) {
+      if (Identifier.timestamp(entry) >= cutoff) continue
+      await Bun.file(path.join(dir, entry)).delete().catch(() => {})
+    }
   }
 
   export async function remove(input: { sessionID: SessionID; now?: number }) {
@@ -186,6 +207,40 @@ export namespace SessionLog {
     } satisfies ProtocolTrace
   }
 
+  export function payloadID() {
+    return Identifier.ascending("payload")
+  }
+
+  export async function savePayload(input: { id: string; sessionID: SessionID; data: unknown; time?: number }) {
+    const text = JSON.stringify(
+      {
+        id: input.id,
+        sessionID: input.sessionID,
+        data: input.data,
+        time: input.time ?? Date.now(),
+      },
+      replacer(),
+      2,
+    )
+    await Filesystem.write(path.join(dir, input.id), text)
+    return {
+      id: input.id,
+      bytes: Buffer.byteLength(text, "utf8"),
+    }
+  }
+
+  export async function readPayload(input: { id: string; sessionID: SessionID }) {
+    const parsed = await Filesystem.readJson(path.join(dir, input.id))
+      .then((data) => Payload.omit({ bytes: true }).parse(data))
+      .catch(() => undefined)
+    if (!parsed) return undefined
+    if (parsed.sessionID !== input.sessionID) return undefined
+    return {
+      ...parsed,
+      bytes: await Filesystem.size(path.join(dir, input.id)),
+    } satisfies Payload
+  }
+
   function parse(row: typeof SessionLogTable.$inferSelect): Info {
     return {
       id: row.id,
@@ -202,5 +257,17 @@ export namespace SessionLog {
   function object(input: unknown) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return undefined
     return input as Record<string, unknown>
+  }
+
+  function replacer() {
+    const seen = new WeakSet<object>()
+    return (_: string, value: unknown) => {
+      if (typeof value === "function") return `[function ${value.name || "anonymous"}]`
+      if (typeof value === "bigint") return value.toString()
+      if (!value || typeof value !== "object") return value
+      if (seen.has(value)) return "[Circular]"
+      seen.add(value)
+      return value
+    }
   }
 }

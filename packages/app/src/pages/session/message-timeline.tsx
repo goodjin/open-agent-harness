@@ -10,6 +10,7 @@ import { Dialog } from "@open-agent-harness/ui/dialog"
 import { InlineInput } from "@open-agent-harness/ui/inline-input"
 import { Spinner } from "@open-agent-harness/ui/spinner"
 import { SessionTurn, SessionTurnDiffs, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
+import { Markdown } from "@open-agent-harness/ui/markdown"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
 import type {
@@ -38,7 +39,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { isSessionBusy, turnDone } from "@/pages/session/helpers"
+import { deriveTurnStats, isSessionBusy, turnDone } from "@/pages/session/helpers"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { lastAssistant, lastUser, modelName, statusName, totals } from "@/pages/session/session-insight-banner-helpers"
@@ -48,7 +49,7 @@ import {
   questionConfirmationKey,
   visibleConfirmations,
 } from "@/pages/session/session-confirmation-match"
-import { delegationProgress, pendingDelegation, turn } from "@/pages/session/session-delegations"
+import { delegationProgress, pendingDelegation, turn, type DelegationItem } from "@/pages/session/session-delegations"
 
 type MessageComment = {
   path: string
@@ -64,7 +65,7 @@ const idle = { type: "idle" as const }
 
 const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
-const stopped = new Set(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+const restorable = new Set(["interrupted"])
 const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
@@ -104,6 +105,26 @@ const confirmItem = (input: unknown): ConfirmRecord | undefined => {
     run_id: run,
     status: state,
     updated_at: typeof input.updated_at === "number" ? input.updated_at : undefined,
+  }
+}
+
+const turnInfo = (input: UserMessage | undefined) => {
+  const metadata = input?.metadata
+  if (!record(metadata)) return
+  const turn = metadata.turn
+  if (!record(turn)) return
+  return turn
+}
+
+const turnStats = (input: UserMessage | undefined) => {
+  const stats = turnInfo(input)?.stats
+  if (!record(stats)) return {}
+  const num = (value: unknown) => (typeof value === "number" && value > 0 ? value : undefined)
+  return {
+    actions: num(stats.actions),
+    children: num(stats.children),
+    confirmations: num(stats.confirmations),
+    tools: num(stats.tools),
   }
 }
 
@@ -187,11 +208,11 @@ function SessionConfirmationCard(props: {
   })
 
   return (
-    <div class="px-4 md:px-5 pt-4">
+    <div class="px-6 md:px-8 pt-4">
       <div data-component="session-request-card" class="rounded-md border border-border-weak-base bg-background-base overflow-hidden">
         <button
           type="button"
-          class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
+          class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
           aria-expanded={open()}
           onClick={() => setOpen((value) => !value)}
         >
@@ -201,7 +222,7 @@ function SessionConfirmationCard(props: {
               {props.item.action_title ?? props.item.action_id}
             </span>
           </span>
-          <span class="inline-flex items-center gap-2">
+          <span class="inline-flex shrink-0 items-center gap-2">
             <span
               class="rounded-sm border px-1.5 py-0.5 text-10-medium"
               classList={{
@@ -218,16 +239,16 @@ function SessionConfirmationCard(props: {
           </span>
         </button>
         <Show when={open()}>
-          <div class="border-t border-border-weaker-base p-2">
+          <div class="border-t border-border-weaker-base p-2.5">
             <Show
               when={props.item.status === "pending" ? props.request : undefined}
               keyed
               fallback={
                 <div
                   data-scrollable
-                  class="max-h-[60vh] overflow-auto whitespace-pre-wrap rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
+                  class="max-h-[42vh] overflow-auto rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
                 >
-                  {props.item.plan || "No plan text recorded."}
+                  <Markdown text={props.item.plan || "No plan text recorded."} />
                 </div>
               }
             >
@@ -760,18 +781,36 @@ export function MessageTimeline(props: {
       }),
     )
 
-  const cont = (id: string) =>
-    post(id, "/session/tree/resume", {
-      include_completed: true,
-      mode: "message",
-      message: language.t("sessionTree.resumeDialog.defaultMessage"),
-    }).catch((err: unknown) =>
-      showToast({
-        variant: "error",
-        title: language.t("common.requestFailed"),
-        description: errorMessage(err),
-      }),
-    )
+  const submit = (run: string) => {
+    const id = sessionID()
+    if (!id) return
+    const key = `submit:${run}`
+    setOp("child", key, "submit")
+    return sdk
+      .request(`/session/${id}/delegations/submit`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          directory: sdk.directory,
+          force: true,
+          run_id: run,
+        }),
+      })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        await sync.session.sync(id, { force: true }).catch(() => undefined)
+      })
+      .catch((err: unknown) =>
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        }),
+      )
+      .finally(() => {
+        setOp("child", key, undefined)
+      })
+  }
 
   function DialogDeleteSession(props: { sessionID: string }) {
     const name = createMemo(() => sync.session.get(props.sessionID)?.title ?? language.t("command.session.new"))
@@ -1239,14 +1278,28 @@ export function MessageTimeline(props: {
                       (item): item is UserMessage => item.id === messageID && item.role === "user",
                     ),
                   )
+                  const stats = createMemo(() => turnStats(turn()))
+                  const derived = createMemo(() => deriveTurnStats(sessionMessages(), messageID, sync.data.part))
+                  const statText = createMemo(() => {
+                    const tools = stats().tools ?? derived().tools
+                    const children = stats().children ?? delegation().total
+                    const actions = stats().actions ?? derived().actions
+                    return [
+                      tools ? `工具 ${num().format(tools)}` : "",
+                      children ? `子会话 ${num().format(children)}` : "",
+                      actions ? `Action ${num().format(actions)}` : "",
+                      stats().confirmations ? `确认 ${num().format(stats().confirmations!)}` : "",
+                    ].filter(Boolean)
+                  })
                   const kids = createMemo(() => {
-                    const map = new Map<string, { id: string; label: string }>()
+                    const map = new Map<string, DelegationItem>()
                     for (const item of [...delegation().active, ...delegation().completed]) {
                       if (map.has(item.id)) continue
                       map.set(item.id, item)
                     }
                     return Array.from(map.values())
                   })
+                  const run = createMemo(() => kids().find((item) => item.run)?.run)
                   const question = createMemo(() => {
                     const req = props.request?.question
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
@@ -1335,7 +1388,7 @@ export function MessageTimeline(props: {
                         classes={{
                           root: "min-w-0 w-full relative",
                           content: "flex flex-col justify-between !overflow-visible",
-                          container: "w-full px-4 md:px-5",
+                          container: "w-full px-6 md:px-8",
                         }}
                       />
                       <Show when={props.filter === "all"}>
@@ -1353,7 +1406,7 @@ export function MessageTimeline(props: {
                         {(request) => {
                           const submit = props.request!.submit
                           return (
-                            <div class="px-4 md:px-5 pt-4">
+                            <div class="px-6 md:px-8 pt-4">
                               <div
                                 data-component="session-request-card"
                                 class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
@@ -1387,7 +1440,7 @@ export function MessageTimeline(props: {
                           const req = request()
                           const decide = props.request!.decide
                           return (
-                            <div class="px-4 md:px-5 pt-4">
+                            <div class="px-6 md:px-8 pt-4">
                               <div
                                 data-component="session-request-card"
                                 class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
@@ -1421,7 +1474,7 @@ export function MessageTimeline(props: {
                         }}
                       </Show>
                       <Show when={props.filter === "all" && (completed() || delegation().total > 0)}>
-                        <div class="px-4 md:px-5 pt-8">
+                        <div class="px-6 md:px-8 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
                             <div class="h-px flex-1 bg-border-weaker-base" />
                             <span class="shrink-0 inline-flex items-center gap-1.5">
@@ -1437,6 +1490,11 @@ export function MessageTimeline(props: {
                               <Show when={delegation().total > 0}>
                                 <span class="shrink-0">
                                   （{delegation().done}/{delegation().total}）
+                                </span>
+                              </Show>
+                              <Show when={statText().length > 0}>
+                                <span class="shrink-0 text-11-regular text-text-weaker">
+                                  {statText().join(" · ")}
                                 </span>
                               </Show>
                             </span>
@@ -1506,7 +1564,7 @@ export function MessageTimeline(props: {
                                                 暂停
                                               </Button>
                                             </Show>
-                                            <Show when={stopped.has(status())}>
+                                            <Show when={restorable.has(status())}>
                                               <Button
                                                 variant="secondary"
                                                 size="small"
@@ -1517,20 +1575,26 @@ export function MessageTimeline(props: {
                                                 恢复
                                               </Button>
                                             </Show>
-                                            <Button
-                                              variant="secondary"
-                                              size="small"
-                                              class="h-7 px-2"
-                                              disabled={busy()}
-                                              onClick={() => void cont(item.id)}
-                                            >
-                                              继续
-                                            </Button>
                                           </div>
                                         </div>
                                       )
                                     }}
                                   </For>
+                                </div>
+                                <div class="flex items-center justify-end gap-2 border-t border-border-weaker-base px-3 py-2">
+                                  <Button
+                                    variant="secondary"
+                                    size="small"
+                                    class="h-7 px-2"
+                                    disabled={!run() || !!op.child[`submit:${run()}`]}
+                                    onClick={() => {
+                                      const id = run()
+                                      if (!id) return
+                                      void submit(id)
+                                    }}
+                                  >
+                                    提交结果给父会话
+                                  </Button>
                                 </div>
                               </Show>
                             </div>

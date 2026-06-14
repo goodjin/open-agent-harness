@@ -12,6 +12,7 @@ import { MessageID, SessionID } from "./schema"
 import { Storage } from "@/storage/storage"
 import { ActionResult } from "./action-result"
 import { SessionStatus } from "./status"
+import { SessionTurn } from "./turn"
 
 export namespace SessionDelegation {
   const log = Log.create({ service: "session.delegation" })
@@ -158,7 +159,11 @@ export namespace SessionDelegation {
         messageID: input.result.info.id,
       })
     }
-    const done = await meta(input.agent, input.result.info.role === "assistant" && input.result.info.finish === "error" ? "failed" : "completed", output)
+    const done = await meta(
+      input.agent,
+      input.result.info.role === "assistant" && input.result.info.finish === "error" ? "failed" : "completed",
+      output,
+    )
     return complete({
       sessionID: input.childID,
       messageID: input.result.info.id,
@@ -181,7 +186,11 @@ export namespace SessionDelegation {
     return complete({
       sessionID: input.childID,
       messageID: input.messageID,
-      metadata: await meta(input.agent, "failed", input.error instanceof Error ? input.error.message : String(input.error)),
+      metadata: await meta(
+        input.agent,
+        "failed",
+        input.error instanceof Error ? input.error.message : String(input.error),
+      ),
       status: "failed",
       output: input.error instanceof Error ? input.error.message : String(input.error),
     })
@@ -224,11 +233,14 @@ export namespace SessionDelegation {
       const fresh = statusof(item) !== status || text(item.output) !== output
       const active = await pending(item)
       const done = await delivered(item)
+      const message = input.messageID ?? item.completed_message_id
       const load = async () => assignment(await Session.get(input.sessionID))
       const next = await load()
       if (!next) return false
       if (!active && done) {
-        if (fresh) await store(input.sessionID, item, body, input.messageID)
+        if (fresh) await store(input.sessionID, item, body, message)
+        await turn(input.sessionID, message, status)
+        settle(input.sessionID, status)
         const alreadyNotified = typeof next.notified_at === "number"
         if (alreadyNotified) return false
         await notified(input.sessionID, next)
@@ -237,8 +249,10 @@ export namespace SessionDelegation {
       if (fresh) {
         await logdone(body)
         await logmeta(body)
-        await store(input.sessionID, item, body, input.messageID)
+        await store(input.sessionID, item, body, message)
       }
+      await turn(input.sessionID, message, status)
+      settle(input.sessionID, status)
       const freshNext = await load()
       if (!freshNext) return false
       const routed = await route(body, item)
@@ -253,6 +267,51 @@ export namespace SessionDelegation {
     } finally {
       ctx.busy.delete(input.sessionID)
     }
+  }
+
+  export async function submit(input: { agent?: string; force?: boolean; runID: string; sessionID: SessionID }) {
+    const ready = await finalize(input.sessionID, input.runID, input.force === true)
+    if (ready.waiting > 0) {
+      await hold(input.sessionID, input.runID, ready.waiting)
+      return false
+    }
+    const session = await Session.get(input.sessionID)
+    if (!(await claim(session, input.runID))) return false
+    const { SessionPrompt } = await import("./prompt")
+    SessionStatus.set(input.sessionID, { type: "running" })
+    void SessionPrompt.prompt({
+      sessionID: input.sessionID,
+      agent: session.agent ?? input.agent,
+      metadata: {
+        internal: true,
+        source: "delegation",
+        run_id: input.runID,
+      },
+      parts: [
+        {
+          type: "text",
+          text: ready.text,
+        },
+      ],
+    }).catch((error) => {
+      log.warn("session delegation submit failed", { error, sessionID: input.sessionID })
+    })
+    return true
+  }
+
+  async function turn(sessionID: SessionID, messageID: MessageID | undefined, status: Status) {
+    if (!messageID) return
+    const msg = await MessageV2.get({ sessionID, messageID }).catch(() => undefined)
+    if (!msg || msg.info.role !== "assistant") return
+    const user = await MessageV2.get({ sessionID, messageID: msg.info.parentID }).catch(() => undefined)
+    if (!user || user.info.role !== "user") return
+    await SessionTurn.finish({
+      assistantID: msg.info.id,
+      outcome: status === "failed" ? "failed" : status === "blocked" ? "blocked" : "completed",
+      reason: "action_result",
+      stats: SessionTurn.stats({ message: msg }),
+      user: user.info,
+    })
   }
 
   function nested(session: Session.Info) {
@@ -290,8 +349,8 @@ export namespace SessionDelegation {
           text: [
             `Your delegated task must finish by calling the native ${ActionResult.TOOL} tool.`,
             "Do not return plain text as the final result.",
-            "Call ActionResult once with role, action_id, status, result, and brief string fields. Do not use arrays or nested objects.",
             "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
+            ...ActionResult.protocol({ action: item.action_id }),
             output ? "" : "",
             output ? "Previous plain-text output:" : "",
             output ?? "",
@@ -318,12 +377,22 @@ export namespace SessionDelegation {
   }) {
     const session = await Session.get(input.sessionID)
     const prev = object(object(session.dsl_context).protocol)
-    const pending = (await Promise.all(Object.entries(object(prev.pending_delegations))
-      .map(([id, item]) => row(item, "pending", input.output === true, id))))
+    const pending = (
+      await Promise.all(
+        Object.entries(object(prev.pending_delegations)).map(([id, item]) =>
+          row(item, "pending", input.output === true, id),
+        ),
+      )
+    )
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
-    const done = (await Promise.all((Array.isArray(prev.completed_delegations) ? prev.completed_delegations : [])
-      .map((item) => row(item, "completed", input.output === true))))
+    const done = (
+      await Promise.all(
+        (Array.isArray(prev.completed_delegations) ? prev.completed_delegations : []).map((item) =>
+          row(item, "completed", input.output === true),
+        ),
+      )
+    )
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
     return {
@@ -341,7 +410,16 @@ export namespace SessionDelegation {
   async function event(info: MessageV2.Info) {
     if (info.role !== "assistant") return
     if (typeof info.time.completed !== "number") return
-    if (!info.finish || info.finish === "tool-calls" || info.finish === "unknown") return
+    if (!info.finish || info.finish === "unknown") return
+    const session = await Session.get(info.sessionID).catch(() => undefined)
+    const item = session ? assignment(session) : undefined
+    if (item?.result_tool === ActionResult.TOOL) {
+      if (info.finish !== "tool-calls") return
+      const parts = await MessageV2.parts(info.id).catch(() => [])
+      if (!actionResult(parts)) return
+    } else if (info.finish === "tool-calls") {
+      return
+    }
     await complete({
       sessionID: info.sessionID,
       messageID: info.id,
@@ -388,7 +466,8 @@ export namespace SessionDelegation {
       typeof data.parent_session_id !== "string" ||
       typeof data.result_policy !== "string" ||
       typeof data.run_id !== "string"
-    ) return
+    )
+      return
     return data as Item
   }
 
@@ -407,15 +486,15 @@ export namespace SessionDelegation {
       const status =
         out.role === "worker"
           ? out.status === "success"
-            ? "completed" as const
+            ? ("completed" as const)
             : out.status === "reply"
-              ? "blocked" as const
-              : "failed" as const
+              ? ("blocked" as const)
+              : ("failed" as const)
           : out.status === "pass" || out.status === "skipped"
-            ? "completed" as const
+            ? ("completed" as const)
             : out.status === "fail" || out.status === "reply"
-              ? "blocked" as const
-              : "failed" as const
+              ? ("blocked" as const)
+              : ("failed" as const)
       return {
         status,
         output: ActionResult.output(out),
@@ -449,7 +528,7 @@ export namespace SessionDelegation {
       }
     }
     return {
-      status: msg.info.finish === "error" ? "failed" as const : "completed" as const,
+      status: msg.info.finish === "error" ? ("failed" as const) : ("completed" as const),
       output: msg.parts.findLast((part) => part.type === "text")?.text ?? "",
     }
   }
@@ -573,26 +652,27 @@ export namespace SessionDelegation {
   }
 
   async function notify(body: ReturnType<typeof completed>, item: Item) {
-    const { SessionPrompt } = await import("./prompt")
     const parentID = SessionID.make(body.parent_session_id as string)
-    const ready = await finalize(parentID, body.run_id)
-    if (ready.waiting > 0) {
-      await hold(parentID, body.run_id, ready.waiting)
-      return false
-    }
-    const parent = await Session.get(parentID)
-    SessionStatus.set(parentID, { type: "running" })
-    void SessionPrompt.prompt({
-      sessionID: SessionID.make(body.parent_session_id as string),
-      agent: parent.agent ?? item.parent_agent,
-      parts: [
-        {
-          type: "text",
-          text: ready.text,
+    return submit({ sessionID: parentID, runID: body.run_id, agent: item.parent_agent })
+  }
+
+  async function claim(parent: Session.Info, runID: string) {
+    const ctx = object(parent.dsl_context)
+    const protocol = object(ctx.protocol)
+    const sent = object(protocol.delegation_notified_runs)
+    if (typeof sent[runID] === "number") return false
+    await Session.setDslContext({
+      sessionID: parent.id,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...protocol,
+          delegation_notified_runs: {
+            ...sent,
+            [runID]: Date.now(),
+          },
         },
-      ],
-    }).catch((error) => {
-      log.warn("session delegation notify failed", { error, sessionID: body.parent_session_id })
+      },
     })
     return true
   }
@@ -606,8 +686,8 @@ export namespace SessionDelegation {
     })
   }
 
-  async function finalize(parentID: SessionID, runID: string) {
-    await close(parentID, runID)
+  async function finalize(parentID: SessionID, runID: string, force = false) {
+    await close(parentID, runID, force)
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const pending = Object.entries(object(protocol.pending_delegations))
@@ -626,12 +706,12 @@ export namespace SessionDelegation {
     }
   }
 
-  async function close(parentID: SessionID, runID: string) {
+  async function close(parentID: SessionID, runID: string, force = false) {
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const entries = Object.entries(object(protocol.pending_delegations))
       .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
-      .filter((entry) => entry.item.run_id === runID && ended(SessionStatus.get(entry.id)))
+      .filter((entry) => entry.item.run_id === runID && (force || ended(SessionStatus.get(entry.id))))
     for (const entry of entries) {
       if (await delivered(entry.item)) {
         await notified(entry.id, entry.item)
@@ -642,8 +722,13 @@ export namespace SessionDelegation {
         `Delegated child session ended with status ${status.type}.`,
         "No structured child result was recorded before the session ended.",
         "The parent summary should treat this child as ended and mention the status explicitly.",
+        force && !ended(status)
+          ? "This result was submitted manually before the child session reached a terminal state."
+          : "",
         "message" in status && typeof status.message === "string" ? status.message : "",
-      ].filter((line) => line.length > 0).join("\n")
+      ]
+        .filter((line) => line.length > 0)
+        .join("\n")
       const body = completed(entry.item, map(status), out, undefined, undefined)
       await logdone(body)
       await store(entry.id, entry.item, body)
@@ -682,15 +767,17 @@ export namespace SessionDelegation {
       `- Failed: ${count("failed")}`,
       "",
       "## Child Results",
-      ...rows.flatMap((row, index) => [
-        "",
-        `### ${index + 1}. ${row.action_title ?? row.action_id ?? row.child_session_id}`,
-        row.action_id ? `- Action: \`${row.action_id}\`` : "",
-        row.agent ? `- Agent: @${row.agent}` : "",
-        `- Child session: \`${row.child_session_id}\``,
-        `- Status: ${row.status}`,
-        row.summary ? `- Summary: ${row.summary}` : "- Summary: No summary was recorded.",
-      ]).filter((line) => line.length > 0),
+      ...rows
+        .flatMap((row, index) => [
+          "",
+          `### ${index + 1}. ${row.action_title ?? row.action_id ?? row.child_session_id}`,
+          row.action_id ? `- Action: \`${row.action_id}\`` : "",
+          row.agent ? `- Agent: @${row.agent}` : "",
+          `- Child session: \`${row.child_session_id}\``,
+          `- Status: ${row.status}`,
+          row.summary ? `- Summary: ${row.summary}` : "- Summary: No summary was recorded.",
+        ])
+        .filter((line) => line.length > 0),
       "",
       "If these results complete the requested work, reply to the user in Markdown with the final outcome. If more work is needed, produce the next protocol package.",
     ].join("\n")
@@ -719,13 +806,21 @@ export namespace SessionDelegation {
     return "notify" as const
   }
 
-  async function verifier(body: ReturnType<typeof completed>, item: Item, res: ActionResult.Value & { role: "verifier" }) {
+  async function verifier(
+    body: ReturnType<typeof completed>,
+    item: Item,
+    res: ActionResult.Value & { role: "verifier" },
+  ) {
     const worker = await workerrow(item, res.target_action_id)
     if (!worker) return "none" as const
     if (res.status === "fail" || res.status === "reply") {
       const count = await cycle(item, res.target_action_id)
       if (count >= 2) {
-        await verified(worker.item, await aggregate(worker.item, worker.body, "blocked"), await checks(worker.item, res.target_action_id))
+        await verified(
+          worker.item,
+          await aggregate(worker.item, worker.body, "blocked"),
+          await checks(worker.item, res.target_action_id),
+        )
         await reset(item, res.target_action_id)
         return "notify" as const
       }
@@ -733,7 +828,11 @@ export namespace SessionDelegation {
       return "wait" as const
     }
     if (res.status === "error") {
-      await verified(worker.item, await aggregate(worker.item, worker.body, "blocked"), await checks(worker.item, res.target_action_id))
+      await verified(
+        worker.item,
+        await aggregate(worker.item, worker.body, "blocked"),
+        await checks(worker.item, res.target_action_id),
+      )
       await reset(item, res.target_action_id)
       return "notify" as const
     }
@@ -858,7 +957,9 @@ export namespace SessionDelegation {
   async function aggregate(item: Item, body: ReturnType<typeof completed>, status: Status) {
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const protocol = object(object(parent.dsl_context).protocol)
-    const done = Array.isArray(protocol.completed_delegations) ? protocol.completed_delegations.map((entry) => object(entry)) : []
+    const done = Array.isArray(protocol.completed_delegations)
+      ? protocol.completed_delegations.map((entry) => object(entry))
+      : []
     const res = object(body.action_result)
     const worker = typeof res.action_id === "string" ? res.action_id : item.action_id
     const attempts = number(object(protocol.verification_cycles)[worker]) ?? 0
@@ -875,7 +976,9 @@ export namespace SessionDelegation {
         const out = object(entry.action_result)
         return `- ${entry.action_id}: ${out.status ?? "unknown"} - ${out.result ?? entry.summary ?? ""}`
       }),
-    ].filter((line) => line.length > 0).join("\n")
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n")
     return {
       ...body,
       status,
@@ -888,7 +991,6 @@ export namespace SessionDelegation {
   async function verified(item: Item, body: ReturnType<typeof completed>, gates: AgentProtocol.Action[]) {
     await store(SessionID.make(item.child_session_id), item, body)
     await notified(SessionID.make(item.child_session_id), item)
-    await notify(body, item)
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const ctx = object(parent.dsl_context)
     const protocol = object(ctx.protocol)
@@ -1042,7 +1144,10 @@ export namespace SessionDelegation {
   async function delivered(item: Item) {
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const prev = object(object(parent.dsl_context).protocol)
-    return Array.isArray(prev.completed_delegations) && prev.completed_delegations.some((entry) => object(entry).child_session_id === item.child_session_id)
+    return (
+      Array.isArray(prev.completed_delegations) &&
+      prev.completed_delegations.some((entry) => object(entry).child_session_id === item.child_session_id)
+    )
   }
 
   async function notified(sessionID: SessionID, item: Item) {
@@ -1113,7 +1218,10 @@ export namespace SessionDelegation {
       sessionID: SessionID.make(body.parent_session_id),
       messageID: MessageID.make(body.parent_message_id),
       level: body.metadata.status === "completed" ? "info" : "warn",
-      type: body.metadata.validation.status === "valid" ? "agent.metadata.output_validated" : "agent.metadata.output_validation_failed",
+      type:
+        body.metadata.validation.status === "valid"
+          ? "agent.metadata.output_validated"
+          : "agent.metadata.output_validation_failed",
       data: {
         ...(agent ? { agent } : {}),
         status: body.metadata.status,
@@ -1141,7 +1249,12 @@ export namespace SessionDelegation {
     })
   }
 
-  async function row(input: unknown, fallback: QueryStatus, output: boolean, childID?: string): Promise<Row | undefined> {
+  async function row(
+    input: unknown,
+    fallback: QueryStatus,
+    output: boolean,
+    childID?: string,
+  ): Promise<Row | undefined> {
     const item = object(input)
     const child = text(item.child_session_id) ?? childID
     if (!child) return
@@ -1178,13 +1291,18 @@ export namespace SessionDelegation {
   }
 
   function clean(item: Record<string, unknown>) {
-    return Object.fromEntries(Object.entries(item).filter((entry) => entry[0] !== "agent" && entry[0] !== "parent_agent"))
+    return Object.fromEntries(
+      Object.entries(item).filter((entry) => entry[0] !== "agent" && entry[0] !== "parent_agent"),
+    )
   }
 
-  function match(item: Row, input: {
-    childID?: string
-    status?: QueryStatus
-  }) {
+  function match(
+    item: Row,
+    input: {
+      childID?: string
+      status?: QueryStatus
+    },
+  ) {
     if (input.childID && item.child_session_id !== input.childID) return false
     if (input.status && item.status !== input.status) return false
     return true
@@ -1197,7 +1315,70 @@ export namespace SessionDelegation {
       item.status === "blocked" ||
       item.status === "failed" ||
       item.status === "waiting_user"
-    ) return item.status
+    )
+      return item.status
+  }
+
+  function settle(sessionID: SessionID, status: Status) {
+    const next =
+      status === "completed" || status === "partial"
+        ? { type: "completed" as const }
+        : status === "blocked"
+          ? { type: "blocked" as const }
+          : status === "failed"
+            ? { type: "failed" as const }
+            : { type: "waiting_user" as const }
+    const current = SessionStatus.get(sessionID).type
+    const allowed = {
+      completed: ["idle", "running", "rate_limited", "waiting_child", "completed"],
+      blocked: [
+        "idle",
+        "queued",
+        "starting",
+        "running",
+        "rate_limited",
+        "waiting_permission",
+        "waiting_user",
+        "waiting_child",
+        "error",
+        "timeout",
+        "retry",
+        "paused",
+        "aborting",
+        "failed",
+        "blocked",
+        "interrupted",
+      ],
+      failed: [
+        "idle",
+        "queued",
+        "starting",
+        "running",
+        "rate_limited",
+        "waiting_permission",
+        "waiting_user",
+        "waiting_child",
+        "error",
+        "timeout",
+        "retry",
+        "paused",
+        "aborting",
+        "failed",
+        "blocked",
+        "interrupted",
+      ],
+      waiting_user: [
+        "idle",
+        "starting",
+        "running",
+        "rate_limited",
+        "waiting_permission",
+        "waiting_user",
+        "waiting_child",
+      ],
+    }[next.type]
+    if (!allowed.includes(current)) return
+    SessionStatus.set(sessionID, next)
   }
 
   async function meta(agent: string, status: "completed" | "failed", output: string) {

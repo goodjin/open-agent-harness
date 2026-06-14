@@ -761,7 +761,9 @@ describe("session.llm.stream", () => {
         }
 
         const capture = await request
-        const tools = capture.body.tools as Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }> | undefined
+        const tools = capture.body.tools as
+          | Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }>
+          | undefined
         expect(tools?.some((item) => item.function?.name === "question")).toBe(true)
       },
     })
@@ -959,6 +961,14 @@ describe("session.llm.stream", () => {
         )
         expect(err?.toolName).toBe(LLM.ACTION_RESULT_TOOL)
         expect(String(err?.error)).toContain("ActionResult input schema/parse failed")
+        expect(String(err?.error)).toContain("Retry by calling ActionResult again and follow this protocol exactly")
+        expect(String(err?.error)).toContain("Do not wrap the arguments in input")
+        expect(String(err?.error)).toContain("role selects the protocol branch")
+        expect(String(err?.error)).toContain("Worker required fields: role, action_id, status, result.")
+        expect(String(err?.error)).toContain(
+          "Verifier required fields: role, action_id, target_action_id, status, result.",
+        )
+        expect(String(err?.error)).toContain('"role": "worker"')
         expect(String(err?.error)).not.toContain("unavailable tool 'invalid'")
         expect(JSON.stringify(items)).not.toContain('"toolName":"invalid"')
 
@@ -1054,14 +1064,16 @@ describe("session.llm.stream", () => {
         }
 
         const capture = await request
-        const tools = capture.body.tools as Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }> | undefined
+        const tools = capture.body.tools as
+          | Array<{ function?: { name?: string; parameters?: { type?: string; anyOf?: unknown } } }>
+          | undefined
         expect(tools?.map((item) => item.function?.name)).toEqual(["AgentProtocolOutput"])
         expect(tools?.[0]?.function?.parameters?.type).toBe("object")
         expect(tools?.[0]?.function?.parameters?.anyOf).toBeUndefined()
         expect(JSON.stringify(capture.body.tool_choice)).toContain("AgentProtocolOutput")
         expect(JSON.stringify(tools)).toContain("message")
         expect(JSON.stringify(tools)).toContain("depends")
-        expect(JSON.stringify(tools)).toContain("\"type\"")
+        expect(JSON.stringify(tools)).toContain('"type"')
         expect(JSON.stringify(tools)).not.toContain("say")
         expect(JSON.stringify(tools)).not.toContain("after")
       },

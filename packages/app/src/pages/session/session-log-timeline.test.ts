@@ -65,7 +65,7 @@ describe("session log timeline", () => {
       ),
     ).toEqual({
       title: "LLM Request",
-      meta: [],
+      meta: ["gpt-test", "4 messages", "2 tools"],
     })
 
     expect(describeLog(record("response", 4, "llm.finish", { finish: "tool-calls", cost: 0.0042 }))).toEqual({
@@ -101,6 +101,111 @@ describe("session log timeline", () => {
     expect(sections.find((item) => item.id === "tools")?.data).toEqual({
       available: ["bash", "edit"],
       toolChoice: "auto",
+    })
+  })
+
+  test("adds lazy full-content loaders for summarized llm request logs", () => {
+    const sections = detailSections([
+      record("llm", 3, "llm.start", {
+        providerID: "openai",
+        modelID: "gpt-test",
+        messages: 1,
+        tools: 2,
+        request: {
+          messageCount: 1,
+          messageBytes: 2586,
+          user: "msg_user",
+          tools: ["bash", "read"],
+        },
+      }),
+    ])
+
+    expect(sections.find((item) => item.id === "messages")).toMatchObject({
+      data: {
+        messageCount: 1,
+        messageBytes: 2586,
+        user: "msg_user",
+        assistant: "message",
+      },
+      load: {
+        key: "llm:messages",
+        messageIDs: ["msg_user", "message"],
+      },
+    })
+    expect(sections.find((item) => item.id === "user")).toMatchObject({
+      data: "msg_user",
+      load: {
+        key: "llm:user",
+        messageIDs: ["msg_user"],
+      },
+    })
+  })
+
+  test("adds lazy payload loader for full llm request payloads", () => {
+    const sections = detailSections([
+      record("llm", 3, "llm.start", {
+        providerID: "openai",
+        modelID: "gpt-test",
+        messages: 1,
+        tools: 3,
+        request: {
+          payload: "payload_000001abc",
+          messageCount: 1,
+          messageBytes: 2586,
+          user: "msg_user",
+          tools: ["bash", "read", "ActionResult"],
+        },
+      }),
+    ])
+
+    expect(sections.map((item) => item.id)).toEqual(["overview", "payload", "system", "messages", "user", "tools", "raw"])
+    expect(sections.find((item) => item.id === "payload")).toMatchObject({
+      data: {
+        payload: "payload_000001abc",
+      },
+      load: {
+        key: "llm:payload",
+        payloadID: "payload_000001abc",
+      },
+    })
+  })
+
+  test("adds lazy payload loader for full llm response events", () => {
+    const sections = detailSections([
+      record("llm", 3, "llm.start", {
+        providerID: "openai",
+        modelID: "gpt-test",
+        messages: 1,
+        tools: 3,
+        request: {
+          payload: "payload_request",
+          responsePayload: "payload_response",
+          messageCount: 1,
+          messageBytes: 2586,
+          user: "msg_user",
+          tools: ["bash", "read", "ActionResult"],
+        },
+      }),
+    ])
+
+    expect(sections.map((item) => item.id)).toEqual([
+      "overview",
+      "payload",
+      "response",
+      "system",
+      "messages",
+      "user",
+      "tools",
+      "raw",
+    ])
+    expect(sections.find((item) => item.id === "response")).toMatchObject({
+      data: {
+        payload: "payload_response",
+      },
+      load: {
+        key: "llm:response",
+        payloadID: "payload_response",
+      },
     })
   })
 

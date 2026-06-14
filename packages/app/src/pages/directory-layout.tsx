@@ -15,6 +15,7 @@ import HarnessHome from "@/pages/harness-home"
 function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
   const navigate = useNavigate()
   const sync = useSync()
+  const globalSDK = useGlobalSDK()
   const slug = createMemo(() => base64Encode(props.directory))
 
   return (
@@ -23,6 +24,15 @@ function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
       directory={props.directory}
       onNavigateToSession={(sessionID: string) => navigate(`/${slug()}/session/${sessionID}`)}
       onSessionHref={(sessionID: string) => `/${slug()}/session/${sessionID}`}
+      onSessionLogPayload={async (input) => {
+        const res = await globalSDK
+          .createClient({
+            directory: props.directory,
+            throwOnError: true,
+          })
+          .session.log2.payload(input)
+        return res.data
+      }}
     >
       <LocalProvider>{props.children}</LocalProvider>
     </DataProvider>

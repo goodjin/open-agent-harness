@@ -3230,6 +3230,105 @@
         ]
       }
     },
+    "/session/{sessionID}/log/payload/{payloadID}": {
+      "get": {
+        "operationId": "session.log.payload",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "path",
+            "name": "payloadID",
+            "schema": {
+              "type": "string",
+              "pattern": "^payload_.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get session log payload",
+        "description": "Retrieve a large payload referenced by a session log record.",
+        "tags": [
+          "Session"
+        ],
+        "responses": {
+          "200": {
+            "description": "Session log payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^payload.*"
+                    },
+                    "sessionID": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    },
+                    "data": {},
+                    "time": {
+                      "type": "number"
+                    },
+                    "bytes": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "sessionID",
+                    "data",
+                    "time",
+                    "bytes"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.log.payload({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/protocol/{runID}/trace": {
       "get": {
         "operationId": "session.protocol.trace",
@@ -3664,6 +3763,114 @@
           {
             "lang": "js",
             "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.children({\n  ...\n})"
+          }
+        ]
+      }
+    },
+    "/session/{sessionID}/delegations/submit": {
+      "post": {
+        "operationId": "session.delegations.submit",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Submit delegated child results",
+        "tags": [
+          "Session"
+        ],
+        "description": "Submit the current delegated child results and statuses for a parent session run.",
+        "responses": {
+          "200": {
+            "description": "Delegation results submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "submitted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "submitted"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "directory": {
+                    "type": "string"
+                  },
+                  "force": {
+                    "type": "boolean"
+                  },
+                  "run_id": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "run_id"
+                ]
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.delegations.submit({\n  ...\n})"
           }
         ]
       }
@@ -4516,6 +4723,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -4542,6 +4759,9 @@
                       "providerID",
                       "modelID"
                     ]
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   },
                   "agent": {
                     "type": "string"
@@ -4980,6 +5200,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5006,6 +5236,9 @@
                       "providerID",
                       "modelID"
                     ]
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   },
                   "agent": {
                     "type": "string"
@@ -5142,6 +5375,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5159,6 +5402,9 @@
                   },
                   "model": {
                     "type": "string"
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   },
                   "arguments": {
                     "type": "string"
@@ -5276,6 +5522,16 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConflictError"
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -5301,6 +5557,9 @@
                       "providerID",
                       "modelID"
                     ]
+                  },
+                  "confirm": {
+                    "type": "boolean"
                   },
                   "command": {
                     "type": "string"
@@ -14855,6 +15114,77 @@
           "properties"
         ]
       },
+      "Event.session.log.created": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "session.log.created"
+          },
+          "properties": {
+            "type": "object",
+            "properties": {
+              "info": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "sessionID": {
+                    "type": "string",
+                    "pattern": "^ses.*"
+                  },
+                  "messageID": {
+                    "type": "string",
+                    "pattern": "^msg.*"
+                  },
+                  "partID": {
+                    "type": "string",
+                    "pattern": "^prt.*"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "debug",
+                      "info",
+                      "warn",
+                      "error"
+                    ]
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "data": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "time": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "id",
+                  "sessionID",
+                  "level",
+                  "type",
+                  "data",
+                  "time"
+                ]
+              }
+            },
+            "required": [
+              "info"
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "properties"
+        ]
+      },
       "SessionStatus": {
         "anyOf": [
           {
@@ -14926,6 +15256,13 @@
                   "agent"
                 ]
               },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "concurrency",
+                  "rpm"
+                ]
+              },
               "agent": {
                 "type": "string"
               },
@@ -14940,6 +15277,11 @@
                 "maximum": 9007199254740991
               },
               "queued": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "reset": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
@@ -15411,77 +15753,6 @@
             "required": [
               "sessionID",
               "requestID"
-            ]
-          }
-        },
-        "required": [
-          "type",
-          "properties"
-        ]
-      },
-      "Event.session.log.created": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "const": "session.log.created"
-          },
-          "properties": {
-            "type": "object",
-            "properties": {
-              "info": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string"
-                  },
-                  "sessionID": {
-                    "type": "string",
-                    "pattern": "^ses.*"
-                  },
-                  "messageID": {
-                    "type": "string",
-                    "pattern": "^msg.*"
-                  },
-                  "partID": {
-                    "type": "string",
-                    "pattern": "^prt.*"
-                  },
-                  "level": {
-                    "type": "string",
-                    "enum": [
-                      "debug",
-                      "info",
-                      "warn",
-                      "error"
-                    ]
-                  },
-                  "type": {
-                    "type": "string"
-                  },
-                  "data": {
-                    "type": "object",
-                    "propertyNames": {
-                      "type": "string"
-                    },
-                    "additionalProperties": {}
-                  },
-                  "time": {
-                    "type": "number"
-                  }
-                },
-                "required": [
-                  "id",
-                  "sessionID",
-                  "level",
-                  "type",
-                  "data",
-                  "time"
-                ]
-              }
-            },
-            "required": [
-              "info"
             ]
           }
         },
@@ -18874,6 +19145,9 @@
             "$ref": "#/components/schemas/Event.server.instance.disposed"
           },
           {
+            "$ref": "#/components/schemas/Event.session.log.created"
+          },
+          {
             "$ref": "#/components/schemas/Event.session.status"
           },
           {
@@ -18887,9 +19161,6 @@
           },
           {
             "$ref": "#/components/schemas/Event.question.rejected"
-          },
-          {
-            "$ref": "#/components/schemas/Event.session.log.created"
           },
           {
             "$ref": "#/components/schemas/Event.observability.audit.recorded"
@@ -19259,6 +19530,12 @@
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+          "maxToolCalls": {
+            "description": "Maximum consecutive tool calls before stopping the session",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
           "maxSteps": {
             "description": "@deprecated Use 'steps' field instead.",
             "type": "integer",
@@ -19503,12 +19780,24 @@
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
+                },
+                "rpm": {
+                  "description": "Maximum LLM requests per minute allowed for this model.",
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 }
               }
             }
           },
           "concurrency": {
             "description": "Maximum concurrent LLM requests allowed for this provider. Requests above this limit wait locally.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "rpm": {
+            "description": "Maximum LLM requests per minute allowed for this provider. Requests above this limit wait locally.",
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
@@ -20587,6 +20876,11 @@
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
           },
+          "rpm": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -20678,6 +20972,11 @@
             "additionalProperties": {}
           },
           "concurrency": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "rpm": {
             "type": "integer",
             "exclusiveMinimum": 0,
             "maximum": 9007199254740991
@@ -22346,6 +22645,11 @@
               "protocol"
             ]
           },
+          "maxToolCalls": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
           "hidden": {
             "type": "boolean"
           },
@@ -23013,6 +23317,12 @@
                   }
                 ]
               },
+              "maxToolCalls": {
+                "description": "Maximum consecutive tool calls before the session is stopped.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
                 "default": "auto",
@@ -23645,6 +23955,12 @@
                     "maximum": 9007199254740991
                   }
                 ]
+              },
+              "maxToolCalls": {
+                "description": "Maximum consecutive tool calls before the session is stopped.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
               },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
@@ -24297,6 +24613,12 @@
                   }
                 ]
               },
+              "maxToolCalls": {
+                "description": "Maximum consecutive tool calls before the session is stopped.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
                 "default": "auto",
@@ -24918,6 +25240,12 @@
                   }
                 ]
               },
+              "maxToolCalls": {
+                "description": "Maximum consecutive tool calls before the session is stopped.",
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
               "workflow_mode": {
                 "description": "How the agent executes workflows",
                 "default": "auto",
@@ -25411,6 +25739,11 @@
                 "maximum": 9007199254740991
               }
             ]
+          },
+          "maxToolCalls": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
           },
           "native": {
             "type": "boolean"

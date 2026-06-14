@@ -43,6 +43,7 @@ export namespace AgentManage {
       entry: Template.Entry,
       capability: Template.Capability,
       runner: Template.Runner,
+      maxToolCalls: z.number().int().positive().optional(),
       hidden: z.boolean(),
       disabled: z.boolean(),
       model: z.string().optional(),
@@ -325,6 +326,7 @@ export namespace AgentManage {
       },
       capability: item.meta.capability,
       runner: item.meta.runner,
+      maxToolCalls: cfg?.maxToolCalls ?? item.meta.maxToolCalls,
       hidden,
       disabled,
       model:

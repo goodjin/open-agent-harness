@@ -490,6 +490,158 @@ describe("SessionDelegation", () => {
     }
   })
 
+  test("manual submit aggregates current child results and statuses", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      return { info: msg, parts: [] } as MessageV2.WithParts
+    }) as never)
+    const done = async (sessionID: SessionID, action: string, result: string) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: "backend",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: "backend",
+        agent: "backend",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID,
+        type: "tool",
+        callID: `call_${action}`,
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: {
+            kind: "action_result",
+            role: "worker",
+            action_id: action,
+            status: "success",
+            result,
+            task_background: "Manual submit task.",
+            task_content: action,
+            changed_files: "",
+            verification: "done",
+            blockers: "",
+          },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
+      return msg
+    }
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const one = await Session.create({ parentID: parent.id, agent: "backend" })
+              const two = await Session.create({ parentID: parent.id, agent: "backend" })
+              const base = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "manual_submit",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              const first = {
+                ...base,
+                action_id: "done",
+                action_title: "Done child",
+                child_session_id: one.id,
+              }
+              const second = {
+                ...base,
+                action_id: "stopped",
+                action_title: "Stopped child",
+                child_session_id: two.id,
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [one.id]: first, [two.id]: second } } },
+              })
+              await Session.setDslContext({ sessionID: one.id, dsl_context: { protocol: { delegation: first } } })
+              await Session.setDslContext({ sessionID: two.id, dsl_context: { protocol: { delegation: second } } })
+
+              await done(one.id, "done", "child done")
+              expect(await SessionDelegation.complete({ sessionID: one.id })).toBe(false)
+              SessionStatus.set(two.id, { type: "interrupted", message: "Process stopped." })
+
+              expect(await SessionDelegation.submit({ sessionID: parent.id, runID: "manual_submit", force: true })).toBe(true)
+              expect(prompts).toHaveLength(1)
+              expect(prompts[0]?.sessionID).toBe(parent.id)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("child done"))).toBe(true)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("status interrupted"))).toBe(true)
+              const ctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                pending_delegations?: Record<string, unknown>
+                completed_delegations?: { child_session_id?: string }[]
+              }
+              expect(Object.keys(ctx.pending_delegations ?? {})).toHaveLength(0)
+              expect(ctx.completed_delegations).toHaveLength(2)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("worker ActionResult runs verifier gates serially before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
@@ -756,7 +908,8 @@ describe("SessionDelegation", () => {
                 evidence: "reviewed diff",
                 worker_feedback: "Accepted",
               })
-              expect(await SessionDelegation.complete({ sessionID: reviewSession })).toBe(true)
+              const notified = await SessionDelegation.complete({ sessionID: reviewSession })
+              expect(notified || prompts.length === 3).toBe(true)
               expect(prompts).toHaveLength(3)
               expect(prompts[2]?.sessionID).toBe(parent.id)
               expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(false)
@@ -1264,6 +1417,282 @@ describe("SessionDelegation", () => {
             }
             expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
             expect(typeof cctx.delegation?.notified_at).toBe("number")
+          },
+        }),
+    })
+  })
+
+  test("ActionResult tool calls close the delegated turn", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const msg = MessageID.ascending()
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_action_tool_close",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: msg,
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "summary",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              SessionStatus.set(child.id, { type: "running" })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+                metadata: {
+                  turn: {
+                    kind: "user",
+                    status: "running",
+                    time: { queued: Date.now(), started: Date.now() },
+                  },
+                },
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_impl",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "impl",
+                    status: "success",
+                    scope: "task",
+                    result: "implemented",
+                    task_background: "delegated",
+                    task_content: "impl",
+                    changed_files: "none",
+                    verification: "done",
+                    blockers: "",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+
+              const stored = await MessageV2.get({ sessionID: child.id, messageID: user.id })
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string }[]
+                pending_delegations?: Record<string, unknown>
+              }
+              if (stored.info.role !== "user") throw new Error("expected user message")
+              expect(stored.info.metadata?.turn?.status).toBe("done")
+              expect(stored.info.metadata?.turn?.reason).toBe("action_result")
+              expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(SessionStatus.get(child.id).type).toBe("completed")
+              expect(prompts).toHaveLength(1)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("completed delegated child accepts explicit user prompts", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const parent = await Session.create({ agent: "protocol-runner" })
+            const child = await Session.create({ parentID: parent.id, agent: "backend" })
+            const old = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "backend",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "running",
+                  time: { queued: Date.now(), started: Date.now() },
+                },
+              },
+            } as MessageV2.User)) as MessageV2.User
+            const done = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: old.id,
+              role: "assistant",
+              mode: "backend",
+              agent: "backend",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "tool-calls",
+            })) as MessageV2.Assistant
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: done.id,
+              sessionID: child.id,
+              type: "tool",
+              callID: "call_impl",
+              tool: "ActionResult",
+              state: {
+                status: "completed",
+                input: {
+                  kind: "action_result",
+                  role: "worker",
+                  action_id: "impl",
+                  status: "success",
+                  scope: "task",
+                  result: "implemented",
+                  task_background: "delegated",
+                  task_content: "impl",
+                  changed_files: "none",
+                  verification: "done",
+                  blockers: "",
+                },
+                output: "Action result received.",
+                title: "Action Result",
+                metadata: { action_result: true },
+                time: { start: Date.now(), end: Date.now() },
+              },
+            } as MessageV2.ToolPart)
+            await Session.setDslContext({
+              sessionID: child.id,
+              dsl_context: {
+                result: {
+                  type: "session.action_result",
+                  status: "completed",
+                  action_id: "impl",
+                  output_ref: `session_delegation_result/${parent.id}/${child.id}`,
+                },
+                protocol: {
+                  delegation: {
+                    type: "agent.delegation.assignment",
+                    version: "1",
+                    run_id: "apr_explicit_prompt",
+                    action_id: "impl",
+                    action_title: "Implement",
+                    parent_session_id: parent.id,
+                    parent_message_id: MessageID.ascending(),
+                    parent_agent: "protocol-runner",
+                    child_session_id: child.id,
+                    agent: "backend",
+                    result_policy: "summary",
+                    result_tool: "ActionResult",
+                    status: "completed",
+                    completed_at: Date.now(),
+                    completed_message_id: MessageID.ascending(),
+                    created_at: Date.now(),
+                  },
+                },
+              },
+            })
+
+            const before = (await Session.messages({ sessionID: child.id })).length
+            const msg = await SessionPrompt.prompt({
+              sessionID: child.id,
+              noReply: true,
+              parts: [{ type: "text", text: "follow up" }],
+            })
+            const after = (await Session.messages({ sessionID: child.id })).length
+            const fixed = await MessageV2.get({ sessionID: child.id, messageID: old.id })
+
+            if (fixed.info.role !== "user") throw new Error("expected user message")
+            expect(fixed.info.metadata?.turn?.status).toBe("done")
+            expect(fixed.info.metadata?.turn?.reason).toBe("action_result")
+            expect(msg.info.role).toBe("user")
+            expect(after).toBe(before + 1)
           },
         }),
     })

@@ -34,6 +34,7 @@ export type FollowupDraft = {
   context: (ContextItem & { key: string })[]
   agent: string
   model: { providerID: string; modelID: string }
+  confirm?: boolean
   variant?: string
 }
 
@@ -93,6 +94,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
         arguments: tail.join(" "),
         agent: input.draft.agent,
         model: `${input.draft.model.providerID}/${input.draft.model.modelID}`,
+        confirm: input.draft.confirm,
         variant: input.draft.variant,
         parts: images.map((attachment) => ({
           id: Identifier.ascending("part"),
@@ -159,6 +161,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
       sessionID: input.draft.sessionID,
       agent: input.draft.agent,
       model: input.draft.model,
+      confirm: input.draft.confirm,
       messageID,
       parts: requestParts,
       variant: input.draft.variant,
@@ -418,6 +421,18 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
     const agent = currentAgent.name
     let info: SubmitSession = session
+    const same = (left?: { providerID: string; modelID: string }, right?: { providerID: string; modelID: string }) =>
+      left?.providerID === right?.providerID && left?.modelID === right?.modelID
+    const name = (item: { providerID: string; modelID: string }) => `${item.providerID}/${item.modelID}`
+    const change = () => {
+      if (!info.model || same(info.model, model)) return
+      const ok =
+        globalThis.confirm?.(`This session is bound to ${name(info.model)}. Switch it to ${name(model)} before sending?`) ??
+        false
+      if (ok) return { model, confirm: true }
+      local.model.set(info.model)
+      return { model: info.model, confirm: false }
+    }
     const bind = async (confirm = false) => {
       await client.session.tree2.update({
         body_directory: sessionDirectory,
@@ -497,20 +512,24 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     if (mode === "shell") {
       clearInput()
-      client.session
-        .shell({
+      const send = (item: { model: typeof model; confirm?: boolean }): Promise<unknown> =>
+        client.session.shell({
           sessionID: info.id,
           agent,
-          model,
+          model: item.model,
+          confirm: item.confirm,
           command: text,
         })
         .catch((err) => {
+          const next = code(err) === 409 ? change() : undefined
+          if (next) return send(next)
           showToast({
             title: language.t("prompt.toast.shellSendFailed.title"),
             description: errorMessage(err),
           })
           restoreInput()
         })
+      send({ model })
       return
     }
 
@@ -520,13 +539,14 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       const customCommand = sync.data.command.find((c) => c.name === commandName)
       if (customCommand) {
         clearInput()
-        client.session
-          .command({
+        const send = (item: { model: typeof model; confirm?: boolean }): Promise<unknown> =>
+          client.session.command({
             sessionID: info.id,
             command: commandName,
             arguments: args.join(" "),
             agent,
-            model: `${model.providerID}/${model.modelID}`,
+            model: `${item.model.providerID}/${item.model.modelID}`,
+            confirm: item.confirm,
             variant,
             parts: images.map((attachment) => ({
               id: Identifier.ascending("part"),
@@ -537,12 +557,15 @@ export function createPromptSubmit(input: PromptSubmitInput) {
             })),
           })
           .catch((err) => {
+            const next = code(err) === 409 ? change() : undefined
+            if (next) return send(next)
             showToast({
               title: language.t("prompt.toast.commandSendFailed.title"),
               description: formatServerError(err, language.t, language.t("common.requestFailed")),
             })
             restoreInput()
           })
+        send({ model })
         return
       }
     }
@@ -625,6 +648,31 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
     }).catch((err) => {
+      const next = code(err) === 409 ? change() : undefined
+      if (next) {
+        void sendFollowupDraft({
+          client,
+          sync,
+          globalSync,
+          draft: { ...draft, model: next.model, confirm: next.confirm },
+          messageID,
+          optimisticBusy: sessionDirectory === projectDirectory,
+          before: waitForWorktree,
+        }).catch((err) => {
+          pending.delete(info.id)
+          if (sessionDirectory === projectDirectory) {
+            sync.set("session_status", info.id, { type: "idle" })
+          }
+          showToast({
+            title: language.t("prompt.toast.promptSendFailed.title"),
+            description: errorMessage(err),
+          })
+          removeOptimisticMessage()
+          restoreCommentItems(commentItems)
+          restoreInput()
+        })
+        return
+      }
       pending.delete(info.id)
       if (sessionDirectory === projectDirectory) {
         sync.set("session_status", info.id, { type: "idle" })

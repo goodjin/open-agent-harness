@@ -184,7 +184,7 @@ describe("session processor lifecycle", () => {
 
             expect(SessionStatus.get(session.id)).toEqual({ type: "error", message: "Error: processor exploded" })
             const logs = await SessionLog.list({ sessionID: session.id })
-            expect(logs.map((item) => item.type)).toEqual([
+            expect(logs.map((item) => item.type).filter((item) => item !== "session.status.changed")).toEqual([
               "llm.start",
               "reasoning.start",
               "reasoning.end",
@@ -348,6 +348,133 @@ describe("session processor lifecycle", () => {
     stream.mockRestore()
   })
 
+  test("keeps response event summaries after oversized stream event", async () => {
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "tool-input-start" as const, id: "call_action", toolName: LLM.ACTION_RESULT_TOOL }
+          yield { type: "tool-input-delta" as const, id: "call_action", delta: "x".repeat(200_000) }
+          yield { type: "tool-input-end" as const, id: "call_action" }
+          yield {
+            type: "tool-error" as const,
+            toolCallId: "call_action",
+            toolName: LLM.ACTION_RESULT_TOOL,
+            input: {},
+            error: new Error("ActionResult schema failed"),
+          }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-response-capture"),
+          fn: async () => {
+            const session = await Session.create({})
+            const user = MessageID.ascending()
+            const input = (await Session.updateMessage({
+              id: user,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)) as MessageV2.User
+
+            const assistant = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: user,
+              role: "assistant",
+              mode: "test",
+              agent: "test",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: projectRoot,
+                root: projectRoot,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            })) as MessageV2.Assistant
+
+            const model = {
+              id: "test",
+              providerID: "test",
+              api: { id: "openai", npm: "" },
+              limit: { context: 100_000, output: 32_000 },
+            } as Provider.Model
+
+            const processor = SessionProcessor.create({
+              assistantMessage: assistant,
+              sessionID: session.id,
+              model,
+              abort: new AbortController().signal,
+            })
+
+            await processor.process({
+              user: input,
+              sessionID: session.id,
+              model,
+              agent: {
+                name: "test",
+                mode: "primary",
+                permission: [],
+                options: {},
+              },
+              system: ["system prompt"],
+              abort: new AbortController().signal,
+              messages: [{ role: "user", content: "hello prompt" }],
+              tools: {},
+            } as unknown as LLM.StreamInput)
+
+            const part = (await MessageV2.parts(assistant.id)).find(
+              (item): item is MessageV2.ToolPart => item.type === "tool" && item.tool === LLM.ACTION_RESULT_TOOL,
+            )
+            expect(part?.state.status).toBe("error")
+            if (part?.state.status !== "error") throw new Error("expected errored ActionResult")
+            const data = JSON.parse(String(part.state.metadata?.rawResponse)) as {
+              events: { type: string; truncated?: boolean }[]
+              truncated: boolean
+            }
+            expect(data.truncated).toBe(true)
+            expect(data.events.map((item) => item.type)).toEqual([
+              "start",
+              "tool-input-start",
+              "tool-input-delta",
+              "tool-input-end",
+              "tool-error",
+            ])
+            expect(data.events.find((item) => item.type === "tool-input-delta")?.truncated).toBe(true)
+            expect(Number(part.state.metadata?.rawResponseChars)).toBeGreaterThan(
+              Number(part.state.metadata?.rawResponsePreviewChars),
+            )
+
+            const full = await SessionLog.readPayload({
+              sessionID: session.id,
+              id: String(part.state.metadata?.responsePayload),
+            })
+            expect(JSON.stringify(full?.data)).toContain("x".repeat(20_000))
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+
+    stream.mockRestore()
+  })
+
   test("stops repeated preflight compaction for the same user message", async () => {
     await Instance.provide({
       directory: projectRoot,
@@ -431,17 +558,20 @@ describe("session processor lifecycle", () => {
   })
 
   test("does not fail when text-start has no delta but non-text events continue", async () => {
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => ({
-      fullStream: (async function* () {
-        yield { type: "start" as const }
-        yield { type: "text-start" as const }
-        yield { type: "reasoning-start" as const, id: "r1" }
-        yield { type: "reasoning-delta" as const, id: "r1", text: "..." }
-        yield { type: "reasoning-end" as const, id: "r1" }
-        yield { type: "text-end" as const }
-        yield { type: "finish" as const }
-      })(),
-    }) as unknown as Awaited<ReturnType<typeof LLM.stream>>)
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" as const }
+            yield { type: "text-start" as const }
+            yield { type: "reasoning-start" as const, id: "r1" }
+            yield { type: "reasoning-delta" as const, id: "r1", text: "..." }
+            yield { type: "reasoning-end" as const, id: "r1" }
+            yield { type: "text-end" as const }
+            yield { type: "finish" as const }
+          })(),
+        }) as unknown as Awaited<ReturnType<typeof LLM.stream>>,
+    )
 
     await Instance.provide({
       directory: projectRoot,
