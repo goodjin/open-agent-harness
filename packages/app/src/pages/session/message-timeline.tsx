@@ -67,6 +67,7 @@ const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
 const restorable = new Set(["interrupted"])
 const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
+const done = new Set(["completed", "user_completed", "archived"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
@@ -169,10 +170,12 @@ const dot = (type: string) => {
   if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"
   if (live.has(type)) return "bg-icon-info-base"
-  if (type === "completed") return "bg-icon-success-base"
+  if (type === "completed" || type === "user_completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   return "bg-icon-critical-base"
 }
+
+const label = (type: string) => (type === "user_completed" ? "用户标记完成" : type)
 
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
@@ -502,7 +505,7 @@ export function MessageTimeline(props: {
 
   let more: HTMLButtonElement | undefined
 
-  const [req, setReq] = createStore({ share: false, unshare: false })
+  const [req, setReq] = createStore({ share: false, status: false, unshare: false })
   const [op, setOp] = createStore({ child: {} as Record<string, string | undefined> })
 
   const shareSession = () => {
@@ -781,6 +784,34 @@ export function MessageTimeline(props: {
       }),
     )
 
+  const mark = (id: string, reason = "Marked complete from session timeline") => {
+    const current = sessionID()
+    if (current === id) setReq("status", true)
+    else setOp("child", id, "user_completed")
+    return sdk
+      .request(`/session/${id}/status/user-completed`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason }),
+      })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        await sync.session.sync(id, { force: true }).catch(() => undefined)
+        if (current && current !== id) await sync.session.sync(current, { force: true }).catch(() => undefined)
+      })
+      .catch((err: unknown) =>
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        }),
+      )
+      .finally(() => {
+        if (current === id) setReq("status", false)
+        else setOp("child", id, undefined)
+      })
+  }
+
   const submit = (run: string) => {
     const id = sessionID()
     if (!id) return
@@ -793,6 +824,37 @@ export function MessageTimeline(props: {
         body: JSON.stringify({
           directory: sdk.directory,
           force: true,
+          run_id: run,
+        }),
+      })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        await sync.session.sync(id, { force: true }).catch(() => undefined)
+      })
+      .catch((err: unknown) =>
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        }),
+      )
+      .finally(() => {
+        setOp("child", key, undefined)
+      })
+  }
+
+  const cancelRun = (run: string) => {
+    const id = sessionID()
+    if (!id) return
+    const key = `cancel:${run}`
+    setOp("child", key, "cancel")
+    return sdk
+      .request(`/session/${id}/delegations/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          directory: sdk.directory,
+          reason: "User cancelled delegated child sessions from parent timeline.",
           run_id: run,
         }),
       })
@@ -1087,6 +1149,17 @@ export function MessageTimeline(props: {
                                 <DropdownMenu.ItemLabel>
                                   {language.t("session.share.action.share")}
                                 </DropdownMenu.ItemLabel>
+                              </DropdownMenu.Item>
+                            </Show>
+                            <Show when={!done.has(sessionStatus().type)}>
+                              <DropdownMenu.Item
+                                onSelect={() => {
+                                  setTitle("menuOpen", false)
+                                  void mark(id(), "User marked the session complete.")
+                                }}
+                                disabled={req.status}
+                              >
+                                <DropdownMenu.ItemLabel>标记为用户完成</DropdownMenu.ItemLabel>
                               </DropdownMenu.Item>
                             </Show>
                             <DropdownMenu.Item onSelect={() => void archiveSession(id())}>
@@ -1540,7 +1613,7 @@ export function MessageTimeline(props: {
                                               <span class="truncate text-12-medium text-text-strong">
                                                 {info()?.title || item.label}
                                               </span>
-                                              <span class="shrink-0 text-11-regular text-text-weak">{status()}</span>
+                                              <span class="shrink-0 text-11-regular text-text-weak">{label(status())}</span>
                                             </div>
                                             <div class="mt-0.5 truncate text-11-regular text-text-weak">{item.id}</div>
                                           </button>
@@ -1575,6 +1648,17 @@ export function MessageTimeline(props: {
                                                 恢复
                                               </Button>
                                             </Show>
+                                            <Show when={!done.has(status())}>
+                                              <Button
+                                                variant="ghost"
+                                                size="small"
+                                                class="h-7 px-2"
+                                                disabled={busy()}
+                                                onClick={() => void mark(item.id, "User marked delegated child session complete.")}
+                                              >
+                                                标完成
+                                              </Button>
+                                            </Show>
                                           </div>
                                         </div>
                                       )
@@ -1582,6 +1666,19 @@ export function MessageTimeline(props: {
                                   </For>
                                 </div>
                                 <div class="flex items-center justify-end gap-2 border-t border-border-weaker-base px-3 py-2">
+                                  <Button
+                                    variant="ghost"
+                                    size="small"
+                                    class="h-7 px-2"
+                                    disabled={!run() || !!op.child[`cancel:${run()}`]}
+                                    onClick={() => {
+                                      const id = run()
+                                      if (!id) return
+                                      void cancelRun(id)
+                                    }}
+                                  >
+                                    取消子会话并继续
+                                  </Button>
                                   <Button
                                     variant="secondary"
                                     size="small"
@@ -1593,7 +1690,7 @@ export function MessageTimeline(props: {
                                       void submit(id)
                                     }}
                                   >
-                                    提交结果给父会话
+                                    不再等待
                                   </Button>
                                 </div>
                               </Show>

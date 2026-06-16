@@ -14,6 +14,105 @@ import { Agent } from "../../src/agent/agent"
 import { RuntimeTools } from "../../src/session/runtime-tools"
 
 describe("SessionDelegation", () => {
+  test("cancels pending delegated children and submits an aggregate handoff", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_cancel_children",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+
+              const result = await SessionDelegation.cancel({
+                sessionID: parent.id,
+                runID: "apr_cancel_children",
+                reason: "No longer needed",
+              })
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string; status?: string; summary?: string }[]
+              }
+              const messages = await MessageV2.filterCompacted(MessageV2.stream(child.id))
+
+              expect(result).toBe(true)
+              expect(SessionStatus.get(child.id)).toEqual({ type: "aborted", message: "No longer needed" })
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.status).toBe("failed")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("status aborted")
+              expect(messages.some((msg) => msg.info.role === "user" && msg.parts.some((part) => part.type === "text" && part.text.includes("cancel_delegated_task")))).toBe(true)
+              expect(prompts[0]?.sessionID).toBe(parent.id)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Partial: 0"))).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("new delegated assignments require ActionResult before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []

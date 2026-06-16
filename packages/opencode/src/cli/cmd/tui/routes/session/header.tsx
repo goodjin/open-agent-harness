@@ -91,6 +91,8 @@ const SessionStatusIndicator = (props: { status: Accessor<SessionStatus> }) => {
         return { icon: "⋯", color: theme.primary, label: "waiting for input" }
       case "waiting_child":
         return { icon: "⋯", color: theme.warning, label: "waiting for child" }
+      case "user_completed":
+        return { icon: "✓", color: theme.success, label: "user completed" }
       case "error":
         return { icon: "✗", color: theme.error, label: "error" }
       case "retry":

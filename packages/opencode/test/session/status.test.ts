@@ -27,6 +27,7 @@ describe("session state machine", () => {
           { type: "timeout" as const, message: "test timeout" },
           { type: "retry" as const, attempt: 1, message: "retry message", next: Date.now() + 2000 },
           { type: "interrupted" as const, prior: "running" as const, message: "process stopped" },
+          { type: "user_completed" as const, message: "accepted by user" },
         ]
 
         for (const state of states) {
@@ -107,6 +108,35 @@ describe("session state machine", () => {
             expect(info.data.to).toBe("waiting_permission")
             expect(info.data.reason).toBe("Session status changed to waiting_permission.")
             await Session.remove(sessionID)
+          },
+        }),
+    })
+  })
+
+  test("allows user-marked completion from unfinished and failed states", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-user-completed"),
+          fn: async () => {
+            const waiting = await Session.create({})
+            SessionStatus.set(waiting.id, { type: "running" })
+            SessionStatus.set(waiting.id, { type: "waiting_child", message: "waiting" })
+            SessionStatus.set(
+              waiting.id,
+              { type: "user_completed", message: "good enough" },
+              { reason: "User accepted partial result." },
+            )
+            expect(SessionStatus.get(waiting.id)).toEqual({ type: "user_completed", message: "good enough" })
+
+            const failed = await Session.create({})
+            SessionStatus.set(failed.id, { type: "failed", message: "tool failed" })
+            SessionStatus.set(failed.id, { type: "user_completed", message: "handled outside the runtime" })
+            expect(SessionStatus.get(failed.id).type).toBe("user_completed")
+
+            await Session.remove(waiting.id)
+            await Session.remove(failed.id)
           },
         }),
     })

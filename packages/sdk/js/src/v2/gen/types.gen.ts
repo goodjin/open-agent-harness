@@ -165,6 +165,10 @@ export type SessionStatus =
       type: "completed"
     }
   | {
+      type: "user_completed"
+      message?: string
+    }
+  | {
       type: "archived"
     }
   | {
@@ -5048,6 +5052,42 @@ export type SessionGetStatusResponses = {
 
 export type SessionGetStatusResponse = SessionGetStatusResponses[keyof SessionGetStatusResponses]
 
+export type SessionStatusUserCompletedData = {
+  body?: {
+    reason?: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/status/user-completed"
+}
+
+export type SessionStatusUserCompletedErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionStatusUserCompletedError = SessionStatusUserCompletedErrors[keyof SessionStatusUserCompletedErrors]
+
+export type SessionStatusUserCompletedResponses = {
+  /**
+   * Updated session status
+   */
+  200: SessionStatus
+}
+
+export type SessionStatusUserCompletedResponse =
+  SessionStatusUserCompletedResponses[keyof SessionStatusUserCompletedResponses]
+
 export type SessionLogData = {
   body?: never
   path: {
@@ -5369,6 +5409,50 @@ export type SessionDelegationsSubmitResponses = {
 
 export type SessionDelegationsSubmitResponse =
   SessionDelegationsSubmitResponses[keyof SessionDelegationsSubmitResponses]
+
+export type SessionDelegationsCancelData = {
+  body?: {
+    directory?: string
+    reason?: string
+    run_id: string
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/delegations/cancel"
+}
+
+export type SessionDelegationsCancelErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDelegationsCancelError = SessionDelegationsCancelErrors[keyof SessionDelegationsCancelErrors]
+
+export type SessionDelegationsCancelResponses = {
+  /**
+   * Delegated child sessions cancelled and submitted
+   */
+  200: {
+    submitted: boolean
+  }
+}
+
+export type SessionDelegationsCancelResponse =
+  SessionDelegationsCancelResponses[keyof SessionDelegationsCancelResponses]
 
 export type SessionDescendantsData = {
   body?: never

@@ -56,7 +56,11 @@ If a remaining pending child is terminal, such as `interrupted`, `aborted`, `fai
 
 Manual delegation submit uses the same aggregate handoff path. The submit route accepts a parent session and run id, records current pending child statuses as synthetic results when forced, removes those children from the pending set, and sends one collected Markdown handoff to the parent. Later child completions for that run do not notify the parent again after the run has been claimed.
 
+Delegation cancellation is a stronger manual handoff. Runtime writes a visible control message into each pending child session, cancels its active prompt, marks the child `aborted`, then force-submits the parent run through the same aggregate handoff path. This keeps the child session inspectable and makes the user cancellation explicit to both the child timeline and the parent summary.
+
 The parent handoff prompt is Markdown prose, not JSON. It includes run counts, child session ids, action ids, agents, statuses, and summaries so the parent can continue naturally or produce the final user-facing answer.
+
+`user_completed` is distinct from runtime `completed`. It means the user decided the session no longer needs runtime work, even if the previous state was waiting, blocked, interrupted, failed, paused, aborted, or partially complete. Runtime records it through `SessionStatus.set()` and status-change logs, but must not treat it as proof that the model or delegated task produced a normal final result. When a child session with `user_completed` is included in a forced delegation handoff, the handoff reports a partial/manual result rather than a natural completion.
 
 ## Request Turn State
 

@@ -205,6 +205,8 @@ import type {
   SessionCommandResponses,
   SessionCreateErrors,
   SessionCreateResponses,
+  SessionDelegationsCancelErrors,
+  SessionDelegationsCancelResponses,
   SessionDelegationsSubmitErrors,
   SessionDelegationsSubmitResponses,
   SessionDeleteErrors,
@@ -254,6 +256,8 @@ import type {
   SessionShellResponses,
   SessionStatusErrors,
   SessionStatusResponses,
+  SessionStatusUserCompletedErrors,
+  SessionStatusUserCompletedResponses,
   SessionSummarizeErrors,
   SessionSummarizeResponses,
   SessionTodoErrors,
@@ -1730,6 +1734,49 @@ export class Tree extends HeyApiClient {
   }
 }
 
+export class Status extends HeyApiClient {
+  /**
+   * Mark session as user completed
+   *
+   * Mark a waiting, interrupted, failed, or otherwise unfinished session as completed by user decision.
+   */
+  public userCompleted<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      reason?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "reason" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionStatusUserCompletedResponses,
+      SessionStatusUserCompletedErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/status/user-completed",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Log extends HeyApiClient {
   /**
    * Get session log payload
@@ -1846,6 +1893,59 @@ export class Delegations extends HeyApiClient {
       ThrowOnError
     >({
       url: "/session/{sessionID}/delegations/submit",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Cancel delegated child sessions
+   *
+   * Cancel pending delegated child sessions for a parent run and submit their statuses back to the parent.
+   */
+  public cancel<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      query_directory?: string
+      body_directory?: string
+      reason?: string
+      run_id?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            {
+              in: "query",
+              key: "query_directory",
+              map: "directory",
+            },
+            {
+              in: "body",
+              key: "body_directory",
+              map: "directory",
+            },
+            { in: "body", key: "reason" },
+            { in: "body", key: "run_id" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionDelegationsCancelResponses,
+      SessionDelegationsCancelErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/delegations/cancel",
       ...options,
       ...params,
       headers: {
@@ -3125,6 +3225,11 @@ export class Session3 extends HeyApiClient {
   private _tree?: Tree
   get tree2(): Tree {
     return (this._tree ??= new Tree({ client: this.client }))
+  }
+
+  private _status?: Status
+  get status2(): Status {
+    return (this._status ??= new Status({ client: this.client }))
   }
 
   private _log?: Log

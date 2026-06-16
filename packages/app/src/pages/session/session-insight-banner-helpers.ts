@@ -79,6 +79,7 @@ export function modelName(input: {
 }
 
 export function statusName(status?: SessionStatus) {
+  if (status?.type === "user_completed") return "用户标记完成"
   return status?.type ?? "idle"
 }
 

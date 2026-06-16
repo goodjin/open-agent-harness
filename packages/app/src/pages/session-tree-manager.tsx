@@ -74,6 +74,7 @@ const statuses = [
   "running",
   "starting",
   "timeout",
+  "user_completed",
   "waiting_permission",
   "waiting_user",
   "waiting_child",
@@ -100,7 +101,7 @@ function rows(nodes: Node[]) {
 
 function statusClass(type: string) {
   if (type === "running" || type === "starting" || type === "queued" || type === "retry") return "bg-icon-info-base"
-  if (type === "completed") return "bg-icon-success-base"
+  if (type === "completed" || type === "user_completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"

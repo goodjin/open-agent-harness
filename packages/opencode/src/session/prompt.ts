@@ -283,6 +283,7 @@ export namespace SessionPrompt {
       const status = SessionStatus.get(sessionID).type
       if (
         status === "completed" ||
+        status === "user_completed" ||
         status === "archived" ||
         status === "failed" ||
         status === "error" ||

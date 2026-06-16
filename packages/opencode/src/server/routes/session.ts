@@ -398,7 +398,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const body = c.req.valid("json")
         const aborted = await scoped(body.directory, async () => {
-          const done = new Set(["completed", "archived", "failed", "error", "timeout"])
+          const done = new Set(["completed", "user_completed", "archived", "failed", "error", "timeout"])
           const result = await Promise.all(
             body.ids.map(async (id) => {
               await Session.get(id)
@@ -531,6 +531,50 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         await Session.get(sessionID)
+        return c.json(SessionStatus.get(sessionID))
+      },
+    )
+    .post(
+      "/:sessionID/status/user-completed",
+      describeRoute({
+        summary: "Mark session as user completed",
+        tags: ["Session"],
+        description: "Mark a waiting, interrupted, failed, or otherwise unfinished session as completed by user decision.",
+        operationId: "session.status.userCompleted",
+        responses: {
+          200: {
+            description: "Updated session status",
+            content: {
+              "application/json": {
+                schema: resolver(SessionStatus.Info),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          reason: z.string().optional(),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        await Session.get(sessionID)
+        SessionPrompt.cancel(sessionID)
+        SessionStatus.set(
+          sessionID,
+          { type: "user_completed", message: body.reason ?? "Marked complete by user." },
+          { reason: body.reason ?? "User marked session complete." },
+        )
         return c.json(SessionStatus.get(sessionID))
       },
     )
@@ -744,6 +788,52 @@ export const SessionRoutes = lazy(() =>
             sessionID,
             runID: body.run_id,
             force: body.force,
+          }),
+        )
+        return c.json({ submitted })
+      },
+    )
+    .post(
+      "/:sessionID/delegations/cancel",
+      describeRoute({
+        summary: "Cancel delegated child sessions",
+        tags: ["Session"],
+        description: "Cancel pending delegated child sessions for a parent run and submit their statuses back to the parent.",
+        operationId: "session.delegations.cancel",
+        responses: {
+          200: {
+            description: "Delegated child sessions cancelled and submitted",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ submitted: z.boolean() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          directory: z.string().optional(),
+          reason: z.string().optional(),
+          run_id: z.string().min(1),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const submitted = await scoped(body.directory, () =>
+          SessionDelegation.cancel({
+            sessionID,
+            runID: body.run_id,
+            reason: body.reason,
           }),
         )
         return c.json({ submitted })

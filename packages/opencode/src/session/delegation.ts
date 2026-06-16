@@ -8,11 +8,12 @@ import { Log } from "@/util/log"
 import { Session } from "."
 import { MessageV2 } from "./message-v2"
 import { SessionLog } from "./log"
-import { MessageID, SessionID } from "./schema"
+import { MessageID, PartID, SessionID } from "./schema"
 import { Storage } from "@/storage/storage"
 import { ActionResult } from "./action-result"
 import { SessionStatus } from "./status"
 import { SessionTurn } from "./turn"
+import { Provider } from "@/provider/provider"
 
 export namespace SessionDelegation {
   const log = Log.create({ service: "session.delegation" })
@@ -299,6 +300,27 @@ export namespace SessionDelegation {
     return true
   }
 
+  export async function cancel(input: { reason?: string; runID: string; sessionID: SessionID }) {
+    const parent = await Session.get(input.sessionID)
+    const protocol = object(object(parent.dsl_context).protocol)
+    const entries = Object.entries(object(protocol.pending_delegations))
+      .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
+      .filter((entry) => entry.item.run_id === input.runID)
+    const { SessionPrompt } = await import("./prompt")
+    await Promise.all(
+      entries.map(async (entry) => {
+        await notice(entry.id, entry.item, input.reason)
+        SessionPrompt.cancel(entry.id)
+        SessionStatus.set(
+          entry.id,
+          { type: "aborted", message: input.reason ?? "Cancelled by user while parent session was waiting." },
+          { reason: input.reason ?? "User cancelled delegated child task." },
+        )
+      }),
+    )
+    return submit({ sessionID: input.sessionID, runID: input.runID, force: true })
+  }
+
   async function turn(sessionID: SessionID, messageID: MessageID | undefined, status: Status) {
     if (!messageID) return
     const msg = await MessageV2.get({ sessionID, messageID }).catch(() => undefined)
@@ -556,6 +578,57 @@ export namespace SessionDelegation {
       .trim()
   }
 
+  async function latest(sessionID: SessionID) {
+    for await (const msg of MessageV2.stream(sessionID)) {
+      if (msg.info.role === "user") return msg.info.model
+    }
+    return Provider.defaultModel()
+  }
+
+  async function notice(sessionID: SessionID, item: Item, reason: string | undefined) {
+    const session = await Session.get(sessionID)
+    const meta = {
+      command: {
+        source: "parent_session",
+        source_session: item.parent_session_id,
+        target_session: sessionID,
+        intent: "cancel_delegated_task",
+        reason,
+      },
+    }
+    const msg = await Session.updateMessage({
+      id: MessageID.ascending(),
+      sessionID,
+      role: "user",
+      time: { created: Date.now() },
+      agent: session.agent ?? text(item.agent) ?? "default",
+      model: session.model ?? (await latest(sessionID)),
+      tools: {},
+      mode: "",
+      metadata: meta,
+    } as MessageV2.User)
+    await Session.updatePart({
+      id: PartID.ascending(),
+      sessionID,
+      messageID: msg.id,
+      type: "text",
+      text: [
+        "[Session Command]",
+        "source: parent_session",
+        `source_session: ${item.parent_session_id}`,
+        `target_session: ${sessionID}`,
+        "intent: cancel_delegated_task",
+        reason ? `reason: ${reason}` : undefined,
+        "expected_action: Stop the delegated task. Do not continue work unless the user explicitly resumes this session.",
+      ]
+        .filter((line): line is string => typeof line === "string")
+        .join("\n"),
+      synthetic: true,
+      time: { start: Date.now(), end: Date.now() },
+      metadata: meta,
+    } as MessageV2.TextPart)
+  }
+
   function completed(
     item: Item,
     status: Status,
@@ -739,6 +812,7 @@ export namespace SessionDelegation {
   function ended(status: SessionStatus.Info) {
     return (
       status.type === "completed" ||
+      status.type === "user_completed" ||
       status.type === "aborted" ||
       status.type === "failed" ||
       status.type === "blocked" ||
@@ -751,6 +825,7 @@ export namespace SessionDelegation {
 
   function map(status: SessionStatus.Info): Status {
     if (status.type === "completed") return "completed"
+    if (status.type === "user_completed") return "partial"
     if (status.type === "blocked") return "blocked"
     return "failed"
   }
@@ -763,6 +838,7 @@ export namespace SessionDelegation {
       "## Run Status",
       `- Child sessions: ${rows.length}`,
       `- Completed: ${count("completed")}`,
+      `- Partial: ${count("partial")}`,
       `- Blocked: ${count("blocked")}`,
       `- Failed: ${count("failed")}`,
       "",
