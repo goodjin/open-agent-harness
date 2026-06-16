@@ -66,6 +66,38 @@ describe("agent protocol schema", () => {
     })
   })
 
+  test("ignores whitespace-only v2 item strings", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "worker", kind: "agent", target: "backend", prompt: "Patch the API.\nKeep the prompt newline." },
+        "\n",
+        {
+          id: "worker_review",
+          kind: "agent",
+          target: "backend-verifier",
+          prompt: "Review the backend patch.",
+          depends: ["worker"],
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions.map((item) => item.id)).toEqual(["worker", "worker_review"])
+    expect(out.payload.actions[0]?.input).toEqual({ prompt: "Patch the API.\nKeep the prompt newline." })
+    expect(out.payload.actions[1]?.depends_on).toEqual(["worker"])
+  })
+
+  test("rejects non-empty v2 item strings", () => {
+    expect(() =>
+      AgentProtocol.parse({
+        version: "2",
+        items: [{ id: "worker", kind: "agent", target: "backend", prompt: "Patch the API." }, "run this"],
+      }),
+    ).toThrow()
+  })
+
   test("ignores extra v2 protocol fields when required fields are valid", () => {
     const out = AgentProtocol.parse({
       version: "2",

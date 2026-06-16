@@ -623,15 +623,25 @@ export namespace AgentProtocol {
   export type Result = z.infer<typeof Result>
 
   export function parse(input: unknown) {
+    const clean = whitespace(input)
     if (
-      input &&
-      typeof input === "object" &&
-      !Array.isArray(input) &&
-      (input as { version?: unknown }).version === "2"
+      clean &&
+      typeof clean === "object" &&
+      !Array.isArray(clean) &&
+      (clean as { version?: unknown }).version === "2"
     ) {
-      V2.parse(input)
+      V2.parse(clean)
     }
-    return Declaration.parse(input)
+    return Declaration.parse(clean)
+  }
+
+  function whitespace(input: unknown): unknown {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return input
+    const value = input as globalThis.Record<string, unknown>
+    if (!Array.isArray(value.items)) return input
+    const items = value.items.filter((item) => !(typeof item === "string" && item.trim() === ""))
+    if (items.length === value.items.length) return input
+    return { ...value, items }
   }
 
   function actions(input: unknown) {
