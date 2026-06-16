@@ -963,12 +963,15 @@ describe("session.llm.stream", () => {
         expect(String(err?.error)).toContain("ActionResult input schema/parse failed")
         expect(String(err?.error)).toContain("Retry by calling ActionResult again and follow this protocol exactly")
         expect(String(err?.error)).toContain("Do not wrap the arguments in input")
-        expect(String(err?.error)).toContain("role selects the protocol branch")
-        expect(String(err?.error)).toContain("Worker required fields: role, action_id, status, result.")
+        expect(String(err?.error)).toContain("Worker result required fields: action_id, status, result.")
+        expect(String(err?.error)).toContain("Worker status values: success, failure, error, reply.")
+        expect(String(err?.error)).toContain("Worker optional fields: scope, changed_files, verification, blockers.")
         expect(String(err?.error)).toContain(
-          "Verifier required fields: role, action_id, target_action_id, status, result.",
+          "Verifier result required fields: action_id, target_action_id, status, result.",
         )
-        expect(String(err?.error)).toContain('"role": "worker"')
+        expect(String(err?.error)).toContain("Verifier status values: pass, fail, error, reply, skipped.")
+        expect(String(err?.error)).toContain("Verifier optional fields: issues, evidence, worker_feedback.")
+        expect(String(err?.error)).not.toContain('"result_type": "worker"')
         expect(String(err?.error)).not.toContain("unavailable tool 'invalid'")
         expect(JSON.stringify(items)).not.toContain('"toolName":"invalid"')
 

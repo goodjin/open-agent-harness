@@ -11,7 +11,8 @@ When a delegated session repeatedly calls `ActionResult` with malformed or empty
 - Stop a session after more than three consecutive failed `ActionResult` attempts.
 - Add an agent-level maximum tool-call loop limit with default `1000`.
 - Expose the maximum tool-call limit in Settings > Agents.
-- Return the strict `ActionResult` protocol again when schema parsing fails, including direct-argument rules, `role` branch semantics, worker/verifier required fields, status values, and a valid example.
+- Return the strict `ActionResult` protocol again when schema parsing fails, including direct-argument rules, runtime-derived worker/verifier branch semantics, required fields, status values, and a valid example.
+- Ignore stale `ActionResult` input fields such as `role`, `result_type`, `kind`, and `summary` instead of treating them as protocol instructions.
 
 ## Implementation Plan
 
@@ -19,7 +20,7 @@ When a delegated session repeatedly calls `ActionResult` with malformed or empty
 - Track tool-call count and consecutive `ActionResult` failures inside the prompt loop for the active agent.
 - Log `tool.action_result` outcome records and include bounded raw tool input on `tool.error`.
 - Store full LLM response event payloads, expose bounded previews on failed tool parts/logs, and link those previews to exportable response payloads.
-- Centralize the `ActionResult` protocol text so delegated prompts and schema-failure repair messages use the same role and field rules.
+- Centralize the `ActionResult` protocol text so delegated prompts and schema-failure repair messages use the same result-shape and field rules.
 - Mark sessions `blocked` when either guard is exceeded.
 - Update Agent Settings helpers and runtime form controls to read/write `maxToolCalls`.
 

@@ -562,7 +562,7 @@ export namespace SessionDelegation {
     )
     if (!part || part.state.status !== "completed") return
     const raw = object(part.state.input)
-    const parsed = ActionResult.parse(raw)
+    const parsed = ActionResult.stored(raw)
     if (!parsed.success) return
     return {
       value: parsed.data,
@@ -995,7 +995,7 @@ export namespace SessionDelegation {
           text: [
             `Run verifier action ${gate.id}: ${gate.title}.`,
             "Call ActionResult exactly once when finished.",
-            "Use role `verifier`, set target_action_id to the worker action id, and set status to pass, fail, error, reply, or skipped.",
+            "Set target_action_id to the worker action id. Use status pass, fail, error, reply, or skipped.",
             "Keep issues, evidence, and worker_feedback as short strings. Do not use arrays or nested objects.",
             "",
             "## Verifier Prompt",
@@ -1102,7 +1102,7 @@ export namespace SessionDelegation {
             `Verifier ${res.action_id} did not pass on attempt ${count}.`,
             res.worker_feedback ?? res.result,
             "",
-            "Fix the issue, then call ActionResult with role `worker`, status `success`, scope `verification_feedback`, result, and concise string fields.",
+            "Fix the issue, then call ActionResult with status `success`, scope `verification_feedback`, result, and concise string fields.",
           ].join("\n"),
         },
       ],
@@ -1120,7 +1120,7 @@ export namespace SessionDelegation {
           text: [
             "The verifier feedback loop has passed, but your latest worker result only described verification feedback.",
             "Return a complete task summary for the original delegated task.",
-            "Call ActionResult with role `worker`, status `success`, scope `final_summary`, and include result, task_background, task_content, changed_files, verification, and blockers as short strings.",
+            "Call ActionResult with status `success`, scope `final_summary`, and include result, changed_files, verification, and blockers as short strings.",
             "",
             "Latest worker result:",
             body.output,

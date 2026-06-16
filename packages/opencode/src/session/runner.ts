@@ -3043,7 +3043,7 @@ export namespace SessionRunner {
       "When you are done, return a task result for the parent session.",
       "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
       "Use one result kind: success, failure, error, or reply.",
-      "For success/failure/error, include result, task_background, task_content, changed_files, verification, and blockers.",
+      "For success/failure/error, include result, changed_files, verification, and blockers.",
       ...ActionResult.protocol({
         verifier: agent.kind === "verifier",
         action: action.id,

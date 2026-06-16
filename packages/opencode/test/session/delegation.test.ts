@@ -12,6 +12,7 @@ import { SessionStatus } from "../../src/session/status"
 import { tmpdir } from "../fixture/fixture"
 import { Agent } from "../../src/agent/agent"
 import { RuntimeTools } from "../../src/session/runtime-tools"
+import { ActionResult } from "../../src/session/action-result"
 
 describe("SessionDelegation", () => {
   test("cancels pending delegated children and submits an aggregate handoff", async () => {
@@ -116,7 +117,9 @@ describe("SessionDelegation", () => {
   test("new delegated assignments require ActionResult before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -227,8 +230,14 @@ describe("SessionDelegation", () => {
               expect(result).toBe(false)
               expect(prompts).toHaveLength(1)
               expect(prompts[0]?.sessionID).toBe(child.id)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("ActionResult"))).toBe(true)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(false)
+              expect(
+                prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("ActionResult")),
+              ).toBe(true)
+              expect(
+                prompts[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                ),
+              ).toBe(false)
               expect(pctx.pending_delegations?.[child.id]).toBeDefined()
               expect(pctx.completed_delegations ?? []).toHaveLength(0)
             },
@@ -242,7 +251,9 @@ describe("SessionDelegation", () => {
   test("delegated planner waits for nested child sessions before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -320,8 +331,6 @@ describe("SessionDelegation", () => {
             action_id: "plan_feature",
             status: "success",
             result,
-            task_background: "Feature planner was delegated by a parent session.",
-            task_content: "Plan and coordinate nested feature work.",
             changed_files: "",
             verification: "Nested child sessions handled the executable work.",
             blockers: "",
@@ -422,7 +431,11 @@ describe("SessionDelegation", () => {
               expect(ctx.completed_delegations).toHaveLength(1)
               expect(prompts).toHaveLength(1)
               expect(prompts[0]?.sessionID).toBe(parent.id)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Nested feature work is complete"))).toBe(true)
+              expect(
+                prompts[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("Nested feature work is complete"),
+                ),
+              ).toBe(true)
             },
           }),
       })
@@ -434,7 +447,9 @@ describe("SessionDelegation", () => {
   test("records child results and notifies parent only after all sibling children end", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -512,8 +527,6 @@ describe("SessionDelegation", () => {
             action_id: action,
             status: "success",
             result,
-            task_background: "Sibling child task.",
-            task_content: action,
             changed_files: "",
             verification: "done",
             blockers: "",
@@ -577,10 +590,20 @@ describe("SessionDelegation", () => {
               expect(await SessionDelegation.complete({ sessionID: two.id })).toBe(true)
               expect(prompts).toHaveLength(1)
               expect(prompts[0]?.sessionID).toBe(parent.id)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("## Child Results"))).toBe(true)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(false)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("first done"))).toBe(true)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("second done"))).toBe(true)
+              expect(
+                prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("## Child Results")),
+              ).toBe(true)
+              expect(
+                prompts[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                ),
+              ).toBe(false)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("first done"))).toBe(
+                true,
+              )
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("second done"))).toBe(
+                true,
+              )
             },
           }),
       })
@@ -592,7 +615,9 @@ describe("SessionDelegation", () => {
   test("manual submit aggregates current child results and statuses", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -662,8 +687,6 @@ describe("SessionDelegation", () => {
             action_id: action,
             status: "success",
             result,
-            task_background: "Manual submit task.",
-            task_content: action,
             changed_files: "",
             verification: "done",
             blockers: "",
@@ -722,11 +745,17 @@ describe("SessionDelegation", () => {
               expect(await SessionDelegation.complete({ sessionID: one.id })).toBe(false)
               SessionStatus.set(two.id, { type: "interrupted", message: "Process stopped." })
 
-              expect(await SessionDelegation.submit({ sessionID: parent.id, runID: "manual_submit", force: true })).toBe(true)
+              expect(
+                await SessionDelegation.submit({ sessionID: parent.id, runID: "manual_submit", force: true }),
+              ).toBe(true)
               expect(prompts).toHaveLength(1)
               expect(prompts[0]?.sessionID).toBe(parent.id)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("child done"))).toBe(true)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("status interrupted"))).toBe(true)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("child done"))).toBe(
+                true,
+              )
+              expect(
+                prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("status interrupted")),
+              ).toBe(true)
               const ctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 pending_delegations?: Record<string, unknown>
                 completed_delegations?: { child_session_id?: string }[]
@@ -744,7 +773,9 @@ describe("SessionDelegation", () => {
   test("worker ActionResult runs verifier gates serially before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -782,11 +813,7 @@ describe("SessionDelegation", () => {
       return { info: msg, parts: [part] } as MessageV2.WithParts
     }) as never)
 
-    const done = async (
-      sessionID: SessionID,
-      agent: string,
-      input: Record<string, unknown>,
-    ) => {
+    const done = async (sessionID: SessionID, agent: string, input: Record<string, unknown>) => {
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
         sessionID,
@@ -918,7 +945,11 @@ describe("SessionDelegation", () => {
                             id: "impl_test",
                             title: "Test Implement",
                             operation: "verification_test",
-                            executor: { type: "agent", target: "backend-verifier", capabilities: ["verification", "test"] },
+                            executor: {
+                              type: "agent",
+                              target: "backend-verifier",
+                              capabilities: ["verification", "test"],
+                            },
                             depends_on: ["impl"],
                             verification: { role: "test", worker: "impl", required: true },
                             result_policy: "structured",
@@ -932,7 +963,11 @@ describe("SessionDelegation", () => {
                             id: "impl_review",
                             title: "Review Implement",
                             operation: "verification_review",
-                            executor: { type: "agent", target: "backend-verifier", capabilities: ["verification", "review"] },
+                            executor: {
+                              type: "agent",
+                              target: "backend-verifier",
+                              capabilities: ["verification", "review"],
+                            },
                             depends_on: ["impl", "impl_test"],
                             result_policy: "structured",
                             status: "pending",
@@ -956,8 +991,6 @@ describe("SessionDelegation", () => {
                 status: "success",
                 scope: "task",
                 result: "Implemented task",
-                task_background: "Needed backend work",
-                task_content: "Implement",
                 changed_files: "packages/api.ts",
                 verification: "bun test",
                 blockers: "none",
@@ -969,9 +1002,13 @@ describe("SessionDelegation", () => {
               expect(prompts[0]?.agent).toBe("backend-verifier")
               expect(prompts[0]?.sessionID).not.toBe(parent.id)
               expect(prompts[0]?.sessionID).not.toBe(worker.id)
-              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("impl_test"))).toBe(true)
+              expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("impl_test"))).toBe(
+                true,
+              )
               const testSession = prompts[0]!.sessionID
-              const test = (await Session.get(testSession)).dsl_context?.protocol as { delegation?: { action_id?: string } }
+              const test = (await Session.get(testSession)).dsl_context?.protocol as {
+                delegation?: { action_id?: string }
+              }
               expect((await Session.get(testSession)).parentID).toBe(worker.id)
               expect(test.delegation?.action_id).toBe("impl_test")
 
@@ -980,7 +1017,6 @@ describe("SessionDelegation", () => {
                 role: "verifier",
                 action_id: "impl_test",
                 target_action_id: "impl",
-                verification_role: "test",
                 status: "pass",
                 result: "Tests pass",
                 issues: "none",
@@ -991,7 +1027,9 @@ describe("SessionDelegation", () => {
               expect(prompts).toHaveLength(2)
               expect(prompts[1]?.agent).toBe("backend-verifier")
               expect(prompts[1]?.sessionID).not.toBe(testSession)
-              expect(prompts[1]?.parts?.some((part) => part.type === "text" && part.text.includes("impl_review"))).toBe(true)
+              expect(prompts[1]?.parts?.some((part) => part.type === "text" && part.text.includes("impl_review"))).toBe(
+                true,
+              )
               const reviewSession = prompts[1]!.sessionID
               expect((await Session.get(reviewSession)).parentID).toBe(worker.id)
 
@@ -1000,7 +1038,6 @@ describe("SessionDelegation", () => {
                 role: "verifier",
                 action_id: "impl_review",
                 target_action_id: "impl",
-                verification_role: "review",
                 status: "pass",
                 result: "Review pass",
                 issues: "none",
@@ -1011,10 +1048,20 @@ describe("SessionDelegation", () => {
               expect(notified || prompts.length === 3).toBe(true)
               expect(prompts).toHaveLength(3)
               expect(prompts[2]?.sessionID).toBe(parent.id)
-              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("<agent-delegation-result>"))).toBe(false)
-              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("## Child Results"))).toBe(true)
-              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("Tests pass"))).toBe(true)
-              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("Review pass"))).toBe(true)
+              expect(
+                prompts[2]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                ),
+              ).toBe(false)
+              expect(
+                prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("## Child Results")),
+              ).toBe(true)
+              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("Tests pass"))).toBe(
+                true,
+              )
+              expect(prompts[2]?.parts?.some((part) => part.type === "text" && part.text.includes("Review pass"))).toBe(
+                true,
+              )
               const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 pending_delegations?: Record<string, unknown>
               }
@@ -1048,13 +1095,17 @@ describe("SessionDelegation", () => {
                 bypassAgentCheck: false,
                 messages: [],
               })
-              const out = (await runtime.execute("session_result", {
-                child_session_id: worker.id,
-                include_output: true,
-              }, {
-                toolCallId: "call_result",
-                abortSignal: new AbortController().signal,
-              } as never)) as { output: string }
+              const out = (await runtime.execute(
+                "session_result",
+                {
+                  child_session_id: worker.id,
+                  include_output: true,
+                },
+                {
+                  toolCallId: "call_result",
+                  abortSignal: new AbortController().signal,
+                } as never,
+              )) as { output: string }
               const parsed = JSON.parse(out.output) as {
                 result?: { action_id?: string; action_result?: { role?: string }; output?: string }
               }
@@ -1069,174 +1120,25 @@ describe("SessionDelegation", () => {
     }
   })
 
-  test("ActionResult stores trailing final text as result when result field is empty", async () => {
-    await using tmp = await tmpdir()
-    await Instance.provide({
-      directory: tmp.path,
-      fn: () =>
-        WorkspaceContext.provide({
-          workspaceID: WorkspaceID.ascending(),
-          fn: async () => {
-            const parent = await Session.create({ agent: "protocol-runner" })
-            const child = await Session.create({ parentID: parent.id, agent: "backend" })
-            const msg = MessageID.ascending()
-            const item = {
-              type: "agent.delegation.assignment",
-              version: "1",
-              run_id: "apr_trailing_result",
-              action_id: "survey",
-              action_title: "Survey",
-              parent_session_id: parent.id,
-              parent_message_id: msg,
-              parent_agent: "protocol-runner",
-              child_session_id: child.id,
-              agent: "backend",
-              result_policy: "structured",
-              result_tool: "ActionResult",
-              created_at: Date.now(),
-            }
-            await Session.setDslContext({
-              sessionID: parent.id,
-              dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
-            })
-            await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
-            const call = {
-              kind: "action_result",
-              role: "worker",
-              action_id: "survey",
-              status: "success",
-              scope: "task",
-              summary: "Survey completed",
-              task_background: "Need a report",
-              task_content: "Survey",
-              changed_files: "",
-              verification: "read-only",
-              blockers: "",
-            }
-            const first = (await Session.updateMessage({
-              id: MessageID.ascending(),
-              sessionID: child.id,
-              role: "user",
-              time: { created: Date.now() },
-              agent: "backend",
-              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
-              tools: {},
-              mode: "",
-            } as MessageV2.User)) as MessageV2.User
-            const tool = (await Session.updateMessage({
-              id: MessageID.ascending(),
-              sessionID: child.id,
-              parentID: first.id,
-              role: "assistant",
-              mode: "backend",
-              agent: "backend",
-              path: { cwd: tmp.path, root: tmp.path },
-              cost: 0,
-              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-              modelID: ModelID.make("gpt-5.2"),
-              providerID: ProviderID.make("openai"),
-              time: { created: Date.now(), completed: Date.now() },
-              finish: "tool-calls",
-            })) as MessageV2.Assistant
-            await Session.updatePart({
-              id: PartID.ascending(),
-              messageID: tool.id,
-              sessionID: child.id,
-              type: "tool",
-              callID: "call_survey",
-              tool: "ActionResult",
-              state: {
-                status: "completed",
-                input: call,
-                output: "Action result received.",
-                title: "Action Result",
-                metadata: { action_result: true },
-                time: { start: Date.now(), end: Date.now() },
-              },
-            } as MessageV2.ToolPart)
-            const user = (await Session.updateMessage({
-              id: MessageID.ascending(),
-              sessionID: child.id,
-              role: "user",
-              time: { created: Date.now() },
-              agent: "backend",
-              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
-              tools: {},
-              mode: "",
-            } as MessageV2.User)) as MessageV2.User
-            const final = (await Session.updateMessage({
-              id: MessageID.ascending(),
-              sessionID: child.id,
-              parentID: user.id,
-              role: "assistant",
-              mode: "backend",
-              agent: "backend",
-              path: { cwd: tmp.path, root: tmp.path },
-              cost: 0,
-              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-              modelID: ModelID.make("gpt-5.2"),
-              providerID: ProviderID.make("openai"),
-              time: { created: Date.now(), completed: Date.now() },
-              finish: "stop",
-            })) as MessageV2.Assistant
-            await Session.updatePart({
-              id: PartID.ascending(),
-              messageID: final.id,
-              sessionID: child.id,
-              type: "text",
-              text: "# Full survey report\n\nEvidence and conclusions.",
-              time: { start: Date.now(), end: Date.now() },
-            } as MessageV2.TextPart)
-
-            expect(await SessionDelegation.complete({ sessionID: child.id, messageID: final.id })).toBe(true)
-            const ctx = (await Session.get(child.id)).dsl_context as {
-              result?: { action_result?: { result?: string }; output_ref?: string }
-            }
-            expect(ctx.result?.action_result?.result).toContain("Full survey report")
-
-            const planner = await Agent.get("feature-planner")
-            if (!planner) throw new Error("expected feature-planner")
-            const runtime = await RuntimeTools.build({
-              agent: planner,
-              model: {
-                id: ModelID.make("gpt-5.2"),
-                providerID: ProviderID.make("openai"),
-                api: { id: "openai", npm: "" },
-              } as never,
-              session: parent,
-              tools: {},
-              processor: {
-                get message() {
-                  return { id: msg } as never
-                },
-                partFromToolCall() {
-                  return undefined
-                },
-              } as never,
-              bypassAgentCheck: false,
-              messages: [],
-            })
-            const out = (await runtime.execute("session_result", {
-              child_session_id: child.id,
-              include_output: true,
-            }, {
-              toolCallId: "call_result",
-              abortSignal: new AbortController().signal,
-            } as never)) as { output: string }
-            const parsed = JSON.parse(out.output) as {
-              result?: { action_result?: { result?: string }; output?: string }
-            }
-            expect(parsed.result?.action_result?.result).toContain("Full survey report")
-            expect(parsed.result?.output).toContain("Full survey report")
-          },
-        }),
-    })
+  test("ActionResult requires an explicit result field", () => {
+    expect(
+      ActionResult.parse({
+        action_id: "survey",
+        status: "success",
+        summary: "Survey completed",
+        changed_files: "none",
+        verification: "read-only",
+        blockers: "none",
+      }).success,
+    ).toBe(false)
   })
 
   test("recovery notifies parent from a completed child assignment", async () => {
     await using tmp = await tmpdir()
     const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       inputs.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -1524,7 +1426,9 @@ describe("SessionDelegation", () => {
   test("ActionResult tool calls close the delegated turn", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -1641,8 +1545,6 @@ describe("SessionDelegation", () => {
                     status: "success",
                     scope: "task",
                     result: "implemented",
-                    task_background: "delegated",
-                    task_content: "impl",
                     changed_files: "none",
                     verification: "done",
                     blockers: "",
@@ -1734,8 +1636,6 @@ describe("SessionDelegation", () => {
                   status: "success",
                   scope: "task",
                   result: "implemented",
-                  task_background: "delegated",
-                  task_content: "impl",
                   changed_files: "none",
                   verification: "done",
                   blockers: "",
@@ -1800,7 +1700,9 @@ describe("SessionDelegation", () => {
   test("complete should still notify parent when child is already marked done but not yet delivered", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -1899,7 +1801,7 @@ describe("SessionDelegation", () => {
                 tools: {},
                 mode: "",
               } as MessageV2.User)) as MessageV2.User
-              const done = await Session.updateMessage({
+              const done = (await Session.updateMessage({
                 id: MessageID.ascending(),
                 sessionID: child.id,
                 parentID: user.id,
@@ -1918,7 +1820,7 @@ describe("SessionDelegation", () => {
                 providerID: ProviderID.make("openai"),
                 time: { created: Date.now(), completed: Date.now() },
                 finish: "stop",
-              }) as MessageV2.Assistant
+              })) as MessageV2.Assistant
               await Session.updatePart({
                 id: PartID.ascending(),
                 messageID: done.id,
@@ -2049,14 +1951,14 @@ describe("SessionDelegation", () => {
 
             const runtime = await RuntimeTools.build(opts)
             const review = await RuntimeTools.build({ ...opts, agent: reviewer })
-            const result = await runtime.execute("delegation_status", {}, {
+            const result = (await runtime.execute("delegation_status", {}, {
               toolCallId: "call_status",
               abortSignal: new AbortController().signal,
-            } as never) as { output?: string }
-            const tree = await runtime.execute("session_tree", {}, {
+            } as never)) as { output?: string }
+            const tree = (await runtime.execute("session_tree", {}, {
               toolCallId: "call_tree",
               abortSignal: new AbortController().signal,
-            } as never) as { output?: string }
+            } as never)) as { output?: string }
 
             expect(runtime.catalog.map((item) => item.id)).toContain("delegation_status")
             expect(runtime.catalog.map((item) => item.id)).toContain("session_tree")
@@ -2078,14 +1980,16 @@ describe("SessionDelegation", () => {
             expect(tree.output).not.toContain("verified")
             expect(tree.output).not.toContain("verified output")
           },
-      }),
-      })
+        }),
+    })
   })
 
   test("session_continue returns child continuation reply content", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       prompts.push(input)
       const user = (await Session.updateMessage({
         id: MessageID.ascending(),
@@ -2184,13 +2088,17 @@ describe("SessionDelegation", () => {
                 messages: [],
               })
 
-              const result = (await runtime.execute("session_continue", {
-                child_session_id: child.id,
-                prompt: "continue child", 
-              }, {
-                toolCallId: "call_continue",
-                abortSignal: new AbortController().signal,
-              } as never)) as { metadata?: { child_session_id?: string; message_id?: string }; output: string }
+              const result = (await runtime.execute(
+                "session_continue",
+                {
+                  child_session_id: child.id,
+                  prompt: "continue child",
+                },
+                {
+                  toolCallId: "call_continue",
+                  abortSignal: new AbortController().signal,
+                } as never,
+              )) as { metadata?: { child_session_id?: string; message_id?: string }; output: string }
 
               expect(result.output).toContain('"kind": "session_continue_result"')
               const parsed = JSON.parse(result.output) as {
