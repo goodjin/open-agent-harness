@@ -8,6 +8,7 @@ import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { deriveSessionLiveStatus } from "@/pages/session/helpers"
 import { composerDriver, composerEnabled, composerEvent } from "@/testing/session-composer"
 import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
 
@@ -118,6 +119,18 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     if (!id) return idle
     return sync.data.session_status[id] ?? idle
   })
+  const messages = createMemo(() => {
+    const id = params.id
+    if (!id) return []
+    return sync.data.message[id] ?? []
+  })
+  const liveStatus = createMemo(() =>
+    deriveSessionLiveStatus({
+      status: status(),
+      messages: messages(),
+      parts: sync.data.part,
+    }),
+  )
 
   const busy = createMemo(() => active.has(status().type))
   const live = createMemo(() => {
@@ -252,6 +265,7 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     permissionResponding,
     decide,
     todos,
+    liveStatus,
     dock: () => store.dock,
     closing: () => store.closing,
     opening: () => store.opening,

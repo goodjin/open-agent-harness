@@ -210,6 +210,35 @@ export function SessionComposerRegion(props: {
                 onEdit={props.followup!.onEdit}
               />
             </Show>
+            <Show when={props.state.liveStatus()} keyed>
+              {(status) => (
+                <div
+                  data-component="session-live-status"
+                  class="mb-2 flex min-h-8 items-center gap-2 rounded-md border bg-background-base px-3 py-2 text-left shadow-xs"
+                  classList={{
+                    "border-icon-info-base/30": status.tone === "info",
+                    "border-icon-warning-base/40": status.tone === "warning",
+                    "border-icon-critical-base/40": status.tone === "danger",
+                    "border-icon-success-base/40": status.tone === "success",
+                  }}
+                >
+                  <span
+                    class="h-2 w-2 shrink-0 rounded-full"
+                    classList={{
+                      "bg-icon-info-base": status.tone === "info",
+                      "bg-icon-warning-base": status.tone === "warning",
+                      "bg-icon-critical-base": status.tone === "danger",
+                      "bg-icon-success-base": status.tone === "success",
+                    }}
+                    aria-hidden="true"
+                  />
+                  <div class="min-w-0 flex items-baseline gap-2">
+                    <span class="shrink-0 text-12-medium text-text-strong">{status.label}</span>
+                    <span class="min-w-0 truncate text-12-regular text-text-weak">{status.description}</span>
+                  </div>
+                </div>
+              )}
+            </Show>
             <PromptInput
               ref={props.inputRef}
               newSessionWorktree={props.newSessionWorktree}

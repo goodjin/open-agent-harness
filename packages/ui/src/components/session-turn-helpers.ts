@@ -1,4 +1,4 @@
-import type { FileDiff } from "@open-agent-harness/sdk/v2/client"
+import type { AssistantMessage, FileDiff, Message } from "@open-agent-harness/sdk/v2/client"
 
 const limit = 3
 
@@ -42,6 +42,14 @@ export function thinkingText(base: string, topic: string, value?: string) {
   const text = value?.trim()
   if (!text) return base
   return topic.replace("{{topic}}", text)
+}
+
+export function turnAssistants(messages: Message[], id: string) {
+  const index = messages.findIndex((item) => item.id === id && item.role === "user")
+  if (index === -1) return []
+  return messages
+    .slice(index + 1)
+    .filter((item): item is AssistantMessage => item.role === "assistant" && item.parentID === id)
 }
 
 export function diffUnique(files: FileDiff[] | undefined | null) {

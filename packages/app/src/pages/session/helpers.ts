@@ -29,6 +29,93 @@ export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Mes
   return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user" || type === "waiting_child"
 }
 
+export type SessionLiveStatus = {
+  label: string
+  description: string
+  tone: "info" | "warning" | "danger" | "success"
+}
+
+const liveStatus = (label: string, description: string, tone: SessionLiveStatus["tone"] = "info") => ({
+  label,
+  description,
+  tone,
+})
+
+const pendingAssistant = (messages: Message[]) => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === "assistant" && typeof msg.time.completed !== "number") return msg
+  }
+}
+
+const lastUser = (messages: Message[]) => {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.role === "user") return msg
+  }
+}
+
+const runningTool = (part: Part): part is Extract<Part, { type: "tool" }> =>
+  part.type === "tool" && (part.state.status === "running" || part.state.status === "pending")
+
+export const deriveSessionLiveStatus = (input: {
+  status: SessionStatus | undefined
+  messages: Message[]
+  parts: Record<string, Part[] | undefined>
+}): SessionLiveStatus | undefined => {
+  const status = input.status?.type ?? "idle"
+  if (status === "waiting_permission") {
+    return liveStatus("等待权限确认", "工具调用已暂停，正在等待权限选择。", "warning")
+  }
+  if (status === "waiting_user") {
+    return liveStatus("等待用户确认", "模型请求已暂停，正在等待你的回复。", "warning")
+  }
+  if (input.status?.type === "waiting_child") {
+    return liveStatus("等待子会话", input.status.message || "父会话已暂停，正在等待子会话完成。", "warning")
+  }
+  if (input.status?.type === "rate_limited") {
+    return liveStatus(
+      "受到并发限制",
+      `${input.status.scope} 队列中 ${input.status.queued} 个请求，${input.status.providerID}/${input.status.modelID} 正在等待可用额度。`,
+      "warning",
+    )
+  }
+  if (input.status?.type === "retry") {
+    return liveStatus("准备重试", `${input.status.message}，第 ${input.status.attempt} 次重试已排队。`, "warning")
+  }
+  if (input.status?.type === "paused") return liveStatus("已暂停", input.status.message || "会话运行已暂停。", "warning")
+  if (input.status?.type === "aborting") return liveStatus("正在停止", input.status.message || "正在停止当前会话。", "warning")
+  if (input.status?.type === "error") return liveStatus("运行出错", input.status.message, "danger")
+  if (input.status?.type === "timeout") return liveStatus("运行超时", input.status.message, "danger")
+  if (input.status?.type === "failed") return liveStatus("运行失败", input.status.message || "会话运行失败。", "danger")
+  if (input.status?.type === "blocked") return liveStatus("已阻塞", input.status.message || "会话需要外部输入后才能继续。", "warning")
+  if (input.status?.type === "queued") return liveStatus("请求排队中", "请求已进入队列，等待运行。")
+  if (input.status?.type === "starting") return liveStatus("请求发送中", "正在准备模型请求。")
+
+  const msg = pendingAssistant(input.messages)
+  if (msg) {
+    const parts = input.parts[msg.id] ?? []
+    const tool = parts.findLast(runningTool)
+    if (tool) {
+      const title = "title" in tool.state && typeof tool.state.title === "string" ? `：${tool.state.title}` : ""
+      return liveStatus("工具调用中", `正在执行 ${tool.tool}${title}`, "info")
+    }
+    if (parts.findLast((part) => part.type === "text" && part.text.trim())) {
+      return liveStatus("文本回复中", "模型正在生成可见回复。")
+    }
+    if (parts.findLast((part) => part.type === "reasoning" && part.text.trim())) {
+      return liveStatus("思考中", "模型正在生成推理内容。")
+    }
+    return liveStatus("响应中", "模型响应已开始，正在接收内容。")
+  }
+
+  if (status === "running" && lastUser(input.messages)) {
+    return liveStatus("请求已发出", "用户消息已进入会话，正在等待模型开始响应。")
+  }
+  if (status === "running") return liveStatus("响应中", "模型请求正在运行。")
+  return undefined
+}
+
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 

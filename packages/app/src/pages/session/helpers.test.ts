@@ -5,6 +5,7 @@ import {
   createOpenReviewFile,
   createOpenSessionFileTab,
   createSessionTabs,
+  deriveSessionLiveStatus,
   deriveTurnStats,
   focusTerminalById,
   getTabReorderIndex,
@@ -142,6 +143,114 @@ describe("deriveTurnStats", () => {
       actions: 1,
       tools: 1,
     })
+  })
+})
+
+describe("deriveSessionLiveStatus", () => {
+  const user = (id: string, created = 1) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "user",
+      time: { created },
+    }) as Message
+  const assistant = (id: string, parentID: string, completed?: number) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "assistant",
+      parentID,
+      time: { created: 2, completed },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: "model",
+      providerID: "provider",
+      agent: "build",
+      mode: "build",
+      path: { cwd: "/tmp", root: "/tmp" },
+    }) as Message
+
+  test("describes precise wait states before generic running state", () => {
+    expect(deriveSessionLiveStatus({ status: { type: "waiting_user" }, messages: [], parts: {} })).toMatchObject({
+      label: "等待用户确认",
+      description: "模型请求已暂停，正在等待你的回复。",
+    })
+    expect(
+      deriveSessionLiveStatus({
+        status: {
+          type: "rate_limited",
+          providerID: "anthropic",
+          modelID: "claude",
+          scope: "model",
+          kind: "concurrency",
+          active: 2,
+          limit: 2,
+          queued: 3,
+        },
+        messages: [],
+        parts: {},
+      }),
+    ).toMatchObject({
+      label: "受到并发限制",
+      description: "model 队列中 3 个请求，anthropic/claude 正在等待可用额度。",
+    })
+  })
+
+  test("uses latest unfinished assistant parts for thinking, tools, and text", () => {
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        messages: [user("u1"), assistant("a1", "u1")],
+        parts: {
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "reasoning", text: "thinking", time: { start: 2 } }],
+        },
+      }),
+    ).toMatchObject({ label: "思考中" })
+
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        messages: [user("u1"), assistant("a1", "u1")],
+        parts: {
+          a1: [
+            {
+              id: "p1",
+              sessionID: "ses_1",
+              messageID: "a1",
+              type: "tool",
+              callID: "call_1",
+              tool: "bash",
+              state: { status: "running", input: {}, time: { start: 2 }, title: "Run tests" },
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ label: "工具调用中", description: "正在执行 bash：Run tests" })
+
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        messages: [user("u1"), assistant("a1", "u1")],
+        parts: {
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "text", text: "partial" }],
+        },
+      }),
+    ).toMatchObject({ label: "文本回复中" })
+  })
+
+  test("shows request progress before any assistant part arrives", () => {
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        messages: [user("u1")],
+        parts: {},
+      }),
+    ).toMatchObject({
+      label: "请求已发出",
+      description: "用户消息已进入会话，正在等待模型开始响应。",
+    })
+
+    expect(deriveSessionLiveStatus({ status: { type: "completed" }, messages: [user("u1")], parts: {} })).toBeUndefined()
   })
 })
 

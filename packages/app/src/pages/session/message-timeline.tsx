@@ -9,7 +9,7 @@ import { DropdownMenu } from "@open-agent-harness/ui/dropdown-menu"
 import { Dialog } from "@open-agent-harness/ui/dialog"
 import { InlineInput } from "@open-agent-harness/ui/inline-input"
 import { Spinner } from "@open-agent-harness/ui/spinner"
-import { SessionTurn, SessionTurnDiffs, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
+import { SessionTurn, SessionTurnDiffs, turnAssistants, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
 import { Markdown } from "@open-agent-harness/ui/markdown"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
@@ -391,14 +391,7 @@ export function MessageTimeline(props: {
   const turnMatches = (id: string) => {
     if (props.filter === "all" || props.filter === "input") return true
     const messages = sessionMessages()
-    const index = messages.findIndex((item) => item.id === id)
-    if (index === -1) return false
-
-    for (let i = index + 1; i < messages.length; i++) {
-      const item = messages[i]
-      if (!item) continue
-      if (item.role === "user") break
-      if (item.role !== "assistant" || item.parentID !== id) continue
+    for (const item of turnAssistants(messages, id)) {
       const parts = sync.data.part[item.id] ?? []
       if (props.filter === "thinking" && parts.some((part) => part.type === "reasoning")) return true
       if (props.filter === "output" && parts.some((part) => part.type === "text")) return true

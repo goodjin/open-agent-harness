@@ -24,7 +24,9 @@ import { TextShimmer } from "./text-shimmer"
 import { SessionRetry } from "./session-retry"
 import { createAutoScroll } from "../hooks"
 import { useI18n } from "../context/i18n"
-import { diffRows, diffStats, diffUnique, heading, thinkingText } from "./session-turn-helpers"
+import { diffRows, diffStats, diffUnique, heading, thinkingText, turnAssistants } from "./session-turn-helpers"
+
+export { turnAssistants } from "./session-turn-helpers"
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value)
@@ -361,14 +363,7 @@ export function SessionTurn(
       const index = messageIndex()
       if (index < 0) return emptyAssistant
 
-      const result: AssistantMessage[] = []
-      for (let i = index + 1; i < messages.length; i++) {
-        const item = messages[i]
-        if (!item) continue
-        if (item.role === "user") break
-        if (item.role === "assistant" && item.parentID === msg.id) result.push(item as AssistantMessage)
-      }
-      return result
+      return turnAssistants(messages, msg.id)
     },
     emptyAssistant,
     { equals: same },

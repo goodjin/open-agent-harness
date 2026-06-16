@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { diffRows, diffStats, diffUnique, heading, thinkingText } from "./session-turn-helpers"
-import type { FileDiff } from "@open-agent-harness/sdk/v2/client"
+import { diffRows, diffStats, diffUnique, heading, thinkingText, turnAssistants } from "./session-turn-helpers"
+import type { FileDiff, Message } from "@open-agent-harness/sdk/v2/client"
 
 const diff = (file: string, additions: number, deletions: number): FileDiff =>
   ({
@@ -46,5 +46,42 @@ describe("turn diffs", () => {
       additions: 5,
       deletions: 5,
     })
+  })
+})
+
+describe("turnAssistants", () => {
+  const user = (id: string, created: number) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "user",
+      time: { created },
+    }) as Message
+  const assistant = (id: string, parentID: string, created: number, completed = created + 1) =>
+    ({
+      id,
+      sessionID: "ses_1",
+      role: "assistant",
+      parentID,
+      time: { created, completed },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: "model",
+      providerID: "provider",
+      agent: "build",
+      mode: "build",
+      path: { cwd: "/tmp", root: "/tmp" },
+    }) as Message
+
+  test("keeps assistant messages tied to a user parent after later user messages", () => {
+    expect(
+      turnAssistants([
+        user("u1", 1),
+        assistant("a1", "u1", 2),
+        user("u2", 3),
+        assistant("a2", "u1", 4),
+        assistant("a3", "u2", 5),
+      ], "u1").map((item) => item.id),
+    ).toEqual(["a1", "a2"])
   })
 })
