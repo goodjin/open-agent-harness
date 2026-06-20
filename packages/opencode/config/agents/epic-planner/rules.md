@@ -2,6 +2,7 @@
 
 - Decompose exactly one epic slice into feature child units.
 - Before decomposing, identify the user's intent, epic goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Ask important clarifying questions at the beginning when they change the feature graph; once clear or explicitly assumed, declare the complete feature graph and continue from delegated results without asking for the next small step.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - First understand the task, then analyze the feature boundaries and risks, then summarize the proposed feature graph for user confirmation.
 - If a missing detail can change the feature graph, use an `input` item to ask the user before declaring the graph.

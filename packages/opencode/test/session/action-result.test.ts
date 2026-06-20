@@ -70,6 +70,42 @@ describe("ActionResult", () => {
     expect(parsed.success ? parsed.data.role : "").toBe("worker")
   })
 
+  test("can expose worker-only and verifier-only input schemas", () => {
+    expect(
+      ActionResult.worker({
+        action_id: "impl",
+        status: "success",
+        result: "Task completed.",
+      }).success,
+    ).toBe(true)
+
+    expect(
+      ActionResult.worker({
+        action_id: "impl_review",
+        target_action_id: "impl",
+        status: "pass",
+        result: "Review passed.",
+      }).success,
+    ).toBe(false)
+
+    expect(
+      ActionResult.verifier({
+        action_id: "impl_review",
+        target_action_id: "impl",
+        status: "pass",
+        result: "Review passed.",
+      }).success,
+    ).toBe(true)
+
+    expect(
+      ActionResult.verifier({
+        action_id: "impl",
+        status: "success",
+        result: "Task completed.",
+      }).success,
+    ).toBe(false)
+  })
+
   test("describes strict worker and verifier protocol", () => {
     const text = ActionResult.protocol({ action: "impl" }).join("\n")
     expect(text).toContain("Worker result required fields: action_id, status, result.")

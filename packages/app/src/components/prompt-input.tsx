@@ -57,6 +57,7 @@ import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { isShellCommand } from "./prompt-input/shell-detect"
+import { resolveModelConflict } from "./prompt-input/model-conflict"
 import { ImagePreview } from "@open-agent-harness/ui/image-preview"
 import { showToast } from "@open-agent-harness/ui/toast"
 
@@ -628,17 +629,43 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       local.model.set(item, options)
       return
     }
-    void sdk.client.session.tree2
-      .update({
+    const bind = (confirm = false) =>
+      sdk.client.session.tree2.update({
         body_directory: sdk.directory,
         ids: [id],
         model: item,
+        confirm,
       })
+
+    const apply = async () => {
+      await sync.session.sync(id, { force: true }).catch(() => undefined)
+      local.model.set(item, options)
+    }
+
+    void bind()
       .then(async () => {
-        await sync.session.sync(id, { force: true }).catch(() => undefined)
-        local.model.set(item, options)
+        await apply()
       })
-      .catch((err) => {
+      .catch(async (err) => {
+        if (code(err) === 409) {
+          const next = resolveModelConflict({
+            current: info()?.model,
+            next: item,
+            ask: (message) => globalThis.confirm?.(message) ?? false,
+            reset: (model) => local.model.set(model),
+          })
+          if (!next) return
+          return bind(next.confirm)
+            .then(async () => {
+              await apply()
+            })
+            .catch((next) => {
+              showToast({
+                title: language.t("common.requestFailed"),
+                description: error(next),
+              })
+            })
+        }
         showToast({
           title: language.t("common.requestFailed"),
           description: error(err),

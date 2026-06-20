@@ -8,7 +8,11 @@ import { BUILTIN_AGENTS } from "../../src/agent/builtin.generated"
 describe("AgentTemplateLoader", () => {
   const loader = new AgentTemplateLoader()
 
-  async function write(dir: string, id: string, input?: Partial<{ name: string; role: string; description: string }>) {
+  async function write(
+    dir: string,
+    id: string,
+    input?: Partial<{ name: string; role: string; description: string; request_footer: unknown }>,
+  ) {
     const root = path.join(dir, id)
     await fs.mkdir(root, { recursive: true })
     await fs.writeFile(
@@ -18,6 +22,7 @@ describe("AgentTemplateLoader", () => {
         name: input?.name ?? id,
         role: input?.role ?? "test",
         description: input?.description ?? "test agent",
+        ...(input?.request_footer ? { request_footer: input.request_footer } : {}),
       }),
     )
     await fs.writeFile(path.join(root, "identity.md"), "# Identity")
@@ -89,6 +94,21 @@ describe("AgentTemplateLoader", () => {
       )
     })
 
+    test("built-in coordinator planners keep strict graph routing footers", async () => {
+      const agent = BUILTIN_AGENTS.find((item) => item.id === "default")
+      expect(agent?.rules).toContain("always split work by the project/PRD -> milestone -> epic slice -> feature/capability -> implementation task -> verification/review hierarchy")
+      expect(agent?.rules).toContain("Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan")
+      expect(agent?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
+      expect(agent?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
+
+      ;["milestone-planner", "epic-planner", "feature-planner"].forEach((id) => {
+        const planner = BUILTIN_AGENTS.find((item) => item.id === id)
+        expect(planner?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
+        expect(planner?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
+        expect(planner?.rules).toContain("without asking for the next small step")
+      })
+    })
+
     test("discovers multiple agent templates", async () => {
       const agents = await loader.loadAll()
       const ids = agents.map((a) => a.id)
@@ -103,11 +123,33 @@ describe("AgentTemplateLoader", () => {
       expect(ids).toContain("title")
     })
 
+    test("loads request footer prompt from shared fallback directory", async () => {
+      const tmp = await fs.mkdtemp(path.join("/tmp", "agent-loader-test-"))
+      const fallback = await fs.mkdtemp(path.join("/tmp", "agent-loader-fallback-"))
+      try {
+        await fs.mkdir(path.join(fallback, "request-footers"), { recursive: true })
+        await fs.writeFile(path.join(fallback, "request-footers", "handoff.md"), "Footer {{action_id}}")
+        await write(tmp, "footer-agent", {
+          request_footer: {
+            file: "handoff.md",
+          },
+        })
+
+        const testLoader = new AgentTemplateLoader(tmp, fallback)
+        const agents = await testLoader.loadAll()
+        const agent = agents.find((item) => item.id === "footer-agent")
+
+        expect(agent?.requestFooter?.file).toBe("handoff.md")
+        expect(agent?.requestFooter?.prompt).toBe("Footer {{action_id}}")
+      } finally {
+        await fs.rm(tmp, { recursive: true })
+        await fs.rm(fallback, { recursive: true })
+      }
+    })
+
     test("package templates expose built-in target entry and capability semantics", async () => {
       const target = {
         default: ["coordination", "medium", false, true, true, true, true, false],
-        plan: ["planning_analysis", "low", false, false, true, false, false, true],
-        general: ["general_research", "medium", false, false, true, false, false, true],
         "general-investigator": ["investigation", "low", false, false, true, true, false, false],
         "general-executor": ["implementation", "medium", true, false, true, true, false, false],
         "general-executor-verifier": ["general_execution_verification", "low", false, false, true, true, false, false],
@@ -115,14 +157,8 @@ describe("AgentTemplateLoader", () => {
         compaction: ["system_compaction", "low", false, false, false, false, false, true],
         title: ["system_title", "low", false, false, false, false, false, true],
         summary: ["system_summary", "low", false, false, false, false, false, true],
-        sisyphus: ["orchestration", "high", false, false, false, false, false, true],
-        hephaestus: ["end_to_end_delivery", "high", true, true, true, true, false, false],
-        prometheus: ["plan_building", "low", false, false, true, false, false, true],
-        atlas: ["plan_execution", "high", false, false, false, false, false, true],
-        "sisyphus-junior": ["bounded_implementation", "medium", true, false, true, true, false, false],
         "technical-reviewer": ["technical_review", "high", false, false, true, true, false, false],
         librarian: ["source_research", "low", false, false, true, true, false, false],
-        "requirements-clarifier": ["requirements_clarification", "medium", false, false, false, false, false, true],
         "plan-reviewer": ["plan_review", "medium", false, false, true, true, false, false],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
         "workflow-runner": ["workflow_profile_management", "low", true, true, false, true, false, false],
@@ -147,6 +183,24 @@ describe("AgentTemplateLoader", () => {
           hidden: row[7],
         })
       })
+    })
+
+    test("package templates omit redundant legacy fallback agents", async () => {
+      const agents = await loader.loadAll()
+      const ids = agents.map((item) => item.id)
+
+      expect(ids).not.toContain("hephaestus")
+      expect(ids).not.toContain("hephaestus-verifier")
+      expect(ids).not.toContain("sisyphus")
+      expect(ids).not.toContain("sisyphus-verifier")
+      expect(ids).not.toContain("sisyphus-junior")
+      expect(ids).not.toContain("sisyphus-junior-verifier")
+      expect(ids).not.toContain("atlas")
+      expect(ids).not.toContain("atlas-verifier")
+      expect(ids).not.toContain("prometheus")
+      expect(ids).not.toContain("general")
+      expect(ids).not.toContain("plan")
+      expect(ids).not.toContain("requirements-clarifier")
     })
 
     test("package templates default to chat runner except special runners", async () => {

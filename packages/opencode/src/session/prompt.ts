@@ -56,6 +56,7 @@ import { Global } from "@/global"
 import { Storage } from "@/storage/storage"
 import { ConflictError } from "@/storage/db"
 import { ActionResult } from "./action-result"
+import { RequestFooter } from "./request-footer"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -632,6 +633,8 @@ export namespace SessionPrompt {
         agent,
         session,
       })
+      const actionResult = context(session)
+      const footer = requestFooter({ session, agent, actionResult })
 
       const processor = SessionRunner.create({
         assistantMessage: (await Session.updateMessage({
@@ -766,6 +769,14 @@ export namespace SessionPrompt {
         system,
         messages: [
           ...MessageV2.toModelMessages(msgs, model),
+          ...(footer
+            ? [
+                {
+                  role: "user" as const,
+                  content: footer,
+                },
+              ]
+            : []),
           ...(isLastStep
             ? [
                 {
@@ -778,6 +789,7 @@ export namespace SessionPrompt {
         tools,
         runtimeTools: runtime,
         model,
+        actionResult,
         toolChoice: format.type === "json_schema" ? "required" : undefined,
       })
       const parts = await MessageV2.parts(processor.message.id)
@@ -1060,6 +1072,64 @@ export namespace SessionPrompt {
         if (part.state.status !== "error") return { ok: false, part, error: part.state.status }
         return { ok: false, part, error: part.state.error }
       })
+  }
+
+  function context(session: Session.Info): LLM.StreamInput["actionResult"] | undefined {
+    const delegation = object(object(session.dsl_context).protocol).delegation
+    const item = object(delegation)
+    if (item.result_tool !== ActionResult.TOOL) return
+    const action = str(item.action_id)
+    const target = targetAction(item)
+    return {
+      action,
+      target,
+      verifier: Boolean(target),
+    }
+  }
+
+  function requestFooter(input: {
+    session: Session.Info
+    agent: Agent.Info
+    actionResult?: LLM.StreamInput["actionResult"]
+  }) {
+    const prompt = input.agent.requestFooter?.prompt
+    if (!prompt) return
+    const delegation = object(object(input.session.dsl_context).protocol).delegation
+    const vars = RequestFooter.variables({
+      sessionID: input.session.id,
+      agent: input.agent.name,
+      mode: input.agent.mode,
+      delegation: object(delegation),
+    })
+    const text = RequestFooter.render(prompt, vars)
+    void SessionLog.emit({
+      sessionID: input.session.id,
+      level: "debug",
+      type: "request.footer.applied",
+      data: {
+        agent: input.agent.name,
+        file: input.agent.requestFooter?.file,
+        chars: text.length,
+        vars: Object.entries(vars).flatMap(([key, value]) => (value ? [key] : [])),
+        action_id: input.actionResult?.action,
+        target_action_id: input.actionResult?.target,
+      },
+    }).catch((err) => log.warn("request footer log failed", { err }))
+    return text
+  }
+
+  function targetAction(input: Record<string, unknown>) {
+    const meta = object(input.metadata)
+    const verification = object(meta.verification)
+    const worker = str(verification.worker)
+    if (worker) return worker
+    const deps = input.depends_on
+    if (!Array.isArray(deps)) return
+    return deps.map(str).find((item): item is string => Boolean(item))
+  }
+
+  function str(input: unknown) {
+    return typeof input === "string" && input.trim() ? input.trim() : undefined
   }
 
   async function stopTools(input: {

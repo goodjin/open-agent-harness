@@ -43,6 +43,12 @@ export namespace Agent {
       policy: PermissionNext.PolicyModel.optional(),
       inheritPermissions: z.boolean().optional(),
       autoAppendPrompt: z.string().optional(),
+      requestFooter: z
+        .object({
+          file: z.string().optional(),
+          prompt: z.string(),
+        })
+        .optional(),
       protocol: z
         .object({
           file: z.string(),
@@ -85,6 +91,10 @@ export namespace Agent {
       file: string
       prompt: string
     }
+    requestFooter?: {
+      file?: string
+      prompt: string
+    }
   }): Promise<Info> {
     const policy = await buildPolicy(template.meta)
     return {
@@ -103,6 +113,7 @@ export namespace Agent {
       policy,
       inheritPermissions: template.meta.inherit_permissions,
       autoAppendPrompt: template.meta.auto_append_prompt,
+      requestFooter: template.requestFooter,
       protocol: template.protocol,
       options: {},
       prompt: prompt(template),
@@ -132,6 +143,7 @@ export namespace Agent {
         policy: { rules: [] },
         inheritPermissions: false,
         autoAppendPrompt: undefined,
+        requestFooter: undefined,
         protocol: undefined,
         options: {},
       } satisfies Info)
@@ -168,6 +180,7 @@ export namespace Agent {
       policy,
       inheritPermissions: next.inheritPermissions,
       autoAppendPrompt: cfg.auto_append_prompt ?? next.autoAppendPrompt,
+      requestFooter: next.requestFooter,
       protocol: next.protocol,
     }
   }

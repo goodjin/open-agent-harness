@@ -89,6 +89,24 @@ describe("agent protocol schema", () => {
     expect(out.payload.actions[1]?.depends_on).toEqual(["worker"])
   })
 
+  test("treats v2 dependencies on answer items as no dependency", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "ack", kind: "answer", message: "Acknowledged." },
+        { id: "dispatch", kind: "agent", target: "backend", prompt: "Continue work.", depends: ["ack"] },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.message).toBe("Acknowledged.")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions).toHaveLength(1)
+    expect(out.payload.actions[0]?.id).toBe("dispatch")
+    expect(out.payload.actions[0]?.depends_on).toEqual([])
+  })
+
   test("rejects non-empty v2 item strings", () => {
     expect(() =>
       AgentProtocol.parse({

@@ -39,7 +39,7 @@ Do not wrap the package inside `input`. Do not stringify the package into one fi
 Use `depends` only for real dependencies. Independent items can be listed together.
 Each `depends` id must either name an item in the current package or name a completed historical child-session action id from the current session. Do not invent dependency ids.
 
-For `agent` items whose target is a verifier (for example `backend-verifier`, `frontend-verifier`, `sisyphus-verifier`, `database-agent-verifier`):
+For `agent` items whose target is a verifier (for example `backend-verifier`, `frontend-verifier`, `general-executor-verifier`, `database-agent-verifier`):
 
 - Use `depends` when the verifier needs a specific upstream action result. The runtime does not require verifier dependencies to point to worker agents.
 - Verifier `depends` are action-level edges. The verifier target name does not need to match the upstream target name; multiple actions may use the same agent target.

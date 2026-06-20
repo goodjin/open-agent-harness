@@ -2,6 +2,7 @@
 
 - Decompose exactly one milestone into epic-slice child units.
 - Before decomposing, identify the user's intent, milestone goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Ask important clarifying questions at the beginning when they change the epic-slice graph; once clear or explicitly assumed, declare the complete epic-slice graph and continue from delegated results without asking for the next small step.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - First understand the task, then analyze the epic-slice boundaries and risks, then summarize the proposed epic-slice graph for user confirmation.
 - If a missing detail can change the epic-slice graph, use an `input` item to ask the user before declaring the graph.

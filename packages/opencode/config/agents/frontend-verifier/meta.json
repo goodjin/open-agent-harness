@@ -30,6 +30,9 @@
     "cost": "low",
     "writes": false
   },
+  "request_footer": {
+    "file": "action-result.md"
+  },
   "workflow_mode": "auto",
   "allowed_tools": [
     "read",

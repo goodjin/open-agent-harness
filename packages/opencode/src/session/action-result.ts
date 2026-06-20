@@ -32,7 +32,7 @@ export namespace ActionResult {
     worker_feedback: z.string().default(""),
   }).strict()
 
-  const WorkerInput = Input.extend({
+  export const WorkerInput = Input.extend({
     status: z.enum(["success", "failure", "error", "reply"]),
     scope: z.enum(["task", "verification_feedback", "final_summary"]).default("task"),
     changed_files: z.string().default(""),
@@ -40,7 +40,7 @@ export namespace ActionResult {
     blockers: z.string().default(""),
   })
 
-  const VerifierInput = Input.extend({
+  export const VerifierInput = Input.extend({
     target_action_id: z.string().min(1),
     status: z.enum(["pass", "fail", "error", "reply", "skipped"]),
     issues: z.string().default(""),
@@ -52,10 +52,20 @@ export namespace ActionResult {
     VerifierInput.transform((input) => Verifier.parse({ ...input, role: "verifier" })),
     WorkerInput.transform((input) => Worker.parse({ ...input, role: "worker" })),
   ])
+  export const WorkerSchema = WorkerInput.transform((input) => Worker.parse({ ...input, role: "worker" }))
+  export const VerifierSchema = VerifierInput.transform((input) => Verifier.parse({ ...input, role: "verifier" }))
   export type Value = z.infer<typeof Schema>
 
   export function parse(input: unknown) {
     return Schema.safeParse(input)
+  }
+
+  export function worker(input: unknown) {
+    return WorkerSchema.safeParse(input)
+  }
+
+  export function verifier(input: unknown) {
+    return VerifierSchema.safeParse(input)
   }
 
   export function stored(input: unknown) {
@@ -71,25 +81,28 @@ export namespace ActionResult {
     return input.status === "pass" || input.status === "skipped"
   }
 
+  export function sample(input: { verifier?: boolean; action?: string; target?: string } = {}) {
+    if (input.verifier)
+      return {
+        action_id: input.action ?? "verify_action",
+        target_action_id: input.target ?? "worker_action",
+        status: "pass",
+        result: "Verification passed.",
+        evidence: "Checks or review evidence.",
+        issues: "none",
+        worker_feedback: "none",
+      }
+    return {
+      action_id: input.action ?? "assigned_action",
+      status: "success",
+      result: "Task completed.",
+      changed_files: "none",
+      verification: "Commands, checks, or evidence.",
+      blockers: "none",
+    }
+  }
+
   export function protocol(input: { verifier?: boolean; action?: string; target?: string } = {}) {
-    const sample = input.verifier
-      ? {
-          action_id: input.action ?? "verify_action",
-          target_action_id: input.target ?? "worker_action",
-          status: "pass",
-          result: "Verification passed.",
-          evidence: "Checks or review evidence.",
-          issues: "none",
-          worker_feedback: "none",
-        }
-      : {
-          action_id: input.action ?? "assigned_action",
-          status: "success",
-          result: "Task completed.",
-          changed_files: "none",
-          verification: "Commands, checks, or evidence.",
-          blockers: "none",
-        }
     return [
       "ActionResult protocol:",
       "Call the native ActionResult tool exactly once with direct JSON arguments.",
@@ -103,7 +116,7 @@ export namespace ActionResult {
       "Verifier optional fields: issues, evidence, worker_feedback.",
       "All non-status fields must be plain strings. Do not use arrays or nested objects.",
       "Valid direct ActionResult arguments example:",
-      JSON.stringify(sample, null, 2),
+      JSON.stringify(sample(input), null, 2),
     ]
   }
 }

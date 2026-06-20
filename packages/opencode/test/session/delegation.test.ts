@@ -1133,6 +1133,150 @@ describe("SessionDelegation", () => {
     ).toBe(false)
   })
 
+  test("user confirmed fallback stores edited child output and notifies parent", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      return { info: {} as never, parts: [] }
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_fallback",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              SessionStatus.set(child.id, { type: "blocked", message: "Stopped after failed ActionResult calls." })
+
+              const ok = await SessionDelegation.confirmFallback({
+                sessionID: child.id,
+                status: "success",
+                result: "Edited fallback result.",
+                originalMessageID: MessageID.make("msg_original"),
+                edited: true,
+              })
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string; status?: string; summary?: string; metadata?: unknown }[]
+              }
+
+              expect(ok).toBe(true)
+              expect(SessionStatus.get(child.id).type).toBe("user_completed")
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.status).toBe("completed")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("User-confirmed fallback result")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("Edited fallback result.")
+              expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("user_confirmed_fallback")
+              expect(prompts[0]?.sessionID).toBe(parent.id)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("fallback preview returns the latest assistant text from a delegated child", async () => {
+    await using tmp = await tmpdir()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const child = await Session.create({ agent: "backend" })
+            const user = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "backend",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)) as MessageV2.User
+            const first = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: user.id,
+              role: "assistant",
+              mode: "backend",
+              agent: "backend",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "stop",
+            })) as MessageV2.Assistant
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: first.id,
+              sessionID: child.id,
+              type: "text",
+              text: "Older output",
+              time: { start: Date.now(), end: Date.now() },
+            } as MessageV2.TextPart)
+            const last = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: child.id,
+              parentID: user.id,
+              role: "assistant",
+              mode: "backend",
+              agent: "backend",
+              path: { cwd: tmp.path, root: tmp.path },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              finish: "stop",
+            })) as MessageV2.Assistant
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: last.id,
+              sessionID: child.id,
+              type: "text",
+              text: "Latest output",
+              time: { start: Date.now(), end: Date.now() },
+            } as MessageV2.TextPart)
+
+            const preview = await SessionDelegation.fallbackPreview({ sessionID: child.id })
+
+            expect(preview.messageID).toBe(last.id)
+            expect(preview.text).toBe("Latest output")
+          },
+        }),
+    })
+  })
+
   test("recovery notifies parent from a completed child assignment", async () => {
     await using tmp = await tmpdir()
     const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []

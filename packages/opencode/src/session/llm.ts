@@ -87,6 +87,11 @@ export namespace LLM {
     toolChoice?: ToolChoice<ToolSet>
     runtimeTools?: RuntimeTools.Info
     structuredOutput?: boolean
+    actionResult?: {
+      action?: string
+      target?: string
+      verifier?: boolean
+    }
     payload?: {
       id: string
     }
@@ -229,7 +234,7 @@ export namespace LLM {
                 execute: async (args) => invalid(args),
               }),
             }
-          : await attach(await resolveTools(input))
+          : await attach(await resolveTools(input), input.actionResult)
 
       // LiteLLM and some Anthropic proxies require the tools parameter to be present
       // when message history contains tool calls, even if no tools are being used.
@@ -322,7 +327,7 @@ export namespace LLM {
             }
           }
           if (input.agent.runner !== "protocol" && failed.toolCall.toolName === ACTION_RESULT_TOOL) {
-            throw new Error(action(failed.error.message, failed.toolCall.input))
+            throw new Error(action(failed.error.message, failed.toolCall.input, input.actionResult))
           }
           if (NoSuchToolError.isInstance(failed.error)) {
             l.warn("tool call unavailable", {
@@ -451,13 +456,18 @@ export namespace LLM {
     return found?.[1]?.trim() || error
   }
 
-  async function attach(input: Record<string, Tool>) {
+  async function attach(input: Record<string, Tool>, context?: StreamInput["actionResult"]) {
+    const schema = context?.verifier
+      ? ActionResult.VerifierSchema
+      : context
+        ? ActionResult.WorkerSchema
+        : ActionResult.Schema
     return {
       ...input,
       [ACTION_RESULT_TOOL]: tool({
         description:
           "Submit the final delegated action result to the runtime. Use this once at the end of a delegated worker or verifier task.",
-        inputSchema: ActionResult.Schema,
+        inputSchema: schema,
         execute: async (args) => ({
           title: "Action Result",
           output: "Action result received.",
@@ -507,11 +517,11 @@ export namespace LLM {
     ].join(" ")
   }
 
-  function action(error: string, input?: string) {
+  function action(error: string, input?: string, context?: StreamInput["actionResult"]) {
     return [
       "ActionResult input schema/parse failed.",
       "The previous ActionResult call was rejected. Retry by calling ActionResult again and follow this protocol exactly.",
-      ...ActionResult.protocol(),
+      ...ActionResult.protocol(context),
       input ? `Raw tool input: ${raw(input)}` : "",
       `Parser error: ${error}`,
     ]

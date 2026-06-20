@@ -141,11 +141,14 @@ describe("applyDirectoryEvent", () => {
       }),
     )
 
+    let pushes = 0
     applyDirectoryEvent({
       event: { type: "session.created", properties: { info: rootSession({ id: "a" }) } },
       store,
       setStore,
-      push() {},
+      push() {
+        pushes++
+      },
       directory: "/tmp",
       loadLsp() {},
     })
@@ -157,12 +160,15 @@ describe("applyDirectoryEvent", () => {
       event: { type: "session.created", properties: { info: rootSession({ id: "c", parentID: "a" }) } },
       store,
       setStore,
-      push() {},
+      push() {
+        pushes++
+      },
       directory: "/tmp",
       loadLsp() {},
     })
 
     expect(store.sessionTotal).toBe(2)
+    expect(pushes).toBe(1)
   })
 
   test("cleans session caches when archived", () => {

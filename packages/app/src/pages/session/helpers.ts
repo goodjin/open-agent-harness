@@ -58,12 +58,25 @@ const lastUser = (messages: Message[]) => {
 const runningTool = (part: Part): part is Extract<Part, { type: "tool" }> =>
   part.type === "tool" && (part.state.status === "running" || part.state.status === "pending")
 
+const record = (input: unknown): input is Record<string, unknown> =>
+  typeof input === "object" && input !== null && !Array.isArray(input)
+
+const turn = (input: Message | undefined) => {
+  if (!input || input.role !== "user") return
+  const metadata = (input as { metadata?: unknown }).metadata
+  if (!record(metadata)) return
+  const value = metadata.turn
+  if (!record(value)) return
+  return value
+}
+
 export const deriveSessionLiveStatus = (input: {
   status: SessionStatus | undefined
   messages: Message[]
   parts: Record<string, Part[] | undefined>
 }): SessionLiveStatus | undefined => {
   const status = input.status?.type ?? "idle"
+  if (status === "idle" || status === "completed" || status === "user_completed" || status === "archived") return undefined
   if (status === "waiting_permission") {
     return liveStatus("等待权限确认", "工具调用已暂停，正在等待权限选择。", "warning")
   }
@@ -74,9 +87,21 @@ export const deriveSessionLiveStatus = (input: {
     return liveStatus("等待子会话", input.status.message || "父会话已暂停，正在等待子会话完成。", "warning")
   }
   if (input.status?.type === "rate_limited") {
+    const scope = input.status.scope === "model" ? "模型" : input.status.scope === "provider" ? "服务商" : "智能体"
+    const reset =
+      input.status.reset && input.status.reset > Date.now()
+        ? `，预计 ${Math.ceil((input.status.reset - Date.now()) / 1000)} 秒后释放`
+        : ""
+    if (input.status.kind === "rpm") {
+      return liveStatus(
+        "请求频率已满",
+        `${scope}最近一分钟已达 ${input.status.limit} 次请求，队列中 ${input.status.queued} 个请求${reset}。`,
+        "warning",
+      )
+    }
     return liveStatus(
-      "受到并发限制",
-      `${input.status.scope} 队列中 ${input.status.queued} 个请求，${input.status.providerID}/${input.status.modelID} 正在等待可用额度。`,
+      "并发额度已满",
+      `${scope}并发 ${input.status.active}/${input.status.limit}，队列中 ${input.status.queued} 个请求，${input.status.providerID}/${input.status.modelID} 正在等待可用额度。`,
       "warning",
     )
   }
@@ -91,6 +116,10 @@ export const deriveSessionLiveStatus = (input: {
   if (input.status?.type === "blocked") return liveStatus("已阻塞", input.status.message || "会话需要外部输入后才能继续。", "warning")
   if (input.status?.type === "queued") return liveStatus("请求排队中", "请求已进入队列，等待运行。")
   if (input.status?.type === "starting") return liveStatus("请求发送中", "正在准备模型请求。")
+  if (status !== "running") return undefined
+
+  const user = lastUser(input.messages)
+  if (turn(user)?.status === "done") return undefined
 
   const msg = pendingAssistant(input.messages)
   if (msg) {
@@ -109,23 +138,11 @@ export const deriveSessionLiveStatus = (input: {
     return liveStatus("响应中", "模型响应已开始，正在接收内容。")
   }
 
-  if (status === "running" && lastUser(input.messages)) {
+  if (user) {
     return liveStatus("请求已发出", "用户消息已进入会话，正在等待模型开始响应。")
   }
   if (status === "running") return liveStatus("响应中", "模型请求正在运行。")
   return undefined
-}
-
-const record = (input: unknown): input is Record<string, unknown> =>
-  typeof input === "object" && input !== null && !Array.isArray(input)
-
-const turn = (input: Message | undefined) => {
-  if (!input || input.role !== "user") return
-  const metadata = (input as { metadata?: unknown }).metadata
-  if (!record(metadata)) return
-  const value = metadata.turn
-  if (!record(value)) return
-  return value
 }
 
 export const turnDone = (messages: Message[], id: string, status: SessionStatus | undefined) => {

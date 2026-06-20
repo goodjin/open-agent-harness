@@ -530,7 +530,7 @@ export const SortableWorkspace = (props: {
   const showNew = createMemo(() => !loading() && (touch() || sessions().length === 0 || (active() && !params.id)))
   const loadMore = async () => {
     setWorkspaceStore("limit", (limit) => (limit ?? 0) + 10)
-    await globalSync.project.loadSessions(props.directory, { mode: "current" })
+    await globalSync.project.loadSessions(props.directory, { mode: "current", force: true })
   }
 
   const workspaceEditActive = createMemo(() => props.ctx.editorOpen(`workspace:${props.directory}`))
@@ -667,7 +667,7 @@ export const LocalWorkspace = (props: {
   const hasMore = createMemo(() => workspace().store.sessionTotal > sessions().length)
   const loadMore = async () => {
     workspace().setStore("limit", (limit) => (limit ?? 0) + 10)
-    await globalSync.project.loadSessions(props.project.worktree, { mode: "current" })
+    await globalSync.project.loadSessions(props.project.worktree, { mode: "current", force: true })
   }
 
   return (

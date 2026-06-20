@@ -258,6 +258,15 @@ export namespace AgentTemplate {
     .strict()
   export type Protocol = z.infer<typeof Protocol>
 
+  export const RequestFooter = z
+    .object({
+      file: Text.optional().describe("Shared request footer prompt file name under config/request-footers"),
+      prompt: Text.optional().describe("Inline request footer prompt"),
+    })
+    .strict()
+    .refine((input) => Boolean(input.file || input.prompt), "request_footer requires file or prompt")
+  export type RequestFooter = z.infer<typeof RequestFooter>
+
   function normalize(input: unknown) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return input
     const meta = { ...input } as Record<string, unknown>
@@ -287,6 +296,7 @@ export namespace AgentTemplate {
       observability: Observability.optional().describe("Observability policy"),
       lifecycle: Lifecycle.optional().describe("Lifecycle metadata"),
       protocol: Protocol.optional().describe("Protocol runner prompt configuration"),
+      request_footer: RequestFooter.optional().describe("Transient request footer prompt configuration"),
 
       // Required fields - must be non-empty strings
       id: Text.describe("Unique identifier for the agent"),
@@ -380,5 +390,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "maxToolCalls" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "maxToolCalls" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol" | "request_footer">
 }

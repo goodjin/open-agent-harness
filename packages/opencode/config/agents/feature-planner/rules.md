@@ -2,6 +2,7 @@
 
 - Decompose exactly one feature into implementation, verification, review, documentation, migration, release, or operations tasks.
 - Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
+- Ask important clarifying questions at the beginning when they change the execution graph; once clear or explicitly assumed, declare the complete execution and verification graph and continue from delegated results without asking for the next small step.
 - Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - First understand the task, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.

@@ -1,5 +1,32 @@
 # Protocol Runtime Module
 
+## Default Agent Routing Contract
+
+The `default` agent is a coordinator, not an implementation worker. It must classify every request by scale, decompose work through the project/PRD, milestone, epic slice, feature/capability, implementation task, and verification/review hierarchy, then declare the complete current-layer Agent Protocol graph.
+
+User wording such as "do it all", "overall progress", or "do not handle one task at a time" changes graph completeness, not routing authority. The default agent should express that request by declaring all known graph items and dependencies in one package. It must not collapse multiple milestones, epic slices, features, or implementation tasks into a single broad worker assignment.
+
+When the next layer still needs decomposition, the graph must route that item to the matching planner (`milestone-planner`, `epic-planner`, or `feature-planner`). Implementation workers are valid only for bounded implementation tasks with one objective, one main surface, and a clear verification path.
+
+The `default` agent and planner chain carry metadata `request_footer` reminders. Runtime appends these footers to each outbound request without storing them in conversation history. The footers reinforce two contracts: understand intent and clarify important details before dispatch, then autonomously continue the confirmed graph; and call the native `AgentProtocolOutput` tool exactly once with `{ "version": "2", "items": [...] }` instead of plain text or raw JSON.
+
+## Package Agent Catalog
+
+Package agents should be named by their actual routing role and behavior. The runtime keeps the coarse `kind` taxonomy for collaboration semantics:
+
+- `planner`: decomposes work and declares protocol graphs.
+- `helper`: gathers context or analyzes a bounded question without writing.
+- `worker`: performs a bounded implementation, migration, release, or operations task.
+- `verifier`: validates or reviews without writing.
+
+Do not keep broad legacy fallback agents when current explicit agents cover the behavior. Broad planning belongs to `default`, `milestone-planner`, `epic-planner`, and `feature-planner`; requirement clarification stays in `default`; broad investigation uses `general-investigator` or `explore`; bounded fallback implementation uses `general-executor`; bounded fallback review uses `general-executor-verifier` or `verifier`.
+
+Agents with names that do not expose their behavior, or compatibility agents that overlap with the explicit planner/helper/worker/verifier set, should be removed from the package catalog rather than renamed into new broad workers.
+
+## Answer Dependencies
+
+Agent Protocol v2 `answer` items are response metadata, not executable actions. When an executable v2 item names a same-package `answer` id in `depends`, normalization drops that dependency and lets the executable item run as independent work. Dependencies on missing executable ids remain invalid.
+
 ## LLM Request Limits
 
 LLM request acquisition is globally coordinated inside the server process before calling the provider SDK. The runtime supports two independent provider/model gates:
@@ -86,7 +113,11 @@ Turn completion is written by runtime boundaries:
 
 Delegated task prompts must include a concrete native `ActionResult` argument example. Worker task results use `action_id`, `status`, `result`, and optional `scope`, `changed_files`, `verification`, and `blockers` string fields. Verifier results use `action_id`, `target_action_id`, `status`, `result`, and optional `issues`, `evidence`, and `worker_feedback` string fields. The example is part of the runtime contract because provider tool-call behavior can degrade when the model only receives prose field descriptions.
 
+Agents can declare a per-request footer through `request_footer` metadata. The footer can be inline text or a file under the shared `config/request-footers/` directory. Runtime renders it with variables such as `session_id`, `agent`, `mode`, `action_id`, `target_action_id`, `result_tool`, and `action_result_example`, then appends it only to the outbound provider request. The rendered footer is not inserted into persisted session history. This keeps the reminder current for every retry or continuation without polluting the conversation log.
+
 Runtime derives the result branch from the submitted shape: verifier results include `target_action_id`, while worker results do not. Stale fields such as `role`, `result_type`, `kind`, and `summary` are ignored during input parsing rather than treated as protocol instructions; `summary` is not mapped into `result`, so a valid call still needs an explicit `result`. After a native tool call is accepted, runtime stores an internal normalized result with `kind` and `role` for routing; that storage shape is not part of the model-facing input protocol. Worker `status` is one of `success`, `failure`, `error`, or `reply`; verifier `status` is one of `pass`, `fail`, `error`, `reply`, or `skipped`. When schema parsing fails, the tool error returned to the model must restate the strict direct-argument protocol, worker/verifier required fields, valid statuses, and an example.
+
+If repeated malformed `ActionResult` attempts still leave a delegated child blocked or failed, the user can submit a reviewed fallback result. Runtime previews the child's latest assistant text, accepts the edited text and selected fallback status, wraps it with metadata that identifies it as a `user_confirmed_fallback`, stores it through the normal delegation result path, notifies the parent session, and marks the child `user_completed`. The parent sees that the result was user-reviewed fallback content rather than a native model tool result.
 
 When a terminal delegated child already has `session.action_result`, prompt startup repairs stale source turns before accepting or resuming another request. It first uses `completed_message_id`; if that historical assistant message is unavailable, it closes unfinished user turns created before `completed_at`. This is a local turn-state repair, not a prompt rejection: users can still send explicit follow-up prompts to completed child sessions, and those prompts must not be preempted by the stale source turn.
 

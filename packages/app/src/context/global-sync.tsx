@@ -31,7 +31,7 @@ import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent, cleanupDroppedSessionCaches } from "./global-sync/event-reducer"
 import { createRefreshQueue } from "./global-sync/queue"
 import { clearSessionPrefetchDirectory } from "./global-sync/session-prefetch"
-import { estimateRootSessionTotal, loadSessionTreeWithFallback } from "./global-sync/session-load"
+import { estimateRootSessionTotal, loadSessionTreeWithFallback, mergeSessionStatus } from "./global-sync/session-load"
 import type { ProjectMeta, RootLoadArgs } from "./global-sync/types"
 import { sanitizeProject } from "./global-sync/utils"
 import { formatServerError } from "@/utils/server-errors"
@@ -214,8 +214,9 @@ function createGlobalSync() {
     return roots.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
   }
 
-  async function loadSessions(directory: string, opts?: { mode?: LoadMode }) {
+  async function loadSessions(directory: string, opts?: { mode?: LoadMode; force?: boolean }) {
     const mode = opts?.mode ?? "current"
+    const force = opts?.force === true
     const key = `${directory}:${mode}`
     const pending = sessionLoads.get(key)
     if (pending) return pending
@@ -223,13 +224,13 @@ function createGlobalSync() {
     children.pin(directory)
     const [store, setStore] = children.child(directory, { bootstrap: false })
     const meta = sessionMeta.get(directory)
-    if (mode === "running" && meta?.mode === "current") {
+    if (!force && mode === "running" && meta?.mode === "current") {
       children.unpin(directory)
       return
     }
 
     const limit = mode === "running" ? INITIAL_SESSION_LIMIT : Math.max(store.limit, INITIAL_SESSION_LIMIT)
-    if (meta?.mode === mode && meta.limit >= limit) {
+    if (!force && meta?.mode === mode && meta.limit >= limit) {
       children.unpin(directory)
       return
     }
@@ -247,7 +248,7 @@ function createGlobalSync() {
         directory,
         limit: base ? base.length : limit,
         children: true,
-        loaded: meta?.mode === mode ? meta.roots : undefined,
+        loaded: !force && meta?.mode === mode ? meta.roots : undefined,
         list,
         tree: (query) => globalSDK.client.session.tree(query),
         descendants: (query) =>
@@ -265,6 +266,7 @@ function createGlobalSync() {
       const childSessions = store.session.filter((s) => !!s.parentID && !ids.has(s.id))
       const sessions = [...nonArchived, ...childSessions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       if (mode === "running" && sessionMeta.get(directory)?.mode === "current") return
+      setStore("session_status", reconcile(mergeSessionStatus(store.session_status, x.status)))
       setStore(
         "sessionTotal",
         mode === "running"
@@ -354,7 +356,10 @@ function createGlobalSync() {
       directory,
       store,
       setStore,
-      push: queue.push,
+      push: (directory) => {
+        sessionMeta.delete(directory)
+        queue.push(directory)
+      },
       setSessionTodo,
       vcsCache: children.vcsCache.get(directory),
       loadLsp: () => {

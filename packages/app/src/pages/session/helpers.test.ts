@@ -169,6 +169,19 @@ describe("deriveSessionLiveStatus", () => {
       mode: "build",
       path: { cwd: "/tmp", root: "/tmp" },
     }) as Message
+  const done = (id: string) =>
+    ({
+      ...user(id),
+      metadata: {
+        turn: {
+          kind: "user",
+          status: "done",
+          outcome: "completed",
+          reason: "assistant",
+          time: { queued: 1, started: 2, completed: 3 },
+        },
+      },
+    }) as Message
 
   test("describes precise wait states before generic running state", () => {
     expect(deriveSessionLiveStatus({ status: { type: "waiting_user" }, messages: [], parts: {} })).toMatchObject({
@@ -191,8 +204,27 @@ describe("deriveSessionLiveStatus", () => {
         parts: {},
       }),
     ).toMatchObject({
-      label: "受到并发限制",
-      description: "model 队列中 3 个请求，anthropic/claude 正在等待可用额度。",
+      label: "并发额度已满",
+      description: "模型并发 2/2，队列中 3 个请求，anthropic/claude 正在等待可用额度。",
+    })
+    expect(
+      deriveSessionLiveStatus({
+        status: {
+          type: "rate_limited",
+          providerID: "anthropic",
+          modelID: "claude",
+          scope: "model",
+          kind: "rpm",
+          active: 20,
+          limit: 20,
+          queued: 4,
+        },
+        messages: [],
+        parts: {},
+      }),
+    ).toMatchObject({
+      label: "请求频率已满",
+      description: "模型最近一分钟已达 20 次请求，队列中 4 个请求。",
     })
   })
 
@@ -251,6 +283,28 @@ describe("deriveSessionLiveStatus", () => {
     })
 
     expect(deriveSessionLiveStatus({ status: { type: "completed" }, messages: [user("u1")], parts: {} })).toBeUndefined()
+  })
+
+  test("does not show responding after the turn or session has ended", () => {
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "completed" },
+        messages: [user("u1"), assistant("a1", "u1")],
+        parts: {
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "text", text: "partial" }],
+        },
+      }),
+    ).toBeUndefined()
+
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        messages: [done("u1"), assistant("a1", "u1")],
+        parts: {
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "reasoning", text: "thinking", time: { start: 2 } }],
+        },
+      }),
+    ).toBeUndefined()
   })
 })
 

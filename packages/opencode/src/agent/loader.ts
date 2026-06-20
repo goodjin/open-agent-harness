@@ -74,6 +74,10 @@ export interface AgentTemplate {
     file: string
     prompt: string
   }
+  requestFooter?: {
+    file?: string
+    prompt: string
+  }
 }
 
 export interface AgentTemplateDiagnostic {
@@ -379,6 +383,14 @@ export class AgentTemplateLoader {
     return path.join(path.dirname(path.dirname(dir)), "protocol", file)
   }
 
+  private async requestFooterFile(dir: string, file: string) {
+    const local = path.join(dir, file)
+    if (await this.exists(local)) return local
+    const adjacent = path.join(path.dirname(path.dirname(dir)), "request-footers", file)
+    if (await this.exists(adjacent)) return adjacent
+    return path.join(this.fallbackDir, "request-footers", file)
+  }
+
   private async audit(input: { dir: string; source: "package" | "user"; meta: Schema.Meta }) {
     const meta = input.meta
     if (meta.logo?.uri && !this.url(meta.logo.uri)) {
@@ -552,6 +564,18 @@ export class AgentTemplateLoader {
           ? {
               file: result.data.protocol.file,
               prompt: await this.read(await this.protocolFile(agentDir, result.data.protocol.file), agentId, result.data.protocol.file),
+            }
+          : undefined,
+        requestFooter: result.data.request_footer
+          ? {
+              file: result.data.request_footer.file,
+              prompt: result.data.request_footer.file
+                ? await this.read(
+                    await this.requestFooterFile(agentDir, result.data.request_footer.file),
+                    agentId,
+                    result.data.request_footer.file,
+                  )
+                : result.data.request_footer.prompt ?? "",
             }
           : undefined,
       }

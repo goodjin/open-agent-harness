@@ -1,4 +1,4 @@
-import type { Session, SessionTreeNode } from "@open-agent-harness/sdk/v2/client"
+import type { Session, SessionStatus, SessionTreeNode } from "@open-agent-harness/sdk/v2/client"
 import type { RootLoadArgs, TreeLoadArgs } from "./types"
 
 export async function loadRootSessionsWithFallback(input: RootLoadArgs) {
@@ -46,6 +46,7 @@ export async function loadSessionTreeWithFallback(input: TreeLoadArgs) {
   return {
     ...roots,
     data: [...by.values()],
+    status: found?.status ?? {},
   }
 }
 
@@ -54,16 +55,34 @@ async function loadChildren(input: TreeLoadArgs, roots: Session[], ids: string[]
   if (input.tree) {
     const trees = await Promise.all(ids.map((root) => input.tree!({ directory: input.directory, root })))
     const rootsByID = new Map(roots.map((session) => [session.id, session]))
+    const nodes = trees.flatMap((tree) => tree.data?.nodes ?? [])
     return {
-      data: trees.flatMap((tree) =>
-        (tree.data?.nodes ?? [])
-          .filter((node) => !!node.parent_id)
-          .map((node) => sessionFromNode(node, rootsByID.get(node.root_id))),
-      ),
+      data: nodes
+        .filter((node) => !!node.parent_id)
+        .map((node) => sessionFromNode(node, rootsByID.get(node.root_id))),
+      status: Object.fromEntries(nodes.map((node) => [node.id, node.status])) as Record<string, SessionStatus>,
     }
   }
   if (!input.descendants) return undefined
-  return input.descendants({ directory: input.directory, ids })
+  const result = await input.descendants({ directory: input.directory, ids })
+  return {
+    data: result.data,
+    status: {},
+  }
+}
+
+export function mergeSessionStatus(
+  current: Record<string, SessionStatus>,
+  next: Record<string, SessionStatus>,
+) {
+  return {
+    ...current,
+    ...Object.fromEntries(
+      Object.entries(next).filter((item) =>
+        item[1].type === "idle" || item[1].type === "archived" ? current[item[0]] === undefined : true,
+      ),
+    ),
+  }
 }
 
 export function sessionFromNode(node: SessionTreeNode, root?: Session): Session {

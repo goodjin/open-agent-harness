@@ -112,6 +112,7 @@ export function applyDirectoryEvent(input: {
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
       if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
+      if (info.parentID) input.push(input.directory)
       break
     }
     case "session.updated": {

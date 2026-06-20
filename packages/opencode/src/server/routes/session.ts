@@ -793,6 +793,83 @@ export const SessionRoutes = lazy(() =>
         return c.json({ submitted })
       },
     )
+    .get(
+      "/:sessionID/delegations/fallback-preview",
+      describeRoute({
+        summary: "Preview delegated child fallback result",
+        tags: ["Session"],
+        description: "Return the latest assistant text from a delegated child session for user-confirmed fallback handoff.",
+        operationId: "session.delegations.fallbackPreview",
+        responses: {
+          200: {
+            description: "Fallback preview",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ messageID: MessageID.zod.optional(), text: z.string() })),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        return c.json(await SessionDelegation.fallbackPreview({ sessionID }))
+      },
+    )
+    .post(
+      "/:sessionID/delegations/confirm-fallback",
+      describeRoute({
+        summary: "Confirm delegated child fallback result",
+        tags: ["Session"],
+        description: "Submit user-reviewed fallback text as the delegated child result and notify the parent session.",
+        operationId: "session.delegations.confirmFallback",
+        responses: {
+          200: {
+            description: "Fallback result confirmation",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ submitted: z.boolean() })),
+              },
+            },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "json",
+        z.object({
+          edited: z.boolean().optional(),
+          original_message_id: MessageID.zod.optional(),
+          result: z.string().min(1),
+          status: z.enum(["success", "failure", "reply"]).default("success"),
+        }),
+      ),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        const body = c.req.valid("json")
+        const submitted = await SessionDelegation.confirmFallback({
+          sessionID,
+          status: body.status,
+          result: body.result,
+          originalMessageID: body.original_message_id,
+          edited: body.edited,
+        })
+        return c.json({ submitted })
+      },
+    )
     .post(
       "/:sessionID/delegations/cancel",
       describeRoute({

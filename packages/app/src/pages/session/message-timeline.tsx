@@ -68,10 +68,12 @@ const delegationLabel = "等待子会话执行任务中"
 const restorable = new Set(["interrupted"])
 const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
 const done = new Set(["completed", "user_completed", "archived"])
+const fallbackable = new Set(["failed", "blocked"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
 type ConfirmStatus = "pending" | "confirmed" | "cancelled"
+type FallbackStatus = "success" | "failure" | "reply"
 
 type ConfirmRecord = {
   action_id: string
@@ -867,6 +869,106 @@ export function MessageTimeline(props: {
       })
   }
 
+  const openFallback = (id: string) => {
+    setOp("child", id, "fallback")
+    return sdk
+      .request(`/session/${id}/delegations/fallback-preview`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        const data = (await res.json()) as { messageID?: string; text: string }
+        dialog.show(() => <DialogConfirmFallback sessionID={id} messageID={data.messageID} text={data.text} />)
+      })
+      .catch((err: unknown) =>
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        }),
+      )
+      .finally(() => {
+        setOp("child", id, undefined)
+      })
+  }
+
+  function DialogConfirmFallback(props: { messageID?: string; sessionID: string; text: string }) {
+    const [value, setValue] = createSignal(props.text)
+    const [state, setState] = createSignal<FallbackStatus>("success")
+    const [saving, setSaving] = createSignal(false)
+    const submit = () => {
+      const result = value().trim()
+      if (!result || saving()) return
+      setSaving(true)
+      setOp("child", props.sessionID, "confirm_fallback")
+      sdk
+        .request(`/session/${props.sessionID}/delegations/confirm-fallback`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            edited: result !== props.text.trim(),
+            original_message_id: props.messageID,
+            result,
+            status: state(),
+          }),
+        })
+        .then(async (res) => {
+          if (!res.ok) throw new Error(await res.text())
+          await sync.session.sync(props.sessionID, { force: true }).catch(() => undefined)
+          const current = sessionID()
+          if (current && current !== props.sessionID) await sync.session.sync(current, { force: true }).catch(() => undefined)
+          dialog.close()
+        })
+        .catch((err: unknown) =>
+          showToast({
+            variant: "error",
+            title: language.t("common.requestFailed"),
+            description: errorMessage(err),
+          }),
+        )
+        .finally(() => {
+          setSaving(false)
+          setOp("child", props.sessionID, undefined)
+        })
+    }
+
+    return (
+      <Dialog title="确认子会话结果" fit>
+        <div class="flex w-[min(760px,calc(100vw-32px))] max-w-full flex-col gap-4 px-6 pb-4">
+          <div class="flex flex-col gap-1 text-13-regular text-text-weak">
+            <span>大模型没有成功调用 ActionResult。下面内容会作为用户确认过的 fallback 结果提交给父会话。</span>
+            <span>提交后子会话状态会标记为用户确认完成。</span>
+          </div>
+          <textarea
+            class="h-[360px] min-h-[220px] w-full resize-y rounded-md border border-border-weak-base bg-background-base px-3 py-2 font-mono text-12-regular text-text-strong outline-none focus:border-border-strong-base"
+            value={value()}
+            onInput={(event) => setValue(event.currentTarget.value)}
+          />
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <label class="flex items-center gap-2 text-12-regular text-text-weak">
+              <span>结果状态</span>
+              <select
+                class="h-8 rounded-md border border-border-weak-base bg-background-base px-2 text-12-regular text-text-strong outline-none"
+                value={state()}
+                onChange={(event) => setState(event.currentTarget.value as FallbackStatus)}
+              >
+                <option value="success">成功</option>
+                <option value="reply">需要父会话继续处理</option>
+                <option value="failure">失败</option>
+              </select>
+            </label>
+            <div class="flex items-center gap-2">
+              <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+                {language.t("common.cancel")}
+              </Button>
+              <Button variant="primary" size="large" disabled={saving() || value().trim().length === 0} onClick={submit}>
+                确认提交
+              </Button>
+            </div>
+          </div>
+        </div>
+      </Dialog>
+    )
+  }
+
   function DialogDeleteSession(props: { sessionID: string }) {
     const name = createMemo(() => sync.session.get(props.sessionID)?.title ?? language.t("command.session.new"))
     const handleDelete = async () => {
@@ -1639,6 +1741,17 @@ export function MessageTimeline(props: {
                                                 onClick={() => void resume(item.id)}
                                               >
                                                 恢复
+                                              </Button>
+                                            </Show>
+                                            <Show when={fallbackable.has(status())}>
+                                              <Button
+                                                variant="secondary"
+                                                size="small"
+                                                class="h-7 px-2"
+                                                disabled={busy()}
+                                                onClick={() => void openFallback(item.id)}
+                                              >
+                                                确认结果
                                               </Button>
                                             </Show>
                                             <Show when={!done.has(status())}>

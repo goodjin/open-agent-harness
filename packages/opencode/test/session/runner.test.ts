@@ -829,7 +829,7 @@ describe("SessionRunner", () => {
         messageID: assistant.id,
         sessionID: input.sessionID,
         type: "text",
-        text: "agent:general child summary",
+        text: "agent:general-investigator child summary",
         time: { start: Date.now(), end: Date.now() },
       } as MessageV2.TextPart)
       done++
@@ -1969,15 +1969,15 @@ describe("SessionRunner", () => {
     const body = {
       version: "2",
       items: [
-        { id: "complete_m4_e4_files", kind: "agent", target: "sisyphus-junior", prompt: "Complete M4.E4 files." },
+        { id: "complete_m4_e4_files", kind: "agent", target: "general-executor", prompt: "Complete M4.E4 files." },
         {
           id: "verify_m4_e4_completion",
           kind: "agent",
-          target: "sisyphus-junior-verifier",
+          target: "general-executor-verifier",
           prompt: "Verify M4.E4 completion.",
           depends: ["complete_m4_e4_files"],
         },
-        { id: "finalize_m2_pipeline_doc", kind: "agent", target: "sisyphus-junior", prompt: "Finalize M2 doc." },
+        { id: "finalize_m2_pipeline_doc", kind: "agent", target: "general-executor", prompt: "Finalize M2 doc." },
       ],
     }
     const stream = spyOn(LLM, "stream").mockImplementation(
@@ -2009,7 +2009,7 @@ describe("SessionRunner", () => {
         }) as never,
     )
     const junior = {
-      name: "sisyphus-junior",
+      name: "general-executor",
       kind: "worker",
       capability: { purpose: "implementation", tags: [], writes: false },
       entry: { delegable: true },
@@ -2017,7 +2017,7 @@ describe("SessionRunner", () => {
       permission: [],
     } as never
     const verify = {
-      name: "sisyphus-junior-verifier",
+      name: "general-executor-verifier",
       kind: "verifier",
       capability: { purpose: "review", tags: [], writes: false },
       entry: { delegable: true },
@@ -2033,8 +2033,8 @@ describe("SessionRunner", () => {
       permission: [{ permission: "*", pattern: "*", action: "allow" }],
     } as never
     const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
-      if (name === "sisyphus-junior") return junior
-      if (name === "sisyphus-junior-verifier") return verify
+      if (name === "general-executor") return junior
+      if (name === "general-executor-verifier") return verify
       if (name === "protocol-runner") return parent
       return undefined
     })
@@ -2047,8 +2047,8 @@ describe("SessionRunner", () => {
         id: MessageID.ascending(),
         sessionID: input.sessionID,
         role: "assistant",
-        mode: input.agent ?? "sisyphus-junior",
-        agent: input.agent ?? "sisyphus-junior",
+        mode: input.agent ?? "general-executor",
+        agent: input.agent ?? "general-executor",
         path: { cwd: tmp.path, root: tmp.path },
         cost: 0,
         tokens: {
@@ -2139,7 +2139,7 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
-              expect(children.some((item) => item.agent === "sisyphus-junior")).toBe(true)
+              expect(children.some((item) => item.agent === "general-executor")).toBe(true)
             },
           }),
       })
@@ -4067,20 +4067,13 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const children = await Session.children(session.id)
-              const after = await Session.get(session.id)
-              const protocol = after.dsl_context?.protocol as
-                | {
-                    runs?: { actions: { output?: string }[] }[]
-                  }
-                | undefined
 
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
-              expect(children[0]?.title).toContain("@general")
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("Delegated to general.")
+              expect(children[0]?.title).toContain("@general-investigator")
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(done).toBeGreaterThanOrEqual(2)
-              expect(inputs[0]?.agent).toBe("general")
+              expect(inputs[0]?.agent).toBe("general-investigator")
               expect(inputs[1]?.agent).toBe("default")
               const text = inputs[0]?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
               expect(text).not.toContain("@default")

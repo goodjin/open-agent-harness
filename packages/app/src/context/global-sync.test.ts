@@ -4,6 +4,7 @@ import {
   estimateRootSessionTotal,
   loadRootSessionsWithFallback,
   loadSessionTreeWithFallback,
+  mergeSessionStatus,
   sessionFromNode,
 } from "./global-sync/session-load"
 
@@ -179,7 +180,7 @@ describe("loadSessionTreeWithFallback", () => {
                 parent_id: "root-a",
                 root_id: "root-a",
                 title: "Child A",
-                status: { type: "idle" },
+                status: { type: "completed" },
                 stats: {
                   messages: 2,
                   tokens_input: 0,
@@ -203,6 +204,10 @@ describe("loadSessionTreeWithFallback", () => {
       directory: "dir",
       parentID: "root-a",
       summary: { files: 3, additions: 4, deletions: 5 },
+    })
+    expect(result.status).toEqual({
+      "root-a": { type: "idle" },
+      "child-a": { type: "completed" },
     })
   })
 
@@ -291,6 +296,27 @@ describe("loadSessionTreeWithFallback", () => {
     expect(calls).toEqual(["root-b"])
     expect(result.ids).toEqual(["root-b"])
     expect(result.data?.map((s) => s.id)).toEqual(["root-b"])
+  })
+})
+
+describe("mergeSessionStatus", () => {
+  test("preserves active local status when a lightweight tree reports idle", () => {
+    expect(
+      mergeSessionStatus(
+        {
+          running: { type: "running" },
+          old: { type: "completed" },
+        },
+        {
+          running: { type: "idle" },
+          done: { type: "completed" },
+        },
+      ),
+    ).toEqual({
+      running: { type: "running" },
+      old: { type: "completed" },
+      done: { type: "completed" },
+    })
   })
 })
 

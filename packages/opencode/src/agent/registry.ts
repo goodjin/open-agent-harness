@@ -41,6 +41,10 @@ export interface AgentTemplateInfo {
     file: string
     prompt: string
   }
+  requestFooter?: {
+    file?: string
+    prompt: string
+  }
   permission: PermissionNext.Ruleset
   policy: Policy.Model
 }
@@ -146,6 +150,7 @@ export class AgentRegistry {
       identity: agent.identity,
       rules: agent.rules,
       protocol: agent.protocol,
+      requestFooter: agent.requestFooter,
       permission: Policy.toLegacy(policy),
       policy,
     }

@@ -26,6 +26,9 @@
     "cost": "low",
     "writes": false
   },
+  "request_footer": {
+    "file": "action-result.md"
+  },
   "workflow_mode": "auto",
   "allowed_tools": ["read", "glob", "grep", "codesearch", "lsp", "external_directory"],
   "denied_tools": ["edit", "write", "apply_patch", "bash", "task", "webfetch", "websearch", "todowrite"],

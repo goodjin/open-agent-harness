@@ -26,6 +26,8 @@ Session-local model selection is a hot draft for the active conversation. The UI
 
 When that submitted model differs from the server-bound session model, the server owns the final guard and returns a conflict instead of silently rebinding the session. The prompt UI then asks whether to switch the session to the selected model. Confirming retries the same request with `confirm: true`; declining restores the local selector to the bound model and retries with that model.
 
+Direct prompt footer model selection follows the same guard. The first session tree update is attempted without confirmation. If the server reports that the session is already bound to another model, the selector asks whether to switch the session. Confirming retries the update with `confirm: true`; cancelling restores the selector to the bound model without showing the raw conflict message.
+
 ## Settings Workspace Layout
 
 Opening Settings replaces the main workspace content instead of adding another right-side panel. The sidebar remains available, while the session area and any session-side content are replaced by `SettingsPanel` until the user closes Settings.

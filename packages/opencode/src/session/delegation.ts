@@ -321,6 +321,70 @@ export namespace SessionDelegation {
     return submit({ sessionID: input.sessionID, runID: input.runID, force: true })
   }
 
+  export async function fallbackPreview(input: { sessionID: SessionID }) {
+    await Session.get(input.sessionID)
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(input.sessionID)).catch((err: unknown) => {
+      if (err instanceof NotFoundError) return []
+      throw err
+    })
+    const msg = msgs.findLast((item) => {
+      if (item.info.role !== "assistant") return false
+      if (typeof item.info.time.completed !== "number") return false
+      return item.parts.some((part) => part.type === "text" && part.text.trim().length > 0)
+    })
+    if (!msg) return { text: "" }
+    return {
+      messageID: msg.info.id,
+      text: msg.parts
+        .flatMap((part) => (part.type === "text" && part.text.trim().length > 0 ? [part.text] : []))
+        .join("\n\n")
+        .trim(),
+    }
+  }
+
+  export async function confirmFallback(input: {
+    sessionID: SessionID
+    status: "success" | "failure" | "reply"
+    result: string
+    originalMessageID?: MessageID
+    edited?: boolean
+  }) {
+    const session = await Session.get(input.sessionID)
+    const item = assignment(session)
+    if (!item) return false
+    const agent = text(item.agent) ?? session.agent ?? "default"
+    const output = [
+      "[User-confirmed fallback result]",
+      "The delegated child failed to submit native ActionResult after repeated tool-call errors.",
+      "The following result was reviewed and confirmed by the user before handoff.",
+      "",
+      input.result,
+    ].join("\n")
+    const done = await meta(agent, input.status === "failure" ? "failed" : "completed", output)
+    const metadata = {
+      ...done,
+      source: "user_confirmed_fallback",
+      fallback: {
+        source: "user_confirmed_fallback",
+        original_child_status: SessionStatus.get(input.sessionID).type,
+        reason: "action_result_tool_call_failed",
+        confirmed_by_user: true,
+        original_message_id: input.originalMessageID,
+        edited: input.edited === true,
+      },
+    }
+    const ok = await complete({
+      sessionID: input.sessionID,
+      status: input.status === "failure" ? "failed" : input.status === "reply" ? "partial" : "completed",
+      output,
+      metadata,
+    })
+    if (ok) {
+      SessionStatus.set(input.sessionID, { type: "user_completed", message: "User confirmed fallback result." })
+    }
+    return ok
+  }
+
   async function turn(sessionID: SessionID, messageID: MessageID | undefined, status: Status) {
     if (!messageID) return
     const msg = await MessageV2.get({ sessionID, messageID }).catch(() => undefined)

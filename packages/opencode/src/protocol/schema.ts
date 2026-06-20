@@ -792,6 +792,7 @@ export namespace AgentProtocol {
 
   function v2Parsed(parsed: z.infer<typeof V2>) {
     const terminal = parsed.items.find((item): item is z.infer<typeof V2Terminal> => done(item.kind))
+    const answers = new Set(parsed.items.filter((item) => item.kind === "answer").map((item) => item.id))
     const actions = parsed.items.filter(
       (item): item is Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>> => !done(item.kind),
     )
@@ -819,12 +820,16 @@ export namespace AgentProtocol {
       execution: { strategy: parsed.strategy },
       payload: {
         type: "action_graph",
-        actions: actions.map((item) => action(item)),
+        actions: actions.map((item) => action(item, answers)),
       },
     }
   }
 
-  function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>>) {
+  function links(input: z.infer<typeof V2Depends>, answers: Set<string>) {
+    return input.filter((item) => !answers.has(item))
+  }
+
+  function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>>, answers: Set<string>) {
     if (input.kind === "tool") {
       return {
         type: "action",
@@ -833,7 +838,7 @@ export namespace AgentProtocol {
         operation: input.target,
         executor: { type: "tool", target: input.target, capabilities: [] },
         input: input.args,
-        depends_on: input.depends,
+        depends_on: links(input.depends, answers),
         context_refs: [],
         result_policy: input.result,
       }
@@ -846,7 +851,7 @@ export namespace AgentProtocol {
         operation: input.target === "auto" ? "agent" : input.target,
         executor: { type: "agent", target: input.target, capabilities: input.capabilities },
         input: { prompt: input.prompt },
-        depends_on: input.depends,
+        depends_on: links(input.depends, answers),
         context_refs: input.context_refs,
         verification: input.verification,
         result_policy: input.result,
@@ -860,7 +865,7 @@ export namespace AgentProtocol {
         operation: input.target,
         executor: { type: "runtime", target: "wait", capabilities: [] },
         input: { target: input.target, reason: input.reason },
-        depends_on: input.depends,
+        depends_on: links(input.depends, answers),
         context_refs: [],
         result_policy: input.result,
       }
@@ -873,7 +878,7 @@ export namespace AgentProtocol {
         operation: "confirm",
         executor: { type: "human", target: "user", capabilities: ["confirmation"] },
         input: { prompt: input.prompt, plan: input.plan },
-        depends_on: input.depends,
+        depends_on: links(input.depends, answers),
         context_refs: [],
         result_policy: input.result,
       }
@@ -885,7 +890,7 @@ export namespace AgentProtocol {
       operation: "input",
       executor: { type: "human", target: "user", capabilities: [input.mode] },
       input: ask(input),
-      depends_on: input.depends,
+      depends_on: links(input.depends, answers),
       context_refs: [],
       result_policy: input.result,
     }

@@ -36,6 +36,9 @@
     "cost": "medium",
     "writes": true
   },
+  "request_footer": {
+    "file": "action-result.md"
+  },
   "workflow_mode": "auto",
   "allowed_tools": [],
   "denied_tools": [
