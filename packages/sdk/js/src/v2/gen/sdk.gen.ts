@@ -207,6 +207,10 @@ import type {
   SessionCreateResponses,
   SessionDelegationsCancelErrors,
   SessionDelegationsCancelResponses,
+  SessionDelegationsConfirmFallbackErrors,
+  SessionDelegationsConfirmFallbackResponses,
+  SessionDelegationsFallbackPreviewErrors,
+  SessionDelegationsFallbackPreviewResponses,
   SessionDelegationsSubmitErrors,
   SessionDelegationsSubmitResponses,
   SessionDeleteErrors,
@@ -1893,6 +1897,87 @@ export class Delegations extends HeyApiClient {
       ThrowOnError
     >({
       url: "/session/{sessionID}/delegations/submit",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Preview delegated child fallback result
+   *
+   * Return the latest assistant text from a delegated child session for user-confirmed fallback handoff.
+   */
+  public fallbackPreview<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      SessionDelegationsFallbackPreviewResponses,
+      SessionDelegationsFallbackPreviewErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/delegations/fallback-preview",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Confirm delegated child fallback result
+   *
+   * Submit user-reviewed fallback text as the delegated child result and notify the parent session.
+   */
+  public confirmFallback<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      edited?: boolean
+      original_message_id?: string
+      result?: string
+      status?: "success" | "failure" | "reply"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "edited" },
+            { in: "body", key: "original_message_id" },
+            { in: "body", key: "result" },
+            { in: "body", key: "status" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionDelegationsConfirmFallbackResponses,
+      SessionDelegationsConfirmFallbackErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/delegations/confirm-fallback",
       ...options,
       ...params,
       headers: {

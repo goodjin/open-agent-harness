@@ -28,6 +28,21 @@ export namespace SessionProcessor {
   export type Info = Awaited<ReturnType<typeof create>>
   export type Result = Awaited<ReturnType<Info["process"]>>
 
+  function status(error: NonNullable<MessageV2.Assistant["error"]>): Extract<SessionStatus.Info, { type: "error" }> {
+    if (MessageV2.APIError.isInstance(error) && error.data.metadata?.code === "ProviderOutputSafety") {
+      return {
+        type: "error",
+        message: error.data.message,
+        reason: "output_safety",
+        recoverable: true,
+      }
+    }
+    return {
+      type: "error",
+      message: "message" in error.data ? error.data.message : error.name,
+    }
+  }
+
   export function create(input: {
     assistantMessage: MessageV2.Assistant
     sessionID: SessionID
@@ -652,8 +667,7 @@ export namespace SessionProcessor {
                 error: input.assistantMessage.error,
               })
               SessionStatus.set(input.sessionID, {
-                type: "error",
-                message: "message" in error.data ? error.data.message : error.name,
+                ...status(error),
               })
               failure = e
             }

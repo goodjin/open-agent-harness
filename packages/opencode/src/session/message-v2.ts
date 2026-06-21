@@ -996,6 +996,27 @@ export namespace MessageV2 {
           { cause: e },
         ).toObject()
       case e instanceof Error:
+        const stream = ProviderError.parseStreamError(e.message)
+        if (stream) {
+          if (stream.type === "context_overflow") {
+            return new MessageV2.ContextOverflowError(
+              {
+                message: stream.message,
+                responseBody: stream.responseBody,
+              },
+              { cause: e },
+            ).toObject()
+          }
+          return new MessageV2.APIError(
+            {
+              message: stream.message,
+              isRetryable: stream.isRetryable,
+              responseBody: stream.responseBody,
+              ...(stream.metadata ? { metadata: stream.metadata } : {}),
+            },
+            { cause: e },
+          ).toObject()
+        }
         return new NamedError.Unknown({ message: e.toString() }, { cause: e }).toObject()
       default:
         try {
@@ -1015,6 +1036,7 @@ export namespace MessageV2 {
                 message: parsed.message,
                 isRetryable: parsed.isRetryable,
                 responseBody: parsed.responseBody,
+                ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
               },
               {
                 cause: e,

@@ -18,7 +18,7 @@ describe("ActionResult", () => {
       ActionResult.parse({
         action_id: "impl_review",
         target_action_id: "impl",
-        status: "pass",
+        status: "success",
         result: "Full review report with findings and evidence.",
         issues: "none",
         evidence: "Reviewed diff and test output.",
@@ -54,6 +54,24 @@ describe("ActionResult", () => {
     ).toBe(false)
   })
 
+  test("normalizes legacy verifier status values", () => {
+    const pass = ActionResult.parse({
+      action_id: "impl_review",
+      target_action_id: "impl",
+      status: "pass",
+      result: "Review passed.",
+    })
+    expect(pass.success ? pass.data.status : "").toBe("success")
+
+    const fail = ActionResult.parse({
+      action_id: "impl_review",
+      target_action_id: "impl",
+      status: "fail",
+      result: "Review failed.",
+    })
+    expect(fail.success ? fail.data.status : "").toBe("failure")
+  })
+
   test("accepts internal stored result shape after tool execution", () => {
     const parsed = ActionResult.stored({
       kind: "action_result",
@@ -70,7 +88,7 @@ describe("ActionResult", () => {
     expect(parsed.success ? parsed.data.role : "").toBe("worker")
   })
 
-  test("can expose worker-only and verifier-only input schemas", () => {
+  test("can expose worker and verifier input schemas with shared status values", () => {
     expect(
       ActionResult.worker({
         action_id: "impl",
@@ -83,16 +101,16 @@ describe("ActionResult", () => {
       ActionResult.worker({
         action_id: "impl_review",
         target_action_id: "impl",
-        status: "pass",
+        status: "success",
         result: "Review passed.",
       }).success,
-    ).toBe(false)
+    ).toBe(true)
 
     expect(
       ActionResult.verifier({
         action_id: "impl_review",
         target_action_id: "impl",
-        status: "pass",
+        status: "success",
         result: "Review passed.",
       }).success,
     ).toBe(true)
@@ -108,8 +126,8 @@ describe("ActionResult", () => {
 
   test("describes strict worker and verifier protocol", () => {
     const text = ActionResult.protocol({ action: "impl" }).join("\n")
+    expect(text).toContain("Status values for all results: success, failure, error, reply, skipped.")
     expect(text).toContain("Worker result required fields: action_id, status, result.")
-    expect(text).toContain("Worker status values: success, failure, error, reply.")
     expect(text).toContain("Worker optional fields: scope, changed_files, verification, blockers.")
     expect(text).toContain("Worker scope values: task, verification_feedback, final_summary.")
     expect(text).not.toContain('"result_type": "worker"')
@@ -119,7 +137,6 @@ describe("ActionResult", () => {
 
     const verifier = ActionResult.protocol({ verifier: true, action: "review", target: "impl" }).join("\n")
     expect(verifier).toContain("Verifier result required fields: action_id, target_action_id, status, result.")
-    expect(verifier).toContain("Verifier status values: pass, fail, error, reply, skipped.")
     expect(verifier).toContain("Verifier optional fields: issues, evidence, worker_feedback.")
     expect(verifier).not.toContain('"result_type": "verifier"')
     expect(verifier).not.toContain('"role": "verifier"')

@@ -49,15 +49,15 @@ For `agent` items whose target is a verifier (for example `backend-verifier`, `f
 When a worker is followed by a verifier:
 
 - Delegated worker and verifier sessions finish with the native `ActionResult` tool, not plain text.
-- A worker `ActionResult` uses `role: "worker"` and `status: success | failure | error | reply`. Worker `success` only means the worker claims the task is ready for verification; it is not final parent completion when verifier gates exist.
-- A verifier `ActionResult` uses `role: "verifier"`, `target_action_id`, `verification_role: test | review`, and `status: pass | fail | error | reply | skipped`.
+- `ActionResult.status` uses the same values for worker and verifier results: `success | failure | error | reply | skipped`. Worker `success` only means the worker claims the task is ready for verification; it is not final parent completion when verifier gates exist. Verifier `success` means the target action passed that gate.
+- A verifier `ActionResult` includes `target_action_id` and optional `verification_role: test | review`.
 - Keep `changed_files`, `verification`, `blockers`, `issues`, `evidence`, and `worker_feedback` as short strings. Do not use arrays or nested objects in `ActionResult`.
 - For `success`, `failure`, and `error`, include task background, task content, completion summary, changed files, verification evidence, and blockers.
 - If a delegated session returns plain text instead of `ActionResult`, the runtime asks that session to retry with the result tool.
 - If a worker completes without that summary, the runtime may ask the worker to produce a structured task summary before verifier handoff.
 - The verifier receives the worker's original dispatch prompt plus the worker summary. It must return a formatted verification result with `kind`, `status`, `summary`, `issues`, `evidence`, and `worker_feedback`.
-- Verifier gates run serially for a worker. Runtime starts the next verifier only after the previous required verifier returns `pass` or an allowed `skipped`.
-- If a verifier returns `fail` or `reply`, runtime sends its `worker_feedback` back to the worker for a bounded fix loop. If the loop exceeds the runtime limit, remaining verifiers are not started and the final worker/verifier package is returned to the parent as blocked.
+- Verifier gates run serially for a worker. Runtime starts the next verifier only after the previous required verifier returns `success` or an allowed `skipped`.
+- If a verifier returns `failure` or `reply`, runtime sends its `worker_feedback` back to the worker for a bounded fix loop. If the loop exceeds the runtime limit, remaining verifiers are not started and the final worker/verifier package is returned to the parent as blocked.
 - After all required verifier gates pass, runtime attaches the verifier result descriptions to the worker result and only then sends the canonical result to the parent session.
 - If the latest worker result only describes verifier feedback, runtime asks the worker for a fresh complete task summary with `ActionResult` before notifying the parent.
 

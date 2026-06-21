@@ -16,6 +16,7 @@ import { Question } from "../../src/question"
 import { Provider } from "../../src/provider/provider"
 import { SessionStatus } from "../../src/session/status"
 import { SessionDelegation } from "../../src/session/delegation"
+import { SessionTurn } from "../../src/session/turn"
 import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
@@ -4083,6 +4084,262 @@ describe("SessionRunner", () => {
     } finally {
       stream.mockRestore()
       prompt.mockRestore()
+    }
+  })
+
+  test("protocol runner fails unavailable agent without creating child session", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      version: "2",
+      items: [
+        {
+          id: "dispatch_removed_agent",
+          kind: "agent",
+          target: "hephaestus",
+          prompt: "Implement the bounded task.",
+        },
+      ],
+    }
+    const hook = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Session.setPermission({
+                sessionID: session.id,
+                permission: [{ permission: "*", pattern: "*", action: "allow" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "default",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "default",
+                agent: "default",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "default",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "dispatch removed agent" }],
+                tools: {},
+              })
+              const sessionAfter = await Session.get(session.id)
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: { status: string; actions: { status: string; error?: string }[] }[]
+                  }
+                | undefined
+              const fresh = await MessageV2.get({ sessionID: session.id, messageID: user.id })
+              if (fresh.info.role !== "user") throw new Error("expected user message")
+              const turn = SessionTurn.get(fresh.info)
+
+              expect(result).toBe("stop")
+              expect(await Session.children(session.id)).toHaveLength(0)
+              expect(protocol?.runs?.at(-1)?.status).toBe("failed")
+              expect(protocol?.runs?.at(-1)?.actions[0]?.status).toBe("failed")
+              expect(protocol?.runs?.at(-1)?.actions[0]?.error).toContain("Protocol agent not available")
+              expect(turn?.outcome).toBe("failed")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("prompt finish ignores stale interrupted pending child after protocol failure", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const data = {
+      version: "2",
+      items: [
+        {
+          id: "dispatch_removed_agent",
+          kind: "agent",
+          target: "hephaestus",
+          prompt: "Implement the bounded task.",
+        },
+      ],
+    }
+    const stream = spyOn(LLM, "stream").mockImplementation(
+      async () =>
+        ({
+          fullStream: (async function* () {
+            yield { type: "start" }
+            yield { type: "start-step" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+            yield {
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+            }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: data,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
+            yield {
+              type: "finish-step",
+              finishReason: "tool-calls",
+              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+            }
+            yield { type: "finish" }
+          })(),
+        }) as never,
+    )
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({ agent: "default" })
+              const child = await Session.create({ parentID: session.id, agent: "general-executor" })
+              SessionStatus.set(child.id, {
+                type: "interrupted",
+                prior: "running",
+                message: "Session was running when the process stopped.",
+              })
+              await Session.setDslContext({
+                sessionID: session.id,
+                dsl_context: {
+                  protocol: {
+                    current: "apr_old",
+                    pending_delegations: {
+                      [child.id]: {
+                        type: "agent.delegation.assignment",
+                        version: "1",
+                        run_id: "apr_old",
+                        action_id: "old_child",
+                        action_title: "Old child",
+                        parent_session_id: session.id,
+                        parent_message_id: "msg_old",
+                        child_session_id: child.id,
+                        agent: "general-executor",
+                      },
+                    },
+                  },
+                },
+              })
+              await SessionPrompt.prompt({
+                sessionID: session.id,
+                agent: "default",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                parts: [{ type: "text", text: "dispatch removed agent" }],
+              })
+              const sessionAfter = await Session.get(session.id)
+              const pending = (
+                sessionAfter.dsl_context?.protocol as
+                  | {
+                      pending_delegations?: Record<string, unknown>
+                      runs?: { status: string; actions: { status: string; error?: string }[] }[]
+                    }
+                  | undefined
+              )?.pending_delegations
+
+              expect(SessionStatus.get(session.id).type).not.toBe("waiting_child")
+              expect(Object.keys(pending ?? {})).toHaveLength(0)
+              expect((sessionAfter.dsl_context?.protocol as { runs?: { status: string }[] })?.runs?.at(-1)?.status).toBe(
+                "failed",
+              )
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      provider.mockRestore()
     }
   })
 

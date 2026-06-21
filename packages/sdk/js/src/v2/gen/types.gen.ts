@@ -131,6 +131,8 @@ export type SessionStatus =
   | {
       type: "error"
       message: string
+      reason?: "output_safety"
+      recoverable?: boolean
     }
   | {
       type: "timeout"
@@ -2539,6 +2541,19 @@ export type AgentManageInfo = {
       file: string
     }
     /**
+     * Transient request footer prompt configuration
+     */
+    request_footer?: {
+      /**
+       * Shared request footer prompt file name under config/request-footers
+       */
+      file?: string
+      /**
+       * Inline request footer prompt
+       */
+      prompt?: string
+    }
+    /**
      * Unique identifier for the agent
      */
     id: string
@@ -2799,6 +2814,19 @@ export type AgentManageValidateOutput = {
        * Protocol prompt file path relative to the agent directory
        */
       file: string
+    }
+    /**
+     * Transient request footer prompt configuration
+     */
+    request_footer?: {
+      /**
+       * Shared request footer prompt file name under config/request-footers
+       */
+      file?: string
+      /**
+       * Inline request footer prompt
+       */
+      prompt?: string
     }
     /**
      * Unique identifier for the agent
@@ -3068,6 +3096,19 @@ export type AgentManageSaveInput = {
       file: string
     }
     /**
+     * Transient request footer prompt configuration
+     */
+    request_footer?: {
+      /**
+       * Shared request footer prompt file name under config/request-footers
+       */
+      file?: string
+      /**
+       * Inline request footer prompt
+       */
+      prompt?: string
+    }
+    /**
      * Unique identifier for the agent
      */
     id: string
@@ -3328,6 +3369,19 @@ export type AgentManagePatchInput = {
       file: string
     }
     /**
+     * Transient request footer prompt configuration
+     */
+    request_footer?: {
+      /**
+       * Shared request footer prompt file name under config/request-footers
+       */
+      file?: string
+      /**
+       * Inline request footer prompt
+       */
+      prompt?: string
+    }
+    /**
      * Unique identifier for the agent
      */
     id: string
@@ -3543,6 +3597,10 @@ export type Agent = {
   }
   inheritPermissions?: boolean
   autoAppendPrompt?: string
+  requestFooter?: {
+    file?: string
+    prompt: string
+  }
   protocol?: {
     file: string
     prompt: string
@@ -5409,6 +5467,90 @@ export type SessionDelegationsSubmitResponses = {
 
 export type SessionDelegationsSubmitResponse =
   SessionDelegationsSubmitResponses[keyof SessionDelegationsSubmitResponses]
+
+export type SessionDelegationsFallbackPreviewData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/delegations/fallback-preview"
+}
+
+export type SessionDelegationsFallbackPreviewErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDelegationsFallbackPreviewError =
+  SessionDelegationsFallbackPreviewErrors[keyof SessionDelegationsFallbackPreviewErrors]
+
+export type SessionDelegationsFallbackPreviewResponses = {
+  /**
+   * Fallback preview
+   */
+  200: {
+    messageID?: string
+    text: string
+  }
+}
+
+export type SessionDelegationsFallbackPreviewResponse =
+  SessionDelegationsFallbackPreviewResponses[keyof SessionDelegationsFallbackPreviewResponses]
+
+export type SessionDelegationsConfirmFallbackData = {
+  body?: {
+    edited?: boolean
+    original_message_id?: string
+    result: string
+    status?: "success" | "failure" | "reply"
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/delegations/confirm-fallback"
+}
+
+export type SessionDelegationsConfirmFallbackErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDelegationsConfirmFallbackError =
+  SessionDelegationsConfirmFallbackErrors[keyof SessionDelegationsConfirmFallbackErrors]
+
+export type SessionDelegationsConfirmFallbackResponses = {
+  /**
+   * Fallback result confirmation
+   */
+  200: {
+    submitted: boolean
+  }
+}
+
+export type SessionDelegationsConfirmFallbackResponse =
+  SessionDelegationsConfirmFallbackResponses[keyof SessionDelegationsConfirmFallbackResponses]
 
 export type SessionDelegationsCancelData = {
   body?: {

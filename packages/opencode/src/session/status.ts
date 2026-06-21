@@ -47,6 +47,8 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("error"),
         message: z.string(),
+        reason: z.enum(["output_safety"]).optional(),
+        recoverable: z.boolean().optional(),
       }),
       z.object({
         type: z.literal("timeout"),

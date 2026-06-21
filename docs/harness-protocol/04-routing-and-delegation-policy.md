@@ -126,8 +126,8 @@ Worker completion routing is gate-aware:
 
 1. If the worker has no required verifier gate, Runtime may return the worker `ActionResult` to the parent.
 2. If verifier gates exist, Runtime starts verifier sessions as children of the worker session, one gate at a time.
-3. Runtime starts the next verifier only after the previous required verifier returns `pass` or an allowed `skipped`.
-4. If a verifier returns `fail` or `reply`, Runtime sends `worker_feedback` back to the worker and repeats the bounded fix / verify loop.
+3. Runtime starts the next verifier only after the previous required verifier returns `success` or an allowed `skipped`.
+4. If a verifier returns `failure` or `reply`, Runtime sends `worker_feedback` back to the worker and repeats the bounded fix / verify loop.
 5. If the loop exceeds its limit, Runtime stops remaining verifier gates, packages the worker result plus all executed verifier results and loop count, resets the loop state, and returns that blocked package to the parent.
 6. If all verifier gates pass, Runtime attaches verifier result descriptions to the worker result and then returns the canonical result to the parent.
 7. If the latest worker result only describes verifier feedback, Runtime asks the worker for a fresh complete task summary before returning to the parent.

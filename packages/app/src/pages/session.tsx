@@ -1900,8 +1900,8 @@ export default function Page() {
   }
 
   const sendShellPrompt = async (input: { sessionID: string; text: string }) => {
-    const model = shellModel()
-    const agent = local.agent.current()?.name
+    const model = shellModel() ?? info()?.model
+    const agent = local.agent.current()?.name ?? info()?.agent
     if (!model || !agent) return
     const send = (item: { model: typeof model; confirm?: boolean }) => {
       return sdk.client.session.promptAsync({
@@ -1945,7 +1945,7 @@ export default function Page() {
     return sendShellPrompt({
       sessionID: input.sessionID,
       text,
-    })
+    }).catch(fail)
   }
 
   const actions = {

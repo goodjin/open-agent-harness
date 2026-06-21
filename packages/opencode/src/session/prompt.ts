@@ -307,8 +307,37 @@ export namespace SessionPrompt {
 
   async function waiting(sessionID: SessionID) {
     const session = await Session.get(sessionID).catch(() => undefined)
-    const pending = object(object(session?.dsl_context).protocol).pending_delegations
-    return Object.keys(object(pending)).length
+    const ctx = object(session?.dsl_context)
+    const protocol = object(ctx.protocol)
+    const pending = object(protocol.pending_delegations)
+    const ids = Object.keys(pending)
+    const live = ids.filter((id) => !ended(SessionStatus.get(SessionID.make(id))))
+    if (live.length === ids.length) return live.length
+    await Session.setDslContext({
+      sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...protocol,
+          pending_delegations: Object.fromEntries(live.map((id) => [id, pending[id]])),
+        },
+      },
+    })
+    return live.length
+  }
+
+  function ended(status: SessionStatus.Info) {
+    return (
+      status.type === "completed" ||
+      status.type === "user_completed" ||
+      status.type === "aborted" ||
+      status.type === "failed" ||
+      status.type === "blocked" ||
+      status.type === "interrupted" ||
+      status.type === "timeout" ||
+      status.type === "error" ||
+      status.type === "archived"
+    )
   }
 
   async function finish(sessionID: SessionID, after: MessageID | undefined) {

@@ -1216,8 +1216,7 @@ export namespace SessionRunner {
         "Use the verifier instruction and the worker handoff package below. Validate the worker result against the original dispatch prompt.",
         "",
         "Return a formatted verification result with these fields:",
-        "- kind: success | failure | error | reply",
-        "- status: PASS | FAIL | ERROR | REPLY",
+        "- status: success | failure | error | reply | skipped",
         "- summary: concise verification conclusion",
         "- issues: concrete issues or `none`",
         "- evidence: files, tests, logs, or reasoning checked",
@@ -2717,7 +2716,7 @@ export namespace SessionRunner {
       return {
         title: input.action.title,
         output: selected.error,
-        metadata: { blocked: true },
+        metadata: { failed: true },
       }
     }
     const meta = await AgentDelegation.meta(selected.agent.name).catch(() => undefined)
@@ -2798,7 +2797,7 @@ export namespace SessionRunner {
       return {
         title: input.action.title,
         output: `Protocol agent denied: ${selected.agent.name}`,
-        metadata: { blocked: true, agentID: selected.agent.name, metadata: gate },
+        metadata: { failed: true, agentID: selected.agent.name, metadata: gate },
       }
     }
     const title = input.action.title.trim()
@@ -3042,7 +3041,7 @@ export namespace SessionRunner {
       ...readonly,
       "When you are done, return a task result for the parent session.",
       "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
-      "Use one result kind: success, failure, error, or reply.",
+      "Use one result status: success, failure, error, reply, or skipped.",
       "For success/failure/error, include result, changed_files, verification, and blockers.",
       ...ActionResult.protocol({
         verifier: agent.kind === "verifier",

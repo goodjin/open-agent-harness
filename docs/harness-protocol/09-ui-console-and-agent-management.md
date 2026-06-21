@@ -170,11 +170,11 @@ Agent Session 之间仍不直接通信。用户在 UI 中进入某个 session，
 
 Delegated worker / verifier session 使用统一的 native `ActionResult` 作为完成信号。普通 child session 可以不输出 Agent Protocol DSL，但只要它是 runtime delegation 创建的任务，就应以 `ActionResult` 提交机器可判定结果；如果只返回普通文本，Runtime 向该 child session 追加协议提醒，要求重新提交 `ActionResult`。
 
-Worker 的 `ActionResult` 表示执行任务的产出，`status: success` 只表示 worker 自报完成。Verifier 的 `ActionResult` 表示对某个 `target_action_id` 的验收结论，`status: pass` 才能满足对应 gate。父会话不得把 worker success 当作最终完成，除非该 worker 没有 required verifier gate，或全部 required gate 已经 `pass` / allowed `skipped`。
+Worker 的 `ActionResult` 表示执行任务的产出，`status: success` 只表示 worker 自报完成。Verifier 的 `ActionResult` 表示对某个 `target_action_id` 的验收结论，`status: success` 才能满足对应 gate。父会话不得把 worker success 当作最终完成，除非该 worker 没有 required verifier gate，或全部 required gate 已经 `success` / allowed `skipped`。`status` 对 worker 和 verifier 使用同一套定义：`success`、`failure`、`error`、`reply`、`skipped`；旧 verifier 输入中的 `pass` / `fail` 仅作为兼容值被归一化。
 
 `ActionResult` 只保留少量机器字段。`result` 是唯一的会话交接结果字段，用于 `session_result` 和后续 handoff；它可以承载最终回答、实现报告、审查结论、验证结果、阻塞说明或下一步请求。其他描述类字段如 changed files、verification、blockers、issues、evidence 和 worker feedback 都使用短字符串，允许用一两行 Markdown 表达，不要求数组或嵌套对象。Runtime 可以兼容旧输入中的 `summary`，但新协议不再要求 child session 输出 `summary`。
 
-当一个 worker 有多个 verifier gate 时，Runtime 串行执行 gate：同一 worker 在整个 verification loop 中同一时刻只允许一个 verifier child session 运行。前一个 verifier 没有返回 `pass` / allowed `skipped` 时，后续 verifier 不启动。若 verifier 返回 `fail` / `reply`，Runtime 将 `worker_feedback` 发送回 worker 修复；循环次数超过上限后停止后续 verifier，将 worker 最后结果、已执行 verifier 结果、失败原因和循环次数一起打包返回父会话，并清理该 worker 的 verification loop 状态，避免影响后续任务。
+当一个 worker 有多个 verifier gate 时，Runtime 串行执行 gate：同一 worker 在整个 verification loop 中同一时刻只允许一个 verifier child session 运行。前一个 verifier 没有返回 `success` / allowed `skipped` 时，后续 verifier 不启动。若 verifier 返回 `failure` / `reply`，Runtime 将 `worker_feedback` 发送回 worker 修复；循环次数超过上限后停止后续 verifier，将 worker 最后结果、已执行 verifier 结果、失败原因和循环次数一起打包返回父会话，并清理该 worker 的 verification loop 状态，避免影响后续任务。
 
 如果 worker 在修复阶段输出的 `ActionResult` 只描述 verifier feedback 的修复内容，而不是完整任务总结，Runtime 在通知父会话前再次要求 worker 用 `ActionResult` 输出完整任务总结，然后将 worker 总结和全部 verifier 结果汇总为 canonical ResultRecord。
 

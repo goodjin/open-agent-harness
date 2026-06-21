@@ -1017,7 +1017,7 @@ describe("SessionDelegation", () => {
                 role: "verifier",
                 action_id: "impl_test",
                 target_action_id: "impl",
-                status: "pass",
+                status: "success",
                 result: "Tests pass",
                 issues: "none",
                 evidence: "bun test",
@@ -1038,7 +1038,7 @@ describe("SessionDelegation", () => {
                 role: "verifier",
                 action_id: "impl_review",
                 target_action_id: "impl",
-                status: "pass",
+                status: "success",
                 result: "Review pass",
                 issues: "none",
                 evidence: "reviewed diff",
@@ -1193,6 +1193,150 @@ describe("SessionDelegation", () => {
               expect(pctx.completed_delegations?.[0]?.summary).toContain("Edited fallback result.")
               expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("user_confirmed_fallback")
               expect(prompts[0]?.sessionID).toBe(parent.id)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("ActionResult failure creates automatic fallback summary before notifying parent", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "summary",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "summary",
+        agent: input.agent ?? "summary",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: input.agent === "summary" ? "Summary recovered attempted edits and recommends retry." : "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "feature-planner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_fallback_summary",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "feature-planner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const msg = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID: child.id,
+                type: "tool",
+                tool: "ActionResult",
+                callID: "call_failed",
+                state: {
+                  status: "error",
+                  input: {},
+                  error: "ActionResult input schema/parse failed.",
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+
+              const ok = await SessionDelegation.fail({
+                action: {} as never,
+                agent: "backend",
+                childID: child.id,
+                error: new Error("Stopped after 4 consecutive failed ActionResult calls."),
+                messageID: item.parent_message_id,
+                parentAgent: "feature-planner",
+                parentID: parent.id,
+                runID: "apr_fallback_summary",
+              })
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string; status?: string; summary?: string; metadata?: unknown }[]
+              }
+              const summary = prompts.find((item) => item.agent === "summary")
+
+              expect(ok).toBe(true)
+              expect(summary?.sessionID).not.toBe(child.id)
+              expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Child Transcript"))).toBe(true)
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.status).toBe("failed")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("Automatic fallback summary")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("Summary recovered attempted edits")
+              expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("fallback_summary")
+              expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("confirmed_by_user")
             },
           }),
       })

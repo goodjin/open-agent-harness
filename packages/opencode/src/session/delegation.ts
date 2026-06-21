@@ -184,16 +184,29 @@ export namespace SessionDelegation {
     parentID: SessionID
     runID: string
   }) {
+    const raw = input.error instanceof Error ? input.error.message : String(input.error)
+    const session = await Session.get(input.childID).catch(() => undefined)
+    const item = session ? assignment(session) : undefined
+    const sum =
+      item && actionfail(raw)
+        ? await summarize({
+            agent: input.agent,
+            item,
+            reason: raw,
+            sessionID: input.childID,
+            status: "failed",
+          }).catch((err) => {
+            log.warn("fallback summary failed", { err, sessionID: input.childID })
+            return undefined
+          })
+        : undefined
+    const output = sum?.output ?? raw
     return complete({
       sessionID: input.childID,
       messageID: input.messageID,
-      metadata: await meta(
-        input.agent,
-        "failed",
-        input.error instanceof Error ? input.error.message : String(input.error),
-      ),
+      metadata: sum?.metadata ?? (await meta(input.agent, "failed", output)),
       status: "failed",
-      output: input.error instanceof Error ? input.error.message : String(input.error),
+      output,
     })
   }
 
@@ -576,9 +589,9 @@ export namespace SessionDelegation {
             : out.status === "reply"
               ? ("blocked" as const)
               : ("failed" as const)
-          : out.status === "pass" || out.status === "skipped"
+          : out.status === "success" || out.status === "skipped"
             ? ("completed" as const)
-            : out.status === "fail" || out.status === "reply"
+            : out.status === "failure" || out.status === "reply"
               ? ("blocked" as const)
               : ("failed" as const)
       return {
@@ -866,7 +879,20 @@ export namespace SessionDelegation {
       ]
         .filter((line) => line.length > 0)
         .join("\n")
-      const body = completed(entry.item, map(status), out, undefined, undefined)
+      const sum =
+        entry.item.result_tool === ActionResult.TOOL && actionfail(out)
+          ? await summarize({
+              agent: text(entry.item.agent) ?? "default",
+              item: entry.item,
+              reason: out,
+              sessionID: entry.id,
+              status: fallback(status),
+            }).catch((err) => {
+              log.warn("fallback summary failed", { err, sessionID: entry.id })
+              return undefined
+            })
+          : undefined
+      const body = completed(entry.item, sum?.status ?? map(status), sum?.output ?? out, sum?.metadata, undefined)
       await logdone(body)
       await store(entry.id, entry.item, body)
       await notified(entry.id, entry.item)
@@ -892,6 +918,111 @@ export namespace SessionDelegation {
     if (status.type === "user_completed") return "partial"
     if (status.type === "blocked") return "blocked"
     return "failed"
+  }
+
+  function fallback(status: SessionStatus.Info): Status {
+    if (status.type === "blocked" || status.type === "user_completed") return "partial"
+    return map(status)
+  }
+
+  async function summarize(input: {
+    agent: string
+    item: Item
+    reason: string
+    sessionID: SessionID
+    status: Status
+  }) {
+    const { SessionPrompt } = await import("./prompt")
+    const child = await Session.get(input.sessionID)
+    const session = await Session.create({
+      parentID: input.sessionID,
+      title: `Fallback summary: ${input.item.action_title}`,
+      agent: "summary",
+      model: child.model,
+    })
+    const msg = await SessionPrompt.prompt({
+      sessionID: session.id,
+      agent: "summary",
+      model: child.model,
+      metadata: {
+        internal: true,
+        source: "delegation_fallback_summary",
+        run_id: input.item.run_id,
+        child_session_id: input.sessionID,
+      },
+      parts: [
+        {
+          type: "text",
+          text: [
+            "Summarize this failed delegated child session for its parent handoff.",
+            "Return plain Markdown text only. Do not call tools. Do not claim the delegated task succeeded.",
+            "Include what was attempted, useful evidence, the failure reason, and the safest next step.",
+            "If the transcript does not support a claim, say that evidence is unavailable.",
+            "",
+            "## Assignment",
+            `- Action: ${input.item.action_id}`,
+            `- Title: ${input.item.action_title}`,
+            `- Agent: ${text(input.item.agent) ?? input.agent}`,
+            `- Child session: ${input.sessionID}`,
+            `- Runtime status: ${input.status}`,
+            "",
+            "## Failure Reason",
+            input.reason,
+            "",
+            "## Child Transcript",
+            await transcript(input.sessionID),
+          ].join("\n"),
+        },
+      ],
+    })
+    const output = [
+      "[Automatic fallback summary]",
+      "The delegated child failed to submit native ActionResult after repeated tool-call errors.",
+      "This plain-text summary was generated in an independent read-only summary session and is not a successful ActionResult.",
+      "",
+      text(msg.parts.findLast((part) => part.type === "text")?.text)?.trim() ??
+        "No recoverable child-session summary was produced.",
+    ].join("\n")
+    return {
+      status: input.status,
+      output,
+      metadata: {
+        ...(await meta(input.agent, input.status === "completed" ? "completed" : "failed", output)),
+        source: "fallback_summary",
+        fallback: {
+          source: "fallback_summary",
+          reason: "action_result_tool_call_failed",
+          original_child_status: SessionStatus.get(input.sessionID).type,
+          summary_session_id: session.id,
+          confirmed_by_user: false,
+        },
+      },
+    }
+  }
+
+  async function transcript(sessionID: SessionID) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    const out = msgs
+      .flatMap((msg) => {
+        const head = [`[${msg.info.role}${msg.info.role === "assistant" ? ` finish=${msg.info.finish ?? "unknown"}` : ""}]`]
+        const parts = msg.parts.flatMap((part) => {
+          if (part.type === "text") return [part.text]
+          if (part.type !== "tool") return []
+          if (part.tool !== ActionResult.TOOL) return []
+          if (part.state.status === "completed") return [`ActionResult completed: ${JSON.stringify(part.state.input)}`]
+          if (part.state.status === "error") return [`ActionResult failed: ${part.state.error}`]
+          return [`ActionResult ${part.state.status}`]
+        })
+        return parts.length ? [[...head, ...parts].join("\n")] : []
+      })
+      .join("\n\n")
+      .trim()
+    if (!out) return "No assistant text or ActionResult evidence was recorded."
+    return out.length > 12000 ? out.slice(out.length - 12000) : out
+  }
+
+  function actionfail(input: string) {
+    return /ActionResult|action_result/i.test(input)
   }
 
   function markdown(runID: string, rows: Row[]) {
@@ -953,7 +1084,7 @@ export namespace SessionDelegation {
   ) {
     const worker = await workerrow(item, res.target_action_id)
     if (!worker) return "none" as const
-    if (res.status === "fail" || res.status === "reply") {
+    if (res.status === "failure" || res.status === "reply") {
       const count = await cycle(item, res.target_action_id)
       if (count >= 2) {
         await verified(
@@ -1026,7 +1157,7 @@ export namespace SessionDelegation {
       done.flatMap((entry) => {
         const res = object(entry.action_result)
         if (res.role !== "verifier") return []
-        if (res.status !== "pass" && res.status !== "skipped") return []
+        if (res.status !== "success" && res.status !== "skipped") return []
         return typeof res.action_id === "string" ? [res.action_id] : []
       }),
     )
@@ -1059,7 +1190,7 @@ export namespace SessionDelegation {
           text: [
             `Run verifier action ${gate.id}: ${gate.title}.`,
             "Call ActionResult exactly once when finished.",
-            "Set target_action_id to the worker action id. Use status pass, fail, error, reply, or skipped.",
+            "Set target_action_id to the worker action id. Use status success, failure, error, reply, or skipped.",
             "Keep issues, evidence, and worker_feedback as short strings. Do not use arrays or nested objects.",
             "",
             "## Verifier Prompt",

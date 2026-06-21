@@ -926,6 +926,26 @@ describe("session.message-v2.toModelMessage", () => {
 })
 
 describe("session.message-v2.fromError", () => {
+  test("classifies provider output safety stream errors", () => {
+    const err = MessageV2.fromError("output new_sensitive (1027)", { providerID })
+    expect(MessageV2.APIError.isInstance(err)).toBe(true)
+    if (!MessageV2.APIError.isInstance(err)) throw new Error("expected APIError")
+    expect(err.data.metadata?.code).toBe("ProviderOutputSafety")
+    expect(err.data.metadata?.reason).toBe("output_safety")
+    expect(err.data.metadata?.raw).toBe("output new_sensitive (1027)")
+    expect(err.data.isRetryable).toBe(false)
+    expect(err.data.message).toContain("Provider blocked the model output")
+  })
+
+  test("classifies provider output safety errors wrapped as Error", () => {
+    const err = MessageV2.fromError(new Error("output new_sensitive (1027)"), { providerID })
+    expect(MessageV2.APIError.isInstance(err)).toBe(true)
+    if (!MessageV2.APIError.isInstance(err)) throw new Error("expected APIError")
+    expect(err.data.metadata?.reason).toBe("output_safety")
+  })
+})
+
+describe("session.message-v2.fromError", () => {
   test("serializes context_length_exceeded as ContextOverflowError", () => {
     const input = {
       type: "error",

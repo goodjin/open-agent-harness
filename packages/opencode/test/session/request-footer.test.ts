@@ -41,5 +41,17 @@ describe("RequestFooter", () => {
         },
       }).action_result_example,
     ).toContain('"target_action_id": "impl"')
+    expect(
+      RequestFooter.variables({
+        sessionID: "ses_review",
+        agent: "backend-verifier",
+        mode: "subagent",
+        delegation: {
+          action_id: "impl_review",
+          result_tool: "ActionResult",
+          depends_on: ["impl"],
+        },
+      }).action_result_example,
+    ).toContain('"status": "success"')
   })
 })

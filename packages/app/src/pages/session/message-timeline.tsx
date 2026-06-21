@@ -179,6 +179,11 @@ const dot = (type: string) => {
 
 const label = (type: string) => (type === "user_completed" ? "用户标记完成" : type)
 
+const safe = (input: unknown) => {
+  if (!record(input)) return false
+  return input.type === "error" && input.reason === "output_safety" && input.recoverable === true
+}
+
 type UserActions = {
   fork?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
   revert?: (input: { sessionID: string; messageID: string }) => Promise<void> | void
@@ -261,6 +266,48 @@ function SessionConfirmationCard(props: {
             </Show>
           </div>
         </Show>
+      </div>
+    </div>
+  )
+}
+
+function SessionOutputSafetyCard(props: {
+  sessionID: string
+  messageID: string
+  status: unknown
+  onContinue?: UserActions["continue"]
+}) {
+  const [busy, setBusy] = createSignal(false)
+  const msg = createMemo(() => {
+    if (!record(props.status)) return "Provider blocked model output because it matched an output safety policy."
+    return text(props.status.message) ?? "Provider blocked model output because it matched an output safety policy."
+  })
+  const prompt = [
+    "继续当前会话，不要复述历史上下文。",
+    "上一轮 provider 在输出阶段触发安全拦截。",
+    "请用更短、更直接的表述继续未完成工作；如果需要协议输出，只输出下一步必要的 Agent Protocol package。",
+  ].join("\n")
+  const cont = async () => {
+    if (!props.onContinue || busy()) return
+    setBusy(true)
+    try {
+      await props.onContinue({ sessionID: props.sessionID, messageID: props.messageID, text: prompt })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div class="px-6 md:px-8 pt-4">
+      <div class="rounded-md border border-icon-warning-base/40 bg-background-base p-3">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div class="min-w-0">
+            <div class="text-12-medium text-text-strong">输出被供应商安全策略拦截</div>
+            <div class="mt-1 text-12-regular text-text-weak">{msg()}</div>
+          </div>
+          <Button variant="secondary" size="small" class="h-7 px-2 shrink-0" disabled={busy()} onClick={cont}>
+            继续进行
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -1559,6 +1606,16 @@ export function MessageTimeline(props: {
                           container: "w-full px-6 md:px-8",
                         }}
                       />
+                      <Show when={active() && safe(sessionStatus()) && sessionID()}>
+                        {(id) => (
+                          <SessionOutputSafetyCard
+                            sessionID={id()}
+                            messageID={messageID}
+                            status={sessionStatus()}
+                            onContinue={props.actions?.continue}
+                          />
+                        )}
+                      </Show>
                       <Show when={props.filter === "all"}>
                         <For each={confirms()}>
                           {(item) => (

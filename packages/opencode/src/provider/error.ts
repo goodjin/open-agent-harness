@@ -109,14 +109,45 @@ export namespace ProviderError {
         message: string
         isRetryable: false
         responseBody: string
+        metadata?: Record<string, string>
       }
 
   export function parseStreamError(input: unknown): ParsedStreamError | undefined {
+    if (typeof input === "string" && /output\s+new_sensitive\s*\(\d+\)/i.test(input)) {
+      return {
+        type: "api_error",
+        message:
+          "Provider blocked the model output because it matched an output safety policy. Continue with a shorter, more direct instruction or switch models.",
+        isRetryable: false,
+        responseBody: input,
+        metadata: {
+          code: "ProviderOutputSafety",
+          reason: "output_safety",
+          raw: input,
+        },
+      }
+    }
+
     const body = json(input)
     if (!body) return
 
     const responseBody = JSON.stringify(body)
     if (body.type !== "error") return
+    const msg = typeof body?.error?.message === "string" ? body.error.message : undefined
+    if (msg && /output\s+new_sensitive\s*\(\d+\)/i.test(msg)) {
+      return {
+        type: "api_error",
+        message:
+          "Provider blocked the model output because it matched an output safety policy. Continue with a shorter, more direct instruction or switch models.",
+        isRetryable: false,
+        responseBody,
+        metadata: {
+          code: "ProviderOutputSafety",
+          reason: "output_safety",
+          raw: msg,
+        },
+      }
+    }
 
     switch (body?.error?.code) {
       case "context_length_exceeded":

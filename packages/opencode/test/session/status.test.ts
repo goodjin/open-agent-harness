@@ -649,6 +649,14 @@ describe("session state machine", () => {
     expect(SessionStatus.shouldContinue({ type: "blocked", message: "needs input" })).toBe(false)
     expect(SessionStatus.shouldContinue({ type: "interrupted", prior: "running" })).toBe(false)
     expect(SessionStatus.shouldContinue({ type: "error", message: "quota exceeded" })).toBe(false)
+    expect(
+      SessionStatus.shouldContinue({
+        type: "error",
+        message: "Provider blocked the model output",
+        reason: "output_safety",
+        recoverable: true,
+      }),
+    ).toBe(false)
     expect(SessionStatus.shouldContinue({ type: "waiting_permission" })).toBe(false)
   })
 
@@ -663,6 +671,28 @@ describe("session state machine", () => {
         expect(status.type).toBe("error")
         if (status.type === "error") {
           expect(status.message).toBe("context overflow")
+        }
+      },
+    })
+  })
+
+  test("error state preserves recoverable output safety classification", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-id" as SessionID
+        SessionStatus.set(sessionID, {
+          type: "error",
+          message: "Provider blocked the model output",
+          reason: "output_safety",
+          recoverable: true,
+        })
+
+        const status = SessionStatus.get(sessionID)
+        expect(status.type).toBe("error")
+        if (status.type === "error") {
+          expect(status.reason).toBe("output_safety")
+          expect(status.recoverable).toBe(true)
         }
       },
     })
