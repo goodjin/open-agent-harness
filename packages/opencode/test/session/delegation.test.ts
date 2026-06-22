@@ -1238,7 +1238,10 @@ describe("SessionDelegation", () => {
         messageID: msg.id,
         sessionID: input.sessionID,
         type: "text",
-        text: input.agent === "summary" ? "Summary recovered attempted edits and recommends retry." : "parent resumed",
+        text:
+          input.agent === "summary"
+            ? "Task result: created docs/audit.md. Verification: wc -l passed. Remaining risk: review pending."
+            : "parent resumed",
         time: { start: Date.now(), end: Date.now() },
       } as MessageV2.TextPart)
       return { info: msg, parts: [part] } as MessageV2.WithParts
@@ -1283,6 +1286,14 @@ describe("SessionDelegation", () => {
                 tools: {},
                 mode: "",
               } as MessageV2.User)) as MessageV2.User
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: user.id,
+                sessionID: child.id,
+                type: "text",
+                text: "Please create docs/audit.md and verify its line count.",
+                time: { start: Date.now(), end: Date.now() },
+              } as MessageV2.TextPart)
               const msg = (await Session.updateMessage({
                 id: MessageID.ascending(),
                 sessionID: child.id,
@@ -1302,6 +1313,14 @@ describe("SessionDelegation", () => {
                 id: PartID.ascending(),
                 messageID: msg.id,
                 sessionID: child.id,
+                type: "text",
+                text: "Created docs/audit.md and verified it with wc -l.",
+                time: { start: Date.now(), end: Date.now() },
+              } as MessageV2.TextPart)
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID: child.id,
                 type: "tool",
                 tool: "ActionResult",
                 callID: "call_failed",
@@ -1317,7 +1336,7 @@ describe("SessionDelegation", () => {
                 action: {} as never,
                 agent: "backend",
                 childID: child.id,
-                error: new Error("Stopped after 4 consecutive failed ActionResult calls."),
+                error: new Error("ConflictError"),
                 messageID: item.parent_message_id,
                 parentAgent: "feature-planner",
                 parentID: parent.id,
@@ -1331,12 +1350,17 @@ describe("SessionDelegation", () => {
               expect(ok).toBe(true)
               expect(summary?.sessionID).not.toBe(child.id)
               expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Child Transcript"))).toBe(true)
+              expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Failure Reason"))).toBe(false)
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.status).toBe("failed")
-              expect(pctx.completed_delegations?.[0]?.summary).toContain("Automatic fallback summary")
-              expect(pctx.completed_delegations?.[0]?.summary).toContain("Summary recovered attempted edits")
-              expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("fallback_summary")
-              expect(JSON.stringify(pctx.completed_delegations?.[0]?.metadata)).toContain("confirmed_by_user")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("Task result: created docs/audit.md")
+              expect(pctx.completed_delegations?.[0]?.summary).not.toContain("ActionResult")
+              expect(pctx.completed_delegations?.[0]?.summary).not.toContain("ConflictError")
+              const meta = JSON.stringify(pctx.completed_delegations?.[0]?.metadata)
+              expect(meta).toContain("fallback_summary")
+              expect(meta).toContain("confirmed_by_user")
+              expect(meta).toContain("ActionResult input schema/parse failed")
+              expect(meta).toContain("ConflictError")
             },
           }),
       })

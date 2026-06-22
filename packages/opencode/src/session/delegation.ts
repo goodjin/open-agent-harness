@@ -71,6 +71,12 @@ export namespace SessionDelegation {
     result_metadata?: ReturnType<typeof AgentDelegation.complete>
     summary?: string
   }
+  type Diag = {
+    raw: string
+    status: string
+    message: string
+    action?: string
+  }
 
   export function init() {
     const ctx = state()
@@ -187,12 +193,13 @@ export namespace SessionDelegation {
     const raw = input.error instanceof Error ? input.error.message : String(input.error)
     const session = await Session.get(input.childID).catch(() => undefined)
     const item = session ? assignment(session) : undefined
+    const diag = item?.result_tool === ActionResult.TOOL ? await diagnose(input.childID, raw) : undefined
     const sum =
-      item && actionfail(raw)
+      item && diag && actionfail(diag.message)
         ? await summarize({
             agent: input.agent,
+            diag,
             item,
-            reason: raw,
             sessionID: input.childID,
             status: "failed",
           }).catch((err) => {
@@ -200,11 +207,12 @@ export namespace SessionDelegation {
             return undefined
           })
         : undefined
-    const output = sum?.output ?? raw
+    const output = sum?.output ?? (item && diag ? taskout(item) : raw)
+    const done = sum?.metadata ?? (await meta(input.agent, "failed", output))
     return complete({
       sessionID: input.childID,
       messageID: input.messageID,
-      metadata: sum?.metadata ?? (await meta(input.agent, "failed", output)),
+      metadata: sum?.metadata ?? (diag ? diagnostic(done, diag) : done),
       status: "failed",
       output,
     })
@@ -883,8 +891,8 @@ export namespace SessionDelegation {
         entry.item.result_tool === ActionResult.TOOL && actionfail(out)
           ? await summarize({
               agent: text(entry.item.agent) ?? "default",
+              diag: await diagnose(entry.id, out),
               item: entry.item,
-              reason: out,
               sessionID: entry.id,
               status: fallback(status),
             }).catch((err) => {
@@ -927,8 +935,8 @@ export namespace SessionDelegation {
 
   async function summarize(input: {
     agent: string
+    diag?: Diag
     item: Item
-    reason: string
     sessionID: SessionID
     status: Status
   }) {
@@ -954,10 +962,13 @@ export namespace SessionDelegation {
         {
           type: "text",
           text: [
-            "Summarize this failed delegated child session for its parent handoff.",
-            "Return plain Markdown text only. Do not call tools. Do not claim the delegated task succeeded.",
-            "Include what was attempted, useful evidence, the failure reason, and the safest next step.",
-            "If the transcript does not support a claim, say that evidence is unavailable.",
+            "Summarize this delegated child session for its parent handoff.",
+            "Return plain Markdown text only. Do not call tools.",
+            "Produce a concise task-result summary only.",
+            "Include the original delegated requirement, final result and produced artifacts, verification evidence or confidence level, important findings for continuation, and remaining blockers, risks, or next steps.",
+            "Do not include execution process details.",
+            "Do not include protocol, tool-call, ActionResult, or handoff failure details.",
+            "If evidence is missing, say what result can be inferred from the transcript and what remains unverified.",
             "",
             "## Assignment",
             `- Action: ${input.item.action_id}`,
@@ -966,23 +977,15 @@ export namespace SessionDelegation {
             `- Child session: ${input.sessionID}`,
             `- Runtime status: ${input.status}`,
             "",
-            "## Failure Reason",
-            input.reason,
-            "",
             "## Child Transcript",
             await transcript(input.sessionID),
           ].join("\n"),
         },
       ],
     })
-    const output = [
-      "[Automatic fallback summary]",
-      "The delegated child failed to submit native ActionResult after repeated tool-call errors.",
-      "This plain-text summary was generated in an independent read-only summary session and is not a successful ActionResult.",
-      "",
+    const output =
       text(msg.parts.findLast((part) => part.type === "text")?.text)?.trim() ??
-        "No recoverable child-session summary was produced.",
-    ].join("\n")
+      "No task-result summary could be recovered from the child transcript."
     return {
       status: input.status,
       output,
@@ -995,6 +998,7 @@ export namespace SessionDelegation {
           original_child_status: SessionStatus.get(input.sessionID).type,
           summary_session_id: session.id,
           confirmed_by_user: false,
+          diagnostic: input.diag,
         },
       },
     }
@@ -1007,11 +1011,7 @@ export namespace SessionDelegation {
         const head = [`[${msg.info.role}${msg.info.role === "assistant" ? ` finish=${msg.info.finish ?? "unknown"}` : ""}]`]
         const parts = msg.parts.flatMap((part) => {
           if (part.type === "text") return [part.text]
-          if (part.type !== "tool") return []
-          if (part.tool !== ActionResult.TOOL) return []
-          if (part.state.status === "completed") return [`ActionResult completed: ${JSON.stringify(part.state.input)}`]
-          if (part.state.status === "error") return [`ActionResult failed: ${part.state.error}`]
-          return [`ActionResult ${part.state.status}`]
+          return []
         })
         return parts.length ? [[...head, ...parts].join("\n")] : []
       })
@@ -1023,6 +1023,55 @@ export namespace SessionDelegation {
 
   function actionfail(input: string) {
     return /ActionResult|action_result/i.test(input)
+  }
+
+  async function diagnose(sessionID: SessionID, raw: string): Promise<Diag> {
+    const status = SessionStatus.get(sessionID)
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch((err: unknown) => {
+      if (err instanceof NotFoundError) return []
+      throw err
+    })
+    const part = msgs
+      .flatMap((msg) => msg.parts)
+      .filter((part): part is MessageV2.ToolPart => part.type === "tool" && part.tool === ActionResult.TOOL)
+      .findLast((part) => part.state.status === "error")
+    const action = part?.state.status === "error" ? part.state.error : undefined
+    return {
+      raw,
+      status: status.type,
+      action,
+      message: [
+        "ActionResult handoff failed.",
+        "message" in status && typeof status.message === "string" ? status.message : undefined,
+        action,
+        raw && raw !== action ? `Wrapper error: ${raw}` : undefined,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join("\n"),
+    }
+  }
+
+  function diagnostic(done: ReturnType<typeof AgentDelegation.complete>, diag: Diag) {
+    return {
+      ...done,
+      source: "fallback_summary",
+      fallback: {
+        source: "fallback_summary",
+        reason: "action_result_tool_call_failed",
+        original_child_status: diag.status,
+        confirmed_by_user: false,
+        diagnostic: diag,
+      },
+    }
+  }
+
+  function taskout(item: Item) {
+    return [
+      "## Task Result",
+      `Original task: ${item.action_title}`,
+      "Result: unavailable from the child transcript.",
+      "Next step: inspect the child session artifacts and transcript before continuing.",
+    ].join("\n")
   }
 
   function markdown(runID: string, rows: Row[]) {
