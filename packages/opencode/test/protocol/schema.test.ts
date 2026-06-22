@@ -538,6 +538,20 @@ describe("agent protocol schema", () => {
     expect(success.message).toContain("Worker completed.")
     expect(success.message).toContain("Changed files: src/a.ts")
 
+    const text = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "done",
+          kind: "success",
+          message: "Worker completed.",
+          changed_files: "src/a.ts; src/b.ts\nsrc/c.ts",
+        },
+      ],
+    })
+    expect(text.intent).toBe("stop")
+    expect(text.message).toContain("Changed files: src/a.ts, src/b.ts, src/c.ts")
+
     const reply = AgentProtocol.parse({
       version: "2",
       items: [{ id: "reply", kind: "reply", message: "Need more context." }],

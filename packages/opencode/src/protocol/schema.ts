@@ -2,6 +2,13 @@ import z from "zod"
 
 export namespace AgentProtocol {
   const Text = z.string().trim().min(1)
+  const Texts = z.preprocess((input) => {
+    if (typeof input !== "string") return input
+    return input
+      .split(/[\n,;]+/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0)
+  }, z.array(Text).default([]))
   const Ref = Text
   const JsonRecord = z.record(z.string(), z.unknown())
   export const VerificationRole = z.enum(["test", "review"])
@@ -220,7 +227,7 @@ export namespace AgentProtocol {
     answer: z.string().optional(),
     text: z.string().optional(),
     summary: z.string().optional(),
-    changed_files: z.array(Text).default([]),
+    changed_files: Texts,
     depends: V2Depends,
   }
   const V2Success = z.object({ ...ResultFields, kind: z.literal("success") })
@@ -291,19 +298,19 @@ export namespace AgentProtocol {
     kind: z.literal("success"),
     message: z.string().default(""),
     summary: z.string().optional(),
-    changed_files: z.array(Text).default([]),
+    changed_files: Texts,
   })
   const FlatFailure = z.object({
     kind: z.literal("failure"),
     message: z.string().default(""),
     summary: z.string().optional(),
-    changed_files: z.array(Text).default([]),
+    changed_files: Texts,
   })
   const FlatError = z.object({
     kind: z.literal("error"),
     message: z.string().default(""),
     summary: z.string().optional(),
-    changed_files: z.array(Text).default([]),
+    changed_files: Texts,
   })
   const FlatReply = z.object({
     kind: z.literal("reply"),
@@ -311,7 +318,7 @@ export namespace AgentProtocol {
     answer: z.string().optional(),
     text: z.string().optional(),
     summary: z.string().optional(),
-    changed_files: z.array(Text).default([]),
+    changed_files: Texts,
   })
 
   export const Structured = z.discriminatedUnion("kind", [
@@ -357,7 +364,13 @@ export namespace AgentProtocol {
             plan: { type: "string", minLength: 1 },
             message: { type: "string", minLength: 1 },
             summary: { type: "string" },
-            changed_files: { type: "array", items: { type: "string", minLength: 1 }, default: [] },
+            changed_files: {
+              anyOf: [
+                { type: "array", items: { type: "string", minLength: 1 } },
+                { type: "string" },
+              ],
+              default: [],
+            },
             verification: {
               type: "object",
               properties: {
