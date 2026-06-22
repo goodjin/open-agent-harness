@@ -626,10 +626,7 @@ export namespace LLM {
     const data = object(item.input)
     const kind = typeof data.kind === "string" ? data.kind : "unknown"
     if (kind === "act") {
-      return `Protocol output: ${JSON.stringify({
-        kind,
-        calls: Array.isArray(data.calls) ? data.calls : [],
-      })}`
+      return "Protocol output: legacy act/calls shape omitted; use the current { version: \"2\", items } shape."
     }
     return `Protocol output: kind=${kind} (message omitted; already shown to user).`
   }

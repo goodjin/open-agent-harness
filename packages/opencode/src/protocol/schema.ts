@@ -415,102 +415,8 @@ export namespace AgentProtocol {
           ],
         },
       },
-      kind: {
-        type: "string",
-        enum: ["act", "answer", "done", "success", "failure", "error", "reply"],
-      },
-      message: {
-        type: "string",
-        default: "",
-      },
-      calls: {
-        type: "array",
-        minItems: 1,
-        items: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              minLength: 1,
-            },
-            type: {
-              type: "string",
-              enum: ["tool", "agent"],
-            },
-            title: {
-              type: "string",
-              minLength: 1,
-            },
-            name: {
-              type: "string",
-              minLength: 1,
-            },
-            args: {
-              type: "object",
-              additionalProperties: true,
-              default: {},
-            },
-            depends: {
-              type: "array",
-              items: {
-                type: "string",
-                minLength: 1,
-              },
-              default: [],
-            },
-            result: {
-              type: "string",
-              enum: ["summary", "structured", "full", "on_failure", "on_demand", "adaptive"],
-              default: "summary",
-            },
-          },
-          required: ["id", "type", "name"],
-          additionalProperties: false,
-        },
-      },
     },
-    required: [],
-    allOf: [
-      {
-        if: {
-          required: ["items"],
-        },
-        then: {
-          required: ["version", "items"],
-          not: {
-            required: ["kind"],
-          },
-        },
-      },
-      {
-        if: {
-          properties: {
-            kind: {
-              const: "act",
-            },
-          },
-          required: ["kind"],
-        },
-        then: {
-          required: ["calls"],
-        },
-      },
-      {
-        if: {
-          properties: {
-            kind: {
-              enum: ["answer", "done", "success", "failure", "error", "reply"],
-            },
-          },
-          required: ["kind"],
-        },
-        then: {
-          not: {
-            required: ["calls"],
-          },
-        },
-      },
-    ],
+    required: ["version", "items"],
     additionalProperties: false,
   } as const
 
@@ -628,7 +534,8 @@ export namespace AgentProtocol {
       clean &&
       typeof clean === "object" &&
       !Array.isArray(clean) &&
-      (clean as { version?: unknown }).version === "2"
+      (clean as { version?: unknown }).version === "2" &&
+      "items" in clean
     ) {
       V2.parse(clean)
     }
@@ -770,10 +677,10 @@ export namespace AgentProtocol {
             title: item.title ?? item.id,
             operation: operation(item),
             executor: { type: type(item), target: target(item), capabilities: capabilities(item) },
-            input: item.args,
-            depends_on: deps(item.depends && item.depends.length > 0 ? item.depends : after(item)),
+            input: data(item),
+            depends_on: edges(item),
             context_refs: [],
-            result_policy: item.result,
+            result_policy: result(item),
           })),
         },
       }
@@ -987,5 +894,34 @@ export namespace AgentProtocol {
 
   function after(input: z.infer<typeof LegacyCall> | z.infer<typeof FlatCall>) {
     return "after" in input ? input.after : undefined
+  }
+
+  function edges(input: z.infer<typeof LegacyCall> | z.infer<typeof FlatCall>) {
+    const own = deps(input.depends)
+    if (own.length > 0) return own
+    const raw = input.args.depends
+    if (typeof raw === "string") return deps(raw)
+    if (Array.isArray(raw)) {
+      return raw
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim())
+    }
+    return deps(after(input))
+  }
+
+  function result(input: z.infer<typeof LegacyCall> | z.infer<typeof FlatCall>) {
+    const raw = input.args.result
+    if (typeof raw === "string") {
+      const parsed = Policy.safeParse(raw)
+      if (parsed.success) return parsed.data
+    }
+    return input.result
+  }
+
+  function data(input: z.infer<typeof LegacyCall> | z.infer<typeof FlatCall>) {
+    if (type(input) === "agent" && typeof input.args.prompt !== "string") {
+      return { ...input.args, prompt: input.title ?? name(input) }
+    }
+    return input.args
   }
 }

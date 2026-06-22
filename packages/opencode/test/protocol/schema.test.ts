@@ -222,13 +222,16 @@ describe("agent protocol schema", () => {
     })
   })
 
-  test("public v2 output schema exposes input but not deprecated ask or wait", () => {
+  test("public v2 output schema exposes current items shape only", () => {
     const item = AgentProtocol.OutputSchema.properties.items.items.properties.kind
     expect(item.enum).toContain("input")
     expect(item.enum).not.toContain("ask")
     expect(item.enum).not.toContain("wait")
     const mode = AgentProtocol.OutputSchema.properties.items.items.properties.mode
     expect(mode.enum).not.toContain("confirm")
+    expect("kind" in AgentProtocol.OutputSchema.properties).toBe(false)
+    expect("calls" in AgentProtocol.OutputSchema.properties).toBe(false)
+    expect(AgentProtocol.OutputSchema.required).toEqual(["version", "items"])
   })
 
   test("accepts v2 confirm item and maps it to a human confirmation action", () => {
@@ -574,6 +577,42 @@ describe("agent protocol schema", () => {
       ["find", "glob", []],
       ["read", "read", ["find"]],
     ])
+  })
+
+  test("keeps versioned legacy act calls parseable without exposing them publicly", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      kind: "act",
+      calls: [
+        {
+          id: "write_doc",
+          type: "agent",
+          title: "Write docs",
+          name: "docs-maintainer",
+          args: {
+            depends: ["inspect"],
+            result: "structured",
+          },
+        },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "write_doc",
+      title: "Write docs",
+      operation: "agent",
+      executor: { type: "agent", target: "docs-maintainer", capabilities: [] },
+      input: {
+        depends: ["inspect"],
+        result: "structured",
+        prompt: "Write docs",
+      },
+      depends_on: ["inspect"],
+      result_policy: "structured",
+    })
   })
 
   test("accepts a minimal v1 action graph declaration", () => {
