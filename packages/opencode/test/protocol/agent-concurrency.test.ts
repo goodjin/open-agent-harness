@@ -18,13 +18,16 @@ describe("AgentConcurrency", () => {
       concurrency: input.concurrency,
     }) as Agent.Info
 
-  test("defaults ordinary planners to one concurrent task", () => {
+  test("defaults milestone planner to one concurrent task", () => {
     expect(AgentConcurrency.limit({ agent: "milestone-planner", kind: "planner" })).toBe(1)
-    expect(AgentConcurrency.limit({ agent: "epic-planner", kind: "planner" })).toBe(1)
   })
 
-  test("defaults feature planner to two concurrent tasks", () => {
-    expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner" })).toBe(2)
+  test("defaults epic planner to two concurrent tasks", () => {
+    expect(AgentConcurrency.limit({ agent: "epic-planner", kind: "planner" })).toBe(2)
+  })
+
+  test("defaults feature planner to five concurrent tasks", () => {
+    expect(AgentConcurrency.limit({ agent: "feature-planner", kind: "planner" })).toBe(5)
   })
 
   test("does not limit workers by default", () => {

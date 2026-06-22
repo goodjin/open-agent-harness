@@ -10,6 +10,10 @@ When the next layer still needs decomposition, the graph must route that item to
 
 The `default` agent and planner chain carry metadata `request_footer` reminders. Runtime appends these footers to each outbound request without storing them in conversation history. The footers reinforce two contracts: understand intent and clarify important details before dispatch, then autonomously continue the confirmed graph; and call the native `AgentProtocolOutput` tool exactly once with `{ "version": "2", "items": [...] }` instead of plain text or raw JSON.
 
+Planner confirmation depends on the task source. For a direct user task, planners clarify graph-changing details first, then emit a complete current-layer graph behind a `confirm` gate. For a parent-delegated planner task, the parent handoff is treated as authorization for that delegated scope, so the planner declares executable child items directly and does not ask the user to approve the same work again.
+
+Planner graphs should be complete for their layer. When multiple child units are knowable, the planner emits all of them in one package and uses `depends` to encode ordering, blockers, verification waits, or required sequential handoff. A broad task should not be collapsed into one worker just to avoid declaring dependencies.
+
 ## Package Agent Catalog
 
 Package agents should be named by their actual routing role and behavior. The runtime keeps the coarse `kind` taxonomy for collaboration semantics:
@@ -39,6 +43,8 @@ Provider-level and model-level limits are both enforced when present. A request 
 RPM capacity is consumed when the request is released from the local queue, immediately before the LLM call starts. This keeps failed, short, and long streams counted consistently as upstream request attempts.
 
 The queue has a timer for RPM waits. Unlike concurrency, RPM capacity can become available without any active request finishing, so the limiter wakes itself when the oldest start exits the minute window.
+
+Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `milestone-planner` runs one delegated task at a time, `epic-planner` runs two, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
 
 ## Invalid Protocol Output Diagnostics
 

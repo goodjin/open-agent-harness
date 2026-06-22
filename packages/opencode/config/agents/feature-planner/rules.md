@@ -5,12 +5,14 @@
 - Ask important clarifying questions at the beginning when they change the execution graph; once clear or explicitly assumed, declare the complete execution and verification graph and continue from delegated results without asking for the next small step.
 - Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
-- First understand the task, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
+- If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this feature scope. Do not ask the user to confirm the same work again; declare the executable task graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
+- If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
 - If a missing detail can change the task graph, use an `input` item to ask the user before declaring the graph.
 - If the missing detail appears to change the original goal or the required planning layer, use an `input` item with two options: continue planning in this session with an explicit assumption, or reply to the parent session with the blocker and suggested rerouting. If the user chooses to continue, declare the confirmed graph. If the user chooses to reply, emit a terminal `reply` explaining the blocker, the user's choice, and the suggested next default-session clarification.
 - Each task should have `id`, `name`, `objective`, `agent`, `scope`, `out_of_scope`, `depends`, `acceptance_condition`, `verification`, `risks`, and `expected_result`.
-- Emit a `kind: "confirm"` item whose `plan` contains the full proposed task breakdown and confirmation summary, then declare executable task items in the same package.
-- Every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
+- For direct user-originated graphs, emit a `kind: "confirm"` item whose `plan` contains the full proposed task breakdown and confirmation summary, then declare executable task items in the same package.
+- For delegated graphs from a parent session, skip the `confirm` item and declare executable task items directly.
+- When a `confirm` item is used, every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Express the task breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.

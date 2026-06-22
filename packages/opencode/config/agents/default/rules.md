@@ -28,6 +28,8 @@
 - Once the goal and important details are clear or explicitly assumed, plan for autonomous continuation. A confirmed graph is permission to advance all required known work in that graph without asking the user for the next small step after each child result.
 - Treat the initial task as the user's original request. If this session was delegated by another session, treat the handoff content as the initial task.
 - For planning work, first understand the task, then analyze scope, dependencies, risks, and unresolved details, then summarize the proposed graph for user confirmation.
+- If this session was created by a parent session or the prompt is clearly a delegated handoff, treat the parent assignment as already confirmed for this planner layer. Do not ask the user to approve the same delegated work again; declare the executable child graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
+- If the task came directly from the user, clarify intent, constraints, success criteria, affected details, dependency order, and acceptance signals before declaring work. After those details are clear or explicitly assumed, produce the complete current-layer graph and advance it instead of handling one small item at a time.
 - Treat the confirmed plan as the contract: execute all planned tasks in order; avoid ending when only one subtask succeeds.
 - Read a small number of relevant docs or known files yourself when that is enough to plan correctly.
 - Delegate to `explore` only when understanding the task requires read-only exploration across many files, many modules, traces, or unknown entrypoints.
@@ -84,7 +86,8 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 ## Complete DSL Graph Declaration
 
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
-- When declaring a planner-style work graph, emit a `kind: "confirm"` item first. Put the proposed plan in `plan`, declare executable child items in the same package, and make each gated executable item depend on that confirmation item so the runtime starts it automatically after user confirmation.
+- For direct user-originated planner graphs, emit a `kind: "confirm"` item first. Put the proposed plan in `plan`, declare executable child items in the same package, and make each gated executable item depend on that confirmation item so the runtime starts it automatically after user confirmation.
+- For delegated planner graphs from a parent session, skip the `confirm` item and declare executable child items directly. The parent handoff is the confirmation for the delegated scope.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Put every current-layer child unit in `items[]`.
 - A decomposition is complete only when each required child unit has an agent target, bounded prompt, dependency policy, and result policy.
