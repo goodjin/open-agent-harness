@@ -1,8 +1,9 @@
-import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
+import { For, Show, createMemo, createSignal, onCleanup, type Component } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Button } from "@open-agent-harness/ui/button"
 import { DockPrompt } from "@open-agent-harness/ui/dock-prompt"
 import { Icon } from "@open-agent-harness/ui/icon"
+import { Markdown } from "@open-agent-harness/ui/markdown"
 import { showToast } from "@open-agent-harness/ui/toast"
 import type { QuestionAnswer, QuestionRequest } from "@open-agent-harness/sdk/v2"
 import { useLanguage } from "@/context/language"
@@ -23,7 +24,7 @@ type DescriptionView = { text: string; hidden: number }
 export function limitDescription(text: string, limit: number = OPTION_DESCRIPTION_LIMIT): DescriptionView {
   if (!text) return { text: "", hidden: 0 }
   if (text.length <= limit) return { text, hidden: 0 }
-  return { text: text.slice(0, limit), hidden: text.length - limit }
+  return { text, hidden: text.length - limit }
 }
 
 export function answersWithNotes(answers: QuestionAnswer, notes: Notes): QuestionAnswer {
@@ -77,7 +78,6 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     sending: false,
   })
 
-  let root: HTMLDivElement | undefined
   let replied = false
 
   const question = createMemo(() => questions()[store.tab])
@@ -117,50 +117,6 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
 
     setStore("answers", store.tab, next ? [next] : [])
   }
-
-  const measure = () => {
-    if (!root) return
-
-    const scroller = document.querySelector(".scroll-view__viewport")
-    const head = scroller instanceof HTMLElement ? scroller.firstElementChild : undefined
-    const top =
-      head instanceof HTMLElement && head.classList.contains("sticky") ? head.getBoundingClientRect().bottom : 0
-    if (!top) {
-      root.style.removeProperty("--question-prompt-max-height")
-      return
-    }
-
-    const gap = 8
-    const bottom = scroller instanceof HTMLElement ? scroller.getBoundingClientRect().bottom : window.innerHeight
-    const max = Math.max(240, Math.floor(bottom - top - gap))
-    root.style.setProperty("--question-prompt-max-height", `${max}px`)
-  }
-
-  onMount(() => {
-    let raf: number | undefined
-    const update = () => {
-      if (raf !== undefined) cancelAnimationFrame(raf)
-      raf = requestAnimationFrame(() => {
-        raf = undefined
-        measure()
-      })
-    }
-
-    update()
-    window.addEventListener("resize", update)
-
-    const dock = root?.closest('[data-component="session-request-card"], [data-component="session-prompt-dock"]')
-    const scroller = document.querySelector(".scroll-view__viewport")
-    const observer = new ResizeObserver(update)
-    if (dock instanceof HTMLElement) observer.observe(dock)
-    if (scroller instanceof HTMLElement) observer.observe(scroller)
-
-    onCleanup(() => {
-      window.removeEventListener("resize", update)
-      observer.disconnect()
-      if (raf !== undefined) cancelAnimationFrame(raf)
-    })
-  })
 
   onCleanup(() => {
     if (replied) return
@@ -326,7 +282,6 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   return (
     <DockPrompt
       kind="question"
-      ref={(el) => (root = el)}
       header={
         <>
           <div data-slot="question-header-title">{summary()}</div>
@@ -368,7 +323,9 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         </>
       }
     >
-      <div data-slot="question-text">{question()?.question}</div>
+      <div data-slot="question-text">
+        <Markdown text={question()?.question ?? ""} />
+      </div>
       <Show when={!confirming()}>
         <Show when={multi()} fallback={<div data-slot="question-hint">{language.t("ui.question.singleHint")}</div>}>
           <div data-slot="question-hint">{language.t("ui.question.multiHint")}</div>
@@ -381,9 +338,6 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
               const picked = () => store.answers[store.tab]?.includes(opt.label) ?? false
               const [descriptionOpen, setDescriptionOpen] = createSignal(false)
               const descriptionView = createMemo(() => limitDescription(opt.description ?? ""))
-              const descriptionText = createMemo(() =>
-                descriptionOpen() ? (opt.description ?? "") : descriptionView().text,
-              )
               const descriptionCanExpand = createMemo(() => descriptionView().hidden > 0)
               const toggleDescription = (e: MouseEvent) => {
                 e.preventDefault()
@@ -418,7 +372,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
                           data-slot="option-description"
                           data-truncated={descriptionView().hidden > 0 && !descriptionOpen()}
                         >
-                          {descriptionText()}
+                          <Markdown text={descriptionView().text} />
                         </span>
                       </Show>
                     </span>

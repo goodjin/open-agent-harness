@@ -47,6 +47,7 @@ import {
   confirmationKey,
   protocolConfirmationRequest,
   questionConfirmationKey,
+  timelineQuestionVisible,
   visibleConfirmations,
 } from "@/pages/session/session-confirmation-match"
 import { delegationProgress, pendingDelegation, turn, type DelegationItem } from "@/pages/session/session-delegations"
@@ -1523,11 +1524,9 @@ export function MessageTimeline(props: {
                   const all = createMemo(() => confirmations(info()?.dsl_context, messageID, sessionMessages()))
                   const questionKey = createMemo(() => questionConfirmationKey(question()))
                   const confirms = createMemo(() => visibleConfirmations(all(), questionKey()))
-                  const questionConfirm = createMemo(() => {
-                    const key = questionKey()
-                    if (!key) return false
-                    return confirms().some((item) => item.status === "pending" && confirmationKey(item) === key)
-                  })
+                  const timelineConfirms = createMemo(() =>
+                    confirms().filter((item) => timelineQuestionVisible({ active: active(), request: question(), confirm: item })),
+                  )
                   const confirmRequest = (item: ConfirmRecord) => {
                     if (item.status !== "pending") return
                     if (confirmationKey(item) === questionKey()) return question()
@@ -1617,7 +1616,7 @@ export function MessageTimeline(props: {
                         )}
                       </Show>
                       <Show when={props.filter === "all"}>
-                        <For each={confirms()}>
+                        <For each={timelineConfirms()}>
                           {(item) => (
                             <SessionConfirmationCard
                               item={item}
@@ -1627,7 +1626,14 @@ export function MessageTimeline(props: {
                           )}
                         </For>
                       </Show>
-                      <Show when={props.filter === "all" && active() && !questionConfirm() ? question() : undefined} keyed>
+                      <Show
+                        when={
+                          props.filter === "all" && timelineQuestionVisible({ active: active(), request: question() })
+                            ? question()
+                            : undefined
+                        }
+                        keyed
+                      >
                         {(request) => {
                           const submit = props.request!.submit
                           return (

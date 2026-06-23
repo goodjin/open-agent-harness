@@ -18,6 +18,19 @@ export const questionConfirmationKey = (input: Pick<QuestionRequest, "tool"> | u
   return `${input.tool.messageID}:${input.tool.callID}`
 }
 
+export const timelineQuestionVisible = (input: {
+  active: boolean
+  request: Pick<QuestionRequest, "id" | "tool"> | undefined
+  confirm?: Confirm
+}) => {
+  if (!input.request) return true
+  if (!input.active) return true
+  if (!input.confirm) return false
+  const key = questionConfirmationKey(input.request)
+  if (!key) return true
+  return confirmationKey(input.confirm) !== key
+}
+
 const time = (input: Confirm) => input.updated_at ?? 0
 
 export const visibleConfirmations = <T extends Confirm>(input: T[], request?: string) => {

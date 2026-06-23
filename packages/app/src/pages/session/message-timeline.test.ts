@@ -4,6 +4,7 @@ import {
   confirmationKey,
   protocolConfirmationRequest,
   questionConfirmationKey,
+  timelineQuestionVisible,
   visibleConfirmations,
 } from "./session-confirmation-match"
 
@@ -62,5 +63,31 @@ describe("confirmation request matching", () => {
     expect(req?.tool).toEqual({ messageID: "msg_1", callID: "call_confirm_bridge_plan" })
     expect(req?.questions[0]?.question).toContain("Do the work.")
     expect(questionConfirmationKey(req)).toBe("msg_1:call_confirm_bridge_plan")
+  })
+
+  test("hides active pending questions from the timeline surface", () => {
+    expect(timelineQuestionVisible({ active: true, request: { id: "q_1" } as QuestionRequest })).toBe(false)
+    expect(timelineQuestionVisible({ active: false, request: { id: "q_1" } as QuestionRequest })).toBe(true)
+  })
+
+  test("hides timeline confirmations that share the active question key", () => {
+    const req = {
+      tool: { messageID: "msg_1", callID: "call_confirm_plan" },
+    } as QuestionRequest
+
+    expect(
+      timelineQuestionVisible({
+        active: true,
+        request: req,
+        confirm: { action_id: "confirm_plan", message_id: "msg_1", status: "pending" },
+      }),
+    ).toBe(false)
+    expect(
+      timelineQuestionVisible({
+        active: true,
+        request: req,
+        confirm: { action_id: "confirm_other", message_id: "msg_1", status: "pending" },
+      }),
+    ).toBe(true)
   })
 })

@@ -21,22 +21,29 @@ describe("limitDescription", () => {
     expect(limitDescription("short description", 140)).toEqual({ text: "short description", hidden: 0 })
   })
 
-  test("truncates text that exceeds the limit and reports the hidden count", () => {
+  test("keeps long text intact and reports the hidden count", () => {
     const long = "x".repeat(200)
     const view = limitDescription(long, 140)
-    expect(view.text.length).toBe(140)
-    expect(view.text).toBe("x".repeat(140))
+    expect(view.text).toBe(long)
     expect(view.hidden).toBe(60)
   })
 
   test("honors a custom limit", () => {
     const view = limitDescription("abcdefghij", 4)
-    expect(view).toEqual({ text: "abcd", hidden: 6 })
+    expect(view).toEqual({ text: "abcdefghij", hidden: 6 })
+  })
+
+  test("does not truncate markdown syntax before rendering", () => {
+    const text = "```ts\n" + "x".repeat(160) + "\n```"
+    const view = limitDescription(text, 20)
+    expect(view.text).toBe(text)
+    expect(view.hidden).toBe(text.length - 20)
   })
 
   test("treats the default limit as 140 characters", () => {
-    const view = limitDescription("x".repeat(141))
-    expect(view.text.length).toBe(140)
+    const text = "x".repeat(141)
+    const view = limitDescription(text)
+    expect(view.text).toBe(text)
     expect(view.hidden).toBe(1)
   })
 })
