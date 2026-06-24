@@ -34,6 +34,7 @@ import { showToast } from "@open-agent-harness/ui/toast"
 import { base64Encode, checksum } from "@open-agent-harness/util/encode"
 import { useNavigate, useSearchParams } from "@solidjs/router"
 import { StatusPopover } from "@/components/status-popover"
+import { useConfirmDialog } from "@/components/confirm-dialog"
 import { NewSessionView } from "@/components/session"
 import { useCommand } from "@/context/command"
 import { useComments } from "@/context/comments"
@@ -341,6 +342,7 @@ export default function Page() {
   const file = useFile()
   const sync = useSync()
   const dialog = useDialog()
+  const confirm = useConfirmDialog()
   const language = useLanguage()
   const navigate = useNavigate()
   const sdk = useSDK()
@@ -1909,14 +1911,15 @@ export default function Page() {
     return item.status ?? item.response?.status
   }
 
-  const modelChange = (model: { providerID: string; modelID: string }) => {
+  const modelChange = async (model: { providerID: string; modelID: string }) => {
     const bound = info()?.model
     if (!bound) return
     if (bound.providerID === model.providerID && bound.modelID === model.modelID) return
-    const label = (item: { providerID: string; modelID: string }) => `${item.providerID}/${item.modelID}`
-    const ok =
-      globalThis.confirm?.(`This session is bound to ${label(bound)}. Switch it to ${label(model)} before sending?`) ??
-      false
+    const ok = await confirm({
+      title: language.t("prompt.confirmModel.title"),
+      description: language.t("prompt.confirmModel.description"),
+      confirmLabel: language.t("prompt.confirmModel.confirm"),
+    })
     if (ok) return { model, confirm: true }
     local.model.set(bound)
     return { model: bound, confirm: false }
@@ -1936,8 +1939,8 @@ export default function Page() {
         parts: [shellText(input)],
       })
     }
-    await send({ model }).catch((err) => {
-      const next = code(err) === 409 ? modelChange(model) : undefined
+    await send({ model }).catch(async (err) => {
+      const next = code(err) === 409 ? await modelChange(model) : undefined
       if (next) return send(next)
       throw err
     })
@@ -1962,8 +1965,8 @@ export default function Page() {
         parts: [shellText(input)],
       })
     }
-    await send({ model }).catch((err) => {
-      const next = code(err) === 409 ? modelChange(model) : undefined
+    await send({ model }).catch(async (err) => {
+      const next = code(err) === 409 ? await modelChange(model) : undefined
       if (next) return send(next)
       throw err
     })

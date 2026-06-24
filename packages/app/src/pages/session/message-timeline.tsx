@@ -1777,7 +1777,12 @@ export function MessageTimeline(props: {
                                             onClick={() => navigate(`/${params.dir}/session/${item.id}`)}
                                           >
                                             <div class="flex min-w-0 items-center gap-2">
-                                              <span class={`size-2 rounded-full shrink-0 ${dot(status())}`} />
+                                              <Show
+                                                when={status() === "user_completed"}
+                                                fallback={<span class={`size-2 rounded-full shrink-0 ${dot(status())}`} />}
+                                              >
+                                                <Icon name="circle-check" size="small" class="shrink-0 text-icon-success-base" />
+                                              </Show>
                                               <span class="truncate text-12-medium text-text-strong">
                                                 {info()?.title || item.label}
                                               </span>

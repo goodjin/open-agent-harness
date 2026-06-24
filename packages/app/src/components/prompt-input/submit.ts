@@ -19,6 +19,7 @@ import { buildRequestParts } from "./build-request-parts"
 import { setCursorPosition } from "./editor-dom"
 import { formatServerError } from "@/utils/server-errors"
 import { isShellCommand } from "./shell-detect"
+import type { ConfirmDialogInput } from "@/components/confirm-dialog"
 
 type PendingPrompt = {
   abort: AbortController
@@ -193,6 +194,7 @@ type PromptSubmitInput = {
   shouldQueue?: Accessor<boolean>
   onQueue?: (draft: FollowupDraft) => void
   onAbort?: () => void
+  confirm?: (input: ConfirmDialogInput) => Promise<boolean>
   onSubmit?: () => void
 }
 
@@ -423,12 +425,14 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     let info: SubmitSession = session
     const same = (left?: { providerID: string; modelID: string }, right?: { providerID: string; modelID: string }) =>
       left?.providerID === right?.providerID && left?.modelID === right?.modelID
-    const name = (item: { providerID: string; modelID: string }) => `${item.providerID}/${item.modelID}`
-    const change = () => {
+    const ask = (item: ConfirmDialogInput) => input.confirm?.(item) ?? Promise.resolve(false)
+    const change = async () => {
       if (!info.model || same(info.model, model)) return
-      const ok =
-        globalThis.confirm?.(`This session is bound to ${name(info.model)}. Switch it to ${name(model)} before sending?`) ??
-        false
+      const ok = await ask({
+        title: language.t("prompt.confirmModel.title"),
+        description: language.t("prompt.confirmModel.description"),
+        confirmLabel: language.t("prompt.confirmModel.confirm"),
+      })
       if (ok) return { model, confirm: true }
       local.model.set(info.model)
       return { model: info.model, confirm: false }
@@ -455,10 +459,11 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           })
           return
         }
-        const ok =
-          globalThis.confirm?.(
-            `This session is bound to ${current ?? "another agent"}. Switch it to ${agent} before sending?`,
-          ) ?? false
+        const ok = await ask({
+          title: language.t("prompt.confirmAgent.title"),
+          description: language.t("prompt.confirmAgent.description"),
+          confirmLabel: language.t("prompt.confirmAgent.confirm"),
+        })
         if (!ok) return
         try {
           await bind(true)
@@ -520,8 +525,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           confirm: item.confirm,
           command: text,
         })
-        .catch((err) => {
-          const next = code(err) === 409 ? change() : undefined
+        .catch(async (err) => {
+          const next = code(err) === 409 ? await change() : undefined
           if (next) return send(next)
           showToast({
             title: language.t("prompt.toast.shellSendFailed.title"),
@@ -556,8 +561,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
               filename: attachment.filename,
             })),
           })
-          .catch((err) => {
-            const next = code(err) === 409 ? change() : undefined
+          .catch(async (err) => {
+            const next = code(err) === 409 ? await change() : undefined
             if (next) return send(next)
             showToast({
               title: language.t("prompt.toast.commandSendFailed.title"),
@@ -647,8 +652,8 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       messageID,
       optimisticBusy: sessionDirectory === projectDirectory,
       before: waitForWorktree,
-    }).catch((err) => {
-      const next = code(err) === 409 ? change() : undefined
+    }).catch(async (err) => {
+      const next = code(err) === 409 ? await change() : undefined
       if (next) {
         void sendFollowupDraft({
           client,

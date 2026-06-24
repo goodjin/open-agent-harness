@@ -15,6 +15,17 @@ describe("session delegations", () => {
     expect(turn(messages, "user_2", "assistant_2")).toBe(false)
   })
 
+  test("matches late assistant output by parent id", () => {
+    const late = [
+      { id: "user_1", role: "user" },
+      { id: "user_2", role: "user" },
+      { id: "assistant_1", role: "assistant", parentID: "user_1" },
+    ] as Message[]
+
+    expect(turn(late, "user_1", "assistant_1")).toBe(true)
+    expect(turn(late, "user_2", "assistant_1")).toBe(false)
+  })
+
   test("counts child sessions created by assistant messages in the turn", () => {
     const ctx = {
       protocol: {

@@ -3,7 +3,7 @@ import type { ModelKey } from "@/context/local"
 type Input = {
   current?: ModelKey
   next: ModelKey
-  ask: (message: string) => boolean
+  ask: (message: string) => Promise<boolean>
   reset: (model: ModelKey) => void
 }
 
@@ -17,11 +17,11 @@ const message = (err: unknown) => {
   return data?.message
 }
 
-export const resolveModelConflict = (input: Input) => {
+export const resolveModelConflict = async (input: Input) => {
   if (!input.current) return
   if (same(input.current, input.next)) return { model: input.next, confirm: true }
 
-  if (input.ask(`This session is bound to ${name(input.current)}. Switch it to ${name(input.next)}?`)) {
+  if (await input.ask(`This session is bound to ${name(input.current)}. Switch it to ${name(input.next)}?`)) {
     return { model: input.next, confirm: true }
   }
 
@@ -40,11 +40,11 @@ export const modelConflictCurrent = (err: unknown): ModelKey | undefined => {
   return { providerID: match[1], modelID: match[2] }
 }
 
-export const resolveModelUpdate = (input: Input) => {
+export const resolveModelUpdate = async (input: Input) => {
   if (!input.current) return { model: input.next, confirm: false }
   if (same(input.current, input.next)) return { model: input.next, confirm: false }
 
-  if (input.ask(`This session is bound to ${name(input.current)}. Switch it to ${name(input.next)}?`)) {
+  if (await input.ask(`This session is bound to ${name(input.current)}. Switch it to ${name(input.next)}?`)) {
     return { model: input.next, confirm: true }
   }
 

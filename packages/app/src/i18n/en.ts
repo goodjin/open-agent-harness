@@ -286,6 +286,14 @@ export const dict = {
   "prompt.context.includeActiveFile": "Include active file",
   "prompt.context.removeActiveFile": "Remove active file from context",
   "prompt.context.removeFile": "Remove file from context",
+  "prompt.confirmAgent.title": "Replace bound agent",
+  "prompt.confirmAgent.description":
+    "This session is already bound to another agent. Replacing it changes the agent used before this request continues.",
+  "prompt.confirmAgent.confirm": "Replace agent",
+  "prompt.confirmModel.title": "Replace bound model",
+  "prompt.confirmModel.description":
+    "This session is already bound to another model. Replacing it updates the session model before this request continues.",
+  "prompt.confirmModel.confirm": "Replace model",
   "prompt.action.attachFile": "Add file",
   "prompt.attachment.remove": "Remove attachment",
   "prompt.action.send": "Send",

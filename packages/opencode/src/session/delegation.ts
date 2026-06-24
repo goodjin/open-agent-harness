@@ -53,6 +53,7 @@ export namespace SessionDelegation {
     summary: string | undefined
     output?: string
   }
+  type Result = ReturnType<typeof completed>
   type Item = {
     type: "agent.delegation.assignment"
     version: "1"
@@ -80,12 +81,24 @@ export namespace SessionDelegation {
     summary?: string
   }
   type Protocol = {
-    kind: "success" | "failure" | "error" | "reply"
+    kind: "answer" | "done" | "success" | "failure" | "error" | "reply"
     id?: string
     message?: string
     summary?: string
     changed_files?: unknown
   }
+  type Hit =
+    | {
+        type: "action"
+        message: number
+        value: ActionResult.Value
+        explicit: boolean
+      }
+    | {
+        type: "protocol"
+        message: number
+        value: Protocol
+      }
   type Diag = {
     raw: string
     status: string
@@ -180,7 +193,7 @@ export namespace SessionDelegation {
       })
       return false
     }
-    if (item?.result_tool === ActionResult.TOOL) {
+    if (item && (terminal(input.result.parts) || item.result_tool === ActionResult.TOOL)) {
       return complete({
         sessionID: input.childID,
         messageID: input.result.info.id,
@@ -536,14 +549,10 @@ export namespace SessionDelegation {
     if (!info.finish || info.finish === "unknown") return
     const session = await Session.get(info.sessionID).catch(() => undefined)
     const item = session ? assignment(session) : undefined
-    if (item?.result_tool === ActionResult.TOOL) {
+    if (item) {
       if (info.finish !== "tool-calls") return
       const parts = await MessageV2.parts(info.id).catch(() => [])
-      if (!actionResult(parts)) return
-    } else if (item?.result_tool === protocol) {
-      if (info.finish !== "tool-calls") return
-      const parts = await MessageV2.parts(info.id).catch(() => [])
-      if (!protocolResult(parts)) return
+      if (!terminal(parts)) return
     } else if (info.finish === "tool-calls") {
       return
     }
@@ -608,42 +617,22 @@ export namespace SessionDelegation {
     })
     const index = messageID ? msgs.findIndex((item) => item.info.id === messageID) : -1
     const scope = index >= 0 ? msgs.slice(0, index + 1) : msgs
-    const action = scope.findLastIndex((item) => item.info.role === "assistant" && actionResult(item.parts))
-    const found = action >= 0 ? actionResult(scope[action]!.parts) : undefined
-    if (item.result_tool === ActionResult.TOOL && found) {
-      const tail = trailing(scope.slice(action + 1))
+    const found = recent(scope)
+    if (found?.type === "action") {
+      const tail = trailing(scope.slice(found.message + 1))
       const value = await normalize(sessionID, item, found.value)
       const out = found.explicit || !tail ? value : { ...value, result: tail }
-      const status =
-        out.role === "worker"
-          ? out.status === "success"
-            ? ("completed" as const)
-            : out.status === "reply"
-              ? ("blocked" as const)
-              : ("failed" as const)
-          : out.status === "success" || out.status === "skipped"
-            ? ("completed" as const)
-            : out.status === "failure" || out.status === "reply"
-              ? ("blocked" as const)
-              : ("failed" as const)
       return {
-        status,
+        status: actionStatus(out),
         output: ActionResult.output(out),
         action: out,
       }
     }
-    const terminal = scope.findLastIndex((item) => item.info.role === "assistant" && protocolResult(item.parts))
-    const result = terminal >= 0 ? protocolResult(scope[terminal]!.parts) : undefined
-    if (item.result_tool === protocol && result) {
+    if (found?.type === "protocol") {
       return {
-        status:
-          result.value.kind === "success"
-            ? ("completed" as const)
-            : result.value.kind === "reply"
-              ? ("blocked" as const)
-              : ("failed" as const),
-        output: protocolOutput(result.value),
-        protocol: result.value,
+        status: protocolStatus(found.value),
+        output: protocolOutput(found.value),
+        protocol: found.value,
       }
     }
     const msg = messageID
@@ -684,12 +673,36 @@ export namespace SessionDelegation {
     }
   }
 
+  function recent(msgs: MessageV2.WithParts[]): Hit | undefined {
+    return msgs
+      .flatMap((msg, index) => {
+        if (msg.info.role !== "assistant") return []
+        return msg.parts.flatMap((part): Hit[] => {
+          const action = actionPart(part)
+          if (action) return [{ ...action, message: index, type: "action" as const }]
+          const term = protocolPart(part)
+          if (term) return [{ ...term, message: index, type: "protocol" as const }]
+          return []
+        })
+      })
+      .findLast(() => true)
+  }
+
+  function terminal(parts: MessageV2.Part[]) {
+    return actionResult(parts) ?? protocolResult(parts)
+  }
+
   function actionResult(parts: MessageV2.Part[]) {
-    const part = parts.findLast(
-      (item): item is MessageV2.ToolPart =>
-        item.type === "tool" && item.tool === ActionResult.TOOL && item.state.status === "completed",
-    )
-    if (!part || part.state.status !== "completed") return
+    return parts
+      .flatMap((part) => {
+        const found = actionPart(part)
+        return found ? [found] : []
+      })
+      .findLast(() => true)
+  }
+
+  function actionPart(part: MessageV2.Part) {
+    if (part.type !== "tool" || part.tool !== ActionResult.TOOL || part.state.status !== "completed") return
     const raw = object(part.state.input)
     const parsed = ActionResult.stored(raw)
     if (!parsed.success) return
@@ -700,29 +713,59 @@ export namespace SessionDelegation {
   }
 
   function protocolResult(parts: MessageV2.Part[]) {
-    const part = parts.findLast(
-      (item): item is MessageV2.ToolPart =>
-        item.type === "tool" && item.tool === protocol && item.state.status === "completed",
-    )
-    if (!part || part.state.status !== "completed") return
+    return parts
+      .flatMap((part) => {
+        const found = protocolPart(part)
+        return found ? [found] : []
+      })
+      .findLast(() => true)
+  }
+
+  function protocolPart(part: MessageV2.Part) {
+    if (part.type !== "tool" || part.tool !== protocol || part.state.status !== "completed") return
     const raw = object(part.state.input)
     const items = Array.isArray(raw.items) ? raw.items.map((item) => object(item)) : []
     const found = items.findLast((item) => {
-      if (item.kind === "success") return true
-      if (item.kind === "failure") return true
-      if (item.kind === "error") return true
-      return item.kind === "reply"
+      return Boolean(kind(item.kind))
     })
     if (!found) return
+    const type = kind(found.kind)
+    if (!type) return
     return {
       value: {
-        kind: found.kind,
+        kind: type,
         id: text(found.id),
         message: text(found.message),
         summary: text(found.summary),
         changed_files: found.changed_files,
       } as Protocol,
     }
+  }
+
+  function kind(input: unknown): Protocol["kind"] | undefined {
+    if (input === "answer") return input
+    if (input === "done") return input
+    if (input === "success") return input
+    if (input === "failure") return input
+    if (input === "error") return input
+    if (input === "reply") return input
+  }
+
+  function actionStatus(input: ActionResult.Value): Status {
+    if (input.role === "worker") {
+      if (input.status === "success") return "completed"
+      if (input.status === "reply") return "blocked"
+      return "failed"
+    }
+    if (input.status === "success" || input.status === "skipped") return "completed"
+    if (input.status === "failure" || input.status === "reply") return "blocked"
+    return "failed"
+  }
+
+  function protocolStatus(input: Protocol): Status {
+    if (input.kind === "success" || input.kind === "answer" || input.kind === "done") return "completed"
+    if (input.kind === "reply") return "blocked"
+    return "failed"
   }
 
   function protocolOutput(input: Protocol) {
@@ -1009,7 +1052,8 @@ export namespace SessionDelegation {
     const res = object(input.action_result)
     if (res.role === "worker") return res.status === "success"
     if (res.role === "verifier") return res.status === "success" || res.status === "skipped"
-    return object(input.protocol_result).kind === "success"
+    const term = object(input.protocol_result).kind
+    return term === "success" || term === "answer" || term === "done"
   }
 
   async function launch(input: {
@@ -1286,13 +1330,22 @@ export namespace SessionDelegation {
         .filter((line) => line.length > 0)
         .join("\n")
       if (mode === "terminate_with_result") {
-        const { SessionPrompt } = await import("./prompt")
-        SessionPrompt.cancel(entry.id)
-        SessionStatus.set(
-          entry.id,
-          { type: "user_completed", message: "Terminated by user after collecting current result." },
-          { reason: "User terminated delegated child session and collected current result." },
-        )
+        const found = status.type === "completed" ? await existing(entry.id, entry.item) : undefined
+        if (found) {
+          await logdone(found)
+          await store(entry.id, entry.item, found)
+          await notified(entry.id, entry.item)
+          continue
+        }
+        if (status.type !== "completed") {
+          const { SessionPrompt } = await import("./prompt")
+          SessionPrompt.cancel(entry.id)
+          SessionStatus.set(
+            entry.id,
+            { type: "user_completed", message: "Terminated by user after collecting current result." },
+            { reason: "User terminated delegated child session and collected current result." },
+          )
+        }
       }
       const sum =
         mode === "terminate_with_result"
@@ -1328,6 +1381,63 @@ export namespace SessionDelegation {
       await store(entry.id, entry.item, body)
       await notified(entry.id, entry.item)
     }
+  }
+
+  async function existing(sessionID: SessionID, item: Item): Promise<Result | undefined> {
+    const stored = await Storage.read<unknown>(["session_delegation_result", item.parent_session_id, sessionID]).catch(
+      () => undefined,
+    )
+    const direct = restore(stored, item)
+    if (direct) return direct
+
+    const parent = await Session.get(SessionID.make(item.parent_session_id)).catch(() => undefined)
+    const prev = object(object(parent?.dsl_context).protocol)
+    const done = Array.isArray(prev.completed_delegations) ? prev.completed_delegations.map((entry) => object(entry)) : []
+    const row = done.find((entry) => entry.child_session_id === sessionID && entry.run_id === item.run_id)
+    const ref = text(row?.output_ref)
+    const full = ref ? await Storage.read<unknown>(ref.split("/")).catch(() => undefined) : undefined
+    const saved = restore(full, item) ?? restore(row, item)
+    if (saved) return saved
+
+    const child = await Session.get(sessionID).catch(() => undefined)
+    const ctx = restore(object(child?.dsl_context).result, item)
+    if (ctx) return ctx
+
+    const parsed = await result(sessionID, item.completed_message_id, item)
+    if (!parsed) return
+    if (!("action" in parsed) && !("protocol" in parsed)) return
+    const agent = text(item.agent) ?? "default"
+    return completed(
+      item,
+      parsed.status,
+      parsed.output,
+      await meta(agent, parsed.status === "completed" ? "completed" : "failed", parsed.output),
+      "action" in parsed ? parsed.action : undefined,
+      "protocol" in parsed ? parsed.protocol : undefined,
+    )
+  }
+
+  function restore(input: unknown, item: Item): Result | undefined {
+    const data = object(input)
+    if (data.type !== "agent.delegation.result" && data.type !== "session.action_result") return
+    const status = statusof(data)
+    const output = text(data.output) ?? text(data.summary)
+    if (!status || !output) return
+    const next = {
+      ...item,
+      completed_at: number(data.completed_at) ?? item.completed_at,
+    }
+    const meta = data.metadata || data.result_metadata
+    const action = object(data.action_result)
+    const term = object(data.protocol_result)
+    return completed(
+      next,
+      status,
+      output,
+      meta ? (object(meta) as ReturnType<typeof AgentDelegation.complete>) : undefined,
+      Object.keys(action).length > 0 ? (action as ActionResult.Value) : undefined,
+      Object.keys(term).length > 0 ? (term as Protocol) : undefined,
+    )
   }
 
   function ended(status: SessionStatus.Info) {

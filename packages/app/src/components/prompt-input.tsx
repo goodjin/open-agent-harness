@@ -65,6 +65,7 @@ import {
 } from "./prompt-input/model-conflict"
 import { ImagePreview } from "@open-agent-harness/ui/image-preview"
 import { showToast } from "@open-agent-harness/ui/toast"
+import { useConfirmDialog } from "@/components/confirm-dialog"
 
 const active = new Set([
   "queued",
@@ -131,6 +132,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const layout = useLayout()
   const comments = useComments()
   const dialog = useDialog()
+  const confirm = useConfirmDialog()
   const providers = useProviders()
   const command = useCommand()
   const permission = usePermission()
@@ -608,8 +610,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
         setChangingAgent(false)
         return
       }
-      const current = info()?.agent ?? local.agent.current()?.name ?? "another agent"
-      const ok = globalThis.confirm?.(`This session is bound to ${current}. Switch it to ${name}?`) ?? false
+      const ok = await confirm({
+        title: language.t("prompt.confirmAgent.title"),
+        description: language.t("prompt.confirmAgent.description"),
+        confirmLabel: language.t("prompt.confirmAgent.confirm"),
+      })
       if (!ok) {
         setChangingAgent(false)
         return
@@ -628,7 +633,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     apply()
     await sync.session.sync(id, { force: true }).catch(() => undefined)
   }
-  const selectModel = (item: ModelKey | undefined, options?: { recent?: boolean }) => {
+  const selectModel = async (item: ModelKey | undefined, options?: { recent?: boolean }) => {
     const id = params.id
     if (!id || !item) {
       local.model.set(item, options)
@@ -647,10 +652,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       local.model.set(item, options)
     }
 
-    const next = resolveModelUpdate({
+    const next = await resolveModelUpdate({
       current: info()?.model,
       next: item,
-      ask: (message) => globalThis.confirm?.(message) ?? false,
+      ask: () =>
+        confirm({
+          title: language.t("prompt.confirmModel.title"),
+          description: language.t("prompt.confirmModel.description"),
+          confirmLabel: language.t("prompt.confirmModel.confirm"),
+        }),
       reset: (model) => local.model.set(model),
     })
     if (!next) return
@@ -661,10 +671,15 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       })
       .catch(async (err) => {
         if (modelConflictStatus(err)) {
-          const next = resolveModelConflict({
+          const next = await resolveModelConflict({
             current: info()?.model ?? modelConflictCurrent(err),
             next: item,
-            ask: (message) => globalThis.confirm?.(message) ?? false,
+            ask: () =>
+              confirm({
+                title: language.t("prompt.confirmModel.title"),
+                description: language.t("prompt.confirmModel.description"),
+                confirmLabel: language.t("prompt.confirmModel.confirm"),
+              }),
             reset: (model) => local.model.set(model),
           })
           if (!next) return
@@ -1245,6 +1260,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     shouldQueue: props.shouldQueue,
     onQueue: props.onQueue,
     onAbort: props.onAbort,
+    confirm,
     onSubmit: props.onSubmit,
   })
 

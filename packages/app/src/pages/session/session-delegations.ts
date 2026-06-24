@@ -26,8 +26,11 @@ const item = (
   record(input) && typeof input.parent_message_id === "string" && typeof input.child_session_id === "string"
 
 export const turn = (messages: Message[], root: string, target: string) => {
+  if (root === target) return true
+  const item = messages.find((msg) => msg.id === target)
+  if (item?.role === "assistant" && item.parentID) return item.parentID === root
   const start = messages.findIndex((msg) => msg.id === root)
-  if (start < 0) return root === target
+  if (start < 0) return false
   const next = messages.slice(start + 1).findIndex((msg) => msg.role === "user")
   return messages.slice(start, next < 0 ? undefined : start + 1 + next).some((msg) => msg.id === target)
 }

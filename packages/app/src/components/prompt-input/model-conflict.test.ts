@@ -6,23 +6,23 @@ const old: ModelKey = { providerID: "minimax-cn-coding-plan", modelID: "MiniMax-
 const next: ModelKey = { providerID: "minimaxi-ultra", modelID: "MiniMax-M3" }
 
 describe("resolveModelConflict", () => {
-  test("returns a confirmed retry when the user approves the model switch", () => {
-    const result = resolveModelConflict({
+  test("returns a confirmed retry when the user approves the model switch", async () => {
+    const result = await resolveModelConflict({
       current: old,
       next,
-      ask: () => true,
+      ask: async () => true,
       reset: () => undefined,
     })
 
     expect(result).toEqual({ model: next, confirm: true })
   })
 
-  test("restores the bound model when the user cancels", () => {
+  test("restores the bound model when the user cancels", async () => {
     const resets: ModelKey[] = []
-    const result = resolveModelConflict({
+    const result = await resolveModelConflict({
       current: old,
       next,
-      ask: () => false,
+      ask: async () => false,
       reset: (model) => resets.push(model),
     })
 
@@ -30,11 +30,11 @@ describe("resolveModelConflict", () => {
     expect(resets).toEqual([old])
   })
 
-  test("does not ask when no bound model is available", () => {
+  test("does not ask when no bound model is available", async () => {
     const asks: string[] = []
-    const result = resolveModelConflict({
+    const result = await resolveModelConflict({
       next,
-      ask: (message) => {
+      ask: async (message) => {
         asks.push(message)
         return true
       },
@@ -45,12 +45,12 @@ describe("resolveModelConflict", () => {
     expect(asks).toEqual([])
   })
 
-  test("allows retry when the requested model already matches the bound model", () => {
+  test("allows retry when the requested model already matches the bound model", async () => {
     const asks: string[] = []
-    const result = resolveModelConflict({
+    const result = await resolveModelConflict({
       current: old,
       next: old,
-      ask: (message) => {
+      ask: async (message) => {
         asks.push(message)
         return false
       },
@@ -63,23 +63,23 @@ describe("resolveModelConflict", () => {
 })
 
 describe("resolveModelUpdate", () => {
-  test("asks before replacing a bound model", () => {
-    const result = resolveModelUpdate({
+  test("asks before replacing a bound model", async () => {
+    const result = await resolveModelUpdate({
       current: old,
       next,
-      ask: () => true,
+      ask: async () => true,
       reset: () => undefined,
     })
 
     expect(result).toEqual({ model: next, confirm: true })
   })
 
-  test("does not call update when the user cancels a bound model replacement", () => {
+  test("does not call update when the user cancels a bound model replacement", async () => {
     const resets: ModelKey[] = []
-    const result = resolveModelUpdate({
+    const result = await resolveModelUpdate({
       current: old,
       next,
-      ask: () => false,
+      ask: async () => false,
       reset: (model) => resets.push(model),
     })
 
@@ -87,11 +87,11 @@ describe("resolveModelUpdate", () => {
     expect(resets).toEqual([old])
   })
 
-  test("updates without confirmation when no bound model is known", () => {
+  test("updates without confirmation when no bound model is known", async () => {
     const asks: string[] = []
-    const result = resolveModelUpdate({
+    const result = await resolveModelUpdate({
       next,
-      ask: (message) => {
+      ask: async (message) => {
         asks.push(message)
         return true
       },
@@ -102,12 +102,12 @@ describe("resolveModelUpdate", () => {
     expect(asks).toEqual([])
   })
 
-  test("updates without confirmation when the model already matches", () => {
+  test("updates without confirmation when the model already matches", async () => {
     const asks: string[] = []
-    const result = resolveModelUpdate({
+    const result = await resolveModelUpdate({
       current: old,
       next: old,
-      ask: (message) => {
+      ask: async (message) => {
         asks.push(message)
         return false
       },

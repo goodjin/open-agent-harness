@@ -692,7 +692,12 @@ export default function SessionTreeManager() {
                   </Show>
                 </div>
                 <button class="min-w-0 text-left flex items-center gap-2 py-1.5" onClick={() => open(item.id)}>
-                  <span class={`size-2 rounded-full shrink-0 ${statusClass(item.status.type)}`} />
+                  <Show
+                    when={item.status.type === "user_completed"}
+                    fallback={<span class={`size-2 rounded-full shrink-0 ${statusClass(item.status.type)}`} />}
+                  >
+                    <Icon name="circle-check" size="small" class="shrink-0 text-icon-success-base" />
+                  </Show>
                   <span class="truncate text-13-medium text-text-strong">{item.title}</span>
                   <span class="text-11-regular text-text-weak shrink-0">{item.status.type}</span>
                   <Show when={item.model}>

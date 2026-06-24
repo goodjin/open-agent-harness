@@ -30,6 +30,8 @@ Direct prompt footer model selection asks before replacing a known session-bound
 
 Session tree bulk edits use the same bound-model guard. Selecting a new model for one or more checked sessions opens a replacement confirmation before the PATCH request is sent. Confirming sends the existing session tree update request with `confirm: true`, which lets the backend replace bound models for the selected sessions.
 
+Agent and model replacement confirmations use the app's internal dialog system, not browser-native `confirm()` prompts. The same internal confirmation is used by prompt footer changes, prompt submission conflict handling, and shell/context continuation conflict handling.
+
 ## Settings Workspace Layout
 
 Opening Settings replaces the main workspace content instead of adding another right-side panel. The sidebar remains available, while the session area and any session-side content are replaced by `SettingsPanel` until the user closes Settings.

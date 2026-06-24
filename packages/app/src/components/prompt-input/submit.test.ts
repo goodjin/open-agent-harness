@@ -34,6 +34,7 @@ const treeUpdates: Array<{ directory: string; ids?: string[]; agent?: string; co
 const treeConflicts: Array<{ directory: string; sessionID: string; agent: string }> = []
 const promptConflicts: Array<{ directory: string; sessionID: string; model: { providerID: string; modelID: string } }> = []
 const modelSets: Array<{ providerID: string; modelID: string } | undefined> = []
+const confirms: Array<{ title: string; description: string; confirmLabel: string }> = []
 let confirmNext = false
 
 let params: { id?: string } = {}
@@ -257,7 +258,9 @@ beforeAll(async () => {
     }),
   }))
 
-  globalThis.confirm = () => confirmNext
+  globalThis.confirm = () => {
+    throw new Error("native confirm should not be used")
+  }
 
   const mod = await import("./submit")
   createPromptSubmit = mod.createPromptSubmit
@@ -279,6 +282,7 @@ beforeEach(() => {
   treeConflicts.length = 0
   promptConflicts.length = 0
   modelSets.length = 0
+  confirms.length = 0
   confirmNext = false
   selected = "/repo/worktree-a"
   variant = undefined
@@ -385,6 +389,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -419,6 +427,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -447,6 +459,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -477,6 +493,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -508,6 +528,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -516,6 +540,13 @@ describe("prompt submit worktree selection", () => {
 
     expect(treeUpdates.map((item) => item.confirm)).toEqual([false, true])
     expect(sentPrompt).toMatchObject([{ directory: "/repo/main", sessionID: "child" }])
+    expect(confirms).toEqual([
+      {
+        title: "prompt.confirmAgent.title",
+        description: "prompt.confirmAgent.description",
+        confirmLabel: "prompt.confirmAgent.confirm",
+      },
+    ])
   })
 
   test("retries model conflicts with confirmation before sending", async () => {
@@ -546,6 +577,10 @@ describe("prompt submit worktree selection", () => {
       resetHistoryNavigation: () => undefined,
       setMode: () => undefined,
       setPopover: () => undefined,
+      confirm: async (input) => {
+        confirms.push(input)
+        return confirmNext
+      },
       onSubmit: () => undefined,
     })
 
@@ -557,6 +592,13 @@ describe("prompt submit worktree selection", () => {
     expect(sentPrompt.map((item) => item.model)).toEqual([
       { providerID: "provider", modelID: "next" },
       { providerID: "provider", modelID: "next" },
+    ])
+    expect(confirms).toEqual([
+      {
+        title: "prompt.confirmModel.title",
+        description: "prompt.confirmModel.description",
+        confirmLabel: "prompt.confirmModel.confirm",
+      },
     ])
   })
 
