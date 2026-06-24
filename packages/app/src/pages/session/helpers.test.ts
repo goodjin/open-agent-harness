@@ -10,6 +10,7 @@ import {
   focusTerminalById,
   getTabReorderIndex,
   isSessionBusy,
+  resumePrompt,
   turnDone,
 } from "./helpers"
 import type { Message, Part } from "@open-agent-harness/sdk/v2/client"
@@ -39,6 +40,44 @@ describe("isSessionBusy", () => {
     expect(isSessionBusy({ type: "waiting_child" })).toBe(true)
     expect(isSessionBusy({ type: "timeout", message: "timed out" })).toBe(false)
     expect(isSessionBusy(undefined)).toBe(false)
+  })
+})
+
+describe("resumePrompt", () => {
+  test("does not show while bootstrap can auto continue", () => {
+    expect(resumePrompt({ type: "running" })).toBeUndefined()
+    expect(resumePrompt({ type: "queued" })).toBeUndefined()
+    expect(resumePrompt({ type: "starting" })).toBeUndefined()
+    expect(
+      resumePrompt({
+        type: "rate_limited",
+        providerID: "p",
+        modelID: "m",
+        scope: "model",
+        active: 1,
+        limit: 1,
+        queued: 1,
+      }),
+    ).toBeUndefined()
+    expect(resumePrompt({ type: "retry", attempt: 1, message: "try again", next: 1 })).toBeUndefined()
+  })
+
+  test("shows interrupted sessions as manually continuable", () => {
+    expect(resumePrompt({ type: "interrupted", prior: "running" })).toEqual({
+      label: "会话中断",
+      description: "系统或进程中断了这个会话，确认后从可恢复状态继续。",
+      action: "继续",
+    })
+  })
+
+  test("shows abnormal stopped sessions as manually continuable", () => {
+    expect(resumePrompt({ type: "error", message: "tool failed" })).toEqual({
+      label: "会话异常中断",
+      description: "tool failed",
+      action: "继续",
+    })
+    expect(resumePrompt({ type: "completed" })).toBeUndefined()
+    expect(resumePrompt({ type: "waiting_user" })).toBeUndefined()
   })
 })
 

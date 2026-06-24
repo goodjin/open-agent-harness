@@ -1,9 +1,12 @@
 import { For, Show, createEffect, createMemo, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
+import { Button } from "@open-agent-harness/ui/button"
+import { Icon } from "@open-agent-harness/ui/icon"
 import { useSpring } from "@open-agent-harness/ui/motion-spring"
 import { PromptInput } from "@/components/prompt-input"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
+import type { SessionResumePrompt } from "@/pages/session/helpers"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
@@ -37,6 +40,11 @@ export function SessionComposerRegion(props: {
     restoring?: string
     disabled?: boolean
     onRestore: (id: string) => void
+  }
+  resume?: {
+    prompt: SessionResumePrompt
+    busy: boolean
+    onResume: () => void
   }
   setPromptDockRef: (el: HTMLDivElement) => void
 }) {
@@ -209,6 +217,29 @@ export function SessionComposerRegion(props: {
                 onSend={props.followup!.onSend}
                 onEdit={props.followup!.onEdit}
               />
+            </Show>
+            <Show when={props.resume} keyed>
+              {(resume) => (
+                <div
+                  data-component="session-resume-prompt"
+                  class="mb-2 flex min-h-10 items-center gap-3 rounded-md border border-icon-warning-base/40 bg-background-base px-3 py-2 text-left shadow-xs"
+                >
+                  <Icon name="warning" size="small" class="shrink-0 text-icon-warning-base" />
+                  <div class="min-w-0 flex-1">
+                    <div class="text-12-medium text-text-strong">{resume.prompt.label}</div>
+                    <div class="truncate text-12-regular text-text-weak">{resume.prompt.description}</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    class="h-7 shrink-0 px-2"
+                    disabled={resume.busy}
+                    onClick={resume.onResume}
+                  >
+                    {resume.prompt.action}
+                  </Button>
+                </div>
+              )}
             </Show>
             <Show when={props.state.liveStatus()} keyed>
               {(status) => (

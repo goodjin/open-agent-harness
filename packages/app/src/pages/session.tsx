@@ -54,6 +54,7 @@ import {
   createSizing,
   focusTerminalById,
   isSessionBusy,
+  resumePrompt,
 } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
@@ -367,6 +368,7 @@ export default function Page() {
     pendingMessage: undefined as string | undefined,
     restoring: undefined as string | undefined,
     reverting: false,
+    resuming: false,
     missing: undefined as string | undefined,
     scrollGesture: 0,
     scroll: {
@@ -498,6 +500,8 @@ export default function Page() {
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const status = createMemo(() => (params.id ? sync.data.session_status[params.id] : undefined))
+  const resumable = createMemo(() => resumePrompt(status()))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
   const reviewCount = createMemo(() => Math.max(info()?.summary?.files ?? 0, diffs().length))
   const hasReview = createMemo(() => reviewCount() > 0)
@@ -799,6 +803,50 @@ export default function Page() {
       })
       navigate(`/${params.dir}/session`, { replace: true })
     })
+
+  const recover = () => {
+    const id = params.id
+    if (!id || ui.resuming) return
+    setUi("resuming", true)
+    sdk
+      .request("/session/tree/resume", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          directory: sdk.directory,
+          ids: [id],
+          source: "user",
+          source_session: id,
+          mode: "restore",
+          reason: "User chose to continue an interrupted session.",
+        }),
+      })
+      .then(async (res) => {
+        if (!res.ok) throw new Error(await res.text())
+        await syncCurrentSession(id, { force: true })
+        resumeScroll()
+      })
+      .catch((err: unknown) => {
+        showToast({
+          variant: "error",
+          title: language.t("common.requestFailed"),
+          description: formatServerError(err, language.t),
+        })
+      })
+      .finally(() => {
+        setUi("resuming", false)
+      })
+  }
+
+  const recovery = () => {
+    const item = resumable()
+    if (!item) return
+    return {
+      prompt: item,
+      busy: ui.resuming,
+      onResume: recover,
+    }
+  }
 
   createEffect(
     on([() => sdk.directory, () => params.id] as const, ([, id]) => {
@@ -1279,6 +1327,7 @@ export default function Page() {
             }
           : undefined
       }
+      resume={recovery()}
       setPromptDockRef={(el) => {
         promptDock = el
       }}

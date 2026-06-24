@@ -36,12 +36,37 @@ export type SessionLiveStatus = {
   metrics?: string[]
 }
 
+export type SessionResumePrompt = {
+  label: string
+  description: string
+  action: string
+}
+
 const liveStatus = (label: string, description: string, tone: SessionLiveStatus["tone"] = "info", metrics?: string[]) => ({
   label,
   description,
   tone,
   metrics: metrics?.length ? metrics : undefined,
 })
+
+const restorable = new Set<SessionStatus["type"]>(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+
+export const resumePrompt = (status: SessionStatus | undefined): SessionResumePrompt | undefined => {
+  if (status?.type === "interrupted") {
+    return {
+      label: "会话中断",
+      description: status.message || "系统或进程中断了这个会话，确认后从可恢复状态继续。",
+      action: "继续",
+    }
+  }
+  if (!status || !restorable.has(status.type)) return undefined
+  const msg = "message" in status ? status.message : undefined
+  return {
+    label: "会话异常中断",
+    description: msg || "会话停在异常状态，确认后从可恢复状态继续。",
+    action: "继续",
+  }
+}
 
 const encoder = new TextEncoder()
 
