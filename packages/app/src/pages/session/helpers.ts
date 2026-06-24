@@ -33,13 +33,43 @@ export type SessionLiveStatus = {
   label: string
   description: string
   tone: "info" | "warning" | "danger" | "success"
+  metrics?: string[]
 }
 
-const liveStatus = (label: string, description: string, tone: SessionLiveStatus["tone"] = "info") => ({
+const liveStatus = (label: string, description: string, tone: SessionLiveStatus["tone"] = "info", metrics?: string[]) => ({
   label,
   description,
   tone,
+  metrics: metrics?.length ? metrics : undefined,
 })
+
+const encoder = new TextEncoder()
+
+const num = (input: unknown) => (typeof input === "number" && Number.isFinite(input) ? input : undefined)
+
+const bytes = (input: string | undefined) => (input ? encoder.encode(input).length : 0)
+
+const size = (input: number) => {
+  if (input < 1024) return `${input} B`
+  if (input < 1024 * 1024) return `${(input / 1024).toFixed(1).replace(/\.0$/, "")} KB`
+  return `${(input / (1024 * 1024)).toFixed(1).replace(/\.0$/, "")} MB`
+}
+
+const period = (input: number) => {
+  const ms = Math.max(0, Math.round(input))
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(ms < 10_000 ? 1 : 0).replace(/\.0$/, "")}s`
+  const min = Math.floor(ms / 60_000)
+  const sec = Math.floor((ms % 60_000) / 1000)
+  return sec ? `${min}m ${sec}s` : `${min}m`
+}
+
+const metric = (items: Array<string | undefined>) => items.filter((item): item is string => !!item)
+
+const elapsed = (start: number | undefined, end: number | undefined, now: number) => {
+  if (start === undefined) return
+  return `用时 ${period((end ?? now) - start)}`
+}
 
 const pendingAssistant = (messages: Message[]) => {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -70,21 +100,75 @@ const turn = (input: Message | undefined) => {
   return value
 }
 
+const start = (input: Message | undefined) => {
+  if (!input) return
+  const value = turn(input)
+  const time = record(value?.time) ? value.time : undefined
+  return num(time?.started) ?? num(time?.queued) ?? input.time.created
+}
+
+const output = (part: Part) => {
+  if (part.type === "text" || part.type === "reasoning") return bytes(part.text)
+  if (part.type === "tool" && part.state.status === "completed") return bytes(part.state.output)
+  if (part.type === "tool" && part.state.status === "error") return bytes(part.state.error)
+  return 0
+}
+
+const request = (part: Part) => {
+  if (part.type === "text") return bytes(part.text)
+  if (part.type === "file") return bytes(part.source?.text.value)
+  if (part.type === "agent") return bytes(part.source?.value)
+  if (part.type === "subtask") return bytes(part.prompt) + bytes(part.description)
+  return 0
+}
+
+const begun = (part: Part) => {
+  if (part.type === "text") return num(part.time?.start)
+  if (part.type === "reasoning") return part.time.start
+  if (part.type === "tool" && part.state.status !== "pending") return part.state.time.start
+}
+
+const ended = (part: Part) => {
+  if (part.type === "text") return num(part.time?.end)
+  if (part.type === "reasoning") return num(part.time.end)
+  if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) return part.state.time.end
+}
+
+const first = (parts: Part[], fallback: number | undefined) =>
+  parts.reduce((best, part) => {
+    const value = begun(part)
+    if (value === undefined) return best
+    if (best === undefined) return value
+    return Math.min(best, value)
+  }, fallback)
+
+const last = (parts: Part[]) =>
+  parts.reduce((best, part) => {
+    const value = ended(part)
+    if (value === undefined) return best
+    if (best === undefined) return value
+    return Math.max(best, value)
+  }, undefined as number | undefined)
+
 export const deriveSessionLiveStatus = (input: {
   status: SessionStatus | undefined
   messages: Message[]
   parts: Record<string, Part[] | undefined>
+  now?: number
 }): SessionLiveStatus | undefined => {
   const status = input.status?.type ?? "idle"
+  const now = input.now ?? Date.now()
+  const user = lastUser(input.messages)
+  const live = () => metric([elapsed(start(user), undefined, now)])
   if (status === "idle" || status === "completed" || status === "user_completed" || status === "archived") return undefined
   if (status === "waiting_permission") {
-    return liveStatus("等待权限确认", "工具调用已暂停，正在等待权限选择。", "warning")
+    return liveStatus("等待权限确认", "工具调用已暂停，正在等待权限选择。", "warning", live())
   }
   if (status === "waiting_user") {
-    return liveStatus("等待用户确认", "模型请求已暂停，正在等待你的回复。", "warning")
+    return liveStatus("等待用户确认", "模型请求已暂停，正在等待你的回复。", "warning", live())
   }
   if (input.status?.type === "waiting_child") {
-    return liveStatus("等待子会话", input.status.message || "父会话已暂停，正在等待子会话完成。", "warning")
+    return liveStatus("等待子会话", input.status.message || "父会话已暂停，正在等待子会话完成。", "warning", live())
   }
   if (input.status?.type === "rate_limited") {
     const scope = input.status.scope === "model" ? "模型" : input.status.scope === "provider" ? "服务商" : "智能体"
@@ -97,51 +181,61 @@ export const deriveSessionLiveStatus = (input: {
         "请求频率已满",
         `${scope}最近一分钟已达 ${input.status.limit} 次请求，队列中 ${input.status.queued} 个请求${reset}。`,
         "warning",
+        live(),
       )
     }
     return liveStatus(
       "并发额度已满",
       `${scope}并发 ${input.status.active}/${input.status.limit}，队列中 ${input.status.queued} 个请求，${input.status.providerID}/${input.status.modelID} 正在等待可用额度。`,
       "warning",
+      live(),
     )
   }
   if (input.status?.type === "retry") {
-    return liveStatus("准备重试", `${input.status.message}，第 ${input.status.attempt} 次重试已排队。`, "warning")
+    return liveStatus("准备重试", `${input.status.message}，第 ${input.status.attempt} 次重试已排队。`, "warning", live())
   }
-  if (input.status?.type === "paused") return liveStatus("已暂停", input.status.message || "会话运行已暂停。", "warning")
-  if (input.status?.type === "aborting") return liveStatus("正在停止", input.status.message || "正在停止当前会话。", "warning")
-  if (input.status?.type === "error") return liveStatus("运行出错", input.status.message, "danger")
-  if (input.status?.type === "timeout") return liveStatus("运行超时", input.status.message, "danger")
-  if (input.status?.type === "failed") return liveStatus("运行失败", input.status.message || "会话运行失败。", "danger")
-  if (input.status?.type === "blocked") return liveStatus("已阻塞", input.status.message || "会话需要外部输入后才能继续。", "warning")
-  if (input.status?.type === "queued") return liveStatus("请求排队中", "请求已进入队列，等待运行。")
-  if (input.status?.type === "starting") return liveStatus("请求发送中", "正在准备模型请求。")
+  if (input.status?.type === "paused") return liveStatus("已暂停", input.status.message || "会话运行已暂停。", "warning", live())
+  if (input.status?.type === "aborting") return liveStatus("正在停止", input.status.message || "正在停止当前会话。", "warning", live())
+  if (input.status?.type === "error") return liveStatus("运行出错", input.status.message, "danger", live())
+  if (input.status?.type === "timeout") return liveStatus("运行超时", input.status.message, "danger", live())
+  if (input.status?.type === "failed") return liveStatus("运行失败", input.status.message || "会话运行失败。", "danger", live())
+  if (input.status?.type === "blocked") return liveStatus("已阻塞", input.status.message || "会话需要外部输入后才能继续。", "warning", live())
+  if (input.status?.type === "queued") return liveStatus("请求排队中", "请求已进入队列，等待运行。", "info", live())
+  if (input.status?.type === "starting") return liveStatus("请求发送中", "正在准备模型请求。", "info", live())
   if (status !== "running") return undefined
 
-  const user = lastUser(input.messages)
   if (turn(user)?.status === "done") return undefined
 
   const msg = pendingAssistant(input.messages)
   if (msg) {
     const parts = input.parts[msg.id] ?? []
+    const received = parts.reduce((sum, part) => sum + output(part), 0)
+    const info = (start: number | undefined, end?: number) =>
+      metric([elapsed(start, end, now), received > 0 ? `已接收 ${size(received)}` : undefined])
     const tool = parts.findLast(runningTool)
     if (tool) {
       const title = "title" in tool.state && typeof tool.state.title === "string" ? `：${tool.state.title}` : ""
-      return liveStatus("工具调用中", `正在执行 ${tool.tool}${title}`, "info")
+      return liveStatus("工具调用中", `正在执行 ${tool.tool}${title}`, "info", metric([elapsed(begun(tool), undefined, now)]))
     }
     if (parts.findLast((part) => part.type === "text" && part.text.trim())) {
-      return liveStatus("文本回复中", "模型正在生成可见回复。")
+      return liveStatus("文本回复中", "模型正在生成可见回复。", "info", info(first(parts, undefined) ?? msg.time.created, last(parts)))
     }
     if (parts.findLast((part) => part.type === "reasoning" && part.text.trim())) {
-      return liveStatus("思考中", "模型正在生成推理内容。")
+      return liveStatus("思考中", "模型正在生成推理内容。", "info", info(first(parts, undefined) ?? msg.time.created, last(parts)))
     }
-    return liveStatus("响应中", "模型响应已开始，正在接收内容。")
+    return liveStatus("响应中", "模型响应已开始，正在接收内容。", "info", info(msg.time.created))
   }
 
   if (user) {
-    return liveStatus("请求已发出", "用户消息已进入会话，正在等待模型开始响应。")
+    const sent = (input.parts[user.id] ?? []).reduce((sum, part) => sum + request(part), 0)
+    return liveStatus(
+      "请求已发出",
+      "用户消息已进入会话，正在等待模型开始响应。",
+      "info",
+      metric([elapsed(start(user), undefined, now), sent > 0 ? `已发送 ${size(sent)}` : undefined]),
+    )
   }
-  if (status === "running") return liveStatus("响应中", "模型请求正在运行。")
+  if (status === "running") return liveStatus("响应中", "模型请求正在运行。", "info", live())
   return undefined
 }
 

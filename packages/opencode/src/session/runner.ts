@@ -2489,43 +2489,74 @@ export namespace SessionRunner {
       : []
     const prompt = typeof data.prompt === "string" ? data.prompt : input.action.title
     const form = data.mode === "form" && fields.length > 0
-    const answers = await Question.ask({
+    const qs = form
+      ? fields.map((field) => {
+          const opts = Array.isArray(field.options)
+            ? field.options.flatMap((item) => {
+                const opt = object(item)
+                const label = typeof opt.label === "string" ? opt.label.trim() : ""
+                if (!label) return []
+                return [
+                  {
+                    label,
+                    description: typeof opt.description === "string" ? opt.description : label,
+                  },
+                ]
+              })
+            : []
+          const kind = typeof field.type === "string" ? field.type : "text"
+          const label = typeof field.label === "string" ? field.label : typeof field.id === "string" ? field.id : ""
+          return {
+            question: [label, prompt].filter(Boolean).join("\n\n"),
+            header: label.slice(0, 30),
+            options: opts,
+            multiple: kind === "multi",
+            custom: opts.length === 0,
+          }
+        })
+      : [
+          {
+            question: prompt,
+            header: input.action.title.slice(0, 30),
+            options,
+            multiple: data.mode === "multi",
+            custom: data.allow_custom !== false,
+          },
+        ]
+    await storeInput({
+      action: input.action,
+      messageID: input.messageID,
+      questions: qs,
+      runID: input.runID,
       sessionID: input.sessionID,
-      questions: form
-        ? fields.map((field) => {
-            const opts = Array.isArray(field.options)
-              ? field.options.flatMap((item) => {
-                  const opt = object(item)
-                  const label = typeof opt.label === "string" ? opt.label.trim() : ""
-                  if (!label) return []
-                  return [
-                    {
-                      label,
-                      description: typeof opt.description === "string" ? opt.description : label,
-                    },
-                  ]
-                })
-              : []
-            const kind = typeof field.type === "string" ? field.type : "text"
-            const label = typeof field.label === "string" ? field.label : typeof field.id === "string" ? field.id : ""
-            return {
-              question: [label, prompt].filter(Boolean).join("\n\n"),
-              header: label.slice(0, 30),
-              options: opts,
-              multiple: kind === "multi",
-              custom: opts.length === 0,
-            }
-          })
-        : [
-            {
-              question: prompt,
-              header: input.action.title.slice(0, 30),
-              options,
-              multiple: data.mode === "multi",
-              custom: data.allow_custom !== false,
-            },
-          ],
-      tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+      status: "pending",
+    })
+    let answers: Question.Answer[]
+    try {
+      answers = await Question.ask({
+        sessionID: input.sessionID,
+        questions: qs,
+        tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+      })
+    } catch (err) {
+      await storeInput({
+        action: input.action,
+        messageID: input.messageID,
+        questions: qs,
+        runID: input.runID,
+        sessionID: input.sessionID,
+        status: "rejected",
+      })
+      throw err
+    }
+    await storeInput({
+      action: input.action,
+      answers,
+      messageID: input.messageID,
+      questions: qs,
+      runID: input.runID,
+      sessionID: input.sessionID,
+      status: "answered",
     })
 
     const lines: string[] = []
@@ -2585,6 +2616,53 @@ export namespace SessionRunner {
       ].join("\n"),
       metadata: { blocked: true, reason: "input_received", answers },
     }
+  }
+
+  async function storeInput(input: {
+    action: AgentProtocol.Action
+    answers?: Question.Answer[]
+    messageID: MessageID
+    questions: Question.Info[]
+    runID: string
+    sessionID: SessionID
+    status: "pending" | "answered" | "rejected"
+  }) {
+    const item = {
+      type: "agent.protocol.input",
+      version: "1",
+      run_id: input.runID,
+      action_id: input.action.id,
+      action_title: input.action.title,
+      message_id: input.messageID,
+      questions: input.questions,
+      answers: input.answers,
+      status: input.status,
+      updated_at: Date.now(),
+    }
+    await Storage.write(["session_protocol_input", input.sessionID, input.runID, input.action.id], item)
+    const session = await Session.get(input.sessionID)
+    const ctx = object(session.dsl_context)
+    const prev = object(ctx.protocol)
+    const vals = Array.isArray(prev.inputs) ? prev.inputs : []
+    await Session.setDslContext({
+      sessionID: input.sessionID,
+      dsl_context: {
+        ...ctx,
+        protocol: {
+          ...prev,
+          inputs: [
+            ...vals.filter((val) => {
+              const rec = object(val)
+              return rec.run_id !== input.runID || rec.action_id !== input.action.id
+            }),
+            {
+              ...item,
+              input_ref: ["session_protocol_input", input.sessionID, input.runID, input.action.id].join("/"),
+            },
+          ],
+        },
+      },
+    })
   }
 
   async function confirm(input: {

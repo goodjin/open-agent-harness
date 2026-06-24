@@ -171,6 +171,45 @@ describe("applyDirectoryEvent", () => {
     expect(pushes).toBe(1)
   })
 
+  test("syncs parent after child creation reaches parent update", () => {
+    const parents = new Set<string>()
+    const synced: string[] = []
+    const [store, setStore] = createStore(
+      baseState({
+        session: [rootSession({ id: "ses_parent" })],
+      }),
+    )
+
+    const apply = (info: Session, type = "session.updated") =>
+      applyDirectoryEvent({
+        event: { type, properties: { info } },
+        store,
+        setStore,
+        push() {},
+        directory: "/tmp",
+        loadLsp() {},
+        parents,
+        syncSession(id) {
+          synced.push(id)
+        },
+      })
+
+    apply(rootSession({ id: "ses_child", parentID: "ses_parent" }), "session.created")
+    expect(synced).toEqual([])
+    expect([...parents]).toEqual(["ses_parent"])
+
+    apply(rootSession({ id: "ses_child", parentID: "ses_parent" }))
+    expect(synced).toEqual([])
+    expect([...parents]).toEqual(["ses_parent"])
+
+    apply(rootSession({ id: "ses_parent" }))
+    expect(synced).toEqual(["ses_parent"])
+    expect([...parents]).toEqual([])
+
+    apply(rootSession({ id: "ses_parent" }))
+    expect(synced).toEqual(["ses_parent"])
+  })
+
   test("cleans session caches when archived", () => {
     const message = userMessage("msg_1", "ses_1")
     const [store, setStore] = createStore(

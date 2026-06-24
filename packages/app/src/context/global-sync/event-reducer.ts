@@ -92,6 +92,8 @@ export function applyDirectoryEvent(input: {
   loadLsp: () => void
   vcsCache?: VcsCache
   setSessionTodo?: (sessionID: string, todos: Todo[] | undefined) => void
+  parents?: Set<string>
+  syncSession?: (sessionID: string) => void
 }) {
   const event = input.event
   switch (event.type) {
@@ -112,13 +114,17 @@ export function applyDirectoryEvent(input: {
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
       if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
-      if (info.parentID) input.push(input.directory)
+      if (info.parentID) {
+        input.parents?.add(info.parentID)
+        input.push(input.directory)
+      }
       break
     }
     case "session.updated": {
       const info = (event.properties as { info: Session }).info
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (info.time.archived) {
+        input.parents?.delete(info.id)
         if (result.found) {
           input.setStore(
             "session",
@@ -132,8 +138,13 @@ export function applyDirectoryEvent(input: {
         input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
         break
       }
+      const sync = () => {
+        if (!input.parents?.delete(info.id)) return
+        input.syncSession?.(info.id)
+      }
       if (result.found) {
         input.setStore("session", result.index, reconcile(info))
+        sync()
         break
       }
       const next = input.store.session.slice()
@@ -141,6 +152,7 @@ export function applyDirectoryEvent(input: {
       const trimmed = trimSessions(next, { limit: input.store.limit, permission: input.store.permission })
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
+      sync()
       break
     }
     case "session.deleted": {

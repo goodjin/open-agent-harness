@@ -777,6 +777,7 @@ export const SessionRoutes = lazy(() =>
         z.object({
           directory: z.string().optional(),
           force: z.boolean().optional(),
+          mode: z.enum(["cancel_without_result", "terminate_with_result"]).optional(),
           run_id: z.string().min(1),
         }),
       ),
@@ -788,6 +789,7 @@ export const SessionRoutes = lazy(() =>
             sessionID,
             runID: body.run_id,
             force: body.force,
+            mode: body.mode,
           }),
         )
         return c.json({ submitted })

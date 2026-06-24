@@ -662,7 +662,7 @@ export namespace SessionPrompt {
         agent,
         session,
       })
-      const actionResult = context(session)
+      const actionResult = context(session, agent)
       const footer = requestFooter({ session, agent, actionResult })
 
       const processor = SessionRunner.create({
@@ -1103,16 +1103,16 @@ export namespace SessionPrompt {
       })
   }
 
-  function context(session: Session.Info): LLM.StreamInput["actionResult"] | undefined {
+  function context(session: Session.Info, agent: Agent.Info): LLM.StreamInput["actionResult"] | undefined {
     const delegation = object(object(session.dsl_context).protocol).delegation
     const item = object(delegation)
     if (item.result_tool !== ActionResult.TOOL) return
     const action = str(item.action_id)
-    const target = targetAction(item)
+    const target = agent.kind === "verifier" ? targetAction(item) : undefined
     return {
       action,
       target,
-      verifier: Boolean(target),
+      verifier: agent.kind === "verifier",
     }
   }
 
@@ -1129,6 +1129,7 @@ export namespace SessionPrompt {
       agent: input.agent.name,
       mode: input.agent.mode,
       delegation: object(delegation),
+      actionResult: input.actionResult,
     })
     const text = RequestFooter.render(prompt, vars)
     void SessionLog.emit({

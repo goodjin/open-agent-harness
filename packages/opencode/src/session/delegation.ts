@@ -31,6 +31,11 @@ export namespace SessionDelegation {
 
   type Status = "completed" | "partial" | "blocked" | "failed" | "waiting_user"
   export type QueryStatus = "pending" | Status
+  type SubmitMode = "cancel_without_result" | "terminate_with_result"
+  type CloseOpts = {
+    mode?: SubmitMode
+    reason?: string
+  }
   type Row = {
     status: QueryStatus
     run_id: string | undefined
@@ -291,8 +296,16 @@ export namespace SessionDelegation {
     }
   }
 
-  export async function submit(input: { agent?: string; force?: boolean; runID: string; sessionID: SessionID }) {
-    const ready = await finalize(input.sessionID, input.runID, input.force === true)
+  export async function submit(input: {
+    agent?: string
+    force?: boolean
+    mode?: SubmitMode
+    reason?: string
+    runID: string
+    sessionID: SessionID
+  }) {
+    const mode = input.mode ?? (input.force === true ? "terminate_with_result" : undefined)
+    const ready = await finalize(input.sessionID, input.runID, { mode, reason: input.reason })
     if (ready.waiting > 0) {
       await hold(input.sessionID, input.runID, ready.waiting)
       return false
@@ -322,24 +335,12 @@ export namespace SessionDelegation {
   }
 
   export async function cancel(input: { reason?: string; runID: string; sessionID: SessionID }) {
-    const parent = await Session.get(input.sessionID)
-    const protocol = object(object(parent.dsl_context).protocol)
-    const entries = Object.entries(object(protocol.pending_delegations))
-      .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
-      .filter((entry) => entry.item.run_id === input.runID)
-    const { SessionPrompt } = await import("./prompt")
-    await Promise.all(
-      entries.map(async (entry) => {
-        await notice(entry.id, entry.item, input.reason)
-        SessionPrompt.cancel(entry.id)
-        SessionStatus.set(
-          entry.id,
-          { type: "aborted", message: input.reason ?? "Cancelled by user while parent session was waiting." },
-          { reason: input.reason ?? "User cancelled delegated child task." },
-        )
-      }),
-    )
-    return submit({ sessionID: input.sessionID, runID: input.runID, force: true })
+    return submit({
+      sessionID: input.sessionID,
+      runID: input.runID,
+      mode: "cancel_without_result",
+      reason: input.reason,
+    })
   }
 
   export async function fallbackPreview(input: { sessionID: SessionID }) {
@@ -589,7 +590,8 @@ export namespace SessionDelegation {
     const found = action >= 0 ? actionResult(scope[action]!.parts) : undefined
     if (item.result_tool === ActionResult.TOOL && found) {
       const tail = trailing(scope.slice(action + 1))
-      const out = found.explicit || !tail ? found.value : { ...found.value, result: tail }
+      const value = await normalize(sessionID, item, found.value)
+      const out = found.explicit || !tail ? value : { ...value, result: tail }
       const status =
         out.role === "worker"
           ? out.status === "success"
@@ -653,6 +655,20 @@ export namespace SessionDelegation {
       value: parsed.data,
       explicit: typeof raw.result === "string" && raw.result.trim().length > 0,
     }
+  }
+
+  async function normalize(sessionID: SessionID, item: Item, value: ActionResult.Value): Promise<ActionResult.Value> {
+    if (value.role !== "verifier") return value
+    if (value.action_id !== item.action_id || value.target_action_id !== item.action_id) return value
+    const session = await Session.get(sessionID).catch(() => undefined)
+    const agent = session?.agent ? await Agent.get(session.agent).catch(() => undefined) : undefined
+    if (agent?.kind === "verifier" || session?.agent?.includes("verifier")) return value
+    const parsed = ActionResult.worker({
+      action_id: value.action_id,
+      status: value.status,
+      result: value.result,
+    })
+    return parsed.success ? parsed.data : value
   }
 
   function trailing(msgs: MessageV2.WithParts[]) {
@@ -844,8 +860,8 @@ export namespace SessionDelegation {
     })
   }
 
-  async function finalize(parentID: SessionID, runID: string, force = false) {
-    await close(parentID, runID, force)
+  async function finalize(parentID: SessionID, runID: string, opts?: CloseOpts) {
+    await close(parentID, runID, opts)
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const pending = Object.entries(object(protocol.pending_delegations))
@@ -864,31 +880,73 @@ export namespace SessionDelegation {
     }
   }
 
-  async function close(parentID: SessionID, runID: string, force = false) {
+  async function close(parentID: SessionID, runID: string, opts?: CloseOpts) {
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
+    const mode = opts?.mode
     const entries = Object.entries(object(protocol.pending_delegations))
       .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
-      .filter((entry) => entry.item.run_id === runID && (force || ended(SessionStatus.get(entry.id))))
+      .filter((entry) => entry.item.run_id === runID && (mode !== undefined || ended(SessionStatus.get(entry.id))))
     for (const entry of entries) {
       if (await delivered(entry.item)) {
         await notified(entry.id, entry.item)
         continue
       }
       const status = SessionStatus.get(entry.id)
+      if (mode === "cancel_without_result") {
+        const { SessionPrompt } = await import("./prompt")
+        const reason = opts?.reason ?? "User cancelled delegated child session without collecting a result."
+        await notice(entry.id, entry.item, reason)
+        SessionPrompt.cancel(entry.id)
+        SessionStatus.set(entry.id, { type: "aborted", message: reason }, { reason })
+        const body = completed(
+          entry.item,
+          "failed",
+          [
+            "Delegated child session was cancelled by the user.",
+            "No child result was requested or collected.",
+            "The parent summary should continue without this child result.",
+          ].join("\n"),
+          undefined,
+          undefined,
+        )
+        await logdone(body)
+        await store(entry.id, entry.item, body)
+        await notified(entry.id, entry.item)
+        continue
+      }
       const out = [
         `Delegated child session ended with status ${status.type}.`,
         "No structured child result was recorded before the session ended.",
         "The parent summary should treat this child as ended and mention the status explicitly.",
-        force && !ended(status)
+        mode === "terminate_with_result" && !ended(status)
           ? "This result was submitted manually before the child session reached a terminal state."
           : "",
         "message" in status && typeof status.message === "string" ? status.message : "",
       ]
         .filter((line) => line.length > 0)
         .join("\n")
+      if (mode === "terminate_with_result") {
+        const { SessionPrompt } = await import("./prompt")
+        SessionPrompt.cancel(entry.id)
+        SessionStatus.set(
+          entry.id,
+          { type: "user_completed", message: "Terminated by user after collecting current result." },
+          { reason: "User terminated delegated child session and collected current result." },
+        )
+      }
       const sum =
-        entry.item.result_tool === ActionResult.TOOL && actionfail(out)
+        mode === "terminate_with_result"
+          ? await summarize({
+              agent: text(entry.item.agent) ?? "default",
+              item: entry.item,
+              sessionID: entry.id,
+              status: "partial",
+            }).catch((err) => {
+              log.warn("termination summary failed", { err, sessionID: entry.id })
+              return undefined
+            })
+          : entry.item.result_tool === ActionResult.TOOL && actionfail(out)
           ? await summarize({
               agent: text(entry.item.agent) ?? "default",
               diag: await diagnose(entry.id, out),
@@ -900,7 +958,13 @@ export namespace SessionDelegation {
               return undefined
             })
           : undefined
-      const body = completed(entry.item, sum?.status ?? map(status), sum?.output ?? out, sum?.metadata, undefined)
+      const body = completed(
+        entry.item,
+        sum?.status ?? (mode === "terminate_with_result" ? "partial" : map(status)),
+        sum?.output ?? out,
+        sum?.metadata,
+        undefined,
+      )
       await logdone(body)
       await store(entry.id, entry.item, body)
       await notified(entry.id, entry.item)

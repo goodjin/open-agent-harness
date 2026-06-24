@@ -31,6 +31,14 @@ Agents with names that do not expose their behavior, or compatibility agents tha
 
 Agent Protocol v2 `answer` items are response metadata, not executable actions. When an executable v2 item names a same-package `answer` id in `depends`, normalization drops that dependency and lets the executable item run as independent work. Dependencies on missing executable ids remain invalid.
 
+## User Input Questions
+
+Agent Protocol v2 `input` items are runtime user-choice gates. Runtime maps them to human actions, emits a `Question.ask` request, and stores a matching `protocol.inputs` record in the parent session `dsl_context` before waiting for the reply.
+
+Live replies still resolve the in-memory `Question.ask` deferred. If the page reloads, the app reconnects, or the server loses the live pending map, `/question` restores pending `protocol.inputs` records into normal question requests. Replying to a restored input updates that record to `answered`, stores the selected answers, and sends a continuation prompt into the same session with the captured answer text. Rejecting the restored input marks it `rejected` and resumes the session with an explicit dismissal note.
+
+The session UI surfaces pending questions both in the timeline context and in the composer dock. The composer dock is the stable fallback: an actionable question must remain visible even if the active message changes or the timeline filter hides the original turn.
+
 ## LLM Request Limits
 
 LLM request acquisition is globally coordinated inside the server process before calling the provider SDK. The runtime supports two independent provider/model gates:
@@ -44,7 +52,7 @@ RPM capacity is consumed when the request is released from the local queue, imme
 
 The queue has a timer for RPM waits. Unlike concurrency, RPM capacity can become available without any active request finishing, so the limiter wakes itself when the oldest start exits the minute window.
 
-Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `milestone-planner` runs one delegated task at a time, `epic-planner` runs two, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
+Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `default` is unlimited, `milestone-planner` runs one delegated task at a time, `epic-planner` runs two, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
 
 ## Invalid Protocol Output Diagnostics
 
@@ -132,6 +140,8 @@ Delegated task prompts must include a concrete native `ActionResult` argument ex
 Agents can declare a per-request footer through `request_footer` metadata. The footer can be inline text or a file under the shared `config/request-footers/` directory. Runtime renders it with variables such as `session_id`, `agent`, `mode`, `action_id`, `target_action_id`, `result_tool`, and `action_result_example`, then appends it only to the outbound provider request. The rendered footer is not inserted into persisted session history. This keeps the reminder current for every retry or continuation without polluting the conversation log.
 
 Runtime derives the result branch from the submitted shape: verifier results include `target_action_id`, while worker results do not. Stale fields such as `role`, `result_type`, `kind`, and `summary` are ignored during input parsing rather than treated as protocol instructions; `summary` is not mapped into `result`, so a valid call still needs an explicit `result`. After a native tool call is accepted, runtime stores an internal normalized result with `kind` and `role` for routing; that storage shape is not part of the model-facing input protocol. `ActionResult.status` uses one shared vocabulary for worker and verifier results: `success`, `failure`, `error`, `reply`, or `skipped`. Legacy verifier inputs using `pass` or `fail` are normalized to `success` or `failure` before storage and routing. When schema parsing fails, the tool error returned to the model must restate the strict direct-argument protocol, worker/verifier required fields, valid statuses, and an example.
+
+Delegated sessions derive the native `ActionResult` schema from assignment context before tool execution. Worker child sessions use the worker input schema even if the model includes stray verifier-only fields such as `target_action_id`; verifier child sessions use the verifier input schema. The storage path also guards historical or already-normalized self-target verifier-shaped worker results: if a non-verifier child stores `action_id` and `target_action_id` as the same assigned action, Runtime normalizes the handoff back to a worker result before updating parent dependencies. This keeps verifier gates from being mistaken for worker completion while preventing worker retries from stranding their own action as unfinished.
 
 If repeated malformed `ActionResult` attempts leave a delegated child blocked or failed, Runtime first tries to preserve the child context with an automatic fallback summary. It creates an independent child-of-child session with the hidden `summary` agent, gives that session the original assignment, terminal failure reason, and bounded transcript evidence, and asks for plain Markdown text only. The summary is stored through the normal delegation result path with metadata `source: "fallback_summary"` and `confirmed_by_user: false`. It remains a failed or partial handoff, not a native successful `ActionResult`, so verifier gates and worker-success routing must not treat it as a pass.
 

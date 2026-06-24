@@ -100,6 +100,7 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.rules).toContain("Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan")
       expect(agent?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
       expect(agent?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
+      expect(agent?.meta.concurrency).toBe(-1)
 
       ;["milestone-planner", "epic-planner", "feature-planner"].forEach((id) => {
         const planner = BUILTIN_AGENTS.find((item) => item.id === id)

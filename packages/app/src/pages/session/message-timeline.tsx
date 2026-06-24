@@ -855,49 +855,18 @@ export function MessageTimeline(props: {
       })
   }
 
-  const submit = (run: string) => {
+  const submit = (run: string, mode: "cancel_without_result" | "terminate_with_result") => {
     const id = sessionID()
     if (!id) return
-    const key = `submit:${run}`
-    setOp("child", key, "submit")
+    const key = `${mode}:${run}`
+    setOp("child", key, mode)
     return sdk
       .request(`/session/${id}/delegations/submit`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           directory: sdk.directory,
-          force: true,
-          run_id: run,
-        }),
-      })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(await res.text())
-        await sync.session.sync(id, { force: true }).catch(() => undefined)
-      })
-      .catch((err: unknown) =>
-        showToast({
-          variant: "error",
-          title: language.t("common.requestFailed"),
-          description: errorMessage(err),
-        }),
-      )
-      .finally(() => {
-        setOp("child", key, undefined)
-      })
-  }
-
-  const cancelRun = (run: string) => {
-    const id = sessionID()
-    if (!id) return
-    const key = `cancel:${run}`
-    setOp("child", key, "cancel")
-    return sdk
-      .request(`/session/${id}/delegations/cancel`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          directory: sdk.directory,
-          reason: "User cancelled delegated child sessions from parent timeline.",
+          mode,
           run_id: run,
         }),
       })
@@ -1839,27 +1808,27 @@ export function MessageTimeline(props: {
                                     variant="ghost"
                                     size="small"
                                     class="h-7 px-2"
-                                    disabled={!run() || !!op.child[`cancel:${run()}`]}
+                                    disabled={!run() || !!op.child[`cancel_without_result:${run()}`]}
                                     onClick={() => {
                                       const id = run()
                                       if (!id) return
-                                      void cancelRun(id)
+                                      void submit(id, "cancel_without_result")
                                     }}
                                   >
-                                    取消子会话并继续
+                                    取消并继续
                                   </Button>
                                   <Button
                                     variant="secondary"
                                     size="small"
                                     class="h-7 px-2"
-                                    disabled={!run() || !!op.child[`submit:${run()}`]}
+                                    disabled={!run() || !!op.child[`terminate_with_result:${run()}`]}
                                     onClick={() => {
                                       const id = run()
                                       if (!id) return
-                                      void submit(id)
+                                      void submit(id, "terminate_with_result")
                                     }}
                                   >
-                                    不再等待
+                                    终止并汇总
                                   </Button>
                                 </div>
                               </Show>

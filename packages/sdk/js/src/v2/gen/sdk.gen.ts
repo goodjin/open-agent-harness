@@ -1865,6 +1865,7 @@ export class Delegations extends HeyApiClient {
       query_directory?: string
       body_directory?: string
       force?: boolean
+      mode?: "cancel_without_result" | "terminate_with_result"
       run_id?: string
     },
     options?: Options<never, ThrowOnError>,
@@ -1886,6 +1887,7 @@ export class Delegations extends HeyApiClient {
               map: "directory",
             },
             { in: "body", key: "force" },
+            { in: "body", key: "mode" },
             { in: "body", key: "run_id" },
           ],
         },

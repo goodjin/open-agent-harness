@@ -457,12 +457,13 @@ export namespace LLM {
   }
 
   async function attach(input: Record<string, Tool>, context?: StreamInput["actionResult"]) {
+    const schema = context?.verifier ? ActionResult.VerifierSchema : context ? ActionResult.WorkerSchema : ActionResult.Schema
     return {
       ...input,
       [ACTION_RESULT_TOOL]: tool({
         description:
           "Submit the final delegated action result to the runtime. Use this once at the end of a delegated worker or verifier task.",
-        inputSchema: ActionResult.Schema,
+        inputSchema: schema,
         execute: async (args) => ({
           title: "Action Result",
           output: "Action result received.",

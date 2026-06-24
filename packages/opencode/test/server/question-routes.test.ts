@@ -158,6 +158,60 @@ describe("question routes", () => {
     expect(body[0]?.questions[0]?.question).not.toContain("two plan")
   })
 
+  test("lists pending protocol input from session context", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                protocol: {
+                  inputs: [
+                    {
+                      run_id: "apr_input",
+                      action_id: "choose_next",
+                      action_title: "Choose next",
+                      message_id: "msg_input",
+                      status: "pending",
+                      updated_at: 2,
+                      questions: [
+                        {
+                          question: "Choose next step",
+                          header: "Choose next",
+                          options: [
+                            { label: "Continue", description: "Continue work" },
+                            { label: "Pause", description: "Pause work" },
+                          ],
+                          multiple: false,
+                          custom: false,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            })
+          },
+        }),
+    })
+
+    const res = await call(app, tmp.path, "/question")
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { id: string; questions: { question: string }[]; tool?: { callID: string } }[]
+
+    expect(body).toHaveLength(1)
+    expect(body[0]?.id.startsWith("que_protocol_input_")).toBe(true)
+    expect(body[0]?.tool?.callID).toBe("call_choose_next")
+    expect(body[0]?.questions[0]?.question).toBe("Choose next step")
+  })
+
   test("replies to restored protocol confirmation and continues the session", async () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
@@ -216,6 +270,74 @@ describe("question routes", () => {
     }
   })
 
+  test("replies to restored protocol input and continues the session", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    const prompt = spyOn(SessionPrompt, "prompt")
+    prompt.mockImplementation((async () => undefined) as unknown as typeof SessionPrompt.prompt)
+    let id: SessionID | undefined
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              id = session.id
+              await Session.setDslContext({
+                sessionID: session.id,
+                dsl_context: {
+                  protocol: {
+                    inputs: [
+                      {
+                        run_id: "apr_input",
+                        action_id: "choose_next",
+                        action_title: "Choose next",
+                        message_id: "msg_input",
+                        status: "pending",
+                        updated_at: 2,
+                        questions: [
+                          {
+                            question: "Choose next step",
+                            header: "Choose next",
+                            options: [{ label: "Continue", description: "Continue work" }],
+                            multiple: false,
+                            custom: false,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              })
+            },
+          }),
+      })
+
+      const listed = await call(app, tmp.path, "/question")
+      const questions = (await listed.json()) as { id: string }[]
+      const res = await call(app, tmp.path, `/question/${questions[0]?.id}/reply`, {
+        method: "POST",
+        body: JSON.stringify({ answers: [["Continue"]] }),
+      })
+      const session = await Instance.provide({
+        directory: tmp.path,
+        fn: () => Session.get(id!),
+      })
+      const vals = session.dsl_context?.protocol as { inputs?: { answers?: string[][]; status: string }[] } | undefined
+
+      expect(res.status).toBe(200)
+      expect(vals?.inputs?.[0]?.status).toBe("answered")
+      expect(vals?.inputs?.[0]?.answers).toEqual([["Continue"]])
+      expect(prompt).toHaveBeenCalled()
+      expect(JSON.stringify(prompt.mock.calls[0]?.[0])).toContain("User answered protocol input choose_next")
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("cancels restored protocol confirmation from explicit response", async () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
@@ -269,6 +391,72 @@ describe("question routes", () => {
       expect(vals?.confirmations?.[0]?.status).toBe("cancelled")
       expect(vals?.confirmations?.[0]?.response).toBe("cancel")
       expect(prompt).toHaveBeenCalled()
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("rejects restored protocol input and continues the session", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    const prompt = spyOn(SessionPrompt, "prompt")
+    prompt.mockImplementation((async () => undefined) as unknown as typeof SessionPrompt.prompt)
+    let id: SessionID | undefined
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              id = session.id
+              await Session.setDslContext({
+                sessionID: session.id,
+                dsl_context: {
+                  protocol: {
+                    inputs: [
+                      {
+                        run_id: "apr_input",
+                        action_id: "choose_next",
+                        action_title: "Choose next",
+                        message_id: "msg_input",
+                        status: "pending",
+                        updated_at: 2,
+                        questions: [
+                          {
+                            question: "Choose next step",
+                            header: "Choose next",
+                            options: [{ label: "Continue", description: "Continue work" }],
+                            multiple: false,
+                            custom: false,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              })
+            },
+          }),
+      })
+
+      const listed = await call(app, tmp.path, "/question")
+      const questions = (await listed.json()) as { id: string }[]
+      const res = await call(app, tmp.path, `/question/${questions[0]?.id}/reject`, {
+        method: "POST",
+      })
+      const session = await Instance.provide({
+        directory: tmp.path,
+        fn: () => Session.get(id!),
+      })
+      const vals = session.dsl_context?.protocol as { inputs?: { status: string }[] } | undefined
+
+      expect(res.status).toBe(200)
+      expect(vals?.inputs?.[0]?.status).toBe("rejected")
+      expect(prompt).toHaveBeenCalled()
+      expect(JSON.stringify(prompt.mock.calls[0]?.[0])).toContain("User dismissed protocol input choose_next")
     } finally {
       prompt.mockRestore()
     }

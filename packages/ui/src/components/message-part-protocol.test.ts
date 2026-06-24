@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { protocolMeta, protocolText } from "./message-part-protocol"
+import { actionResult, invalidProtocol, protocolMeta, protocolText } from "./message-part-protocol"
 
 describe("protocolText", () => {
   test("renders flat AgentProtocolOutput input", () => {
@@ -45,5 +45,75 @@ describe("protocolMeta", () => {
       kind: "act",
       calls: "2",
     })
+  })
+})
+
+describe("invalidProtocol", () => {
+  test("shows parse failure and captured raw output", () => {
+    expect(
+      invalidProtocol({
+        input: {
+          tool: "AgentProtocolOutput",
+          error: "Invalid input for tool AgentProtocolOutput",
+          raw: '{"version": "2", "items":',
+        },
+      }),
+    ).toEqual({
+      type: "解析输出失败",
+      output: '{"version": "2", "items":',
+    })
+  })
+
+  test("falls back to raw protocol output in rendered text", () => {
+    expect(
+      invalidProtocol({
+        input: {
+          tool: "AgentProtocolOutput",
+          error: "Invalid input for tool AgentProtocolOutput",
+        },
+        output: 'Invalid input\n\nRaw protocol output:\n{"version": "2", "items":',
+      }),
+    ).toEqual({
+      type: "解析输出失败",
+      output: '{"version": "2", "items":',
+    })
+  })
+
+  test("ignores non-protocol invalid tool calls", () => {
+    expect(invalidProtocol({ input: { tool: "bash", raw: "x" } })).toBeUndefined()
+  })
+})
+
+describe("actionResult", () => {
+  test("shows parse failure and captured raw input", () => {
+    expect(
+      actionResult({
+        tool: "ActionResult",
+        input: {},
+        metadata: {
+          rawInput: '{"action_id":"feature","status":"success"}',
+        },
+      }),
+    ).toEqual({
+      type: "解析结果失败",
+      output: '{"action_id":"feature","status":"success"}',
+    })
+  })
+
+  test("falls back to parsed input", () => {
+    expect(
+      actionResult({
+        tool: "ActionResult",
+        input: {},
+        metadata: {},
+      }),
+    ).toEqual({
+      type: "解析结果失败",
+      output: "{}",
+    })
+  })
+
+  test("ignores other tools", () => {
+    expect(actionResult({ tool: "bash", input: {} })).toBeUndefined()
   })
 })

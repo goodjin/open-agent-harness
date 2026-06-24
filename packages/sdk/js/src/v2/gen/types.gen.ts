@@ -5428,6 +5428,7 @@ export type SessionDelegationsSubmitData = {
   body?: {
     directory?: string
     force?: boolean
+    mode?: "cancel_without_result" | "terminate_with_result"
     run_id: string
   }
   path: {

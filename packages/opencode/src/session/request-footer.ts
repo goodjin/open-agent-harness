@@ -8,14 +8,19 @@ export namespace RequestFooter {
   }
 
   export function variables(input: {
+    actionResult?: {
+      action?: string
+      target?: string
+      verifier?: boolean
+    }
     sessionID: string
     agent: string
     mode: string
     delegation?: Record<string, unknown>
   }) {
-    const action = text(input.delegation?.action_id)
+    const action = input.actionResult?.action ?? text(input.delegation?.action_id)
     const tool = text(input.delegation?.result_tool)
-    const target = targetAction(input.delegation)
+    const target = input.actionResult?.verifier ? input.actionResult.target ?? targetAction(input.delegation) : undefined
     return {
       session_id: input.sessionID,
       agent: input.agent,

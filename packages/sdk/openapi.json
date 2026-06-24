@@ -3935,6 +3935,13 @@
                   "force": {
                     "type": "boolean"
                   },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "cancel_without_result",
+                      "terminate_with_result"
+                    ]
+                  },
                   "run_id": {
                     "type": "string",
                     "minLength": 1

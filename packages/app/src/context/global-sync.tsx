@@ -64,7 +64,9 @@ function createGlobalSync() {
   const sdkCache = new Map<string, OpencodeClient>()
   const booting = new Map<string, Promise<void>>()
   const sessionLoads = new Map<string, Promise<void>>()
+  const sessionSyncs = new Map<string, Promise<void>>()
   const sessionMeta = new Map<string, { limit: number; mode: LoadMode; roots: Set<string> }>()
+  const parents = new Map<string, Set<string>>()
 
   const [projectCache, setProjectCache, projectInit] = persisted(
     Persist.global("globalSync.project", ["globalSync.project.v1"]),
@@ -165,6 +167,7 @@ function createGlobalSync() {
     onDispose: (directory) => {
       queue.clear(directory)
       sessionMeta.delete(directory)
+      parents.delete(directory)
       sdkCache.delete(directory)
       clearSessionPrefetchDirectory(directory)
     },
@@ -180,6 +183,47 @@ function createGlobalSync() {
     })
     sdkCache.set(directory, sdk)
     return sdk
+  }
+
+  const parentSet = (directory: string) => {
+    const set = parents.get(directory)
+    if (set) return set
+    const next = new Set<string>()
+    parents.set(directory, next)
+    return next
+  }
+
+  const syncSession = (directory: string, sessionID: string) => {
+    const key = `${directory}:${sessionID}`
+    const pending = sessionSyncs.get(key)
+    if (pending) return pending
+    const [, setStore] = children.child(directory, { bootstrap: false })
+    const promise = sdkFor(directory)
+      .session.get({ directory, sessionID })
+      .then((res) => {
+        const info = res.data
+        if (!info) return
+        setStore(
+          "session",
+          produce((draft) => {
+            const index = draft.findIndex((item) => item.id === sessionID)
+            if (index !== -1) {
+              draft[index] = info
+              return
+            }
+            draft.push(info)
+            draft.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+          }),
+        )
+      })
+      .catch((err) => {
+        console.error("Failed to sync session", err)
+      })
+      .finally(() => {
+        sessionSyncs.delete(key)
+      })
+    sessionSyncs.set(key, promise)
+    return promise
   }
 
   async function runningRoots(directory: string, status: Record<string, { type?: string }>) {
@@ -361,6 +405,10 @@ function createGlobalSync() {
         queue.push(directory)
       },
       setSessionTodo,
+      parents: parentSet(directory),
+      syncSession: (sessionID) => {
+        void syncSession(directory, sessionID)
+      },
       vcsCache: children.vcsCache.get(directory),
       loadLsp: () => {
         sdkFor(directory)

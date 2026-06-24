@@ -232,16 +232,18 @@ describe("deriveSessionLiveStatus", () => {
     expect(
       deriveSessionLiveStatus({
         status: { type: "running" },
+        now: 5_000,
         messages: [user("u1"), assistant("a1", "u1")],
         parts: {
-          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "reasoning", text: "thinking", time: { start: 2 } }],
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "reasoning", text: "thinking", time: { start: 2_000 } }],
         },
       }),
-    ).toMatchObject({ label: "思考中" })
+    ).toMatchObject({ label: "思考中", metrics: ["用时 3s", "已接收 8 B"] })
 
     expect(
       deriveSessionLiveStatus({
         status: { type: "running" },
+        now: 5_000,
         messages: [user("u1"), assistant("a1", "u1")],
         parts: {
           a1: [
@@ -252,37 +254,78 @@ describe("deriveSessionLiveStatus", () => {
               type: "tool",
               callID: "call_1",
               tool: "bash",
-              state: { status: "running", input: {}, time: { start: 2 }, title: "Run tests" },
+              state: { status: "running", input: {}, time: { start: 2_000 }, title: "Run tests" },
             },
           ],
         },
       }),
-    ).toMatchObject({ label: "工具调用中", description: "正在执行 bash：Run tests" })
+    ).toMatchObject({ label: "工具调用中", description: "正在执行 bash：Run tests", metrics: ["用时 3s"] })
 
     expect(
       deriveSessionLiveStatus({
         status: { type: "running" },
+        now: 5_000,
         messages: [user("u1"), assistant("a1", "u1")],
         parts: {
-          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "text", text: "partial" }],
+          a1: [{ id: "p1", sessionID: "ses_1", messageID: "a1", type: "text", text: "partial", time: { start: 2_000 } }],
         },
       }),
-    ).toMatchObject({ label: "文本回复中" })
+    ).toMatchObject({ label: "文本回复中", metrics: ["用时 3s", "已接收 7 B"] })
   })
 
   test("shows request progress before any assistant part arrives", () => {
     expect(
       deriveSessionLiveStatus({
         status: { type: "running" },
-        messages: [user("u1")],
-        parts: {},
+        now: 5_000,
+        messages: [
+          {
+            ...user("u1", 1_000),
+            metadata: {
+              turn: {
+                kind: "user",
+                status: "running",
+                time: { queued: 1_000, started: 2_000 },
+              },
+            },
+          } as Message,
+        ],
+        parts: {
+          u1: [{ id: "p1", sessionID: "ses_1", messageID: "u1", type: "text", text: "hello" }],
+        },
       }),
     ).toMatchObject({
       label: "请求已发出",
       description: "用户消息已进入会话，正在等待模型开始响应。",
+      metrics: ["用时 3s", "已发送 5 B"],
     })
 
     expect(deriveSessionLiveStatus({ status: { type: "completed" }, messages: [user("u1")], parts: {} })).toBeUndefined()
+  })
+
+  test("adds elapsed duration for non-output live states when turn timing exists", () => {
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "waiting_user" },
+        now: 5_000,
+        messages: [
+          {
+            ...user("u1", 1_000),
+            metadata: {
+              turn: {
+                kind: "user",
+                status: "running",
+                time: { queued: 1_000, started: 2_000 },
+              },
+            },
+          } as Message,
+        ],
+        parts: {},
+      }),
+    ).toMatchObject({
+      label: "等待用户确认",
+      metrics: ["用时 3s"],
+    })
   })
 
   test("does not show responding after the turn or session has ended", () => {

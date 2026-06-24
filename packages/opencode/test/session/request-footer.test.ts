@@ -29,6 +29,11 @@ describe("RequestFooter", () => {
         sessionID: "ses_review",
         agent: "backend-verifier",
         mode: "subagent",
+        actionResult: {
+          action: "impl_review",
+          target: "impl",
+          verifier: true,
+        },
         delegation: {
           action_id: "impl_review",
           result_tool: "ActionResult",
@@ -41,6 +46,26 @@ describe("RequestFooter", () => {
         },
       }).action_result_example,
     ).toContain('"target_action_id": "impl"')
+    expect(
+      RequestFooter.variables({
+        sessionID: "ses_impl",
+        agent: "backend",
+        mode: "subagent",
+        actionResult: {
+          action: "impl",
+          verifier: false,
+        },
+        delegation: {
+          action_id: "impl",
+          result_tool: "ActionResult",
+          metadata: {
+            verification: {
+              worker: "other",
+            },
+          },
+        },
+      }).action_result_example,
+    ).not.toContain("target_action_id")
     expect(
       RequestFooter.variables({
         sessionID: "ses_review",

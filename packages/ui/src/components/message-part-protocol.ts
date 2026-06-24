@@ -24,6 +24,11 @@ const protocol = (input: unknown) => {
   return value
 }
 
+const shown = (input: unknown) => {
+  if (typeof input === "string") return input.trim()
+  return JSON.stringify(input ?? {}, null, 2)
+}
+
 export function protocolText(input: {
   input?: unknown
   output?: string
@@ -57,4 +62,27 @@ export function protocolMeta(input: unknown) {
   const kind = typeof value.kind === "string" && value.kind ? value.kind : undefined
   const calls = Array.isArray(value.calls) ? String(value.calls.length) : undefined
   return { kind, calls }
+}
+
+export function invalidProtocol(input: { input?: unknown; metadata?: Record<string, unknown>; output?: string }) {
+  if (!record(input.input)) return undefined
+  if (input.input.tool !== "AgentProtocolOutput") return undefined
+  const raw = [input.input.raw, input.metadata?.raw]
+    .find((item): item is string => typeof item === "string" && item.trim().length > 0)
+    ?.trim()
+  if (raw) return { type: "解析输出失败", output: raw }
+  const marker = "Raw protocol output:"
+  const text = typeof input.output === "string" ? input.output : ""
+  const idx = text.indexOf(marker)
+  const output = idx >= 0 ? text.slice(idx + marker.length).trim() : ""
+  return { type: "解析输出失败", output }
+}
+
+export function actionResult(input: { tool?: string; input?: unknown; metadata?: Record<string, unknown> }) {
+  if (input.tool !== "ActionResult") return undefined
+  const raw = input.metadata?.rawInput
+  return {
+    type: "解析结果失败",
+    output: typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : shown(input.input),
+  }
 }

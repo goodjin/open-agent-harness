@@ -57,7 +57,7 @@ import { useLocation } from "@solidjs/router"
 import { attached, inline, kind } from "./message-file"
 import { limitTextLines } from "./message-line-limit"
 import { partView, type PartView } from "./message-part-view"
-import { protocolMeta, protocolText } from "./message-part-protocol"
+import { actionResult, invalidProtocol, protocolMeta, protocolText } from "./message-part-protocol"
 import { heading, thinkingText } from "./session-turn-helpers"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
@@ -265,10 +265,10 @@ function LimitedText(props: { text: string; limit?: number; children: (text: () 
   )
 }
 
-function LimitedMarkdown(props: { text: string; cacheKey?: string; limit?: number }) {
+function LimitedMarkdown(props: { text: string; cacheKey?: string; limit?: number; streaming?: boolean }) {
   return (
     <LimitedText text={props.text} limit={props.limit}>
-      {(text) => <Markdown text={text()} cacheKey={props.cacheKey} />}
+      {(text) => <Markdown text={text()} cacheKey={props.cacheKey} streaming={props.streaming} />}
     </LimitedText>
   )
 }
@@ -1400,6 +1400,34 @@ PART_MAPPING["tool"] = function ToolPartDisplay(props) {
                   </div>
                 )
               }
+              const action = actionResult({
+                tool: part().tool,
+                input: input(),
+                metadata: partMetadata(),
+              })
+              if (action) {
+                return (
+                  <BasicTool
+                    icon="circle-ban-sign"
+                    status="error"
+                    defaultOpen={props.defaultOpen}
+                    trigger={{
+                      title: action.type,
+                    }}
+                  >
+                    <div data-component="protocol-output" data-scrollable>
+                      <div data-slot="protocol-invalid-label">模型实际输出</div>
+                      <LimitedText text={action.output}>
+                        {(value) => (
+                          <pre>
+                            <code>{value()}</code>
+                          </pre>
+                        )}
+                      </LimitedText>
+                    </div>
+                  </BasicTool>
+                )
+              }
               return (
                 <ToolErrorCard
                   tool={part().tool}
@@ -1589,6 +1617,12 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
   })
   const [copied, setCopied] = createSignal(false)
   const [open, setOpen] = createSignal(true)
+  const streaming = createMemo(
+    () =>
+      props.message.role === "assistant" &&
+      typeof part().time?.end !== "number" &&
+      typeof (props.message as AssistantMessage).time?.completed !== "number",
+  )
 
   const handleCopy = async () => {
     const content = displayText()
@@ -1622,7 +1656,7 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
               </button>
               <Show when={open()}>
                 <div data-slot="text-part-body" data-scrollable>
-                  <LimitedMarkdown text={throttledText()} cacheKey={part().id} />
+                  <LimitedMarkdown text={throttledText()} cacheKey={part().id} streaming={streaming()} />
                 </div>
               </Show>
             </div>
@@ -2106,6 +2140,56 @@ ToolRegistry.register({
           </div>
         </div>
       </BasicTool>
+    )
+  },
+})
+
+ToolRegistry.register({
+  name: "invalid",
+  render(props) {
+    const info = createMemo(() =>
+      invalidProtocol({
+        input: props.input,
+        output: props.output,
+        metadata: props.metadata,
+      }),
+    )
+
+    return (
+      <Show
+        when={info()}
+        fallback={
+          <GenericTool
+            tool={props.tool}
+            status={props.status}
+            hideDetails={props.hideDetails}
+            input={props.input}
+            output={props.output}
+            metadata={props.metadata}
+          />
+        }
+      >
+        {(item) => (
+          <BasicTool
+            {...props}
+            icon="circle-ban-sign"
+            trigger={{
+              title: item().type,
+            }}
+          >
+            <div data-component="protocol-output" data-scrollable>
+              <div data-slot="protocol-invalid-label">模型实际输出</div>
+              <LimitedText text={item().output}>
+                {(value) => (
+                  <pre>
+                    <code>{value()}</code>
+                  </pre>
+                )}
+              </LimitedText>
+            </div>
+          </BasicTool>
+        )}
+      </Show>
     )
   },
 })

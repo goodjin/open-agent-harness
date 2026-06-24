@@ -2989,6 +2989,13 @@ describe("SessionRunner", () => {
                 "packages/visual-editor/src/visual-state/history.ts",
               ])
               expect(questions[0]?.questions[1]?.header).toBe("Branching policy")
+              const pending = await Session.get(session.id)
+              const pendingProtocol = pending.dsl_context?.protocol as
+                | { inputs?: { action_id?: string; questions?: unknown[]; status?: string }[] }
+                | undefined
+              expect(pendingProtocol?.inputs?.[0]?.action_id).toBe("resolve_path_and_contracts")
+              expect(pendingProtocol?.inputs?.[0]?.status).toBe("pending")
+              expect(pendingProtocol?.inputs?.[0]?.questions).toHaveLength(2)
 
               await Question.reply({
                 requestID: questions[0]!.id,
@@ -3003,7 +3010,16 @@ describe("SessionRunner", () => {
               const summary = messages
                 .flatMap((item) => item.parts)
                 .find((part) => part.type === "text" && part.metadata?.kind === "protocol_summary")
+              const doneSession = await Session.get(session.id)
+              const doneProtocol = doneSession.dsl_context?.protocol as
+                | { inputs?: { action_id?: string; answers?: string[][]; status?: string }[] }
+                | undefined
               expect(calls).toBe(2)
+              expect(doneProtocol?.inputs?.[0]?.status).toBe("answered")
+              expect(doneProtocol?.inputs?.[0]?.answers).toEqual([
+                ["src/visual-state/history.ts"],
+                ["Truncate redo branch"],
+              ])
               expect(summary?.type === "text" ? summary.metadata?.action : undefined).toBe("input_received")
               expect(text).toContain("Protocol input received: Resolve path and provide contracts")
               expect(text).toContain("- Resolve path and provide contracts: input received")

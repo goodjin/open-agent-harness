@@ -57,6 +57,31 @@ function fallback(markdown: string) {
   return escape(markdown).replace(/\r\n?/g, "\n").replace(/\n/g, "<br>")
 }
 
+type Fence = {
+  mark: string
+  size: number
+}
+
+export function snapshot(markdown: string) {
+  const state = markdown.replace(/\r\n?/g, "\n").split("\n").reduce<Fence | undefined>((state, line) => {
+    const match = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/)
+    if (!match) return state
+
+    const mark = match[1]
+    const char = mark[0]
+    const tail = match[2] ?? ""
+
+    if (!state) return { mark: char, size: mark.length }
+    if (char !== state.mark) return state
+    if (mark.length < state.size) return state
+    if (tail.trim()) return state
+    return undefined
+  }, undefined)
+
+  if (!state) return markdown
+  return markdown + (markdown.endsWith("\n") ? "" : "\n") + state.mark.repeat(state.size) + "\n"
+}
+
 type CopyLabels = {
   copy: string
   copied: string
@@ -239,20 +264,23 @@ export function Markdown(
   props: ComponentProps<"div"> & {
     text: string
     cacheKey?: string
+    streaming?: boolean
     class?: string
     classList?: Record<string, boolean>
   },
 ) {
-  const [local, others] = splitProps(props, ["text", "cacheKey", "class", "classList"])
+  const [local, others] = splitProps(props, ["text", "cacheKey", "streaming", "class", "classList"])
   const marked = useMarked()
   const i18n = useI18n()
   const [root, setRoot] = createSignal<HTMLDivElement>()
   const [html] = createResource(
-    () => local.text,
-    async (markdown) => {
-      if (isServer) return fallback(markdown)
+    () => ({
+      text: local.streaming ? snapshot(local.text) : local.text,
+    }),
+    async (input) => {
+      if (isServer) return fallback(input.text)
 
-      const hash = checksum(markdown)
+      const hash = checksum(input.text)
       const key = local.cacheKey ?? hash
 
       if (key && hash) {
@@ -263,7 +291,7 @@ export function Markdown(
         }
       }
 
-      const next = await marked.parse(markdown)
+      const next = await marked.parse(input.text)
       const safe = sanitize(next)
       if (key && hash) touch(key, { hash, html: safe })
       return safe
