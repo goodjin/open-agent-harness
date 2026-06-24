@@ -2312,7 +2312,7 @@ ToolRegistry.register({
                 </Show>
               }
             >
-              <div data-component="edit-content">
+              <div data-component="edit-content" data-scrollable>
                 <Dynamic
                   component={fileComponent}
                   mode="diff"
@@ -2373,7 +2373,7 @@ ToolRegistry.register({
         >
           <Show when={props.input.content && path()}>
             <ToolFileAccordion path={path()}>
-              <div data-component="write-content">
+              <div data-component="write-content" data-scrollable>
                 <Dynamic
                   component={fileComponent}
                   mode="text"
@@ -2516,7 +2516,7 @@ ToolRegistry.register({
                           </StickyAccordionHeader>
                           <Accordion.Content>
                             <Show when={visible()}>
-                              <div data-component="apply-patch-file-diff">
+                              <div data-component="apply-patch-file-diff" data-scrollable>
                                 <Dynamic
                                   component={fileComponent}
                                   mode="diff"
@@ -2591,7 +2591,7 @@ ToolRegistry.register({
                 </Switch>
               }
             >
-              <div data-component="apply-patch-file-diff">
+              <div data-component="apply-patch-file-diff" data-scrollable>
                 <Dynamic
                   component={fileComponent}
                   mode="diff"

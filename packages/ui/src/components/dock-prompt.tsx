@@ -14,7 +14,9 @@ export function DockPrompt(props: {
     <div data-component="dock-prompt" data-kind={props.kind} ref={props.ref}>
       <DockShell data-slot={slot("body")}>
         <div data-slot={slot("header")}>{props.header}</div>
-        <div data-slot={slot("content")}>{props.children}</div>
+        <div data-slot={slot("content")} data-scrollable>
+          {props.children}
+        </div>
       </DockShell>
       <DockTray data-slot={slot("footer")}>{props.footer}</DockTray>
     </div>

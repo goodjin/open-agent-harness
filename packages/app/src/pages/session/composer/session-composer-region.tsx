@@ -7,7 +7,6 @@ import { usePrompt } from "@/context/prompt"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
-import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
 import type { SessionComposerState } from "@/pages/session/composer/session-composer-state"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
@@ -103,8 +102,7 @@ export function SessionComposerRegion(props: {
 
   onCleanup(clear)
 
-  const request = createMemo(() => props.state.questionRequest())
-  const open = createMemo(() => store.ready && (props.state.dock() || !!request()) && !props.state.closing())
+  const open = createMemo(() => store.ready && props.state.dock() && !props.state.closing())
   const progress = useSpring(() => (open() ? 1 : 0), { visualDuration: 0.3, bounce: 0 })
   const value = createMemo(() => Math.max(0, Math.min(1, progress())))
   const dock = createMemo(() => (store.ready && props.state.dock()) || value() > 0.001)
@@ -169,13 +167,6 @@ export function SessionComposerRegion(props: {
               }}
             >
               <div ref={(el) => setStore("body", el)}>
-                <Show when={request()} keyed>
-                  {(req) => (
-                    <div class="pb-2">
-                      <SessionQuestionDock request={req} onSubmit={props.onSubmit} />
-                    </div>
-                  )}
-                </Show>
                 <SessionTodoDock
                   sessionID={route.params.id}
                   todos={props.state.todos()}

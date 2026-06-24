@@ -571,7 +571,7 @@ export function SessionTurn(
                 />
               </Show>
               <Show when={error()}>
-                <Card variant="error" class="error-card">
+                <Card variant="error" class="error-card" data-scrollable>
                   {errorText()}
                 </Card>
               </Show>

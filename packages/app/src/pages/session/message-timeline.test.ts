@@ -65,8 +65,8 @@ describe("confirmation request matching", () => {
     expect(questionConfirmationKey(req)).toBe("msg_1:call_confirm_bridge_plan")
   })
 
-  test("hides active pending questions from the timeline surface", () => {
-    expect(timelineQuestionVisible({ active: true, request: { id: "q_1" } as QuestionRequest })).toBe(false)
+  test("keeps active pending questions on the timeline surface", () => {
+    expect(timelineQuestionVisible({ active: true, request: { id: "q_1" } as QuestionRequest })).toBe(true)
     expect(timelineQuestionVisible({ active: false, request: { id: "q_1" } as QuestionRequest })).toBe(true)
   })
 

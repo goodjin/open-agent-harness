@@ -1186,6 +1186,7 @@ export default function Page() {
                         composer.decide(response)
                       },
                     }}
+                    todos={composer.todos()}
                     scroll={ui.scroll}
                     onResumeScroll={resumeScroll}
                     setScrollRef={setScrollRef}

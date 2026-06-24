@@ -48,7 +48,7 @@ export function SessionTodoDock(props: {
 }) {
   const language = useLanguage()
   const [store, setStore] = createStore({
-    collapsed: false,
+    collapsed: true,
     height: 320,
   })
 

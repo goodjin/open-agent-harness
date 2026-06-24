@@ -100,11 +100,12 @@
 
   .error-card {
     color: var(--text-on-critical-base);
-    max-height: 240px;
+    max-height: 300dvh;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
     overflow-y: auto;
+    scrollbar-width: thin;
   }
 
   [data-slot="session-turn-assistant-content"] {
@@ -260,14 +261,10 @@
     background-color: var(--surface-inset-base);
     width: 100%;
     min-width: 0;
+    max-height: 500dvh;
     overflow-y: auto;
     overflow-x: hidden;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  [data-slot="session-turn-diff-view"]::-webkit-scrollbar {
-    display: none;
+    scrollbar-width: thin;
   }
 }
 
@@ -415,13 +412,9 @@
     background-color: var(--surface-inset-base);
     width: 100%;
     min-width: 0;
+    max-height: 500dvh;
     overflow-y: auto;
     overflow-x: hidden;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-
-  [data-slot="session-turn-diff-view"]::-webkit-scrollbar {
-    display: none;
+    scrollbar-width: thin;
   }
 }

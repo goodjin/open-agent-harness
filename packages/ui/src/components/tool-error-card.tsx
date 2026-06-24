@@ -146,7 +146,7 @@ export function ToolErrorCard(props: ToolErrorCardProps) {
           </div>
         </Collapsible.Trigger>
         <Collapsible.Content>
-          <div data-slot="tool-error-card-content">
+          <div data-slot="tool-error-card-content" data-scrollable>
             <Show when={open()}>
               <div data-slot="tool-error-card-copy">
                 <Tooltip

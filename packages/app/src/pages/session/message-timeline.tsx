@@ -21,6 +21,7 @@ import type {
   QuestionRequest,
   Session,
   TextPart,
+  Todo,
   UserMessage,
 } from "@open-agent-harness/sdk/v2"
 import { showToast } from "@open-agent-harness/ui/toast"
@@ -257,7 +258,7 @@ function SessionConfirmationCard(props: {
               fallback={
                 <div
                   data-scrollable
-                  class="max-h-[42vh] overflow-auto rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
+                  class="max-h-[500dvh] overflow-auto rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
                 >
                   <Markdown text={props.item.plan || "No plan text recorded."} />
                 </div>
@@ -308,6 +309,42 @@ function SessionOutputSafetyCard(props: {
           <Button variant="secondary" size="small" class="h-7 px-2 shrink-0" disabled={busy()} onClick={cont}>
             继续进行
           </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SessionTodoPanel(props: { todos: Todo[]; title: string }) {
+  const done = createMemo(() => props.todos.filter((item) => item.status === "completed").length)
+  const status = (input: Todo["status"]) => {
+    if (input === "completed") return "bg-icon-success-base"
+    if (input === "in_progress") return "bg-icon-info-base"
+    if (input === "cancelled") return "bg-icon-warning-base"
+    return "bg-icon-weak-base"
+  }
+
+  return (
+    <div class="px-6 md:px-8 pt-4">
+      <div data-component="session-todo-panel" class="rounded-md border border-border-weak-base bg-background-base overflow-hidden">
+        <div class="flex items-center justify-between gap-2 border-b border-border-weaker-base px-3 py-2">
+          <div class="min-w-0 text-12-medium text-text-strong">{props.title}</div>
+          <div class="shrink-0 text-11-regular text-text-weak">
+            {done()}/{props.todos.length}
+          </div>
+        </div>
+        <div class="max-h-[300dvh] overflow-y-auto px-3 py-2" data-scrollable>
+          <For each={props.todos}>
+            {(item) => (
+              <div class="flex min-w-0 items-start gap-2 border-b border-border-weaker-base/70 py-2 last:border-b-0">
+                <span class={`mt-1.5 size-2 rounded-full shrink-0 ${status(item.status)}`} />
+                <div class="min-w-0 flex-1">
+                  <div class="break-words text-12-regular text-text-strong">{item.content}</div>
+                  <div class="mt-0.5 text-11-regular text-text-weak">{item.status}</div>
+                </div>
+              </div>
+            )}
+          </For>
         </div>
       </div>
     </div>
@@ -369,6 +406,7 @@ export function MessageTimeline(props: {
   mobileFallback: JSX.Element
   actions?: UserActions
   request?: Requests
+  todos: Todo[]
   scroll: { overflow: boolean; bottom: boolean }
   onResumeScroll: () => void
   setScrollRef: (el: HTMLDivElement | undefined) => void
@@ -1574,6 +1612,9 @@ export function MessageTimeline(props: {
                           container: "w-full px-6 md:px-8",
                         }}
                       />
+                      <Show when={props.filter === "all" && active() && props.todos.length > 0}>
+                        <SessionTodoPanel todos={props.todos} title={language.t("session.todo.title")} />
+                      </Show>
                       <Show when={active() && safe(sessionStatus()) && sessionID()}>
                         {(id) => (
                           <SessionOutputSafetyCard
@@ -1722,7 +1763,7 @@ export function MessageTimeline(props: {
                                 </div>
                               </button>
                               <Show when={kidsOpen()}>
-                                <div class="max-h-[360px] overflow-y-auto" data-scrollable>
+                                <div class="max-h-[300dvh] overflow-y-auto" data-scrollable>
                                   <For each={kids()}>
                                     {(item) => {
                                       const status = createMemo(() => sync.data.session_status[item.id]?.type ?? "idle")

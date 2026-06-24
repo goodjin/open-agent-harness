@@ -24,8 +24,8 @@ export const timelineQuestionVisible = (input: {
   confirm?: Confirm
 }) => {
   if (!input.request) return true
+  if (!input.confirm) return true
   if (!input.active) return true
-  if (!input.confirm) return false
   const key = questionConfirmationKey(input.request)
   if (!key) return true
   return confirmationKey(input.confirm) !== key

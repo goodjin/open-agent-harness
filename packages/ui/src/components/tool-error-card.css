@@ -16,8 +16,11 @@
 
   [data-slot="tool-error-card-content"] {
     position: relative;
+    max-height: 300dvh;
+    overflow-y: auto;
     padding-left: 24px;
     margin-bottom: 8px;
+    scrollbar-width: thin;
     -webkit-user-select: text;
     user-select: text;
   }
@@ -75,8 +78,9 @@
   }
 
   [data-slot="tool-error-card-evidence"] pre {
-    max-height: 260px;
+    max-height: 300dvh;
     overflow: auto;
+    scrollbar-width: thin;
     white-space: pre-wrap;
     word-break: break-word;
     border-radius: 6px;
