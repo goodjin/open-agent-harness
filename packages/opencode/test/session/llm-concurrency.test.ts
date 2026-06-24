@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
 import { LLMConcurrency } from "../../src/session/llm-concurrency"
 import { SessionStatus } from "../../src/session/status"
@@ -202,6 +203,110 @@ describe("LLMConcurrency", () => {
     } finally {
       if (prior === undefined) delete process.env.OPENCODE_LLM_RPM_WINDOW_MS
       else process.env.OPENCODE_LLM_RPM_WINDOW_MS = prior
+    }
+  })
+
+  test("keeps queued session status bound to the originating instance", async () => {
+    await using one = await tmpdir()
+    await using two = await tmpdir()
+
+    const pid = "bind-blocked"
+    const other = "bind-other"
+    const full = {
+      id: pid,
+      concurrency: 1,
+    } as Provider.Info
+    const fullModel = {
+      id: "MiniMax-M3",
+      providerID: pid,
+    } as Provider.Model
+    const spareProvider = {
+      id: other,
+      concurrency: 1,
+    } as Provider.Info
+    const spareModel = {
+      id: "MiniMax-M3",
+      providerID: other,
+    } as Provider.Model
+    const queued = SessionID.make("ses_queued_instance_binding")
+    const ctl = new AbortController()
+    let first: LLMConcurrency.Release | undefined
+    let second: LLMConcurrency.Release | undefined
+    let third: LLMConcurrency.Release | undefined
+    let task: Promise<LLMConcurrency.Release> | undefined
+
+    try {
+      await Instance.provide({
+        directory: one.path,
+        fn: async () => {
+          first = await LLMConcurrency.acquire({
+            model: fullModel,
+            provider: full,
+            sessionID: SessionID.make("ses_held_instance_binding"),
+            abort: new AbortController().signal,
+          })
+          task = LLMConcurrency.acquire({
+            model: fullModel,
+            provider: full,
+            sessionID: queued,
+            abort: ctl.signal,
+          })
+          expect(SessionStatus.get(queued).type).toBe("rate_limited")
+        },
+      })
+
+      await Instance.provide({
+        directory: two.path,
+        fn: async () => {
+          expect(SessionStatus.get(queued).type).toBe("idle")
+          third = await LLMConcurrency.acquire({
+            model: spareModel,
+            provider: spareProvider,
+            sessionID: SessionID.make("ses_spare_instance_binding"),
+            abort: new AbortController().signal,
+          })
+          third()
+          expect(SessionStatus.get(queued).type).toBe("idle")
+        },
+      })
+
+      await Instance.provide({
+        directory: one.path,
+        fn: async () => {
+          expect(SessionStatus.get(queued).type).toBe("rate_limited")
+        },
+      })
+
+      await Instance.provide({
+        directory: two.path,
+        fn: async () => {
+          first?.()
+        },
+      })
+
+      second = await Promise.race([
+        task!,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Timed out waiting for queue")), 1_000)),
+      ])
+
+      await Instance.provide({
+        directory: one.path,
+        fn: async () => {
+          expect(SessionStatus.get(queued).type).toBe("running")
+        },
+      })
+      await Instance.provide({
+        directory: two.path,
+        fn: async () => {
+          expect(SessionStatus.get(queued).type).toBe("idle")
+        },
+      })
+    } finally {
+      second?.()
+      first?.()
+      third?.()
+      ctl.abort()
+      await Instance.disposeAll()
     }
   })
 })

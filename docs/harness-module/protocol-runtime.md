@@ -66,6 +66,8 @@ RPM capacity is consumed when the request is released from the local queue, imme
 
 The queue has a timer for RPM waits. Unlike concurrency, RPM capacity can become available without any active request finishing, so the limiter wakes itself when the oldest start exits the minute window.
 
+Queued LLM requests carry the instance that created the queue item. Any `rate_limited`, queued-abort cleanup, or post-acquire `running` status update must run in that originating instance, even when an unrelated request in another project releases capacity and pumps the shared queue. This prevents one project directory from retaining stale provider/model limit status for a session owned by another directory.
+
 Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `default` is unlimited, `milestone-planner` runs one delegated task at a time, `epic-planner` runs two, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
 
 ## Invalid Protocol Output Diagnostics
@@ -110,9 +112,10 @@ Parent sessions use `waiting_child` while delegated children for the current run
 
 Unavailable agent dispatch is not a wait state. If a protocol action targets an agent that is not visible from the parent, such as a removed legacy package agent, or the target is denied by permission rules, runtime marks that action and run as `failed`. It must not create a child session, must not record a pending delegation, and must not put the parent into `waiting_child` for that action.
 
-Child result delivery has two phases:
+Child result delivery has three phases:
 
-- store each child result in `completed_delegations` as soon as it arrives;
+- write the canonical `ResultRecord` and raw result file as soon as Runtime accepts the task result;
+- store only result references and minimal status projection in `completed_delegations`;
 - notify the parent model only after all sibling child sessions for the run have ended.
 
 Delivery and dependency satisfaction are separate. A child result can be delivered to the parent fan-in without satisfying downstream dependencies. Worker `ActionResult.status=success` satisfies an ordinary worker dependency. Verifier `success` and policy-allowed `skipped` satisfy verifier gates. `failure`, `error`, `reply`, fallback summaries, interrupted children, aborted children, user-completed partial results, and stale terminal child statuses are delivered results, but they do not satisfy ordinary dependent actions.
@@ -121,15 +124,19 @@ After storing a child result and removing that child from the parent pending set
 
 Planner children use the same delivery boundary with a different preferred native carrier. A delegated planner whose agent runner is `protocol` is prompted to complete the child handoff through terminal `AgentProtocolOutput` items. Worker/helper/verifier children are prompted to use `ActionResult` through the action protocol footer. At result ingestion time, runtime accepts both structured carriers for either assignment family and maps status from the terminal semantics: `success`, `answer`, and `done` are delivered and satisfying; `reply` is delivered and blocked/non-satisfying; `failure` and `error` are delivered and failed/non-satisfying.
 
+`ResultRecord` is the canonical result index. The database projection stores only the minimal fields needed by Runtime: carrier, status, satisfying flag, session ids, run id, action id, target action id, raw result reference, short summary, and creation time. Full task-result payloads are stored as raw result files. Parent `completed_delegations`, child `dsl_context.result`, UI state, and dependency routing should keep `result_id` / `raw_ref` references instead of copying the full result object.
+
+For `ActionResult`, the raw result file stores the accepted tool input/output and trace location. For `AgentProtocolOutput`, the raw result file stores only the accepted terminal result item plus location metadata, not the full protocol `items` package. Planning, dispatch, confirmation, input, and other non-result items are not task result records.
+
 Ordinary failed worker actions do not create generic runtime repair tasks by themselves. Runtime records the failed, blocked, partial, fallback, or terminal child result, waits for already-started sibling child sessions in the same run, and then sends the aggregate handoff to the parent model. The parent model decides whether to declare a repair action, skip or reroute work, ask the user, or report failure upward. Runtime-owned automatic repair is limited to explicit mechanisms such as protocol package regeneration after dependency validation failure, malformed `ActionResult` fallback summary, and verifier-gate fix loops.
 
 If a remaining pending child is terminal, such as `interrupted`, `aborted`, `failed`, `timeout`, `error`, or `blocked`, Runtime records a synthetic delegation result with the child session status and removes it from pending. The parent summary then mentions that status instead of waiting indefinitely.
 
 Prompt-loop finalization also treats terminal pending children as stale wait records. Before writing `waiting_child`, runtime rechecks pending child statuses and drops terminal children from `pending_delegations`. A later turn must not inherit `waiting_child` only because an older interrupted child record remains in the parent DSL context.
 
-Manual delegation submit uses the same aggregate handoff path. The submit route accepts a parent session and run id, records current pending child statuses as synthetic results when forced, removes those children from the pending set, and sends one collected Markdown handoff to the parent. Later child completions for that run do not notify the parent again after the run has been claimed.
+Manual delegation submit uses the same aggregate handoff path. The submit route accepts a parent session and run id, records current pending child statuses as synthetic ResultRecords when forced, removes those children from the pending set, and sends one collected Markdown handoff to the parent. Later child completions for that run do not notify the parent again after the run has been claimed.
 
-For manual terminate-and-summarize, a child whose current session status is already `completed` keeps that status. Runtime first looks for a reusable delegation result in the canonical stored handoff, parent `completed_delegations`, child `dsl_context.result`, or native terminal result parts in the child transcript. If one exists, Runtime reuses it for the parent aggregate handoff without creating a summary session. If no reusable result exists, Runtime keeps the child status as `completed` and creates a transcript-based partial summary for the parent handoff.
+For manual terminate-and-summarize, a child whose current session status is already `completed` keeps that status. Runtime first looks for a canonical ResultRecord. If one exists, Runtime reuses that result reference for the parent aggregate handoff without creating a summary session. If no ResultRecord exists, Runtime may run a repair path that parses terminal result carriers from the transcript or creates a transcript-based partial summary, then persists the repaired ResultRecord before fan-in. Normal runtime reads should not scan parent completed rows, child context payload copies, or transcript text as result sources.
 
 Delegation cancellation is a stronger manual handoff. Runtime writes a visible control message into each pending child session, cancels its active prompt, marks the child `aborted`, then force-submits the parent run through the same aggregate handoff path. This keeps the child session inspectable and makes the user cancellation explicit to both the child timeline and the parent summary.
 

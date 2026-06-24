@@ -359,14 +359,16 @@ export namespace SessionStatus {
 
   function save(sessionID: SessionID, status: Info) {
     const prior = chains().get(sessionID) ?? Promise.resolve()
+    const project = Instance.project.id
+    const directory = Instance.directory
     const run = prior
       .then(() =>
         status.type === "idle" || status.type === "archived"
           ? Storage.remove(["session_status", sessionID])
           : Storage.write(["session_status", sessionID], {
               sessionID,
-              projectID: Instance.project.id,
-              directory: Instance.directory,
+              projectID: project,
+              directory,
               status,
               time: Date.now(),
             } satisfies Saved),

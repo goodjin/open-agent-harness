@@ -1,6 +1,7 @@
 import { SessionStatus } from "./status"
 import type { Provider } from "@/provider/provider"
 import type { SessionID } from "./schema"
+import { Instance } from "@/project/instance"
 
 export namespace LLMConcurrency {
   type Limit = {
@@ -22,6 +23,8 @@ export namespace LLMConcurrency {
     run: () => void
     fail: (err: unknown) => void
     abort: () => void
+    get: () => SessionStatus.Info
+    set: (status: SessionStatus.Info) => void
   }
 
   export type Release = () => void
@@ -123,7 +126,7 @@ export namespace LLMConcurrency {
   }
 
   function publish(item: Item, limit: Block) {
-    SessionStatus.set(item.sessionID, {
+    item.set({
       type: "rate_limited",
       providerID: item.model.providerID,
       modelID: item.model.id,
@@ -184,6 +187,8 @@ export namespace LLMConcurrency {
       return lease(limits)
     }
 
+    const get = Instance.bind(() => SessionStatus.get(input.sessionID))
+    const set = Instance.bind((status: SessionStatus.Info) => SessionStatus.set(input.sessionID, status))
     const item: Item = {
       limits,
       sessionID: input.sessionID,
@@ -191,6 +196,8 @@ export namespace LLMConcurrency {
       run: () => {},
       fail: () => {},
       abort: () => {},
+      get,
+      set,
     }
     await new Promise<void>((resolve, reject) => {
       item.run = resolve
@@ -204,9 +211,9 @@ export namespace LLMConcurrency {
         // "waiting for concurrency slot" notification forever. Only
         // touch the status if it is still `rate_limited` to avoid
         // clobbering a transition that happened in the meantime.
-        const current = SessionStatus.get(input.sessionID)
+        const current = item.get()
         if (current.type === "rate_limited") {
-          SessionStatus.set(input.sessionID, { type: "idle" })
+          item.set({ type: "idle" })
         }
         item.fail(input.abort.reason ?? new Error("Aborted"))
       }
@@ -218,7 +225,7 @@ export namespace LLMConcurrency {
       input.abort.removeEventListener("abort", item.abort)
     })
 
-    SessionStatus.set(input.sessionID, { type: "running" })
+    item.set({ type: "running" })
     return lease(limits)
   }
 
