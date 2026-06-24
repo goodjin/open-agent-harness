@@ -58,7 +58,7 @@ import { attached, inline, kind } from "./message-file"
 import { limitTextLines } from "./message-line-limit"
 import { partView, type PartView } from "./message-part-view"
 import { actionResult, invalidProtocol, protocolMeta, protocolText } from "./message-part-protocol"
-import { heading, thinkingText } from "./session-turn-helpers"
+import { heading, partTitle, thinkingText } from "./session-turn-helpers"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -1647,7 +1647,13 @@ PART_MAPPING["text"] = function TextPartDisplay(props) {
               >
                 <span data-slot="part-header-title">
                   <Icon name="bubble-5" size="small" />
-                  <span>{i18n.t("ui.sessionTurn.summary.textOutput")}</span>
+                  <span>
+                    {partTitle("text", false, {
+                      assistant: i18n.t("ui.messagePart.title.assistantText"),
+                      thinking: i18n.t("ui.sessionTurn.status.thinking"),
+                      process: i18n.t("ui.messagePart.title.thinkingProcess"),
+                    })}
+                  </span>
                   <span data-slot="part-header-meta">{chars()}</span>
                 </span>
                 <span data-slot="part-header-toggle">
@@ -1724,9 +1730,11 @@ PART_MAPPING["reasoning"] = function ReasoningPartDisplay(props) {
           <span data-slot="part-header-title">
             <Icon name="brain" size="small" />
             <span>
-              {done()
-                ? i18n.t("ui.sessionTurn.status.thinkingDone")
-                : i18n.t("ui.messagePart.collapsed.reasoning.title")}
+              {partTitle("reasoning", done(), {
+                assistant: i18n.t("ui.messagePart.title.assistantText"),
+                thinking: i18n.t("ui.sessionTurn.status.thinking"),
+                process: i18n.t("ui.messagePart.title.thinkingProcess"),
+              })}
             </span>
           </span>
           <span data-slot="part-header-toggle">

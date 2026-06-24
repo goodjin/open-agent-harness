@@ -649,6 +649,12 @@ export const dict = {
   "sessionTree.confirmAgent.current": "Current: {{current}}",
   "sessionTree.confirmAgent.next": "New: {{next}}",
   "sessionTree.confirmAgent.confirm": "Replace agent",
+  "sessionTree.confirmModel.title": "Replace bound model",
+  "sessionTree.confirmModel.description":
+    "Selected sessions may already have a bound model. Replacing it will change the model used when they continue.",
+  "sessionTree.confirmModel.current": "Current: {{current}}",
+  "sessionTree.confirmModel.next": "New: {{next}}",
+  "sessionTree.confirmModel.confirm": "Replace model",
   "session.header.openIn": "Open in",
   "session.header.open.action": "Open {{app}}",
   "session.header.open.ariaLabel": "Open in {{app}}",

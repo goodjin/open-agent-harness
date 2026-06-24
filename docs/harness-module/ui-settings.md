@@ -26,7 +26,9 @@ Session-local model selection is a hot draft for the active conversation. The UI
 
 When that submitted model differs from the server-bound session model, the server owns the final guard and returns a conflict instead of silently rebinding the session. The prompt UI then asks whether to switch the session to the selected model. Confirming retries the same request with `confirm: true`; declining restores the local selector to the bound model and retries with that model.
 
-Direct prompt footer model selection follows the same guard. The first session tree update is attempted without confirmation. If the server reports that the session is already bound to another model, the selector asks whether to switch the session. Confirming retries the update with `confirm: true`; cancelling restores the selector to the bound model without showing the raw conflict message.
+Direct prompt footer model selection asks before replacing a known session-bound model. Confirming calls the session tree update API with `confirm: true`, so the bound model is updated before later prompts are sent. Cancelling restores the selector to the bound model and does not call the update API. If the local session snapshot is stale and the server still reports a model conflict, the selector keeps the same confirmation fallback instead of showing the raw conflict message.
+
+Session tree bulk edits use the same bound-model guard. Selecting a new model for one or more checked sessions opens a replacement confirmation before the PATCH request is sent. Confirming sends the existing session tree update request with `confirm: true`, which lets the backend replace bound models for the selected sessions.
 
 ## Settings Workspace Layout
 

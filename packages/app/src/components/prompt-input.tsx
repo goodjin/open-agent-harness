@@ -57,7 +57,12 @@ import { PromptImageAttachments } from "./prompt-input/image-attachments"
 import { PromptDragOverlay } from "./prompt-input/drag-overlay"
 import { promptPlaceholder } from "./prompt-input/placeholder"
 import { isShellCommand } from "./prompt-input/shell-detect"
-import { resolveModelConflict } from "./prompt-input/model-conflict"
+import {
+  modelConflictCurrent,
+  modelConflictStatus,
+  resolveModelConflict,
+  resolveModelUpdate,
+} from "./prompt-input/model-conflict"
 import { ImagePreview } from "@open-agent-harness/ui/image-preview"
 import { showToast } from "@open-agent-harness/ui/toast"
 
@@ -642,14 +647,22 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
       local.model.set(item, options)
     }
 
-    void bind()
+    const next = resolveModelUpdate({
+      current: info()?.model,
+      next: item,
+      ask: (message) => globalThis.confirm?.(message) ?? false,
+      reset: (model) => local.model.set(model),
+    })
+    if (!next) return
+
+    void bind(next.confirm)
       .then(async () => {
         await apply()
       })
       .catch(async (err) => {
-        if (code(err) === 409) {
+        if (modelConflictStatus(err)) {
           const next = resolveModelConflict({
-            current: info()?.model,
+            current: info()?.model ?? modelConflictCurrent(err),
             next: item,
             ask: (message) => globalThis.confirm?.(message) ?? false,
             reset: (model) => local.model.set(model),

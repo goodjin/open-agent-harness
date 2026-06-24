@@ -44,6 +44,15 @@ export function thinkingText(base: string, topic: string, value?: string) {
   return topic.replace("{{topic}}", text)
 }
 
+export function partTitle(
+  kind: "text" | "reasoning",
+  done: boolean,
+  labels: { assistant: string; thinking: string; process: string },
+) {
+  if (kind === "reasoning") return done ? labels.process : labels.thinking
+  return labels.assistant
+}
+
 export function turnAssistants(messages: Message[], id: string) {
   const index = messages.findIndex((item) => item.id === id && item.role === "user")
   if (index === -1) return []

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { diffRows, diffStats, diffUnique, heading, thinkingText, turnAssistants } from "./session-turn-helpers"
+import { diffRows, diffStats, diffUnique, heading, partTitle, thinkingText, turnAssistants } from "./session-turn-helpers"
 import type { FileDiff, Message } from "@open-agent-harness/sdk/v2/client"
 
 const diff = (file: string, additions: number, deletions: number): FileDiff =>
@@ -22,6 +22,27 @@ describe("thinkingText", () => {
 
   test("extracts a markdown heading for the topic", () => {
     expect(thinkingText("思考中", "思考：{{topic}}", heading("## 检查文件\n\n读取上下文"))).toBe("思考：检查文件")
+  })
+})
+
+describe("partTitle", () => {
+  const labels = {
+    assistant: "assistant text",
+    thinking: "思考中",
+    process: "思考过程",
+  }
+
+  test("keeps assistant text separate from reasoning labels", () => {
+    expect(partTitle("text", false, labels)).toBe("assistant text")
+    expect(partTitle("text", true, labels)).toBe("assistant text")
+  })
+
+  test("uses thinking while a reasoning part can still stream", () => {
+    expect(partTitle("reasoning", false, labels)).toBe("思考中")
+  })
+
+  test("uses thinking process after a reasoning part or its assistant message ends", () => {
+    expect(partTitle("reasoning", true, labels)).toBe("思考过程")
   })
 })
 

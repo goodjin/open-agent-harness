@@ -37,7 +37,7 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.steps.show": "Show steps",
   "ui.sessionTurn.steps.hide": "Hide steps",
   "ui.sessionTurn.summary.response": "Response",
-  "ui.sessionTurn.summary.textOutput": "Text output",
+  "ui.sessionTurn.summary.textOutput": "assistant text",
   "ui.sessionTurn.summary.responseChars": "{{count}} chars",
   "ui.sessionTurn.diff.showMore": "Show more changes ({{count}})",
   "ui.sessionTurn.diff.summary": "Turn changes",
@@ -73,7 +73,9 @@ export const dict: Record<string, string> = {
   "ui.sessionTurn.status.consideringNextSteps": "Considering next steps",
 
   "ui.messagePart.diagnostic.error": "Error",
+  "ui.messagePart.title.assistantText": "assistant text",
   "ui.messagePart.title.edit": "Edit",
+  "ui.messagePart.title.thinkingProcess": "Thinking process",
   "ui.messagePart.title.write": "Write",
   "ui.messagePart.option.typeOwnAnswer": "Type your own answer",
   "ui.messagePart.review.title": "Review your answers",

@@ -16,6 +16,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useLanguage } from "@/context/language"
 import { formatServerError } from "@/utils/server-errors"
+import { parseConflict, updateBody, type Conflict } from "./session-tree-manager-helpers"
 
 type Status = { type: string; message?: string }
 
@@ -161,9 +162,15 @@ export default function SessionTreeManager() {
     resumeMode: "restore" as ResumeMode,
     resumeMessage: "",
     agentConflict: undefined as AgentConflict | undefined,
+    modelConflict: undefined as ModelConflict | undefined,
   })
 
   type AgentConflict = {
+    current: string
+    next: string
+    body: Record<string, unknown>
+  }
+  type ModelConflict = {
     current: string
     next: string
     body: Record<string, unknown>
@@ -291,11 +298,7 @@ export default function SessionTreeManager() {
     setStore("selected", {})
   }
 
-  const post = async (
-    path: string,
-    body: Record<string, unknown>,
-    options?: { onConflict?: (info: { current: string; message: string }) => void },
-  ) => {
+  const post = async (path: string, body: Record<string, unknown>, options?: { onConflict?: (info: Conflict) => void }) => {
     const ids = picked()
     if (ids.length === 0) return
     setStore("busy", true)
@@ -331,35 +334,37 @@ export default function SessionTreeManager() {
     }
   }
 
-  function parseConflict(text: string): { current: string; message: string } | undefined {
-    try {
-      const data = JSON.parse(text) as { data?: { message?: string }; message?: string }
-      const msg = data?.data?.message ?? data?.message ?? text
-      const match = /has bound agent "([^"]*)"/.exec(msg)
-      return { current: match?.[1] ?? "", message: msg }
-    } catch {
-      return undefined
-    }
-  }
-
   const update = (confirm = false) => {
-    const body: Record<string, unknown> = {}
-    if (store.title.trim()) body.title = store.title.trim()
-    if (store.agentChanged && store.agent) body.agent = store.agent
-    if (store.modelChanged && store.providerID.trim() && store.modelID.trim()) {
-      body.model = { providerID: store.providerID.trim(), modelID: store.modelID.trim() }
-    }
+    const body = updateBody({
+      title: store.title,
+      agent: store.agent,
+      agentChanged: store.agentChanged,
+      providerID: store.providerID,
+      modelID: store.modelID,
+      modelChanged: store.modelChanged,
+      confirm,
+    })
     if (Object.keys(body).length === 0) return
-    if (body.agent !== undefined) body.confirm = confirm
     const next = String(body.agent ?? "")
+    if (!confirm && body.model !== undefined) {
+      const model = body.model as { providerID: string; modelID: string }
+      setStore("modelConflict", { current: "", next: `${model.providerID}/${model.modelID}`, body })
+      dialog.show(() => <DialogModelConflict />)
+      return
+    }
     void post(
       "/session/tree/sessions",
       body,
       confirm || body.agent === undefined
         ? undefined
         : {
-            onConflict: ({ current }) => {
-              setStore("agentConflict", { current: current || next, next, body })
+            onConflict: (conflict) => {
+              if (conflict.type === "model") {
+                setStore("modelConflict", { current: conflict.current, next: conflict.next, body })
+                dialog.show(() => <DialogModelConflict />)
+                return
+              }
+              setStore("agentConflict", { current: conflict.current || next, next: conflict.next || next, body })
               dialog.show(() => <DialogAgentConflict />)
             },
           },
@@ -421,6 +426,49 @@ export default function SessionTreeManager() {
               }}
             >
               {language.t("sessionTree.confirmAgent.confirm")}
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    )
+  }
+
+  function DialogModelConflict() {
+    const conflict = store.modelConflict
+    if (!conflict) return null
+    return (
+      <Dialog
+        title={language.t("sessionTree.confirmModel.title")}
+        fit
+      >
+        <div class="flex flex-col gap-4 px-5 pb-4 min-w-[360px]">
+          <div class="text-12-regular text-text-weak">
+            {language.t("sessionTree.confirmModel.description")}
+          </div>
+          <div class="flex flex-col gap-1 text-12-regular">
+            <Show when={conflict.current}>
+              <div class="text-text-weak">
+                {language.t("sessionTree.confirmModel.current", { current: conflict.current })}
+              </div>
+            </Show>
+            <div class="text-text-strong">
+              {language.t("sessionTree.confirmModel.next", { next: conflict.next })}
+            </div>
+          </div>
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+              {language.t("common.cancel")}
+            </Button>
+            <Button
+              variant="primary"
+              size="large"
+              onClick={() => {
+                dialog.close()
+                setStore("modelConflict", undefined)
+                update(true)
+              }}
+            >
+              {language.t("sessionTree.confirmModel.confirm")}
             </Button>
           </div>
         </div>
