@@ -37,7 +37,7 @@
     "writes": true
   },
   "request_footer": {
-    "file": "action-result.md"
+    "file": "action-protocol.md"
   },
   "workflow_mode": "auto",
   "allowed_tools": [],

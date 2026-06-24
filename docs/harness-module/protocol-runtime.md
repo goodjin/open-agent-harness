@@ -27,6 +27,18 @@ Do not keep broad legacy fallback agents when current explicit agents cover the 
 
 Agents with names that do not expose their behavior, or compatibility agents that overlap with the explicit planner/helper/worker/verifier set, should be removed from the package catalog rather than renamed into new broad workers.
 
+## Agent Protocol Families
+
+Model-facing agent protocols are split by agent execution role.
+
+Planner and coordinator agents with `runner: "protocol"` load the planner protocol. Their only native output carrier is `AgentProtocolOutput`, and they declare runtime work graphs with `agent`, `tool`, `input`, `confirm`, `answer`, and terminal result items. They do not receive the action handoff contract as their protocol document.
+
+Worker, helper, and verifier agents that execute delegated assignments load the action protocol through their request footer when the assignment has a `result_tool`. Their handoff carrier is `ActionResult`, not `AgentProtocolOutput`. These agents do not declare planner DSL packages as their completion mechanism.
+
+The split is based on the active agent runner and delegation assignment context, not merely whether a session has a parent. A parent-delegated planner still uses the planner protocol because it is expected to declare a child work graph. A worker or verifier uses the action protocol because it is expected to return one assigned action result.
+
+`reply` is terminal but non-satisfying in both protocol families. It ends the current package or action handoff with a structured response, blocker, clarification request, or reroute request, but it does not mark the assigned goal as satisfied and must not satisfy ordinary downstream dependencies.
+
 ## Answer Dependencies
 
 Agent Protocol v2 `answer` items are response metadata, not executable actions. When an executable v2 item names a same-package `answer` id in `depends`, normalization drops that dependency and lets the executable item run as independent work. Dependencies on missing executable ids remain invalid.
@@ -100,6 +112,14 @@ Child result delivery has two phases:
 
 - store each child result in `completed_delegations` as soon as it arrives;
 - notify the parent model only after all sibling child sessions for the run have ended.
+
+Delivery and dependency satisfaction are separate. A child result can be delivered to the parent fan-in without satisfying downstream dependencies. Worker `ActionResult.status=success` satisfies an ordinary worker dependency. Verifier `success` and policy-allowed `skipped` satisfy verifier gates. `failure`, `error`, `reply`, fallback summaries, interrupted children, aborted children, user-completed partial results, and stale terminal child statuses are delivered results, but they do not satisfy ordinary dependent actions.
+
+After storing a child result and removing that child from the parent pending set, runtime checks the parent run graph before submitting the aggregate handoff to the parent model. If a same-run agent action is neither pending nor already delivered, and every same-run dependency has a satisfying result, runtime starts that dependent child session immediately and keeps the parent in `waiting_child`. The parent model receives the aggregate handoff only when no pending child and no newly ready dependent action remain.
+
+Planner children use the same delivery boundary with a different native carrier. A delegated planner whose agent runner is `protocol` completes the child handoff through terminal `AgentProtocolOutput` items. `success` is delivered and satisfying; `failure`, `error`, and `reply` are delivered but non-satisfying. Worker/helper/verifier children continue to use `ActionResult` through the action protocol footer.
+
+Ordinary failed worker actions do not create generic runtime repair tasks by themselves. Runtime records the failed, blocked, partial, fallback, or terminal child result, waits for already-started sibling child sessions in the same run, and then sends the aggregate handoff to the parent model. The parent model decides whether to declare a repair action, skip or reroute work, ask the user, or report failure upward. Runtime-owned automatic repair is limited to explicit mechanisms such as protocol package regeneration after dependency validation failure, malformed `ActionResult` fallback summary, and verifier-gate fix loops.
 
 If a remaining pending child is terminal, such as `interrupted`, `aborted`, `failed`, `timeout`, `error`, or `blocked`, Runtime records a synthetic delegation result with the child session status and removes it from pending. The parent summary then mentions that status instead of waiting indefinitely.
 

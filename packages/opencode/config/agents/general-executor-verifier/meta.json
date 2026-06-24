@@ -27,7 +27,7 @@
     "writes": false
   },
   "request_footer": {
-    "file": "action-result.md"
+    "file": "action-protocol.md"
   },
   "workflow_mode": "auto",
   "allowed_tools": ["read", "glob", "grep", "codesearch", "lsp", "external_directory"],

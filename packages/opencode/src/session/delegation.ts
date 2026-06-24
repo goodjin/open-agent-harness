@@ -3,6 +3,7 @@ import { AgentDelegation } from "@/agent/delegation"
 import { Agent } from "@/agent/agent"
 import { Instance } from "@/project/instance"
 import type { AgentProtocol } from "@/protocol/schema"
+import { AgentProtocolExecutor } from "@/protocol/executor"
 import { NotFoundError } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Session } from "."
@@ -18,6 +19,7 @@ import { Provider } from "@/provider/provider"
 export namespace SessionDelegation {
   const log = Log.create({ service: "session.delegation" })
   const wait = "The parent session will resume automatically when the child result is available."
+  const protocol = "AgentProtocolOutput"
   const state = Instance.state(
     () => ({
       init: false,
@@ -73,8 +75,16 @@ export namespace SessionDelegation {
     output?: string
     output_ref?: string
     action_result?: ActionResult.Value
+    protocol_result?: Protocol
     result_metadata?: ReturnType<typeof AgentDelegation.complete>
     summary?: string
+  }
+  type Protocol = {
+    kind: "success" | "failure" | "error" | "reply"
+    id?: string
+    message?: string
+    summary?: string
+    changed_files?: unknown
   }
   type Diag = {
     raw: string
@@ -103,6 +113,11 @@ export namespace SessionDelegation {
     runID: string
     sessionID: SessionID
   }) {
+    const info = await Agent.get(input.agent).catch(() => undefined)
+    const item = packet({
+      ...input,
+      resultTool: info?.runner === "protocol" ? protocol : ActionResult.TOOL,
+    })
     const session = await Session.get(input.sessionID)
     const ctx = object(session.dsl_context)
     const prev = object(ctx.protocol)
@@ -115,7 +130,7 @@ export namespace SessionDelegation {
           ...prev,
           pending_delegations: {
             ...pending,
-            [input.childID]: packet(input),
+            [input.childID]: item,
           },
         },
       },
@@ -131,7 +146,7 @@ export namespace SessionDelegation {
         ...childctx,
         protocol: {
           ...childprev,
-          delegation: packet(input),
+          delegation: item,
         },
       },
     })
@@ -256,7 +271,7 @@ export namespace SessionDelegation {
       if (!status || output === undefined) return false
       if (output.includes(wait)) return false
 
-      const body = completed(item, status, output, input.metadata ?? item.result_metadata, found?.action)
+      const body = completed(item, status, output, input.metadata ?? item.result_metadata, found?.action, found?.protocol)
       const fresh = statusof(item) !== status || text(item.output) !== output
       const active = await pending(item)
       const done = await delivered(item)
@@ -525,6 +540,10 @@ export namespace SessionDelegation {
       if (info.finish !== "tool-calls") return
       const parts = await MessageV2.parts(info.id).catch(() => [])
       if (!actionResult(parts)) return
+    } else if (item?.result_tool === protocol) {
+      if (info.finish !== "tool-calls") return
+      const parts = await MessageV2.parts(info.id).catch(() => [])
+      if (!protocolResult(parts)) return
     } else if (info.finish === "tool-calls") {
       return
     }
@@ -542,6 +561,7 @@ export namespace SessionDelegation {
     metadata?: ReturnType<typeof AgentDelegation.runtime>
     messageID: MessageID
     parentAgent: string
+    resultTool?: string
     runID: string
     sessionID: SessionID
   }): Item {
@@ -553,10 +573,12 @@ export namespace SessionDelegation {
       action_title: input.action.title,
       parent_session_id: input.sessionID,
       parent_message_id: input.messageID,
+      parent_agent: input.parentAgent,
       child_session_id: input.childID,
+      agent: input.agent,
       metadata: input.metadata,
       result_policy: input.action.result_policy,
-      result_tool: ActionResult.TOOL,
+      result_tool: input.resultTool ?? ActionResult.TOOL,
       created_at: Date.now(),
     }
   }
@@ -610,6 +632,20 @@ export namespace SessionDelegation {
         action: out,
       }
     }
+    const terminal = scope.findLastIndex((item) => item.info.role === "assistant" && protocolResult(item.parts))
+    const result = terminal >= 0 ? protocolResult(scope[terminal]!.parts) : undefined
+    if (item.result_tool === protocol && result) {
+      return {
+        status:
+          result.value.kind === "success"
+            ? ("completed" as const)
+            : result.value.kind === "reply"
+              ? ("blocked" as const)
+              : ("failed" as const),
+        output: protocolOutput(result.value),
+        protocol: result.value,
+      }
+    }
     const msg = messageID
       ? msgs.find((item) => item.info.id === messageID)
       : msgs.findLast((item) => {
@@ -626,6 +662,12 @@ export namespace SessionDelegation {
         status: "blocked" as const,
         output: msg.parts.findLast((part) => part.type === "text")?.text ?? "",
         missing: true,
+      }
+    }
+    if (item.result_tool === protocol) {
+      return {
+        status: msg.info.finish === "error" ? ("failed" as const) : ("blocked" as const),
+        output: msg.parts.findLast((part) => part.type === "text")?.text ?? "",
       }
     }
     if (msg.info.error) {
@@ -655,6 +697,46 @@ export namespace SessionDelegation {
       value: parsed.data,
       explicit: typeof raw.result === "string" && raw.result.trim().length > 0,
     }
+  }
+
+  function protocolResult(parts: MessageV2.Part[]) {
+    const part = parts.findLast(
+      (item): item is MessageV2.ToolPart =>
+        item.type === "tool" && item.tool === protocol && item.state.status === "completed",
+    )
+    if (!part || part.state.status !== "completed") return
+    const raw = object(part.state.input)
+    const items = Array.isArray(raw.items) ? raw.items.map((item) => object(item)) : []
+    const found = items.findLast((item) => {
+      if (item.kind === "success") return true
+      if (item.kind === "failure") return true
+      if (item.kind === "error") return true
+      return item.kind === "reply"
+    })
+    if (!found) return
+    return {
+      value: {
+        kind: found.kind,
+        id: text(found.id),
+        message: text(found.message),
+        summary: text(found.summary),
+        changed_files: found.changed_files,
+      } as Protocol,
+    }
+  }
+
+  function protocolOutput(input: Protocol) {
+    return [
+      `AgentProtocolOutput ${input.kind}.`,
+      input.id ? `id: ${input.id}` : "",
+      input.summary ? `summary: ${input.summary}` : "",
+      input.message ? `message: ${input.message}` : "",
+      Array.isArray(input.changed_files) && input.changed_files.length
+        ? `changed_files: ${input.changed_files.join(", ")}`
+        : "",
+    ]
+      .filter((line) => line.length > 0)
+      .join("\n")
   }
 
   async function normalize(sessionID: SessionID, item: Item, value: ActionResult.Value): Promise<ActionResult.Value> {
@@ -736,6 +818,7 @@ export namespace SessionDelegation {
     output: string,
     meta?: ReturnType<typeof AgentDelegation.complete>,
     action?: ActionResult.Value,
+    term?: Protocol,
   ) {
     return {
       type: "agent.delegation.result",
@@ -753,6 +836,7 @@ export namespace SessionDelegation {
       summary: output.slice(0, 4000),
       output,
       ...(action ? { action_result: action } : {}),
+      ...(term ? { protocol_result: term } : {}),
     }
   }
 
@@ -801,6 +885,7 @@ export namespace SessionDelegation {
           result_metadata: body.metadata,
           summary: body.summary,
           ...(body.action_result ? { action_result: body.action_result } : {}),
+          ...(body.protocol_result ? { protocol_result: body.protocol_result } : {}),
         },
         protocol: {
           ...childprev,
@@ -812,6 +897,7 @@ export namespace SessionDelegation {
             output_ref: ref,
             result_metadata: body.metadata,
             summary: body.summary,
+            ...(body.protocol_result ? { protocol_result: body.protocol_result } : {}),
           },
         },
       },
@@ -827,7 +913,280 @@ export namespace SessionDelegation {
 
   async function notify(body: ReturnType<typeof completed>, item: Item) {
     const parentID = SessionID.make(body.parent_session_id as string)
+    const started = await resume(parentID, body.run_id, item)
+    if (started > 0) {
+      await hold(parentID, body.run_id)
+      return true
+    }
     return submit({ sessionID: parentID, runID: body.run_id, agent: item.parent_agent })
+  }
+
+  async function resume(parentID: SessionID, runID: string, item: Item) {
+    await close(parentID, runID)
+    const parent = await Session.get(parentID)
+    const ctx = object(parent.dsl_context)
+    const state = object(ctx.protocol)
+    const run = (Array.isArray(state.runs) ? state.runs.map((entry) => object(entry)) : []).find(
+      (entry) => entry.runID === runID,
+    )
+    const actions = Array.isArray(run?.actions)
+      ? run.actions.map(action).filter((entry): entry is AgentProtocol.Action => Boolean(entry))
+      : []
+    const refs = new Set(actions.map((entry) => entry.id))
+    const active = new Set(
+      Object.values(object(state.pending_delegations))
+        .map((entry) => object(entry))
+        .flatMap((entry) => (typeof entry.action_id === "string" ? [entry.action_id] : [])),
+    )
+    const done = Array.isArray(state.completed_delegations)
+      ? state.completed_delegations.map((entry) => object(entry))
+      : []
+    const seen = new Set(done.flatMap((entry) => (typeof entry.action_id === "string" ? [entry.action_id] : [])))
+    const ids = new Set(
+      done.flatMap((entry) => {
+        if (satisfying(entry)) return typeof entry.action_id === "string" ? [entry.action_id] : []
+        return []
+      }),
+    )
+    const ready = actions.filter((entry) => {
+      if (entry.executor.type !== "agent") return false
+      if (active.has(entry.id) || seen.has(entry.id)) return false
+      return entry.depends_on.every((dep) => !refs.has(dep) || ids.has(dep))
+    })
+    const result = await Promise.all(
+      ready.map((entry) =>
+        launch({
+          action: entry,
+          parent,
+          parentAgent: text(item.parent_agent) ?? parent.agent ?? "default",
+          messageID: MessageID.make(item.parent_message_id),
+          runID,
+        }).catch((err) => {
+          log.warn("dependent agent launch failed", { err, actionID: entry.id, runID, sessionID: parentID })
+          return false
+        }),
+      ),
+    )
+    return result.filter(Boolean).length
+  }
+
+  function action(input: Record<string, unknown>): AgentProtocol.Action | undefined {
+    const executor = object(input.executor)
+    const type = text(executor.type)
+    const id = text(input.id)
+    const title = text(input.title)
+    const operation = text(input.operation)
+    if (!id || !title || !operation) return
+    if (type !== "agent" && type !== "tool" && type !== "runtime" && type !== "human") return
+    return {
+      type: "action",
+      id,
+      title,
+      description: text(input.description),
+      reason: text(input.reason),
+      operation,
+      executor: {
+        type,
+        target: text(executor.target) ?? "auto",
+        capabilities: Array.isArray(executor.capabilities)
+          ? executor.capabilities.filter((entry): entry is string => typeof entry === "string")
+          : [],
+      },
+      input: object(input.input),
+      depends_on: Array.isArray(input.depends_on)
+        ? input.depends_on.filter((entry): entry is string => typeof entry === "string")
+        : [],
+      context_refs: Array.isArray(input.context_refs)
+        ? input.context_refs.filter((entry): entry is string => typeof entry === "string")
+        : [],
+      prompt_ref: text(input.prompt_ref),
+      verification: object(input.verification) as AgentProtocol.Verification,
+      result_policy: policy(text(input.result_policy)),
+    }
+  }
+
+  function satisfying(input: Record<string, unknown>) {
+    const res = object(input.action_result)
+    if (res.role === "worker") return res.status === "success"
+    if (res.role === "verifier") return res.status === "success" || res.status === "skipped"
+    return object(input.protocol_result).kind === "success"
+  }
+
+  async function launch(input: {
+    action: AgentProtocol.Action
+    parent: Session.Info
+    parentAgent: string
+    messageID: MessageID
+    runID: string
+  }) {
+    const selected = await select(input.action, input.parentAgent)
+    if (!selected) return false
+    const meta = await AgentDelegation.meta(selected.name).catch(() => undefined)
+    const gate = AgentDelegation.runtime({
+      agent: selected.name,
+      meta,
+      action: input.action,
+    })
+    await SessionLog.emit({
+      sessionID: input.parent.id,
+      messageID: input.messageID,
+      level: gate.status === "ready" ? "info" : "warn",
+      type: "agent.metadata.assignment",
+      data: {
+        actionID: input.action.id,
+        agent: selected.name,
+        status: gate.status,
+        input: gate.input,
+        collaboration: gate.collaboration,
+        boundary: gate.boundary,
+        snapshot: gate.snapshot,
+        observability: gate.observability,
+      },
+    })
+    if (gate.status !== "ready") return false
+    const model = selected.model ?? input.parent.model ?? (await latest(input.parent.id))
+    const child = await Session.create({
+      parentID: input.parent.id,
+      title: `Protocol: ${input.action.title.trim()} (@${selected.name})`,
+      agent: selected.name,
+      model,
+      permission: Agent.permissions(selected, input.parent.permission),
+    })
+    await SessionLog.emit({
+      sessionID: input.parent.id,
+      messageID: input.messageID,
+      level: "info",
+      type: "protocol.agent.started",
+      data: {
+        actionID: input.action.id,
+        agent: selected.name,
+        childSessionID: child.id,
+        snapshot: gate.snapshot,
+        observability: gate.observability,
+        resumed: true,
+      },
+    })
+    await assign({
+      action: input.action,
+      agent: selected.name,
+      childID: child.id,
+      metadata: gate,
+      messageID: input.messageID,
+      parentAgent: input.parentAgent,
+      runID: input.runID,
+      sessionID: input.parent.id,
+    })
+    const { SessionPrompt } = await import("./prompt")
+    setTimeout(() => {
+      SessionPrompt.resolvePromptParts(task(input.action, selected))
+        .then((parts) =>
+          SessionPrompt.prompt({
+            sessionID: child.id,
+            agent: selected.name,
+            model,
+            parts,
+          }),
+        )
+        .then((msg) =>
+          finish({
+            action: input.action,
+            agent: selected.name,
+            childID: child.id,
+            messageID: input.messageID,
+            parentAgent: input.parentAgent,
+            parentID: input.parent.id,
+            result: msg,
+            runID: input.runID,
+          }),
+        )
+        .catch((err) =>
+          fail({
+            action: input.action,
+            agent: selected.name,
+            childID: child.id,
+            messageID: input.messageID,
+            parentAgent: input.parentAgent,
+            parentID: input.parent.id,
+            runID: input.runID,
+            error: err,
+          }),
+        )
+    }, 0)
+    return true
+  }
+
+  async function select(action: AgentProtocol.Action, parent: string) {
+    const agents = AgentDelegation.list(await Agent.list(), parent)
+    const found =
+      action.executor.target === "auto"
+        ? AgentProtocolExecutor.select(
+            action,
+            agents.map((entry) => ({
+              id: entry.name,
+              entry: entry.entry,
+              capability: entry.capability,
+            })),
+          )?.id
+        : agents.find((entry) => entry.name === action.executor.target)?.name
+    if (!found) return
+    const selected = await Agent.get(found).catch(() => undefined)
+    if (!selected) return
+    if (AgentDelegation.visible(selected, parent)) return selected
+  }
+
+  function task(action: AgentProtocol.Action, agent: Agent.Info) {
+    if (agent.runner === "protocol") {
+      return [
+        `Please handle this delegated planner task: ${action.title}.`,
+        "Treat the task block below as your initial task for this session.",
+        "When the task is complete, return a terminal AgentProtocolOutput item: success, failure, error, or reply.",
+        "Use success only when this delegated action is satisfied and downstream depends_on actions may run.",
+        "Use failure, error, or reply when the action is terminal but not satisfied.",
+        "",
+        "<task>",
+        brief(action),
+        "</task>",
+      ].join("\n")
+    }
+    return [
+      `Please handle this delegated task: ${action.title}.`,
+      "Treat the task block below as your initial task for this session.",
+      "When you are done, return a task result for the parent session.",
+      "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
+      "Use one result status: success, failure, error, reply, or skipped.",
+      "For success/failure/error, include result, changed_files, verification, and blockers.",
+      ...ActionResult.protocol({
+        verifier: agent.kind === "verifier",
+        action: action.id,
+        target: action.depends_on[0] ?? "worker_action_id",
+      }),
+      "Use reply when you need to answer or ask for information instead of claiming the task is complete.",
+      policyText(action.result_policy),
+      "",
+      "<task>",
+      brief(action),
+      "</task>",
+    ].join("\n")
+  }
+
+  function policy(input: unknown): AgentProtocol.Action["result_policy"] {
+    if (input === "summary") return input
+    if (input === "structured") return input
+    if (input === "full") return input
+    if (input === "on_failure") return input
+    if (input === "on_demand") return input
+    if (input === "adaptive") return input
+    return "summary"
+  }
+
+  function policyText(input: AgentProtocol.Action["result_policy"]) {
+    if (input === "summary") return "Keep the result concise and focused on the outcome."
+    if (input === "structured") return "Use a structured result with clear sections or bullets."
+    if (input === "full") return "Include the full relevant details needed by the parent session."
+    if (input === "on_failure")
+      return "Keep the result brief unless the task fails; if it fails, include the failure details and next step."
+    if (input === "on_demand") return "Keep the result brief and mention where more detail is available if needed."
+    return "Adapt the level of detail to the task complexity and risk."
   }
 
   async function claim(parent: Session.Info, runID: string) {
@@ -1175,6 +1534,7 @@ export namespace SessionDelegation {
   }
 
   async function worker(body: ReturnType<typeof completed>, item: Item, res: ActionResult.Value & { role: "worker" }) {
+    if (res.status !== "success") return "none" as const
     const gates = await checks(item, res.action_id)
     if (gates.length === 0) return "none" as const
     const next = await ready(item, gates)

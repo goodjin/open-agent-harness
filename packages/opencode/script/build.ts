@@ -244,6 +244,12 @@ async function manifest() {
     list.map(async (id) => {
       const dir = path.join(root, id)
       const meta = Template.Meta.parse(await Bun.file(path.join(dir, "meta.json")).json())
+      const protocol = meta.protocol
+        ? {
+            file: meta.protocol.file,
+            prompt: await Bun.file(path.join(root, "..", "protocol", meta.protocol.file)).text(),
+          }
+        : undefined
       const footer = meta.request_footer
         ? {
             file: meta.request_footer.file,
@@ -260,6 +266,7 @@ async function manifest() {
         meta,
         identity: await Bun.file(path.join(dir, "identity.md")).text().catch(() => ""),
         rules: await Bun.file(path.join(dir, "rules.md")).text().catch(() => ""),
+        ...(protocol ? { protocol } : {}),
         ...(footer ? { requestFooter: footer } : {}),
       }
     }),

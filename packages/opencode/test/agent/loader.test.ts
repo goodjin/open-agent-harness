@@ -110,6 +110,24 @@ describe("AgentTemplateLoader", () => {
       })
     })
 
+    test("built-in agents keep planner and action protocols isolated", () => {
+      ;["default", "milestone-planner", "epic-planner", "feature-planner", "protocol-runner"].forEach((id) => {
+        const agent = BUILTIN_AGENTS.find((item) => item.id === id)
+        expect(agent?.meta.runner).toBe("protocol")
+        expect(agent?.protocol?.file).toBe("planner-protocol.md")
+        expect(agent?.protocol?.prompt).toContain("This is the planner/coordinator protocol")
+        expect(agent?.protocol?.prompt).not.toContain("Worker result fields")
+      })
+
+      ;["backend", "frontend", "general-executor", "verifier", "backend-verifier"].forEach((id) => {
+        const agent = BUILTIN_AGENTS.find((item) => item.id === id)
+        expect(agent?.requestFooter?.file).toBe("action-protocol.md")
+        expect(agent?.requestFooter?.prompt).toContain("You are running as an action agent")
+        expect(agent?.requestFooter?.prompt).toContain("terminal but non-satisfying result")
+        expect(agent?.protocol).toBeUndefined()
+      })
+    })
+
     test("discovers multiple agent templates", async () => {
       const agents = await loader.loadAll()
       const ids = agents.map((a) => a.id)
