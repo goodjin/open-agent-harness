@@ -13,6 +13,7 @@ import {
   directoryAcceptKey,
   isDirectoryAutoAccepting,
   autoRespondsPermission,
+  createAutoRespondDrain,
 } from "./permission-auto-respond"
 
 type PermissionRespondFn = (input: {
@@ -171,6 +172,23 @@ export const { use: usePermission, provider: PermissionProvider } = createSimple
       respondOnce(perm, e.name)
     })
     onCleanup(unsubscribe)
+
+    createAutoRespondDrain({
+      autoAccept: () => store.autoAccept,
+      directory: () => decode64(params.dir),
+      fallback: () => settings.permissions.autoApprove(),
+      permissions: () => {
+        const dir = decode64(params.dir)
+        if (!dir) return {}
+        return globalSync.child(dir, { bootstrap: false })[0].permission
+      },
+      respond: respondOnce,
+      sessions: () => {
+        const dir = decode64(params.dir)
+        if (!dir) return []
+        return globalSync.child(dir, { bootstrap: false })[0].session
+      },
+    })
 
     function enableDirectory(directory: string) {
       const key = directoryAcceptKey(directory)

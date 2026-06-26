@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { PermissionRequest, Session } from "@open-agent-harness/sdk/v2/client"
 import { base64Encode } from "@open-agent-harness/util/encode"
-import { autoRespondsPermission, isDirectoryAutoAccepting } from "./permission-auto-respond"
+import { autoRespondsPermission, drainAutoRespond, isDirectoryAutoAccepting } from "./permission-auto-respond"
 
 const session = (input: { id: string; parentID?: string }) =>
   ({
@@ -13,6 +13,16 @@ const permission = (sessionID: string) =>
   ({
     sessionID,
   }) as Pick<PermissionRequest, "sessionID">
+
+const permissionRequest = (id: string, sessionID: string) =>
+  ({
+    id,
+    sessionID,
+    permission: "bash",
+    patterns: ["git status"],
+    metadata: {},
+    always: ["git status *"],
+  }) as PermissionRequest
 
 describe("autoRespondsPermission", () => {
   test("uses a parent session's directory-scoped auto-accept", () => {
@@ -107,5 +117,23 @@ describe("isDirectoryAutoAccepting", () => {
     const directory = "/tmp/project"
     const autoAccept = { [`${base64Encode(directory)}/*`]: false }
     expect(isDirectoryAutoAccepting(autoAccept, directory)).toBe(false)
+  })
+})
+
+describe("drainAutoRespond", () => {
+  test("responds to pending permissions already present in the directory store", () => {
+    const directory = "/tmp/project"
+    const calls: Array<{ id: string; directory: string | undefined }> = []
+
+    drainAutoRespond({
+      autoAccept: { [`${base64Encode(directory)}/*`]: true },
+      directory,
+      fallback: false,
+      permissions: { root: [permissionRequest("perm_1", "root")] },
+      respond: (perm, dir) => calls.push({ id: perm.id, directory: dir }),
+      sessions: [session({ id: "root" })],
+    })
+
+    expect(calls).toEqual([{ id: "perm_1", directory }])
   })
 })

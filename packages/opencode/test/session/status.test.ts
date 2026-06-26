@@ -803,6 +803,39 @@ describe("session state machine", () => {
     })
   })
 
+  test("restores restart-lost waiting permission status as interrupted", async () => {
+    const id = await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        SessionStatus.set(session.id, { type: "running" })
+        SessionStatus.set(session.id, { type: "waiting_permission" })
+        await SessionStatus.flush()
+        return session.id
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const restored = await SessionStatus.restore()
+        expect(restored[id]).toEqual({
+          type: "interrupted",
+          message: "Session was waiting for permission when the process stopped.",
+        })
+        expect(SessionStatus.get(id)).toEqual({
+          type: "interrupted",
+          message: "Session was waiting for permission when the process stopped.",
+        })
+        SessionStatus.set(id, { type: "idle" })
+        await SessionStatus.flush()
+        await Session.remove(id)
+      },
+    })
+  })
+
   test("restores queued rate limited and retry statuses for automatic continuation", async () => {
     const ids = await Instance.provide({
       directory: projectRoot,

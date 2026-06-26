@@ -447,6 +447,8 @@ export namespace SessionStatus {
   type Restart = Extract<Info, { type: "starting" | "running" }>
   const restart = new Set<Restart["type"]>(["starting", "running"])
   const lost = (status: Info): status is Restart => restart.has(status.type as Restart["type"])
+  const lostPermission = (status: Info): status is Extract<Info, { type: "waiting_permission" }> =>
+    status.type === "waiting_permission"
 
   export function get(sessionID: SessionID) {
     const cached = state()[sessionID]
@@ -514,6 +516,11 @@ export namespace SessionStatus {
             prior: parsed.type,
             message: `Session was ${parsed.type} when the process stopped.`,
           } satisfies Info)
+        : lostPermission(parsed)
+          ? ({
+              type: "interrupted",
+              message: "Session was waiting for permission when the process stopped.",
+            } satisfies Info)
         : parsed
       data[row.id] = status
       out[row.id] = status
