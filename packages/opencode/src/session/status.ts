@@ -3,7 +3,6 @@ import { Bus } from "@/bus"
 import { Instance } from "@/project/instance"
 import { Metrics } from "@/observability/metrics"
 import { SessionID } from "./schema"
-import { Storage } from "@/storage/storage"
 import z from "zod"
 import { SessionLog } from "./log"
 import { and, Database, eq } from "@/storage/db"
@@ -140,13 +139,6 @@ export namespace SessionStatus {
   const writes = Instance.state(() => new Set<Promise<void>>())
   const chains = Instance.state(() => new Map<SessionID, Promise<void>>())
 
-  type Saved = {
-    sessionID: SessionID
-    projectID: string
-    directory: string
-    status: Info
-    time: number
-  }
   type Class = "active" | "blocked" | "interrupted" | "terminal" | "archived"
   type Source = "runtime" | "recovery" | "user" | "system"
   type Row = typeof SessionTable.$inferSelect
@@ -392,20 +384,9 @@ export namespace SessionStatus {
 
   function save(sessionID: SessionID, status: Info) {
     const prior = chains().get(sessionID) ?? Promise.resolve()
-    const project = Instance.project.id
-    const directory = Instance.directory
     const run = prior
       .then(() => {
         persist(sessionID, status, "runtime")
-        return status.type === "idle" || status.type === "archived"
-          ? Storage.remove(["session_status", sessionID])
-          : Storage.write(["session_status", sessionID], {
-              sessionID,
-              projectID: project,
-              directory,
-              status,
-              time: Date.now(),
-            } satisfies Saved)
       })
       .catch(() => {})
       .finally(() => {
@@ -431,13 +412,13 @@ export namespace SessionStatus {
         .where(and(eq(SessionTable.project_id, Instance.project.id), eq(SessionTable.directory, Instance.directory)))
         .all(),
     )
-    const keys = await Storage.list(["session_status"])
     const out: Record<string, Info> = {}
-    const seen = new Set<SessionID>()
     for (const row of rows) {
-      seen.add(row.id)
       const parsed = decode(row)
-      if (!parsed || parsed.type === "idle") continue
+      if (!parsed || parsed.type === "idle") {
+        delete data[row.id]
+        continue
+      }
       const status = lost(parsed)
         ? ({
             type: "interrupted",
@@ -448,26 +429,6 @@ export namespace SessionStatus {
       data[row.id] = status
       out[row.id] = status
       if (changed(status, parsed)) persist(row.id, status, "recovery")
-    }
-    for (const key of keys) {
-      const item = await Storage.read<Saved>(key).catch(() => undefined)
-      if (!item) continue
-      if (seen.has(item.sessionID)) continue
-      if (item.projectID !== Instance.project.id) continue
-      if (item.directory !== Instance.directory) continue
-      const parsed = Info.safeParse(item.status)
-      if (!parsed.success) continue
-      if (parsed.data.type === "idle") continue
-      const status = lost(parsed.data)
-        ? ({
-            type: "interrupted",
-            prior: parsed.data.type,
-            message: `Session was ${parsed.data.type} when the process stopped.`,
-          } satisfies Info)
-        : parsed.data
-      data[item.sessionID] = status
-      out[item.sessionID] = status
-      if (status !== parsed.data) save(item.sessionID, status)
     }
     return out
   }

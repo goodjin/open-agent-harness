@@ -251,6 +251,29 @@ describe("session state machine", () => {
     })
   })
 
+  test("does not write session status snapshot files", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-no-file"),
+          fn: async () => {
+            const session = await Session.create({})
+
+            SessionStatus.set(session.id, { type: "running" })
+            await SessionStatus.flush()
+
+            const file = await Storage.read(["session_status", session.id]).catch(() => undefined)
+            expect(file).toBeUndefined()
+
+            SessionStatus.set(session.id, { type: "idle" })
+            await SessionStatus.flush()
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("VAL-SESSION-004: Running to waiting_permission transition", async () => {
     await Instance.provide({
       directory: projectRoot,
@@ -605,13 +628,14 @@ describe("session state machine", () => {
   })
 
   test("restores persisted status across instance restart", async () => {
-    const sessionID = "test-session-restart" as SessionID
-    await Instance.provide({
+    const session = await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        SessionStatus.set(sessionID, { type: "blocked", message: "needs user decision" })
+        const session = await Session.create({})
+        SessionStatus.set(session.id, { type: "blocked", message: "needs user decision" })
         await SessionStatus.flush()
-        expect(SessionStatus.get(sessionID)).toEqual({ type: "blocked", message: "needs user decision" })
+        expect(SessionStatus.get(session.id)).toEqual({ type: "blocked", message: "needs user decision" })
+        return session
       },
     })
 
@@ -621,21 +645,23 @@ describe("session state machine", () => {
       directory: projectRoot,
       fn: async () => {
         await SessionStatus.restore()
-        expect(SessionStatus.get(sessionID)).toEqual({ type: "blocked", message: "needs user decision" })
-        SessionStatus.set(sessionID, { type: "idle" })
+        expect(SessionStatus.get(session.id)).toEqual({ type: "blocked", message: "needs user decision" })
+        SessionStatus.set(session.id, { type: "idle" })
         await SessionStatus.flush()
+        await Session.remove(session.id)
       },
     })
   })
 
   test("restores completed status across instance restart", async () => {
-    const sessionID = "test-session-completed-restart" as SessionID
-    await Instance.provide({
+    const session = await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        SessionStatus.set(sessionID, { type: "completed" })
+        const session = await Session.create({})
+        SessionStatus.set(session.id, { type: "completed" })
         await SessionStatus.flush()
-        expect(SessionStatus.get(sessionID)).toEqual({ type: "completed" })
+        expect(SessionStatus.get(session.id)).toEqual({ type: "completed" })
+        return session
       },
     })
 
@@ -645,9 +671,10 @@ describe("session state machine", () => {
       directory: projectRoot,
       fn: async () => {
         await SessionStatus.restore()
-        expect(SessionStatus.get(sessionID)).toEqual({ type: "completed" })
-        SessionStatus.set(sessionID, { type: "idle" })
+        expect(SessionStatus.get(session.id)).toEqual({ type: "completed" })
+        SessionStatus.set(session.id, { type: "idle" })
         await SessionStatus.flush()
+        await Session.remove(session.id)
       },
     })
   })
@@ -675,14 +702,15 @@ describe("session state machine", () => {
   })
 
   test("restores restart-lost active statuses as interrupted", async () => {
-    const running = "test-session-running-restart" as SessionID
-    const starting = "test-session-starting-restart" as SessionID
-    await Instance.provide({
+    const ids = await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        SessionStatus.set(running, { type: "running" })
-        SessionStatus.set(starting, { type: "starting" })
+        const running = await Session.create({})
+        const starting = await Session.create({})
+        SessionStatus.set(running.id, { type: "running" })
+        SessionStatus.set(starting.id, { type: "starting" })
         await SessionStatus.flush()
+        return { running: running.id, starting: starting.id }
       },
     })
 
@@ -692,34 +720,36 @@ describe("session state machine", () => {
       directory: projectRoot,
       fn: async () => {
         const restored = await SessionStatus.restore()
-        expect(restored[running]?.type).toBe("interrupted")
-        expect(restored[starting]?.type).toBe("interrupted")
-        expect(SessionStatus.get(running)).toEqual({
+        expect(restored[ids.running]?.type).toBe("interrupted")
+        expect(restored[ids.starting]?.type).toBe("interrupted")
+        expect(SessionStatus.get(ids.running)).toEqual({
           type: "interrupted",
           prior: "running",
           message: "Session was running when the process stopped.",
         })
-        expect(SessionStatus.get(starting)).toEqual({
+        expect(SessionStatus.get(ids.starting)).toEqual({
           type: "interrupted",
           prior: "starting",
           message: "Session was starting when the process stopped.",
         })
-        SessionStatus.set(running, { type: "idle" })
-        SessionStatus.set(starting, { type: "idle" })
+        SessionStatus.set(ids.running, { type: "idle" })
+        SessionStatus.set(ids.starting, { type: "idle" })
         await SessionStatus.flush()
+        await Session.remove(ids.running)
+        await Session.remove(ids.starting)
       },
     })
   })
 
   test("restores queued rate limited and retry statuses for automatic continuation", async () => {
-    const queued = "test-session-queued-restart" as SessionID
-    const limited = "test-session-limited-restart" as SessionID
-    const retry = "test-session-retry-restart" as SessionID
-    await Instance.provide({
+    const ids = await Instance.provide({
       directory: projectRoot,
       fn: async () => {
-        SessionStatus.set(queued, { type: "queued" })
-        SessionStatus.set(limited, {
+        const queued = await Session.create({})
+        const limited = await Session.create({})
+        const retry = await Session.create({})
+        SessionStatus.set(queued.id, { type: "queued" })
+        SessionStatus.set(limited.id, {
           type: "rate_limited",
           providerID: "p",
           modelID: "m",
@@ -728,9 +758,10 @@ describe("session state machine", () => {
           limit: 1,
           queued: 1,
         })
-        SessionStatus.set(retry, { type: "running" })
-        SessionStatus.set(retry, { type: "retry", attempt: 1, message: "retry", next: Date.now() })
+        SessionStatus.set(retry.id, { type: "running" })
+        SessionStatus.set(retry.id, { type: "retry", attempt: 1, message: "retry", next: Date.now() })
         await SessionStatus.flush()
+        return { queued: queued.id, limited: limited.id, retry: retry.id }
       },
     })
 
@@ -740,13 +771,16 @@ describe("session state machine", () => {
       directory: projectRoot,
       fn: async () => {
         const restored = await SessionStatus.restore()
-        expect(restored[queued]).toEqual({ type: "queued" })
-        expect(restored[limited]?.type).toBe("rate_limited")
-        expect(restored[retry]?.type).toBe("retry")
-        SessionStatus.set(queued, { type: "idle" })
-        SessionStatus.set(limited, { type: "idle" })
-        SessionStatus.set(retry, { type: "idle" })
+        expect(restored[ids.queued]).toEqual({ type: "queued" })
+        expect(restored[ids.limited]?.type).toBe("rate_limited")
+        expect(restored[ids.retry]?.type).toBe("retry")
+        SessionStatus.set(ids.queued, { type: "idle" })
+        SessionStatus.set(ids.limited, { type: "idle" })
+        SessionStatus.set(ids.retry, { type: "idle" })
         await SessionStatus.flush()
+        await Session.remove(ids.queued)
+        await Session.remove(ids.limited)
+        await Session.remove(ids.retry)
       },
     })
   })
