@@ -3703,6 +3703,178 @@ describe("SessionDelegation", () => {
                   .all(),
               )
               expect(rows).toHaveLength(1)
+              expect(rows[0]?.status).toBe("terminal_reply")
+              expect(rows[0]?.satisfying).toBe(false)
+              const dctx = (await Session.get(child.id)).dsl_context?.protocol as {
+                delegation?: {
+                  result_id?: string
+                  status?: string
+                  completed_at?: number
+                  completed_message_id?: string
+                  notified_at?: number
+                }
+              }
+              expect(dctx.delegation?.result_id).toBeString()
+              expect(dctx.delegation?.status).toBe("terminal_reply")
+              expect(dctx.delegation?.completed_at).toBeNumber()
+              expect(dctx.delegation?.completed_message_id).toBe(done.id)
+              expect(dctx.delegation?.notified_at).toBeNumber()
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("ActionResult event keeps reply status authoritative", async () => {
+    await using tmp = await tmpdir()
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent consumed verifier reply",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              SessionDelegation.init()
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend-verifier" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_event_reply",
+                action_id: "impl_test",
+                action_title: "Test fix",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend-verifier",
+                result_policy: "summary",
+                result_tool: "ActionResult",
+                metadata: { verification: { worker: "impl" } },
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              SessionStatus.set(child.id, { type: "running" })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend-verifier",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend-verifier",
+                agent: "backend-verifier",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_impl_test_reply",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "verifier",
+                    action_id: "impl_test",
+                    target_action_id: "impl",
+                    status: "reply",
+                    result: "Need worker artifact.",
+                    issues: "Artifact path is missing.",
+                    evidence: "No worker output reference was provided.",
+                    worker_feedback: "Provide the artifact path before verification.",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+              await Session.updateMessage(done)
+              await new Promise((resolve) => setTimeout(resolve, 50))
+
+              expect(SessionStatus.get(child.id)).toEqual({ type: "terminal_reply", message: "Need worker artifact." })
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { status?: string; satisfying?: boolean }[]
+              }
+              expect(pctx.completed_delegations?.[0]?.status).toBe("terminal_reply")
+              expect(pctx.completed_delegations?.[0]?.satisfying).toBe(false)
+              const row = Database.use((db) =>
+                db
+                  .select()
+                  .from(SessionResultTable)
+                  .where(
+                    and(
+                      eq(SessionResultTable.parent_session_id, parent.id),
+                      eq(SessionResultTable.child_session_id, child.id),
+                      eq(SessionResultTable.run_id, "apr_event_reply"),
+                      eq(SessionResultTable.action_id, "impl_test"),
+                    ),
+                  )
+                  .get(),
+              )
+              expect(row?.status).toBe("terminal_reply")
             },
           }),
       })

@@ -5,9 +5,11 @@ import { WorkspaceID } from "../../src/control-plane/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
+import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { SessionLog } from "../../src/session/log"
-import { SessionID } from "../../src/session/schema"
+import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID, SessionID } from "../../src/session/schema"
 import { Database, eq } from "../../src/storage/db"
 import { SessionTable } from "../../src/session/session.sql"
 import { Storage } from "../../src/storage/storage"
@@ -183,6 +185,94 @@ describe("session state machine", () => {
 
             await SessionStatus.restore()
             expect(SessionStatus.get(session.id)).toEqual({ type: "terminal_reply", message: "Restored from DB." })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("restores terminal ActionResult from dsl context before restart recovery", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-action-result-restore"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                result: {
+                  type: "session.action_result",
+                  status: "terminal_reply",
+                  completed_at: Date.now(),
+                  summary: "Need parent decision.",
+                },
+              },
+            })
+            SessionStatus.set(session.id, { type: "running" })
+            await SessionStatus.flush()
+
+            const restored = await SessionStatus.restore()
+
+            expect(restored[session.id]).toEqual({ type: "terminal_reply", message: "Need parent decision." })
+            expect(SessionStatus.get(session.id)).toEqual({
+              type: "terminal_reply",
+              message: "Need parent decision.",
+            })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("does not restore stale ActionResult over a later user turn", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-action-result-later-user"),
+          fn: async () => {
+            const session = await Session.create({})
+            const at = Date.now() - 100
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                result: {
+                  type: "session.action_result",
+                  status: "terminal_reply",
+                  completed_at: at,
+                  summary: "Old parent decision.",
+                },
+              },
+            })
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              time: { created: at + 50 },
+              agent: "backend",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)
+            SessionStatus.set(session.id, { type: "running" })
+            await SessionStatus.flush()
+
+            const restored = await SessionStatus.restore()
+
+            expect(restored[session.id]).toEqual({
+              type: "interrupted",
+              prior: "running",
+              message: "Session was running when the process stopped.",
+            })
+            expect(SessionStatus.get(session.id)).toEqual({
+              type: "interrupted",
+              prior: "running",
+              message: "Session was running when the process stopped.",
+            })
 
             await Session.remove(session.id)
           },

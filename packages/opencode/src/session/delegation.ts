@@ -340,11 +340,12 @@ export namespace SessionDelegation {
       const next = await load()
       if (!next) return false
       if (!active && done) {
+        const already = typeof next.notified_at === "number"
+        if (already && !newer(message, next)) return false
         if (fresh) await store(input.sessionID, item, body, message)
         await turn(input.sessionID, message, status)
         settle(input.sessionID, status, note(body, output))
-        const alreadyNotified = typeof next.notified_at === "number"
-        if (alreadyNotified) return false
+        if (already) return false
         await notified(input.sessionID, next)
         return false
       }
@@ -611,7 +612,7 @@ export namespace SessionDelegation {
     await complete({
       sessionID: info.sessionID,
       messageID: info.id,
-      status: info.finish === "error" ? "failed" : "completed",
+      ...(item ? {} : { status: info.finish === "error" ? ("failed" as const) : ("completed" as const) }),
     })
   }
 
@@ -2331,6 +2332,7 @@ export namespace SessionDelegation {
           ...prev,
           delegation: {
             ...clean(item),
+            ...projection(object(prev.delegation)),
             notified_at: time,
           },
         },
@@ -2591,6 +2593,24 @@ export namespace SessionDelegation {
       item.status === "terminal_reply"
     )
       return item.status
+  }
+
+  function newer(message: MessageID | undefined, item: Item) {
+    if (!message) return false
+    const done = text(item.completed_message_id)
+    if (!done) return true
+    return message > done
+  }
+
+  function projection(input: Record<string, unknown>) {
+    return {
+      ...(typeof input.result_id === "string" ? { result_id: input.result_id } : {}),
+      ...(typeof input.status === "string" ? { status: input.status } : {}),
+      ...(typeof input.completed_at === "number" ? { completed_at: input.completed_at } : {}),
+      ...(typeof input.completed_message_id === "string" ? { completed_message_id: input.completed_message_id } : {}),
+      ...(typeof input.output_ref === "string" ? { output_ref: input.output_ref } : {}),
+      ...(typeof input.summary === "string" ? { summary: input.summary } : {}),
+    }
   }
 
   function settle(sessionID: SessionID, status: Status, output?: string) {

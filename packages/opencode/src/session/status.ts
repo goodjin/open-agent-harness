@@ -5,8 +5,8 @@ import { Metrics } from "@/observability/metrics"
 import { SessionID } from "./schema"
 import z from "zod"
 import { SessionLog } from "./log"
-import { and, Database, eq } from "@/storage/db"
-import { SessionTable } from "./session.sql"
+import { and, Database, desc, eq, gt } from "@/storage/db"
+import { MessageTable, SessionTable } from "./session.sql"
 
 export namespace SessionStatus {
   export const Info = z
@@ -520,22 +520,27 @@ export namespace SessionStatus {
     const out: Record<string, Info> = {}
     for (const row of rows) {
       const parsed = decode(row)
-      if (!parsed || parsed.type === "idle") {
+      if (!parsed) {
         delete data[row.id]
         continue
       }
-      const base = lost(parsed)
+      const saved = recover(row, parsed)
+      if (saved.type === "idle") {
+        delete data[row.id]
+        continue
+      }
+      const base = lost(saved)
         ? ({
             type: "interrupted",
-            prior: parsed.type,
-            message: `Session was ${parsed.type} when the process stopped.`,
+            prior: saved.type,
+            message: `Session was ${saved.type} when the process stopped.`,
           } satisfies Info)
-        : lostPermission(parsed)
+        : lostPermission(saved)
           ? ({
               type: "interrupted",
               message: "Session was waiting for permission when the process stopped.",
             } satisfies Info)
-        : parsed
+        : saved
       const status = repair(row, base, map)
       data[row.id] = status
       out[row.id] = status
@@ -617,9 +622,37 @@ export namespace SessionStatus {
     if (row.directory !== Instance.directory) return
     const status = decode(row)
     if (!status) return
-    const next = repair(row, status)
+    const next = repair(row, recover(row, status))
     if (changed(next, status)) persist(row.id, next, "recovery")
     return next
+  }
+
+  function recover(row: Row, status: Info): Info {
+    if (status.type !== "interrupted" && done(status)) return status
+    const result = obj(row.dsl_context).result
+    const data = obj(result)
+    if (data.type !== "session.action_result") return status
+    const at = typeof data.completed_at === "number" ? data.completed_at : undefined
+    if (at && later(row.id, at)) return status
+    const message = typeof data.summary === "string" ? data.summary : undefined
+    if (data.status === "completed" || data.status === "partial") return { type: "completed" }
+    if (data.status === "terminal_reply") return { type: "terminal_reply", message }
+    if (data.status === "failed") return { type: "failed", message }
+    if (data.status === "blocked") return { type: "blocked", message }
+    if (data.status === "waiting_user") return { type: "waiting_user" }
+    return status
+  }
+
+  function later(sessionID: SessionID, at: number) {
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(MessageTable)
+        .where(and(eq(MessageTable.session_id, sessionID), gt(MessageTable.time_created, at)))
+        .orderBy(desc(MessageTable.time_created), desc(MessageTable.id))
+        .all(),
+    )
+    return rows.some((row) => obj(row.data).role === "user")
   }
 
   function repair(row: Row, status: Info, rows?: Map<string, Row>): Info {
