@@ -1,12 +1,14 @@
 import { Hono } from "hono"
 import { describeRoute, validator } from "hono-openapi"
 import { resolver } from "hono-openapi"
+import { Bus } from "@/bus"
 import { QuestionID } from "@/question/schema"
 import { Question } from "../../question"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { MessageID, SessionID } from "@/session/schema"
 import { Storage } from "@/storage/storage"
+import { Log } from "@/util/log"
 import z from "zod"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
@@ -24,6 +26,7 @@ type Confirm = {
 
 const prefix = "que_protocol_confirm_"
 const iprefix = "que_protocol_input_"
+const log = Log.create({ service: "server.question" })
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 const num = (input: unknown) => (typeof input === "number" ? input : 0)
@@ -131,6 +134,12 @@ function inputs(sessions: Session.Info[]) {
   return Array.from(latest.values())
 }
 
+function resume(input: Parameters<typeof SessionPrompt.prompt>[0]) {
+  void SessionPrompt.prompt(input).catch((err) => {
+    log.warn("failed to continue restored protocol question", { sessionID: input.sessionID, err })
+  })
+}
+
 async function confirm(input: {
   answers?: Question.Answer[]
   reject?: boolean
@@ -168,7 +177,20 @@ async function confirm(input: {
   if (rec(item)) {
     await Storage.write(["session_protocol_confirmation", key.sessionID, key.run, key.action], item)
   }
-  await SessionPrompt.prompt({
+  if (input.reject) {
+    await Bus.publish(Question.Event.Rejected, {
+      sessionID: key.sessionID,
+      requestID: input.requestID,
+    })
+  } else {
+    await Bus.publish(Question.Event.Replied, {
+      sessionID: key.sessionID,
+      requestID: input.requestID,
+      answers: input.answers ?? [],
+      response: input.response,
+    })
+  }
+  resume({
     sessionID: key.sessionID,
     parts: [
       {
@@ -226,7 +248,19 @@ async function answer(input: {
     if (ans.length === 0) return [`- ${label}: no answer`]
     return [`- ${label}: ${ans.map((part) => `"${part}"`).join(", ")}`]
   })
-  await SessionPrompt.prompt({
+  if (input.reject) {
+    await Bus.publish(Question.Event.Rejected, {
+      sessionID: key.sessionID,
+      requestID: input.requestID,
+    })
+  } else {
+    await Bus.publish(Question.Event.Replied, {
+      sessionID: key.sessionID,
+      requestID: input.requestID,
+      answers: input.answers ?? [],
+    })
+  }
+  resume({
     sessionID: key.sessionID,
     parts: [
       {

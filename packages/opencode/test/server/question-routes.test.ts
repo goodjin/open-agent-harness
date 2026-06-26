@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { Bus } from "../../src/bus"
 import { Instance } from "../../src/project/instance"
+import { Question } from "../../src/question"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -216,8 +218,15 @@ describe("question routes", () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
     const prompt = spyOn(SessionPrompt, "prompt")
-    prompt.mockImplementation((async () => undefined) as unknown as typeof SessionPrompt.prompt)
+    prompt.mockImplementation((() => new Promise(() => {})) as unknown as typeof SessionPrompt.prompt)
     let id: SessionID | undefined
+    let unsub = () => {}
+    let seen:
+      | {
+          requestID: unknown
+          response?: "confirm" | "cancel"
+        }
+      | undefined
 
     try {
       await Instance.provide({
@@ -251,6 +260,17 @@ describe("question routes", () => {
 
       const listed = await call(app, tmp.path, "/question")
       const questions = (await listed.json()) as { id: string }[]
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () => {
+          unsub = Bus.subscribe(Question.Event.Replied, (event) => {
+            seen = {
+              requestID: event.properties.requestID,
+              response: event.properties.response,
+            }
+          })
+        },
+      })
       const res = await call(app, tmp.path, `/question/${questions[0]?.id}/reply`, {
         method: "POST",
         body: JSON.stringify({ answers: [["确认"]], response: "confirm" }),
@@ -265,7 +285,9 @@ describe("question routes", () => {
       expect(vals?.confirmations?.[0]?.status).toBe("confirmed")
       expect(vals?.confirmations?.[0]?.response).toBe("confirm")
       expect(prompt).toHaveBeenCalled()
+      expect(seen).toEqual({ requestID: questions[0]?.id, response: "confirm" })
     } finally {
+      unsub()
       prompt.mockRestore()
     }
   })
@@ -274,7 +296,7 @@ describe("question routes", () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
     const prompt = spyOn(SessionPrompt, "prompt")
-    prompt.mockImplementation((async () => undefined) as unknown as typeof SessionPrompt.prompt)
+    prompt.mockImplementation((() => new Promise(() => {})) as unknown as typeof SessionPrompt.prompt)
     let id: SessionID | undefined
 
     try {
