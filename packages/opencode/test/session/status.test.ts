@@ -955,4 +955,74 @@ describe("session state machine", () => {
       },
     })
   })
+
+  test("repairs waiting child status when pending delegations are empty", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-empty-pending"),
+          fn: async () => {
+            const session = await Session.create({ title: "empty pending parent" })
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                protocol: {
+                  pending_delegations: {},
+                },
+              },
+            })
+            SessionStatus.set(session.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
+            await SessionStatus.flush()
+
+            expect(SessionStatus.get(session.id)).toEqual({ type: "completed" })
+            const restored = await SessionStatus.restore()
+
+            expect(restored[session.id]).toEqual({ type: "completed" })
+            expect(SessionStatus.get(session.id)).toEqual({ type: "completed" })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("repairs waiting child status when pending children are terminal", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-terminal-pending"),
+          fn: async () => {
+            const parent = await Session.create({ title: "terminal pending parent" })
+            const child = await Session.create({ title: "terminal pending child", parentID: parent.id })
+            await Session.setDslContext({
+              sessionID: parent.id,
+              dsl_context: {
+                protocol: {
+                  pending_delegations: {
+                    [child.id]: {
+                      child_session_id: child.id,
+                      run_id: "run_status",
+                      action_id: "act_status",
+                    },
+                  },
+                },
+              },
+            })
+            SessionStatus.set(child.id, { type: "terminal_reply", message: "Needs parent decision." })
+            SessionStatus.set(parent.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
+            await SessionStatus.flush()
+
+            expect(SessionStatus.list()[parent.id]).toEqual({ type: "completed" })
+            const restored = await SessionStatus.restore()
+
+            expect(restored[parent.id]).toEqual({ type: "completed" })
+            expect(SessionStatus.get(parent.id)).toEqual({ type: "completed" })
+
+            await Session.remove(parent.id)
+          },
+        }),
+    })
+  })
 })

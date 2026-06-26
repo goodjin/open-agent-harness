@@ -415,6 +415,7 @@ export function SessionSidePanel(props: {
   activeDiff?: string
   focusReviewDiff: (path: string) => void
   sessionWidth: number
+  ready: boolean
 }) {
   const layout = useLayout()
   const sync = useSync()
@@ -447,6 +448,7 @@ export function SessionSidePanel(props: {
   const childCount = createMemo(() => childSessionCount(sync.data.session, params.id))
   const [seen, setSeen] = createSignal<string>()
   createEffect(() => {
+    if (!props.ready) return
     const id = params.id
     if (!id) return
     if (seen() === id) return
@@ -548,6 +550,7 @@ export function SessionSidePanel(props: {
     const run = ++seq
     setLog("rows", [])
     if (!id) return
+    if (!props.ready) return
     void load(id, run)
   })
 
@@ -803,19 +806,19 @@ export function SessionSidePanel(props: {
 
                   <Show when={reviewTab()}>
                     <Tabs.Content value="review" class="flex flex-col h-full overflow-hidden contain-strict">
-                      <Show when={activeTab() === "review"}>{props.reviewPanel()}</Show>
+                      <Show when={props.ready && activeTab() === "review"}>{props.reviewPanel()}</Show>
                     </Tabs.Content>
                   </Show>
 
                   <Show when={logTab()}>
                     <Tabs.Content value="logs" class="flex flex-col h-full overflow-hidden contain-strict">
-                      <Show when={activeTab() === "logs"}>{props.logPanel()}</Show>
+                      <Show when={props.ready && activeTab() === "logs"}>{props.logPanel()}</Show>
                     </Tabs.Content>
                   </Show>
 
                   <Show when={graphTab()}>
                     <Tabs.Content value="graph" class="flex flex-col h-full overflow-hidden contain-strict">
-                      <Show when={activeTab() === "graph"}>
+                      <Show when={props.ready && activeTab() === "graph"}>
                         <Show when={run()} fallback={empty("No graph runs yet")}>
                           {(item) => (
                             <GraphPanel

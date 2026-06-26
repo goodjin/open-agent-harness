@@ -11,6 +11,17 @@ import { Storage } from "@/storage/storage"
 import { Bus } from "@/bus"
 
 export namespace SessionSummary {
+  export function slim(diffs: Snapshot.FileDiff[]) {
+    return diffs.map((item) => ({
+      file: item.file,
+      before: "",
+      after: "",
+      additions: item.additions,
+      deletions: item.deletions,
+      status: item.status,
+    }))
+  }
+
   function unquoteGitPath(input: string) {
     if (!input.startsWith('"')) return input
     if (!input.endsWith('"')) return input
@@ -94,7 +105,7 @@ export namespace SessionSummary {
     await Storage.write(["session_diff", input.sessionID], diffs)
     Bus.publish(Session.Event.Diff, {
       sessionID: input.sessionID,
-      diff: diffs,
+      diff: slim(diffs),
     })
   }
 
@@ -129,7 +140,34 @@ export namespace SessionSummary {
       })
       const changed = next.some((item, i) => item.file !== diffs[i]?.file)
       if (changed) Storage.write(["session_diff", input.sessionID], next).catch(() => {})
-      return next
+      return slim(next)
+    },
+  )
+
+  export const detail = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod.optional(),
+      file: z.string(),
+    }),
+    async (input) => {
+      const diffs = input.messageID
+        ? await MessageV2.get({ sessionID: input.sessionID, messageID: input.messageID })
+            .then((msg) => (msg.info.role === "user" ? (msg.info.summary?.diffs ?? []) : []))
+            .catch(() => [])
+        : await Storage.read<Snapshot.FileDiff[]>(["session_diff", input.sessionID]).catch(() => [])
+      return (
+        diffs
+          .map((item) => {
+            const file = unquoteGitPath(item.file)
+            if (file === item.file) return item
+            return {
+              ...item,
+              file,
+            }
+          })
+          .find((item) => item.file === input.file) ?? null
+      )
     },
   )
 

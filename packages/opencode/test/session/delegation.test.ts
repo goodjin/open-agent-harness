@@ -253,6 +253,172 @@ describe("SessionDelegation", () => {
     }
   })
 
+  test("delegated child timeline record moves from current to history after parent notification", async () => {
+    await using tmp = await tmpdir()
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await SessionDelegation.assign({
+                action: {
+                  type: "action",
+                  id: "impl",
+                  title: "Implement timeline",
+                  operation: "modify",
+                  executor: { type: "agent", target: "backend", capabilities: [] },
+                  input: {},
+                  depends_on: [],
+                  context_refs: [],
+                  verification: {},
+                  result_policy: "summary",
+                },
+                agent: "backend",
+                childID: child.id,
+                messageID: assistant.id,
+                parentAgent: "protocol-runner",
+                runID: "apr_timeline_child",
+                sessionID: parent.id,
+              })
+              const first = await MessageV2.get({ sessionID: parent.id, messageID: user.id })
+              expect(first.info.role).toBe("user")
+              const firstTurn = first.info.role === "user" ? first.info.metadata?.turn : undefined
+              expect((firstTurn as { children?: { id?: string; current?: boolean }[] }).children).toMatchObject([
+                { id: child.id, current: true },
+              ])
+
+              const childUser = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: childUser.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_impl",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "impl",
+                    status: "success",
+                    result: "Implemented timeline record.",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+              const last = await MessageV2.get({ sessionID: parent.id, messageID: user.id })
+              expect(last.info.role).toBe("user")
+              const lastTurn = last.info.role === "user" ? last.info.metadata?.turn : undefined
+              const rows = (lastTurn as { children?: { id?: string; current?: boolean; status?: string; result_id?: string }[] })
+                .children
+              expect(rows).toMatchObject([{ id: child.id, current: false, status: "completed" }])
+              expect(rows?.[0]?.result_id).toBeString()
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("verifier ActionResult reminders include inferred target action id", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []

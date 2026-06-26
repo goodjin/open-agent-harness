@@ -15,6 +15,7 @@ import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
 import type {
   AssistantMessage,
+  FileDiff,
   Message as MessageType,
   Part,
   PermissionRequest,
@@ -56,6 +57,8 @@ import {
   delegationSubmitted,
   laterUserInput,
   pendingDelegation,
+  timelineChildren,
+  timelineProgress,
   turn,
   type DelegationItem,
 } from "@/pages/session/session-delegations"
@@ -410,6 +413,7 @@ const markBoundaryGesture = (input: {
 }
 
 export function MessageTimeline(props: {
+  loadDiff?: (messageID: string, diff: FileDiff) => Promise<FileDiff | undefined>
   mobileChanges: boolean
   mobileFallback: JSX.Element
   actions?: UserActions
@@ -719,6 +723,8 @@ export function MessageTimeline(props: {
           produce((draft) => {
             const index = draft.session.findIndex((s) => s.id === id)
             if (index !== -1) draft.session[index].title = next
+            const info = draft.session_info[id]
+            if (info) info.title = next
           }),
         )
         setTitle({ editing: false, saving: false })
@@ -760,6 +766,7 @@ export function MessageTimeline(props: {
           produce((draft) => {
             const index = draft.session.findIndex((s) => s.id === sessionID)
             if (index !== -1) draft.session.splice(index, 1)
+            delete draft.session_info[sessionID]
           }),
         )
         navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
@@ -825,6 +832,7 @@ export function MessageTimeline(props: {
         }
 
         draft.session = draft.session.filter((s) => !removed.has(s.id))
+        for (const id of removed) delete draft.session_info[id]
       }),
     )
 
@@ -1556,13 +1564,20 @@ export function MessageTimeline(props: {
                     equals: (a, b) => JSON.stringify(a) === JSON.stringify(b),
                   })
                   const commentCount = createMemo(() => comments().length)
-                  const delegated = createMemo(() => pendingDelegation(info()?.dsl_context, messageID, sessionMessages()))
-                  const delegation = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
                   const completed = createMemo(() => turnDone(sessionMessages(), messageID, sessionStatus()))
                   const turn = createMemo(() =>
                     sessionMessages().find(
                       (item): item is UserMessage => item.id === messageID && item.role === "user",
                     ),
+                  )
+                  const history = createMemo(() => timelineChildren(turn()))
+                  const current = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
+                  const timeline = createMemo(() => timelineProgress(history()))
+                  const delegation = createMemo(() => (history().length > 0 ? timeline() : current()))
+                  const delegated = createMemo(
+                    () =>
+                      delegation().active.length > 0 ||
+                      pendingDelegation(info()?.dsl_context, messageID, sessionMessages()),
                   )
                   const stats = createMemo(() => turnStats(turn()))
                   const derived = createMemo(() => deriveTurnStats(sessionMessages(), messageID, sync.data.part))
@@ -1595,6 +1610,7 @@ export function MessageTimeline(props: {
                   const locked = createMemo(() => {
                     const id = run()
                     if (!id) return
+                    if (history().length > 0 && delegation().active.length === 0) return op.run[id] ?? "terminate_with_result"
                     return op.run[id] ?? (delegationSubmitted(info()?.dsl_context, id) ? "terminate_with_result" : undefined)
                   })
                   const kids = createMemo(() => {
@@ -1962,7 +1978,10 @@ export function MessageTimeline(props: {
                               </Show>
                             </div>
                           </Show>
-                          <SessionTurnDiffs diffs={turn()?.summary?.diffs ?? []} />
+                          <SessionTurnDiffs
+                            diffs={turn()?.summary?.diffs ?? []}
+                            loadDiff={props.loadDiff ? (diff) => props.loadDiff!(messageID, diff) : undefined}
+                          />
                         </div>
                       </Show>
                     </div>

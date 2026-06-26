@@ -167,6 +167,7 @@ export function createChildStoreManager(input: {
             agent: [],
             command: [],
             session: [],
+            session_info: {},
             sessionTotal: 0,
             session_status: {},
             session_diff: {},

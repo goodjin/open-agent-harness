@@ -15,6 +15,23 @@ import type { State, VcsCache } from "./types"
 import { trimSessions } from "./session-trim"
 import { dropSessionCaches } from "./session-cache"
 
+function tree(session: Session): Session {
+  return {
+    ...session,
+    dsl_context: undefined,
+  }
+}
+
+function detail(raw: Session, prev: Session | undefined) {
+  if (raw.dsl_context !== undefined) return raw
+  if (!prev) return
+  return {
+    ...prev,
+    ...raw,
+    dsl_context: prev.dsl_context,
+  }
+}
+
 export function applyGlobalEvent(input: {
   event: { type: string; properties?: unknown }
   project: Project[]
@@ -102,7 +119,7 @@ export function applyDirectoryEvent(input: {
       return
     }
     case "session.created": {
-      const info = (event.properties as { info: Session }).info
+      const info = tree((event.properties as { info: Session }).info)
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (result.found) {
         input.setStore("session", result.index, reconcile(info))
@@ -121,8 +138,11 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.updated": {
-      const info = (event.properties as { info: Session }).info
+      const raw = (event.properties as { info: Session }).info
+      const info = tree(raw)
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
+      const full = detail(raw, input.store.session_info[raw.id])
+      if (full) input.setStore("session_info", raw.id, reconcile(full))
       if (info.time.archived) {
         input.parents?.delete(info.id)
         if (result.found) {
@@ -156,7 +176,7 @@ export function applyDirectoryEvent(input: {
       break
     }
     case "session.deleted": {
-      const info = (event.properties as { info: Session }).info
+      const info = tree((event.properties as { info: Session }).info)
       const result = Binary.search(input.store.session, info.id, (s) => s.id)
       if (result.found) {
         input.setStore(

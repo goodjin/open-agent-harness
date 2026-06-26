@@ -43,6 +43,9 @@ export type State = {
   config: Config
   path: Path
   session: Session[]
+  session_info: {
+    [sessionID: string]: Session | undefined
+  }
   sessionTotal: number
   session_status: {
     [sessionID: string]: SessionStatus

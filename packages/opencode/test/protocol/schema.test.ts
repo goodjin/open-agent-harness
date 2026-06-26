@@ -263,6 +263,39 @@ describe("agent protocol schema", () => {
     })
   })
 
+  test("accepts v2 confirm assignment metadata", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "confirm_assignment",
+          kind: "confirm",
+          title: "Confirm assignment",
+          prompt: "Confirm this assignment before execution.",
+          plan: "Implement the assignment lifecycle with persistence and runtime gates.",
+          assignment: {
+            op: "create",
+            target: "self",
+          },
+        },
+      ],
+    })
+
+    expect(out.intent).toBe("execute")
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "confirm_assignment",
+      operation: "confirm",
+      input: {
+        assignment: {
+          op: "create",
+          target: "self",
+        },
+      },
+    })
+  })
+
   test("accepts flat act shape and normalizes it to one runtime action", () => {
     const out = AgentProtocol.parse({
       kind: "act",

@@ -4,6 +4,7 @@ import type {
   Part,
   PermissionRequest,
   QuestionRequest,
+  Session,
   SessionStatus,
   Todo,
 } from "@open-agent-harness/sdk/v2/client"
@@ -11,6 +12,7 @@ import type {
 export const SESSION_CACHE_LIMIT = 40
 
 type SessionCache = {
+  session_info: Record<string, Session | undefined>
   session_status: Record<string, SessionStatus | undefined>
   session_diff: Record<string, FileDiff[] | undefined>
   todo: Record<string, Todo[] | undefined>
@@ -31,6 +33,7 @@ export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<stri
   }
 
   for (const sessionID of stale) {
+    delete store.session_info[sessionID]
     delete store.message[sessionID]
     delete store.todo[sessionID]
     delete store.session_diff[sessionID]

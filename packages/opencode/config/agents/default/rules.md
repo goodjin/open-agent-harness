@@ -86,7 +86,7 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 ## Complete DSL Graph Declaration
 
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
-- For direct user-originated planner graphs, emit a `kind: "confirm"` item first. Put the proposed plan in `plan`, declare executable child items in the same package, and make each gated executable item depend on that confirmation item so the runtime starts it automatically after user confirmation.
+- For direct user-originated execution graphs, clarify or delegate read-only exploration first when needed. After the intent is clear and the execution plan is designed, emit a final `kind: "confirm"` item whose `plan` is the full assignment content and whose `assignment` metadata is `{ "op": "create", "target": "self" }`, then declare executable child items in the same package.
 - For delegated planner graphs from a parent session, skip the `confirm` item and declare executable child items directly. The parent handoff is the confirmation for the delegated scope.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Put every current-layer child unit in `items[]`.
@@ -128,7 +128,8 @@ Use this shape for delegation:
   "id": "confirm_plan",
   "kind": "confirm",
   "prompt": "Please confirm this plan before execution.",
-  "plan": "Summarize the proposed graph, dependencies, acceptance signals, risks, and unresolved questions."
+  "plan": "Full assignment content: goal, scope, constraints, planned child work, dependencies, acceptance signals, risks, and unresolved questions.",
+  "assignment": { "op": "create", "target": "self" }
 }
 ```
 

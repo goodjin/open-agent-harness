@@ -183,6 +183,30 @@ export namespace SessionDelegation {
         },
       },
     })
+    await timeline(item, { current: true, status: "pending" })
+  }
+
+  export async function mark(input: {
+    childID: SessionID
+    current: boolean
+    messageID: MessageID
+    parentID: SessionID
+    status?: string
+  }) {
+    const session = await Session.get(input.childID).catch(() => undefined)
+    const item = session ? assignment(session) : undefined
+    if (!item) return
+    await timeline(
+      {
+        ...item,
+        parent_session_id: input.parentID,
+        parent_message_id: input.messageID,
+      },
+      {
+        current: input.current,
+        status: input.status ?? (input.current ? "pending" : item.status),
+      },
+    )
   }
 
   export async function finish(input: {
@@ -1001,6 +1025,12 @@ export namespace SessionDelegation {
           },
         },
       },
+    })
+    await timeline(item, {
+      current: true,
+      status: body.status,
+      completed_at: body.completed_at,
+      result_id: rec.id,
     })
   }
 
@@ -2306,6 +2336,10 @@ export namespace SessionDelegation {
         },
       },
     })
+    await timeline(item, {
+      current: false,
+      notified_at: time,
+    })
 
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const pctx = object(parent.dsl_context)
@@ -2332,6 +2366,66 @@ export namespace SessionDelegation {
       },
     })
     ack(item)
+  }
+
+  async function timeline(item: Item, patch: Partial<SessionTurn.Child>) {
+    const user = await owner(item)
+    if (!user) return
+    const meta = object(user.metadata)
+    const turn = object(meta.turn)
+    const stats = object(turn.stats)
+    const prev = Array.isArray(turn.children) ? turn.children.map((entry) => object(entry)) : []
+    const now = Date.now()
+    const base = {
+      id: item.child_session_id,
+      label: item.action_title,
+      run: item.run_id,
+      action: item.action_id,
+      created_at: item.created_at,
+    }
+    const found = prev.find((entry) => entry.id === item.child_session_id)
+    const next = [
+      ...prev.filter((entry) => entry.id !== item.child_session_id),
+      {
+        ...base,
+        ...found,
+        ...patch,
+        updated_at: now,
+      },
+    ]
+    await Session.updateMessage({
+      ...user,
+      metadata: {
+        ...meta,
+        turn: {
+          kind: turn.kind ?? (meta.internal === true ? "internal" : "user"),
+          status: turn.status ?? "running",
+          time: object(turn.time).queued ? turn.time : { queued: user.time.created },
+          ...turn,
+          stats: {
+            ...stats,
+            children: next.length,
+          },
+          children: next,
+        },
+      },
+    } as MessageV2.User)
+  }
+
+  async function owner(item: Item) {
+    const msg = await MessageV2.get({
+      sessionID: SessionID.make(item.parent_session_id),
+      messageID: MessageID.make(item.parent_message_id),
+    }).catch(() => undefined)
+    if (!msg) return
+    if (msg.info.role === "user") return msg.info
+    if (msg.info.role !== "assistant") return
+    return MessageV2.get({
+      sessionID: SessionID.make(item.parent_session_id),
+      messageID: msg.info.parentID,
+    })
+      .then((value) => (value.info.role === "user" ? value.info : undefined))
+      .catch(() => undefined)
   }
 
   async function logdone(body: ReturnType<typeof completed>) {

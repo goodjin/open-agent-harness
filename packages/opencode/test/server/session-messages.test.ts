@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
@@ -9,6 +9,8 @@ import { Log } from "../../src/util/log"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { SessionLog } from "../../src/session/log"
+import { Storage } from "../../src/storage/storage"
+import { SessionRunner } from "../../src/session/runner"
 
 const root = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -87,6 +89,32 @@ describe("session messages endpoint", () => {
             expect(body.map((item) => item.info.id)).toEqual(ids)
 
             await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("does not recover protocol sessions when reading messages", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            await fill(session.id, 1)
+            const recover = spyOn(SessionRunner, "recover").mockImplementation(async () => true)
+
+            try {
+              const app = Server.Default()
+              const res = await app.request(`/session/${session.id}/message?limit=1`)
+
+              expect(res.status).toBe(200)
+              expect(recover).not.toHaveBeenCalled()
+            } finally {
+              recover.mockRestore()
+              await Session.remove(session.id)
+            }
           },
         }),
     })
@@ -215,6 +243,71 @@ describe("session messages endpoint", () => {
               expect(tool.state.output.length).toBeLessThan(20_100)
               expect(tool.state.metadata.raw).toEqual({ omitted: true, bytes: 30_002 })
             }
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("returns diff summaries in message and session diff responses while detail keeps full contents", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const id = MessageID.ascending()
+            const diff = {
+              file: "large.txt",
+              before: "before".repeat(100),
+              after: "after".repeat(100),
+              additions: 7,
+              deletions: 3,
+              status: "modified" as const,
+            }
+            await Session.updateMessage({
+              id,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              summary: { diffs: [diff] },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+            } as unknown as MessageV2.Info)
+            await Storage.write(["session_diff", session.id], [diff])
+
+            const app = Server.Default()
+            const messages = await app.request(`/session/${session.id}/message?limit=1`)
+            expect(messages.status).toBe(200)
+            const body = (await messages.json()) as MessageV2.WithParts[]
+            const item = body[0]!.info
+            expect(item.role).toBe("user")
+            if (item.role === "user") {
+              expect(item.summary?.diffs?.[0]).toMatchObject({
+                file: "large.txt",
+                before: "",
+                after: "",
+                additions: 7,
+                deletions: 3,
+                status: "modified",
+              })
+            }
+
+            const summary = await app.request(`/session/${session.id}/diff`)
+            expect(summary.status).toBe(200)
+            expect(await summary.json()).toEqual([
+              { file: "large.txt", before: "", after: "", additions: 7, deletions: 3, status: "modified" },
+            ])
+
+            const detail = await app.request(
+              `/session/${session.id}/diff/detail?messageID=${id}&file=${encodeURIComponent("large.txt")}`,
+            )
+            expect(detail.status).toBe(200)
+            expect(await detail.json()).toEqual(diff)
 
             await Session.remove(session.id)
           },

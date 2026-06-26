@@ -30,6 +30,7 @@ import { Question } from "@/question"
 import { SessionStatus } from "./status"
 import { SessionTurn } from "./turn"
 import { ActionResult } from "./action-result"
+import { SessionAssignment } from "./assignment"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -1653,6 +1654,7 @@ export namespace SessionRunner {
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
       "Only use tool, agent, input, or confirm items if another runtime call is truly required.",
       "If the previous run stopped on an input item, use the captured user input to decide the next package; do not re-ask the same question unless the answer is unusable.",
+      resolved(input.run),
       repairPrompt(input.run),
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       'The full conversation history is preserved. Resolve references like "these errors", "continue", or "fix them" from the earlier turns.',
@@ -2454,6 +2456,45 @@ export namespace SessionRunner {
     return { selected, notes, custom }
   }
 
+  function resolved(run: AgentProtocol.Result) {
+    const items = run.actions.filter((item) => item.operation === "input")
+    if (items.length === 0) return ""
+    return [
+      "",
+      "Resolved user input from the previous runtime interaction:",
+      "",
+      ...items.flatMap((item) => {
+        const data = object(item.input)
+        const prompt = typeof data.prompt === "string" ? data.prompt : item.title
+        const mode = typeof data.mode === "string" ? data.mode : "text"
+        return [
+          `Input action: ${item.id}`,
+          `Question: ${prompt}`,
+          `Mode: ${mode}`,
+          "Answer:",
+          ...inputAnswer(item).map((line) => `  ${line}`),
+          "",
+        ]
+      }),
+      "Instruction:",
+      "Treat the selected option(s), custom answer(s), and provided text above as the user's answer to the corresponding input action.",
+      "Use those answers in the next response.",
+      "Do not ask the same input again unless the answer is missing, ambiguous, or unusable.",
+      "If earlier context contains defaults, assumptions, or unresolved questions that the input action was created to resolve, use the user's answer as the resolved value.",
+    ].join("\n")
+  }
+
+  function inputAnswer(item: AgentProtocol.ResultAction) {
+    const raw = (item.error ?? item.output ?? item.summary).split("\n")
+    const lines = raw.filter((line) => {
+      if (line.startsWith("User has answered your question")) return false
+      if (line.startsWith("The user did not provide an answer")) return false
+      if (line.startsWith("The runtime captured this input")) return false
+      return line.trim().length > 0
+    })
+    return lines.length ? lines : ["- no answer"]
+  }
+
   async function human(input: {
     action: AgentProtocol.Action
     runID: string
@@ -2481,6 +2522,7 @@ export namespace SessionRunner {
           if (!label) return []
           return [
             {
+              id: typeof opt.id === "string" ? opt.id : undefined,
               label,
               description: typeof opt.description === "string" ? opt.description : label,
             },
@@ -2498,6 +2540,7 @@ export namespace SessionRunner {
                 if (!label) return []
                 return [
                   {
+                    id: typeof opt.id === "string" ? opt.id : undefined,
                     label,
                     description: typeof opt.description === "string" ? opt.description : label,
                   },
@@ -2562,10 +2605,10 @@ export namespace SessionRunner {
     const lines: string[] = []
     if (form) {
       fields.forEach((field, index) => {
-        const opts = Array.isArray(field.options) ? field.options.map(object) : []
-        const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
-        const parsed = parseInquireAnswer(answers[index], valid)
-        const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
+          const opts = Array.isArray(field.options) ? field.options.map(object) : []
+          const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
+          const parsed = parseInquireAnswer(answers[index], valid)
+          const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
         const id = typeof field.id === "string" ? field.id : `field_${index + 1}`
         const label = typeof field.label === "string" ? field.label : id
         lines.push(`- ${id} (${label}):`)
@@ -2574,6 +2617,7 @@ export namespace SessionRunner {
             const opt = labels.get(selected)
             const value = typeof opt?.id === "string" ? opt.id : selected
             lines.push(`  - selected: ${value} ("${selected}")`)
+            if (typeof opt?.description === "string") lines.push(`    description: ${opt.description}`)
           }
         }
         if (parsed.custom.length) {
@@ -2588,7 +2632,14 @@ export namespace SessionRunner {
       const valid = new Set(options.map((item) => item.label))
       const parsed = parseInquireAnswer(answers[0], valid)
       if (parsed.selected.length) {
-        lines.push(`- Selected: ${parsed.selected.map((item) => `"${item}"`).join(", ")}`)
+        lines.push("- Selected options:")
+        const labels = new Map(options.map((item) => [item.label, item]))
+        for (const selected of parsed.selected) {
+          const opt = labels.get(selected)
+          lines.push(`  - id: ${opt?.id ?? selected}`)
+          lines.push(`    label: ${selected}`)
+          if (opt?.description) lines.push(`    description: ${opt.description}`)
+        }
       }
       if (parsed.custom.length) {
         lines.push(
@@ -2612,7 +2663,7 @@ export namespace SessionRunner {
       output: [
         lines.length ? `${header}\n${lines.join("\n")}` : header,
         "",
-        "The runtime captured this input and stopped the current protocol package so the model can decide the next step.",
+        "The runtime captured this input and stopped the current runtime interaction so the model can continue with the resolved answer.",
       ].join("\n"),
       metadata: { blocked: true, reason: "input_received", answers },
     }
@@ -2700,8 +2751,18 @@ export namespace SessionRunner {
     })
     const answer = reply.answers[0]?.[0] ?? ""
     const ok = reply.response ? reply.response === "confirm" : yes(answer)
+    const assignment = ok
+      ? await SessionAssignment.confirm({
+          action: input.action,
+          messageID: input.messageID,
+          plan,
+          runID: input.runID,
+          sessionID: input.sessionID,
+        })
+      : undefined
     await storeConfirm({
       action: input.action,
+      assignment,
       messageID: input.messageID,
       plan,
       response: ok ? "confirm" : "cancel",
@@ -2732,6 +2793,7 @@ export namespace SessionRunner {
 
   async function storeConfirm(input: {
     action: AgentProtocol.Action
+    assignment?: SessionAssignment.Info
     messageID: MessageID
     note?: string
     plan: string
@@ -2748,6 +2810,15 @@ export namespace SessionRunner {
       action_title: input.action.title,
       message_id: input.messageID,
       plan: input.plan,
+      assignment: input.assignment
+        ? {
+            id: input.assignment.id,
+            session_id: input.assignment.session_id,
+            status: input.assignment.status,
+            content_ref: input.assignment.content_ref,
+            content_version: input.assignment.content_version,
+          }
+        : object(input.action.input).assignment,
       note: input.note,
       response: input.response,
       status: input.status,
@@ -2911,6 +2982,14 @@ export namespace SessionRunner {
       metadata: gate,
       messageID: input.messageID,
       parentAgent: input.parentAgent,
+      runID: input.runID,
+      sessionID: input.sessionID,
+    })
+    await SessionAssignment.delegate({
+      action: input.action,
+      childID: child.id,
+      messageID: input.messageID,
+      plan: input.prompt,
       runID: input.runID,
       sessionID: input.sessionID,
     })

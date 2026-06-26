@@ -188,6 +188,8 @@ Session tree resume has two modes. `restore` restarts the existing loop without 
 
 Bootstrap restores status from DB before delegation recovery runs. If memory has no entry for a session, `SessionStatus.get()` may load the DB projection once instead of inventing an `idle` state. This prevents recovery from logging misleading `idle -> blocked` or `idle -> terminal` transitions for sessions that already had persisted status. Active substatuses such as `queued`, `starting`, `running`, and `aborting` carry their structured status payload in `status_detail`; active rows without that detail are treated as legacy shadow data, not authoritative live work.
 
+`waiting_child` is valid only while the parent DSL context still has live `protocol.pending_delegations`. Status restore and lazy status load reconcile stale DB projections: an empty pending set, or a pending set whose child rows are already terminal, is repaired to `completed`; mixed live and terminal children keep `waiting_child` with the live child count.
+
 `waiting_user` and `waiting_child` are done outcomes for the current turn. The session status remains `waiting_user` or `waiting_child` so the title bar, session tree, and prompt dock can still show the broader wait state.
 
 Failed assistant completion is also a done turn. If the assistant message has `time.completed` and an error, Runtime writes the user turn as `status=done`, `outcome=error`, and `reason=error`. The failure remains visible through the assistant error and session status; the prompt loop must not leave the user turn unfinished and rely on a future request to retry it implicitly.

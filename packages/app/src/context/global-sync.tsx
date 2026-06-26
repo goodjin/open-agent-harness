@@ -193,6 +193,11 @@ function createGlobalSync() {
     return next
   }
 
+  const tree = (session: Session) => ({
+    ...session,
+    dsl_context: undefined,
+  })
+
   const syncSession = (directory: string, sessionID: string) => {
     const key = `${directory}:${sessionID}`
     const pending = sessionSyncs.get(key)
@@ -203,15 +208,16 @@ function createGlobalSync() {
       .then((res) => {
         const info = res.data
         if (!info) return
+        setStore("session_info", sessionID, info)
         setStore(
           "session",
           produce((draft) => {
             const index = draft.findIndex((item) => item.id === sessionID)
             if (index !== -1) {
-              draft[index] = info
+              draft[index] = tree(info)
               return
             }
-            draft.push(info)
+            draft.push(tree(info))
             draft.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
           }),
         )

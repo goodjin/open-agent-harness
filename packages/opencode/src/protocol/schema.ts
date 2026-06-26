@@ -186,12 +186,19 @@ export namespace AgentProtocol {
     depends: V2Depends,
     result: Policy.default("summary"),
   })
+  const V2Assignment = z
+    .object({
+      op: z.enum(["create", "update"]),
+      target: Text.default("self"),
+    })
+    .strict()
   const V2Confirm = z.object({
     id: Text,
     kind: z.literal("confirm"),
     title: Text.optional(),
     prompt: Text,
     plan: Text,
+    assignment: V2Assignment.optional(),
     depends: V2Depends,
     result: Policy.default("summary"),
   })
@@ -362,6 +369,15 @@ export namespace AgentProtocol {
             target: { type: "string", minLength: 1 },
             prompt: { type: "string", minLength: 1 },
             plan: { type: "string", minLength: 1 },
+            assignment: {
+              type: "object",
+              properties: {
+                op: { type: "string", enum: ["create", "update"] },
+                target: { type: "string", minLength: 1, default: "self" },
+              },
+              required: ["op"],
+              additionalProperties: false,
+            },
             message: { type: "string", minLength: 1 },
             summary: { type: "string" },
             changed_files: {
@@ -797,7 +813,7 @@ export namespace AgentProtocol {
         title: input.title ?? input.id,
         operation: "confirm",
         executor: { type: "human", target: "user", capabilities: ["confirmation"] },
-        input: { prompt: input.prompt, plan: input.plan },
+        input: { prompt: input.prompt, plan: input.plan, assignment: input.assignment },
         depends_on: links(input.depends, answers),
         context_refs: [],
         result_policy: input.result,

@@ -5,6 +5,7 @@ import type {
   Part,
   PermissionRequest,
   QuestionRequest,
+  Session,
   SessionStatus,
   Todo,
 } from "@open-agent-harness/sdk/v2/client"
@@ -33,6 +34,7 @@ describe("app session cache", () => {
   test("dropSessionCaches clears orphaned parts without message rows", () => {
     const store: {
       session_status: Record<string, SessionStatus | undefined>
+      session_info: Record<string, Session | undefined>
       session_diff: Record<string, FileDiff[] | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
@@ -41,6 +43,7 @@ describe("app session cache", () => {
       question: Record<string, QuestionRequest[] | undefined>
     } = {
       session_status: { ses_1: { type: "running" } as SessionStatus },
+      session_info: { ses_1: { id: "ses_1" } as Session },
       session_diff: { ses_1: [] },
       todo: { ses_1: [] as Todo[] },
       message: {},
@@ -52,6 +55,7 @@ describe("app session cache", () => {
     dropSessionCaches(store, ["ses_1"])
 
     expect(store.message.ses_1).toBeUndefined()
+    expect(store.session_info.ses_1).toBeUndefined()
     expect(store.part.msg_1).toBeUndefined()
     expect(store.todo.ses_1).toBeUndefined()
     expect(store.session_diff.ses_1).toBeUndefined()
@@ -64,6 +68,7 @@ describe("app session cache", () => {
     const m = msg("msg_1", "ses_1")
     const store: {
       session_status: Record<string, SessionStatus | undefined>
+      session_info: Record<string, Session | undefined>
       session_diff: Record<string, FileDiff[] | undefined>
       todo: Record<string, Todo[] | undefined>
       message: Record<string, Message[] | undefined>
@@ -72,6 +77,7 @@ describe("app session cache", () => {
       question: Record<string, QuestionRequest[] | undefined>
     } = {
       session_status: {},
+      session_info: { ses_1: { id: "ses_1" } as Session },
       session_diff: {},
       todo: {},
       message: { ses_1: [m] },
@@ -83,6 +89,7 @@ describe("app session cache", () => {
     dropSessionCaches(store, ["ses_1"])
 
     expect(store.message.ses_1).toBeUndefined()
+    expect(store.session_info.ses_1).toBeUndefined()
     expect(store.part[m.id]).toBeUndefined()
   })
 

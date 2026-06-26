@@ -1,4 +1,4 @@
-import type { Project, UserMessage } from "@open-agent-harness/sdk/v2"
+import type { FileDiff, Project, UserMessage } from "@open-agent-harness/sdk/v2"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import {
   batch,
@@ -608,6 +608,8 @@ export default function Page() {
     filter: "all" as SessionTurnFilter,
     newSessionWorktree: "main",
     deferRender: false,
+    sideReady: false,
+    sideKey: undefined as string | undefined,
   })
 
   const [followup, setFollowup] = createStore({
@@ -624,13 +626,40 @@ export default function Page() {
   createComputed((prev) => {
     const key = sessionKey()
     if (key !== prev) {
-      setStore("deferRender", true)
+      setStore({ deferRender: true, sideReady: false, sideKey: undefined })
       requestAnimationFrame(() => {
         setTimeout(() => setStore("deferRender", false), 0)
       })
     }
     return key
   }, sessionKey())
+
+  let sideFrame: number | undefined
+  createEffect(
+    on(
+      () => [sessionKey(), params.id, messagesReady(), store.deferRender] as const,
+      ([key, id, ready, defer]) => {
+        if (sideFrame !== undefined) cancelAnimationFrame(sideFrame)
+        sideFrame = undefined
+        if (!id || !ready || defer) {
+          if (store.sideReady) setStore({ sideReady: false, sideKey: undefined })
+          return
+        }
+        if (store.sideReady && store.sideKey === key) return
+        sideFrame = requestAnimationFrame(() => {
+          sideFrame = undefined
+          setTimeout(() => {
+            if (sessionKey() !== key) return
+            setStore({ sideReady: true, sideKey: key })
+          }, 0)
+        })
+      },
+    ),
+  )
+
+  onCleanup(() => {
+    if (sideFrame !== undefined) cancelAnimationFrame(sideFrame)
+  })
 
   let refreshFrame: number | undefined
   let refreshTimer: number | undefined
@@ -639,6 +668,17 @@ export default function Page() {
 
   const turnDiffs = createMemo(() => lastUserMessage()?.summary?.diffs ?? [])
   const reviewDiffs = createMemo(() => (store.changes === "session" ? diffs() : turnDiffs()))
+  const reviewMessageID = createMemo(() => (store.changes === "turn" ? lastUserMessage()?.id : undefined))
+
+  const loadDiff = (messageID?: string) => async (diff: FileDiff) => {
+    const id = params.id
+    if (!id) return
+    const query = new URLSearchParams({ file: diff.file })
+    if (messageID) query.set("messageID", messageID)
+    const res = await sdk.request(`/session/${id}/diff/detail?${query.toString()}`)
+    if (!res.ok) return
+    return (await res.json()) as FileDiff | undefined
+  }
 
   const newSessionWorktree = createMemo(() => {
     if (store.newSessionWorktree === "create") return "create"
@@ -1159,6 +1199,7 @@ export default function Page() {
         title={changesTitle()}
         empty={reviewEmpty(input)}
         diffs={reviewDiffs}
+        loadDiff={loadDiff(reviewMessageID())}
         view={view}
         diffStyle={input.diffStyle}
         onDiffStyleChange={input.onDiffStyleChange}
@@ -1219,6 +1260,7 @@ export default function Page() {
               fallback={
                 <Show when={messagesReady()} fallback={sessionLoadingPanel()}>
                   <MessageTimeline
+                    loadDiff={(messageID, diff) => loadDiff(messageID)(diff)}
                     mobileChanges={mobileChanges()}
                     mobileFallback={reviewContent({
                       diffStyle: "unified",
@@ -1442,6 +1484,7 @@ export default function Page() {
 
     const wants = isDesktop() ? desktopFileTreeOpen() || activeTab() === "review" : store.mobileTab === "changes"
     if (!wants) return
+    if (!store.sideReady) return
     if (sync.data.session_diff[id] !== undefined) return
     if (sync.status === "loading") return
 
@@ -1453,13 +1496,15 @@ export default function Page() {
       () =>
         [
           sessionKey(),
+          store.sideReady,
           isDesktop() ? desktopFileTreeOpen() || activeTab() === "review" : store.mobileTab === "changes",
         ] as const,
-      ([key, wants]) => {
+      ([key, ready, wants]) => {
         if (diffFrame !== undefined) cancelAnimationFrame(diffFrame)
         if (diffTimer !== undefined) window.clearTimeout(diffTimer)
         diffFrame = undefined
         diffTimer = undefined
+        if (!ready) return
         if (!wants) return
 
         const id = params.id
@@ -2255,6 +2300,7 @@ export default function Page() {
             activeDiff={tree.activeDiff}
             focusReviewDiff={focusReviewDiff}
             sessionWidth={pane()}
+            ready={store.sideReady}
           />
         </Show>
       </div>

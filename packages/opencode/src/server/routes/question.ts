@@ -7,6 +7,7 @@ import { Question } from "../../question"
 import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { MessageID, SessionID } from "@/session/schema"
+import { SessionAssignment } from "@/session/assignment"
 import { Storage } from "@/storage/storage"
 import { Log } from "@/util/log"
 import z from "zod"
@@ -16,6 +17,7 @@ import { lazy } from "../../util/lazy"
 type Confirm = {
   action_id?: unknown
   action_title?: unknown
+  assignment?: unknown
   message_id?: unknown
   plan?: unknown
   plan_ref?: unknown
@@ -164,6 +166,36 @@ async function confirm(input: {
     }
   })
   const item = next.find((val) => rec(val) && val.run_id === key.run && val.action_id === key.action)
+  if (rec(item)) {
+    if (status === "confirmed") {
+      const msg = text(item.message_id)
+      const run = text(item.run_id)
+      const action = text(item.action_id)
+      const plan = text(item.plan)
+      const title = text(item.action_title) ?? action
+      if (msg && run && action && plan && title) {
+        const assignment = await SessionAssignment.apply({
+          actionID: action,
+          assignment: item.assignment,
+          messageID: MessageID.make(msg),
+          plan,
+          runID: run,
+          sessionID: key.sessionID,
+          title,
+        })
+        if (assignment) {
+          item.assignment = {
+            id: assignment.id,
+            session_id: assignment.session_id,
+            status: assignment.status,
+            content_ref: assignment.content_ref,
+            content_version: assignment.content_version,
+          }
+        }
+      }
+    }
+    await Storage.write(["session_protocol_confirmation", key.sessionID, key.run, key.action], item)
+  }
   await Session.setDslContext({
     sessionID: key.sessionID,
     dsl_context: {
@@ -174,9 +206,6 @@ async function confirm(input: {
       },
     },
   })
-  if (rec(item)) {
-    await Storage.write(["session_protocol_confirmation", key.sessionID, key.run, key.action], item)
-  }
   if (input.reject) {
     await Bus.publish(Question.Event.Rejected, {
       sessionID: key.sessionID,

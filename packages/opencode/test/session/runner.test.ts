@@ -17,6 +17,7 @@ import { Provider } from "../../src/provider/provider"
 import { SessionStatus } from "../../src/session/status"
 import { SessionDelegation } from "../../src/session/delegation"
 import { SessionTurn } from "../../src/session/turn"
+import { SessionAssignment } from "../../src/session/assignment"
 import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
@@ -2550,7 +2551,10 @@ describe("SessionRunner", () => {
           kind: "confirm",
           prompt: "Approve?",
           plan: "Run backend work.",
-          depends: ["confirm_plan"],
+          assignment: {
+            op: "create",
+            target: "self",
+          },
         },
         {
           id: "verify",
@@ -2680,6 +2684,164 @@ describe("SessionRunner", () => {
     } finally {
       stream.mockRestore()
       agent.mockRestore()
+      provider.mockRestore()
+    }
+  })
+
+  test("protocol runner creates assignment from confirmed plan", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const plan = "Goal: persist assignments from confirmation.\nScope: use confirm.plan as the assignment content."
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const body =
+        calls === 1
+          ? {
+              version: "2",
+              items: [
+                {
+                  id: "confirm_assignment",
+                  kind: "confirm",
+                  title: "Confirm assignment",
+                  prompt: "Confirm this assignment.",
+                  plan,
+                  assignment: {
+                    op: "create",
+                    target: "self",
+                  },
+                },
+              ],
+            }
+          : {
+              version: "2",
+              items: [
+                {
+                  id: "answer",
+                  kind: "answer",
+                  message: "Assignment confirmed.",
+                },
+              ],
+            }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_assignment_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_assignment_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_assignment_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: body,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const run = runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "create assignment" }],
+                tools: {},
+              })
+
+              let questions = await Question.list()
+              for (let i = 0; i < 20 && questions.length === 0; i++) {
+                await Bun.sleep(10)
+                questions = await Question.list()
+              }
+
+              expect(questions).toHaveLength(1)
+              await Question.reply({
+                requestID: questions[0]!.id,
+                answers: [["Confirm"]],
+                response: "confirm",
+              })
+              await run
+
+              const item = await SessionAssignment.active(session.id)
+              expect(item?.title).toBe("Confirm assignment")
+              expect(item?.status).toBe("running")
+              const content = (await SessionAssignment.content(item!.id)) as { plan?: string }
+              expect(content.plan).toBe(plan)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
       provider.mockRestore()
     }
   })
@@ -2882,8 +3044,10 @@ describe("SessionRunner", () => {
       ],
     }
     let calls = 0
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+    const systems: string[] = []
+    const stream = spyOn(LLM, "stream").mockImplementation(async (req) => {
       calls++
+      systems.push((req.system ?? []).join("\n"))
       const input = calls === 1 ? body : done
       return {
         fullStream: (async function* () {
@@ -3015,6 +3179,13 @@ describe("SessionRunner", () => {
                 | { inputs?: { action_id?: string; answers?: string[][]; status?: string }[] }
                 | undefined
               expect(calls).toBe(2)
+              expect(systems[1]).toContain("Resolved user input from the previous runtime interaction:")
+              expect(systems[1]).toContain("Input action: resolve_path_and_contracts")
+              expect(systems[1]).toContain("Question: Choose the path and contracts.")
+              expect(systems[1]).toContain('selected: src_visual_state ("src/visual-state/history.ts")')
+              expect(systems[1]).toContain("description: Create src path.")
+              expect(systems[1]).toContain('selected: truncate_redo ("Truncate redo branch")')
+              expect(systems[1]).toContain("Treat the selected option(s), custom answer(s), and provided text above")
               expect(doneProtocol?.inputs?.[0]?.status).toBe("answered")
               expect(doneProtocol?.inputs?.[0]?.answers).toEqual([
                 ["src/visual-state/history.ts"],

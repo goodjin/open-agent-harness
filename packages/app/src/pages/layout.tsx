@@ -706,6 +706,7 @@ export default function Layout(props: ParentProps) {
       produce((draft) => {
         const match = Binary.search(draft.session, session.id, (s) => s.id)
         if (match.found) draft.session.splice(match.index, 1)
+        delete draft.session_info[session.id]
       }),
     )
     if (session.id === params.id) {

@@ -452,7 +452,13 @@ export namespace SessionStatus {
 
   export function get(sessionID: SessionID) {
     const cached = state()[sessionID]
-    if (cached) return cached
+    if (cached && cached.type !== "waiting_child") return cached
+    if (cached) {
+      const status = load(sessionID)
+      if (!status || status.type === "idle") return cached
+      state()[sessionID] = status
+      return status
+    }
     const status = load(sessionID)
     if (!status || status.type === "idle") return { type: "idle" as const }
     state()[sessionID] = status
@@ -460,7 +466,14 @@ export namespace SessionStatus {
   }
 
   export function list() {
-    return state()
+    const data = state()
+    for (const [id, status] of Object.entries(data)) {
+      if (status.type !== "waiting_child") continue
+      const next = load(SessionID.make(id))
+      if (!next || next.type === "idle") continue
+      data[id] = next
+    }
+    return data
   }
 
   export function shouldContinue(status: Info) {
@@ -503,6 +516,7 @@ export namespace SessionStatus {
         .where(and(eq(SessionTable.project_id, Instance.project.id), eq(SessionTable.directory, Instance.directory)))
         .all(),
     )
+    const map = new Map(rows.map((row) => [row.id, row]))
     const out: Record<string, Info> = {}
     for (const row of rows) {
       const parsed = decode(row)
@@ -510,7 +524,7 @@ export namespace SessionStatus {
         delete data[row.id]
         continue
       }
-      const status = lost(parsed)
+      const base = lost(parsed)
         ? ({
             type: "interrupted",
             prior: parsed.type,
@@ -522,6 +536,7 @@ export namespace SessionStatus {
               message: "Session was waiting for permission when the process stopped.",
             } satisfies Info)
         : parsed
+      const status = repair(row, base, map)
       data[row.id] = status
       out[row.id] = status
       if (changed(status, parsed)) persist(row.id, status, "recovery")
@@ -600,7 +615,52 @@ export namespace SessionStatus {
     if (!row) return
     if (row.project_id !== Instance.project.id) return
     if (row.directory !== Instance.directory) return
-    return decode(row)
+    const status = decode(row)
+    if (!status) return
+    const next = repair(row, status)
+    if (changed(next, status)) persist(row.id, next, "recovery")
+    return next
+  }
+
+  function repair(row: Row, status: Info, rows?: Map<string, Row>): Info {
+    if (status.type !== "waiting_child") return status
+    const ids = Object.keys(obj(obj(row.dsl_context).protocol).pending_delegations ?? {})
+    if (ids.length === 0) return { type: "completed" }
+    const live = ids.filter((id) => {
+      const child =
+        rows?.get(id) ??
+        Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, SessionID.make(id))).get())
+      if (!child) return true
+      const next = decode(child)
+      if (!next) return true
+      return !done(next)
+    })
+    if (live.length === 0) return { type: "completed" }
+    if (live.length === ids.length) return status
+    return {
+      type: "waiting_child",
+      message: `Waiting for ${live.length} delegated child session${live.length === 1 ? "" : "s"}.`,
+    }
+  }
+
+  function obj(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return {} as Record<string, unknown>
+    return input as Record<string, unknown>
+  }
+
+  function done(status: Info) {
+    return (
+      status.type === "completed" ||
+      status.type === "terminal_reply" ||
+      status.type === "user_completed" ||
+      status.type === "aborted" ||
+      status.type === "failed" ||
+      status.type === "blocked" ||
+      status.type === "interrupted" ||
+      status.type === "timeout" ||
+      status.type === "error" ||
+      status.type === "archived"
+    )
   }
 
   function persist(sessionID: SessionID, status: Info, source: Source) {

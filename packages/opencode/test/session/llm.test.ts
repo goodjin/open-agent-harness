@@ -113,7 +113,7 @@ describe("session.llm.hasToolCalls", () => {
       system
         .trim()
         .endsWith(
-          'For runtime work use `items`; common items are `{ id, kind: "tool", target, args, depends, result }`, `{ id, kind: "agent", target, prompt, depends, result }`, `{ id, kind: "input", prompt, mode, options }`, and `{ id, kind: "confirm", prompt, plan }`.',
+          'Assignment confirmation is optional while clarifying or exploring. After intent is clear and before starting execution work, use `{ id, kind: "confirm", prompt, plan, assignment: { op: "create", target: "self" } }`; `plan` is the full assignment content for final user approval.',
         ),
     ).toBe(true)
     expect(system).not.toContain("AgentProtocolOutput.input.type")

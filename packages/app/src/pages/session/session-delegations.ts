@@ -1,6 +1,6 @@
-import type { Message } from "@open-agent-harness/sdk/v2"
+import type { Message, UserMessage } from "@open-agent-harness/sdk/v2"
 
-export type DelegationItem = { id: string; label: string; run?: string }
+export type DelegationItem = { id: string; label: string; run?: string; current?: boolean; status?: string }
 
 export type DelegationState = {
   total: number
@@ -19,6 +19,31 @@ const child = (input: { child_session_id: string; action_title?: unknown; run_id
   label: text(input.action_title) || `子会话 ${String(input.child_session_id)}`,
   ...(text(input.run_id) ? { run: text(input.run_id) } : {}),
 })
+
+const turnctx = (input: UserMessage | undefined) => {
+  const metadata = input?.metadata
+  if (!record(metadata)) return
+  const turn = metadata.turn
+  if (!record(turn)) return
+  return turn
+}
+
+export const timelineChildren = (input: UserMessage | undefined): DelegationItem[] => {
+  const list = turnctx(input)?.children
+  if (!Array.isArray(list)) return []
+  return list.flatMap((value) => {
+    if (!record(value) || typeof value.id !== "string") return []
+    return [
+      {
+        id: value.id,
+        label: text(value.label) ?? `子会话 ${value.id}`,
+        ...(text(value.run) ? { run: text(value.run) } : {}),
+        ...(typeof value.current === "boolean" ? { current: value.current } : {}),
+        ...(text(value.status) ? { status: text(value.status) } : {}),
+      },
+    ]
+  })
+}
 
 const item = (
   input: unknown,
@@ -80,4 +105,36 @@ export const delegationProgress = (input: unknown, messageID: string, messages: 
     active,
     completed,
   }
+}
+
+export const timelineProgress = (items: DelegationItem[]): DelegationState => {
+  const map = items.reduce((acc: Map<string, DelegationItem>, value) => {
+    if (acc.has(value.id)) return acc
+    acc.set(value.id, value)
+    return acc
+  }, new Map<string, DelegationItem>())
+  const rows = Array.from(map.values())
+  const active = rows.filter((item) => item.current !== false)
+  return {
+    total: rows.length,
+    done: rows.length - active.length,
+    active,
+    completed: rows.filter((item) => item.current === false),
+  }
+}
+
+export const delegationSubmitted = (input: unknown, run: string | undefined) => {
+  if (!run) return false
+  if (!record(input)) return false
+  const protocol = input.protocol
+  if (!record(protocol)) return false
+  const sent = protocol.delegation_notified_runs
+  if (!record(sent)) return false
+  return typeof sent[run] === "number"
+}
+
+export const laterUserInput = (messages: Message[], messageID: string) => {
+  const index = messages.findIndex((msg) => msg.id === messageID)
+  if (index < 0) return false
+  return messages.slice(index + 1).some((msg) => msg.role === "user")
 }

@@ -17,6 +17,7 @@ export interface SessionReviewTabProps {
   title?: JSX.Element
   empty?: JSX.Element
   diffs: () => FileDiff[]
+  loadDiff?: (diff: FileDiff) => Promise<FileDiff | undefined>
   view: () => ReturnType<ReturnType<typeof useLayout>["view"]>
   diffStyle: DiffStyle
   onDiffStyleChange?: (style: DiffStyle) => void
@@ -153,6 +154,7 @@ export function SessionReviewTab(props: SessionReviewTabProps) {
         container: props.classes?.container ?? "pl-3",
       }}
       diffs={props.diffs()}
+      loadDiff={props.loadDiff}
       diffStyle={props.diffStyle}
       onDiffStyleChange={props.onDiffStyleChange}
       onViewFile={props.onViewFile}

@@ -6,7 +6,6 @@ import z from "zod"
 import { Session } from "../../session"
 import { MessageV2 } from "../../session/message-v2"
 import { SessionPrompt } from "../../session/prompt"
-import { SessionRunner } from "../../session/runner"
 import { SessionCompaction } from "../../session/compaction"
 import { SessionRevert } from "../../session/revert"
 import { SessionLog } from "../../session/log"
@@ -113,7 +112,15 @@ function slim(session: Session.Info): Session.Info {
 
 function view(message: MessageV2.WithParts): MessageV2.WithParts {
   return {
-    info: message.info,
+    info: message.info.role === "user" && message.info.summary?.diffs
+      ? {
+          ...message.info,
+          summary: {
+            ...message.info.summary,
+            diffs: SessionSummary.slim(message.info.summary.diffs),
+          },
+        }
+      : message.info,
     parts: message.parts.map(part),
   }
 }
@@ -1285,6 +1292,49 @@ export const SessionRoutes = lazy(() =>
         return c.json(result)
       },
     )
+    .get(
+      "/:sessionID/diff/detail",
+      describeRoute({
+        summary: "Get detailed file diff",
+        description: "Get full before and after contents for one file diff in a session or message.",
+        operationId: "session.diff.detail",
+        responses: {
+          200: {
+            description: "Detailed file diff",
+            content: {
+              "application/json": {
+                schema: resolver(Snapshot.FileDiff.nullable()),
+              },
+            },
+          },
+          ...errors(400, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+        }),
+      ),
+      validator(
+        "query",
+        z.object({
+          messageID: MessageID.zod.optional(),
+          file: z.string(),
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const query = c.req.valid("query")
+        await Session.get(params.sessionID)
+        const result = await SessionSummary.detail({
+          sessionID: params.sessionID,
+          messageID: query.messageID,
+          file: query.file,
+        })
+        return c.json(result)
+      },
+    )
     .delete(
       "/:sessionID/share",
       describeRoute({
@@ -1437,9 +1487,6 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const query = c.req.valid("query")
         const sessionID = c.req.valid("param").sessionID
-        void SessionRunner.recover({ sessionID }).catch((err) =>
-          log.warn("session protocol recovery scheduling failed", { sessionID, err }),
-        )
         if (query.limit === undefined) {
           await Session.get(sessionID)
           const messages = await Session.messages({ sessionID })

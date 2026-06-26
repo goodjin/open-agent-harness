@@ -86,6 +86,7 @@ export interface SessionReviewProps {
   classes?: { root?: string; header?: string; container?: string }
   actions?: JSX.Element
   diffs: ReviewDiff[]
+  loadDiff?: (diff: ReviewDiff) => Promise<ReviewDiff | undefined>
   onViewFile?: (file: string) => void
   readFile?: (path: string) => Promise<FileContent | undefined>
 }
@@ -141,6 +142,8 @@ export const SessionReview = (props: SessionReviewProps) => {
   const [store, setStore] = createStore({
     open: [] as string[],
     force: {} as Record<string, boolean>,
+    detail: {} as Record<string, ReviewDiff | undefined>,
+    loading: {} as Record<string, boolean | undefined>,
     selection: null as SessionReviewSelection | null,
     commenting: null as SessionReviewSelection | null,
     opened: null as SessionReviewFocus | null,
@@ -287,6 +290,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                     let wrapper: HTMLDivElement | undefined
 
                     const item = createMemo(() => diffs().get(file)!)
+                    const full = createMemo(() => store.detail[file] ?? item())
 
                     const expanded = createMemo(() => open().includes(file))
                     const force = () => !!store.force[file]
@@ -294,10 +298,23 @@ export const SessionReview = (props: SessionReviewProps) => {
                     const comments = createMemo(() => (props.comments ?? []).filter((c) => c.file === file))
                     const commentedLines = createMemo(() => comments().map((c) => c.selection))
 
-                    const beforeText = () => (typeof item().before === "string" ? item().before : "")
-                    const afterText = () => (typeof item().after === "string" ? item().after : "")
+                    const beforeText = () => (typeof full().before === "string" ? full().before : "")
+                    const afterText = () => (typeof full().after === "string" ? full().after : "")
                     const changedLines = () => item().additions + item().deletions
                     const mediaKind = createMemo(() => mediaKindFromPath(file))
+
+                    createEffect(() => {
+                      if (!expanded()) return
+                      if (!props.loadDiff) return
+                      if (store.detail[file] || store.loading[file]) return
+                      setStore("loading", file, true)
+                      props
+                        .loadDiff(item())
+                        .then((detail) => {
+                          if (detail) setStore("detail", file, detail)
+                        })
+                        .finally(() => setStore("loading", file, false))
+                    })
 
                     const tooLarge = createMemo(() => {
                       if (!expanded()) return false
@@ -346,7 +363,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                           file,
                           selection,
                           comment,
-                          preview: selectionPreview(item(), selection),
+                          preview: selectionPreview(full(), selection),
                         })
                       },
                       onUpdate: ({ id, comment, selection }) => {
@@ -355,7 +372,7 @@ export const SessionReview = (props: SessionReviewProps) => {
                           file,
                           selection,
                           comment,
-                          preview: selectionPreview(item(), selection),
+                          preview: selectionPreview(full(), selection),
                         })
                       },
                       onDelete: (comment) => {
@@ -466,6 +483,11 @@ export const SessionReview = (props: SessionReviewProps) => {
                           >
                             <Show when={expanded()}>
                               <Switch>
+                                <Match when={store.loading[file]}>
+                                  <div class="px-3 py-4 text-13-regular text-text-weak">
+                                    {i18n.t("ui.list.loading")}
+                                  </div>
+                                </Match>
                                 <Match when={tooLarge()}>
                                   <div data-slot="session-review-large-diff">
                                     <div data-slot="session-review-large-diff-title">
@@ -509,17 +531,17 @@ export const SessionReview = (props: SessionReviewProps) => {
                                     commentedLines={commentedLines()}
                                     before={{
                                       name: file,
-                                      contents: typeof item().before === "string" ? item().before : "",
+                                      contents: typeof full().before === "string" ? full().before : "",
                                     }}
                                     after={{
                                       name: file,
-                                      contents: typeof item().after === "string" ? item().after : "",
+                                      contents: typeof full().after === "string" ? full().after : "",
                                     }}
                                     media={{
                                       mode: "auto",
                                       path: file,
-                                      before: item().before,
-                                      after: item().after,
+                                      before: full().before,
+                                      after: full().after,
                                       readFile: props.readFile,
                                     }}
                                   />

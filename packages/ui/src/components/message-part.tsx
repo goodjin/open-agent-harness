@@ -58,7 +58,7 @@ import { attached, inline, kind } from "./message-file"
 import { limitTextLines } from "./message-line-limit"
 import { partView, type PartView } from "./message-part-view"
 import { actionResult, invalidProtocol, protocolMeta, protocolText } from "./message-part-protocol"
-import { heading, partTitle, thinkingText } from "./session-turn-helpers"
+import { partTitle } from "./session-turn-helpers"
 
 function ShellSubmessage(props: { text: string; animate?: boolean }) {
   let widthRef: HTMLSpanElement | undefined
@@ -1214,17 +1214,26 @@ function hiddenOutputText(part: PartType) {
   return ""
 }
 
-function HiddenModelOutput(props: { part: PartType; view: Extract<PartView, { kind: "collapsed" }> }) {
+function HiddenModelOutput(props: {
+  message: MessageType
+  part: PartType
+  view: Extract<PartView, { kind: "collapsed" }>
+}) {
   const i18n = useI18n()
   const [open, setOpen] = createSignal(false)
   const text = createMemo(() => hiddenOutputText(props.part))
+  const done = createMemo(
+    () =>
+      props.part.type === "reasoning" &&
+      (typeof props.part.time.end === "number" || typeof (props.message as AssistantMessage).time?.completed === "number"),
+  )
   const title = createMemo(() =>
     props.view.reason === "reasoning"
-      ? thinkingText(
-          i18n.t("ui.sessionTurn.status.thinking"),
-          i18n.t("ui.sessionTurn.status.thinkingWithTopic"),
-          props.part.type === "reasoning" ? heading(props.part.text) : undefined,
-        )
+      ? partTitle("reasoning", done(), {
+          assistant: i18n.t("ui.messagePart.title.assistantText"),
+          thinking: i18n.t("ui.sessionTurn.status.thinking"),
+          process: i18n.t("ui.messagePart.title.thinkingProcess"),
+        })
       : i18n.t("ui.messagePart.collapsed.ignoredText.title"),
   )
 
@@ -1255,7 +1264,11 @@ export function Part(props: MessagePartProps) {
   return (
     <Switch>
       <Match when={view().kind === "collapsed"}>
-        <HiddenModelOutput part={props.part} view={view() as Extract<PartView, { kind: "collapsed" }>} />
+        <HiddenModelOutput
+          message={props.message}
+          part={props.part}
+          view={view() as Extract<PartView, { kind: "collapsed" }>}
+        />
       </Match>
       <Match when={view().kind === "visible"}>
         <Show when={component()}>

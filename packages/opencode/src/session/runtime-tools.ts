@@ -19,7 +19,7 @@ import { Tool } from "@/tool/tool"
 import { Truncate } from "@/tool/truncation"
 import { PermissionNext } from "@/permission/next"
 import { ProtocolToolCatalog } from "@/protocol/tool-catalog"
-import { Storage } from "@/storage/storage"
+import { SessionResult } from "@/session/result"
 
 type McpResult = {
   content: (
@@ -372,7 +372,20 @@ export namespace RuntimeTools {
           const ids = await continueIDs(req, input.session.id)
           const results: ContinueResult[] = []
           for (const id of ids) {
+            await SessionDelegation.mark({
+              parentID: input.session.id,
+              childID: id,
+              messageID: input.processor.message.id,
+              current: true,
+            })
             results.push(...(await continueSessionTree(id, prompt)))
+            await SessionDelegation.mark({
+              parentID: input.session.id,
+              childID: id,
+              messageID: input.processor.message.id,
+              current: false,
+              status: SessionStatus.get(id).type,
+            })
           }
           const latest = results.at(-1) ?? resultFromInput(input.session.id, prompt)
           return {
@@ -499,6 +512,7 @@ export namespace RuntimeTools {
         "- Use `depends` only for real dependencies and omit it for independent calls that can run in parallel.",
         "- Use `result` for result policy.",
         '- Use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }` when a planner needs user approval before execution.',
+        '- Assignment confirmation is not required for clarification or exploratory delegation. After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`; the confirm `plan` is the full assignment content for final user approval.',
         "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
         "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
         "- Do not call repository tools directly from this agent. Delegate file reading, search, edits, commands, validation, and review to specialist agents.",
@@ -549,6 +563,7 @@ export namespace RuntimeTools {
       '- For delegation, do not use a tool item. Use `items[].kind: "agent"` with `target: "auto"` or a concrete agent id.',
       '- For user choices or additional information, use `items[].kind: "input"` with `{ id, kind, prompt, mode, options, fields }`; the runtime returns the answer to the model before more work is declared.',
       '- For plan approval, use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }`; executable items should depend on that confirmation.',
+      '- Assignment confirmation is not required for clarification or exploratory delegation. After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`; the confirm `plan` is the full assignment content for final user approval.',
       "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
       "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
       "",
@@ -704,12 +719,14 @@ export namespace RuntimeTools {
   async function resultOf(session: Session.Info, output: boolean) {
     const found = object(session.dsl_context?.result)
     if (found.type !== "session.action_result") return {}
-    const ref = reqString(found.output_ref)
-    const full = output && ref ? await Storage.read<{ output?: string }>(ref.split("/")).catch(() => undefined) : undefined
+    const id = reqString(found.result_id)
+    const parsed = id ? await SessionResult.parse(id) : undefined
     return {
       result: {
         ...found,
-        ...(output && full?.output !== undefined ? { output: full.output } : {}),
+        ...(parsed?.action_result ? { action_result: parsed.action_result } : {}),
+        ...(parsed?.protocol_result ? { protocol_result: parsed.protocol_result } : {}),
+        ...(output && parsed?.output !== undefined ? { output: parsed.output } : {}),
       },
     }
   }

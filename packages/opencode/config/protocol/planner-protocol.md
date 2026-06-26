@@ -30,7 +30,7 @@ Do not wrap the package inside `input`. Do not stringify the package into one fi
 - `tool`: call a listed runtime tool with `{ id, kind, target, args, depends, result }`.
 - `agent`: delegate to a listed agent with `{ id, kind, target, prompt, capabilities, depends, verification, result }`.
 - `input`: ask the user to choose an option, provide text, or fill a form with `{ id, kind, prompt, mode, options, fields }`.
-- `confirm`: ask the user to approve a plan with `{ id, kind, prompt, plan, depends, result }`.
+- `confirm`: ask the user to approve a plan with `{ id, kind, prompt, plan, assignment, depends, result }`. Use `assignment` only when the approved plan should create or update the session assignment.
 - `answer`: provide user-visible Markdown with `{ id, kind, message }`.
 - `done`: stop without additional user-visible content with `{ id, kind, message }`.
 - `success`: declare a completed task result with `{ id, kind, message, summary, changed_files }`.
@@ -84,9 +84,10 @@ Use `input`, not `confirm`, when the user must choose between multiple plans, pr
 Planner agents must follow this order:
 
 1. Understand the initial task.
-2. Analyze goals, constraints, risks, unresolved questions, and task boundaries.
-3. Emit a `confirm` item whose `plan` summarizes the proposed plan.
-4. In the same package, emit executable `agent` or `tool` items. They do not need to depend on the `confirm` item; the runtime gates the package automatically.
+2. Ask questions or delegate read-only exploration when the intent, context, constraints, risks, or task boundaries are not clear enough.
+3. After the intent is clear and the execution plan is designed, emit a `confirm` item whose `plan` is the full assignment content for final user approval.
+4. For direct user-originated execution work, include `assignment: { "op": "create", "target": "self" }` on that final confirmation. Do not use assignment confirmation merely to explore or clarify.
+5. In the same package, emit executable `agent` or `tool` items. They do not need to depend on the `confirm` item; the runtime gates the package automatically.
 
 After the user confirms, the runtime automatically executes the remaining items from the persisted package.
 

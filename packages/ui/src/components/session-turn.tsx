@@ -120,13 +120,15 @@ function time(value: number | undefined) {
 
 const diffLimit = 3
 
-export function SessionTurnDiffs(props: { diffs: FileDiff[] }) {
+export function SessionTurnDiffs(props: { diffs: FileDiff[]; loadDiff?: (diff: FileDiff) => Promise<FileDiff | undefined> }) {
   const i18n = useI18n()
   const fileComponent = useFileComponent()
   const [state, setState] = createStore({
     open: false,
     details: false,
     expanded: [] as string[],
+    detail: {} as Record<string, FileDiff | undefined>,
+    loading: {} as Record<string, boolean | undefined>,
   })
   const files = createMemo(() => diffUnique(props.diffs))
   const stats = createMemo(() => diffStats(files()))
@@ -200,6 +202,26 @@ export function SessionTurnDiffs(props: { diffs: FileDiff[] }) {
                 {(diff) => {
                   const active = createMemo(() => expanded().includes(diff.file))
                   const [visible, setVisible] = createSignal(false)
+                  const item = createMemo(() => state.detail[diff.file] ?? diff)
+
+                  createEffect(
+                    on(
+                      active,
+                      (value) => {
+                        if (!value) return
+                        if (!props.loadDiff) return
+                        if (state.detail[diff.file] || state.loading[diff.file]) return
+                        setState("loading", diff.file, true)
+                        props
+                          .loadDiff(diff)
+                          .then((full) => {
+                            if (full) setState("detail", diff.file, full)
+                          })
+                          .finally(() => setState("loading", diff.file, false))
+                      },
+                      { defer: true },
+                    ),
+                  )
 
                   createEffect(
                     on(
@@ -246,12 +268,14 @@ export function SessionTurnDiffs(props: { diffs: FileDiff[] }) {
                       <Accordion.Content>
                         <Show when={visible()}>
                           <div data-slot="session-turn-diff-view" data-scrollable>
-                            <Dynamic
-                              component={fileComponent}
-                              mode="diff"
-                              before={{ name: diff.file, contents: diff.before }}
-                              after={{ name: diff.file, contents: diff.after }}
-                            />
+                            <Show when={!state.loading[diff.file]} fallback={<TextShimmer text={i18n.t("ui.list.loading")} />}>
+                              <Dynamic
+                                component={fileComponent}
+                                mode="diff"
+                                before={{ name: diff.file, contents: item().before }}
+                                after={{ name: diff.file, contents: item().after }}
+                              />
+                            </Show>
                           </div>
                         </Show>
                       </Accordion.Content>

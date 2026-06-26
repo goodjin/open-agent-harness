@@ -69,6 +69,7 @@ const baseState = (input: Partial<State> = {}) =>
     config: {} as State["config"],
     path: { directory: "/tmp" } as State["path"],
     session: [],
+    session_info: {},
     sessionTotal: 0,
     session_status: {},
     session_diff: {},
@@ -208,6 +209,48 @@ describe("applyDirectoryEvent", () => {
 
     apply(rootSession({ id: "ses_parent" }))
     expect(synced).toEqual(["ses_parent"])
+  })
+
+  test("keeps full session detail when slim session update arrives", () => {
+    const full = {
+      ...rootSession({ id: "ses_1" }),
+      title: "old title",
+      dsl_context: {
+        protocol: {
+          pending_delegations: [{ child_session_id: "child_1" }],
+        },
+      },
+    } as Session
+    const [store, setStore] = createStore(
+      baseState({
+        session: [rootSession({ id: "ses_1" })],
+        session_info: {
+          ses_1: full,
+        },
+      }),
+    )
+
+    applyDirectoryEvent({
+      event: {
+        type: "session.updated",
+        properties: {
+          info: {
+            ...rootSession({ id: "ses_1" }),
+            title: "new title",
+            dsl_context: undefined,
+          } as Session,
+        },
+      },
+      store,
+      setStore,
+      push() {},
+      directory: "/tmp",
+      loadLsp() {},
+    })
+
+    expect(store.session_info.ses_1?.title).toBe("new title")
+    expect(store.session_info.ses_1?.dsl_context).toEqual(full.dsl_context)
+    expect(store.session.find((item) => item.id === "ses_1")?.dsl_context).toBeUndefined()
   })
 
   test("cleans session caches when archived", () => {

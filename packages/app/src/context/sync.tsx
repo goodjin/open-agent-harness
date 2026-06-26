@@ -183,7 +183,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const inflightDiff = new Map<string, Promise<void>>()
     const inflightTodo = new Map<string, Promise<void>>()
     const optimistic = new Map<string, Map<string, OptimisticItem>>()
-    const full = new Set<string>()
     const maxDirs = 30
     const seen = new Map<string, Set<string>>()
     const [meta, setMeta] = createStore({
@@ -195,6 +194,8 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
     const getSession = (sessionID: string) => {
       const store = current()[0]
+      const info = store.session_info[sessionID]
+      if (info) return info
       const match = Binary.search(store.session, sessionID, (s) => s.id)
       if (match.found) return store.session[match.index]
       return undefined
@@ -459,7 +460,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
 
             const found = Binary.search(store.session, sessionID, (s) => s.id)
             const hasSession = found.found
-            const hasInfo = hasSession && full.has(key)
+            const hasInfo = store.session_info[sessionID] !== undefined
             const cached = store.message[sessionID] !== undefined && meta.limit[key] !== undefined
             if (cached && hasInfo && !opts?.force) return
 
@@ -471,16 +472,20 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
                     if (!tracked(directory, sessionID)) return
                     const data = session.data
                     if (!data) return
-                    full.add(key)
+                    setStore("session_info", sessionID, data)
                     setStore(
                       "session",
                       produce((draft) => {
+                        const item = {
+                          ...data,
+                          dsl_context: undefined,
+                        }
                         const match = Binary.search(draft, sessionID, (s) => s.id)
                         if (match.found) {
-                          draft[match.index] = data
+                          draft[match.index] = item
                           return
                         }
-                        draft.splice(match.index, 0, data)
+                        draft.splice(match.index, 0, item)
                       }),
                     )
                   })
@@ -606,6 +611,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
             produce((draft) => {
               const match = Binary.search(draft.session, sessionID, (s) => s.id)
               if (match.found) draft.session.splice(match.index, 1)
+              delete draft.session_info[sessionID]
             }),
           )
         },

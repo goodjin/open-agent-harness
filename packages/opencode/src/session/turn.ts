@@ -21,6 +21,18 @@ export namespace SessionTurn {
     confirmations?: number
     duration_ms?: number
   }
+  export type Child = {
+    id: string
+    label: string
+    run?: string
+    action?: string
+    status?: string
+    current?: boolean
+    result_id?: string
+    created_at?: number
+    completed_at?: number
+    notified_at?: number
+  }
   export type Info = {
     kind: Kind
     status: Status
@@ -29,6 +41,7 @@ export namespace SessionTurn {
     assistant_id?: MessageID
     run_id?: string
     stats?: Stats
+    children?: Child[]
     time: {
       queued: number
       started?: number

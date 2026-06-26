@@ -381,45 +381,31 @@ Task / Action 的终态由 criteria、gate、result 和 evidence 决定，不由
 
 Result Record 与 Task 绑定。一个 Task 默认只有一个 canonical ResultRecord；重复生成会造成父会话汇总不稳定，因此 Runtime 应通过 `task_id`、`session_id`、`assignment_id`、`action_id` 和 result revision 管理更新。UI 的“获取结果”和会话结束时的自动回复使用同一份 ResultRecord。
 
-Result Record 字段：
+Result Record 字段分为数据库 projection 和 raw result 文件。数据库 projection 只保存 Runtime 调度、依赖、UI 列表和恢复所需的最小语义；完整结果 payload 通过 `raw_ref` 指向文件读取。
+
+当前 `packages/opencode` delegation 路径先落地最小 projection：`id`、`carrier`、`status`、`satisfying`、session ids、run id、action id、target action id、`raw_ref`、`summary`、`created_at`。`task_id`、`assignment_id`、revision 和 canonical 标记属于完整 lifecycle model 的后续扩展。
+
+数据库 projection：
 
 ```json
 {
   "id": "result_session_review_toolbar",
-  "scope": "task",
+  "carrier": "action_result",
+  "status": "completed",
+  "satisfying": true,
   "run_id": "run_123",
   "session_id": "ses_review_toolbar",
+  "parent_session_id": "ses_parent",
+  "child_session_id": "ses_review_toolbar",
   "task_id": "task_review_toolbar_1",
   "assignment_id": "assign_review_toolbar",
   "action_id": "review_toolbar",
-  "status": "completed",
+  "target_action_id": null,
   "revision": 1,
   "canonical": true,
-  "outcome": "success",
+  "raw_ref": "result-raw://result_session_review_toolbar.json",
   "summary": "Reviewed toolbar behavior and found two confirmed issues.",
-  "criteria": [
-    {
-      "text": "Find correctness and regression risks in toolbar behavior.",
-      "status": "satisfied",
-      "evidence": ["artifact://run_123/review_report"]
-    }
-  ],
-  "artifacts": ["artifact://run_123/review_report"],
-  "changes": ["change://run_123/review_report"],
-  "evidence": ["trace://run_123/action/review_toolbar", "event:session.completed"],
-  "unresolved": [],
-  "risks": ["Dropdown layering fix needs browser verification."],
-  "next": {
-    "owner": "runtime",
-    "action": "schedule_repair"
-  },
-  "visibility": {
-    "model": "summary",
-    "user": "summary",
-    "logs": "full",
-    "trace": "summary",
-    "future_runs": "ref"
-  }
+  "created_at": 1780836000000
 }
 ```
 
@@ -427,22 +413,58 @@ Result Record 字段：
 
 | 字段 | 含义 |
 |---|---|
+| `carrier` | 结果来源，可取 `action_result`、`agent_protocol_output`、`fallback_summary`、`synthetic`。 |
 | `status` | Canonical status，供 Projection 和调度使用。 |
+| `satisfying` | 该结果是否满足普通 downstream dependency。 |
 | `task_id` | 当前结果的任务级标识。 |
+| `action_id` | 当前 action 或 terminal result item 对应的 action id。 |
+| `target_action_id` | verifier 结果指向的 worker action；非 verifier 为空。 |
+| `raw_ref` | 指向 raw result 文件。 |
 | `revision` | 同一 Task 结果的修订序号。 |
 | `canonical` | 是否为该 Task 当前可消费的主结果。 |
-| `outcome` | 面向结果分类，可取 `success`、`partial_success`、`failure`、`blocked`、`cancelled`、`interrupted`、`skipped`。 |
 | `summary` | 一到三句结果摘要，面向用户和后续模型。 |
-| `criteria` | 每条完成标准的满足情况，可取 `satisfied`、`partial`、`unsatisfied`、`not_checked`。 |
-| `artifacts` | 可消费产物引用。 |
-| `changes` | 本周期造成的变更引用。 |
-| `evidence` | 支撑 status 和 outcome 的 Event、Trace、Artifact 或 log ref。 |
-| `error` | 失败、阻塞或中断时的结构化错误。 |
-| `blocked_reason` | `blocked` 时的直接原因。 |
-| `interruption` | `interrupted` 时的中断来源、最后安全点和恢复建议。 |
-| `unresolved` | 未解决但不一定阻塞的事项。 |
-| `risks` | 已知风险。 |
-| `next` | Runtime 可执行的后续动作建议。 |
+
+Raw result 文件保存完整结果证据，但只保存结果 carrier 中被 Runtime 接受为任务结果的部分。
+
+`ActionResult` raw 文件保存 accepted tool input/output：
+
+```json
+{
+  "carrier": "action_result",
+  "message_id": "msg_123",
+  "part_id": "prt_123",
+  "tool": "ActionResult",
+  "input": {
+    "kind": "action_result",
+    "role": "worker",
+    "action_id": "review_toolbar",
+    "status": "success",
+    "result": "Reviewed toolbar behavior.",
+    "verification": "Tests passed."
+  },
+  "output": "Action result received."
+}
+```
+
+`AgentProtocolOutput` raw 文件只保存 terminal result item，不保存完整 `items` package：
+
+```json
+{
+  "carrier": "agent_protocol_output",
+  "message_id": "msg_456",
+  "part_id": "prt_456",
+  "tool": "AgentProtocolOutput",
+  "item_index": 3,
+  "item": {
+    "kind": "success",
+    "id": "review_toolbar",
+    "summary": "Review completed.",
+    "message": "Two issues were found."
+  }
+}
+```
+
+`criteria`、`artifacts`、`changes`、`evidence`、`unresolved`、`risks` 和 `next` 等扩展内容可以从 raw result 文件解析并由 `ResultStore` 缓存。它们不应复制到每个 parent/child projection 中。
 
 结果获取规则：
 
@@ -452,6 +474,7 @@ Result Record 字段：
 - 如果目标任务 completed 但没有 ResultRecord，Runtime 写入 `session.result_requested`，向该 Task 对应 Session 发送结果生成 prompt，要求输出 `done.result`。
 - Runtime 收到 `done.result` 后写入 `session.result_recorded`，并更新 task result index。
 - 如果结果需要修订，Runtime 写入 `session.result_revised`，保留历史 revision，并只把该 Task 的最新 canonical revision 提供给父会话汇总。
+- 正常读取路径只读 ResultRecord projection 和 raw result file。Transcript 解析只用于 repair/backfill，并且修复后必须写入 ResultRecord。
 
 错误与阻塞应使用可分类字段：
 
