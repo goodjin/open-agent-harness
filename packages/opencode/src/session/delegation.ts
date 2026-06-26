@@ -18,7 +18,7 @@ import { Provider } from "@/provider/provider"
 import { SessionResult } from "./result"
 import { SessionAssignment } from "./assignment"
 import { Identifier } from "@/id/id"
-import { Database, eq } from "@/storage/db"
+import { Database, eq, sql } from "@/storage/db"
 import { SessionEventOutboxTable } from "./session.sql"
 
 export namespace SessionDelegation {
@@ -113,6 +113,8 @@ export namespace SessionDelegation {
     message: string
     action?: string
   }
+
+  const guard = Instance.state(() => ({ outbox: false }))
 
   export function init() {
     const ctx = state()
@@ -1078,6 +1080,7 @@ export namespace SessionDelegation {
   }
 
   async function outbox(body: ReturnType<typeof completed>, rec: SessionResult.Info) {
+    ensure()
     const key = ["parent_handoff", body.parent_session_id, body.child_session_id, body.run_id, body.action_id].join(":")
     const now = Date.now()
     const row = {
@@ -1123,6 +1126,7 @@ export namespace SessionDelegation {
   }
 
   function ack(item: Item) {
+    ensure()
     const key = ["parent_handoff", item.parent_session_id, item.child_session_id, item.run_id, item.action_id].join(":")
     const now = Date.now()
     Database.use((tx) =>
@@ -1136,6 +1140,34 @@ export namespace SessionDelegation {
         .where(eq(SessionEventOutboxTable.dedupe_key, key))
         .run(),
     )
+  }
+
+  function ensure() {
+    const ctx = guard()
+    if (ctx.outbox) return
+    Database.use((db) => {
+      db.run(sql`
+        CREATE TABLE IF NOT EXISTS session_event_outbox (
+          id text PRIMARY KEY NOT NULL,
+          session_id text NOT NULL,
+          target_session_id text,
+          kind text NOT NULL,
+          dedupe_key text NOT NULL,
+          status text NOT NULL,
+          payload text NOT NULL,
+          created_at integer NOT NULL,
+          updated_at integer NOT NULL,
+          delivered_at integer,
+          acked_at integer,
+          error text,
+          FOREIGN KEY (session_id) REFERENCES session(id) ON DELETE cascade
+        )
+      `)
+      db.run(sql`CREATE INDEX IF NOT EXISTS session_event_outbox_session_idx ON session_event_outbox (session_id)`)
+      db.run(sql`CREATE INDEX IF NOT EXISTS session_event_outbox_status_idx ON session_event_outbox (status)`)
+      db.run(sql`CREATE UNIQUE INDEX IF NOT EXISTS session_event_outbox_dedupe_key_idx ON session_event_outbox (dedupe_key)`)
+    })
+    ctx.outbox = true
   }
 
   async function notify(body: ReturnType<typeof completed>, item: Item) {

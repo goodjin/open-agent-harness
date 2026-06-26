@@ -435,6 +435,7 @@ export namespace SessionStatus {
     const out: Record<string, Info> = {}
     const seen = new Set<SessionID>()
     for (const row of rows) {
+      seen.add(row.id)
       const parsed = decode(row)
       if (!parsed || parsed.type === "idle") continue
       const status = lost(parsed)
@@ -446,7 +447,6 @@ export namespace SessionStatus {
         : parsed
       data[row.id] = status
       out[row.id] = status
-      seen.add(row.id)
       if (changed(status, parsed)) persist(row.id, status, "recovery")
     }
     for (const key of keys) {
@@ -565,7 +565,7 @@ export namespace SessionStatus {
     }
     if (status.type === "idle") return { ...base, status_class: "active" as Class, status: "idle" }
     if (status.type === "queued" || status.type === "starting" || status.type === "running")
-      return { ...base, status_class: "active" as Class, status: "active" }
+      return { ...base, status_class: "active" as Class, status: status.type }
     if (status.type === "rate_limited")
       return {
         ...base,
@@ -578,7 +578,9 @@ export namespace SessionStatus {
     if (status.type === "waiting_permission")
       return { ...base, status_class: "blocked" as Class, status: "blocked_permission" }
     if (status.type === "waiting_child") return { ...base, status_class: "blocked" as Class, status: "blocked_child" }
+    if (status.type === "paused") return { ...base, status_class: "blocked" as Class, status: "blocked_paused" }
     if (status.type === "blocked") return { ...base, status_class: "blocked" as Class, status: "blocked" }
+    if (status.type === "aborting") return { ...base, status_class: "active" as Class, status: "aborting" }
     if (status.type === "interrupted")
       return { ...base, status_class: "interrupted" as Class, status: status.prior ? "interrupted_active" : "interrupted_unknown" }
     if (status.type === "terminal_reply")
@@ -598,10 +600,16 @@ export namespace SessionStatus {
     const detail = row.status_detail ?? {}
     const msg = row.status_message ?? undefined
     if (row.status === "idle") return { type: "idle" }
-    if (row.status_class === "active") return { type: "running" }
+    if (row.status === "queued" || row.status === "starting" || row.status === "running" || row.status === "aborting") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === row.status) return parsed.data
+      return { type: "idle" }
+    }
+    if (row.status_class === "active") return { type: "idle" }
     if (row.status === "blocked_user_input" || row.status === "blocked_confirm") return { type: "waiting_user" }
     if (row.status === "blocked_permission") return { type: "waiting_permission" }
     if (row.status === "blocked_child") return { type: "waiting_child", message: msg }
+    if (row.status === "blocked_paused") return { type: "paused", message: msg }
     if (row.status === "blocked_rate_limit" || row.status === "blocked_concurrency") {
       const parsed = Info.safeParse(detail)
       if (parsed.success && parsed.data.type === "rate_limited") return parsed.data
@@ -631,6 +639,11 @@ export namespace SessionStatus {
 
   function detail(status: Info) {
     if (
+      status.type === "queued" ||
+      status.type === "starting" ||
+      status.type === "running" ||
+      status.type === "aborting" ||
+      status.type === "paused" ||
       status.type === "rate_limited" ||
       status.type === "retry" ||
       status.type === "interrupted" ||

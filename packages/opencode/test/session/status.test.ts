@@ -10,6 +10,7 @@ import { SessionLog } from "../../src/session/log"
 import { SessionID } from "../../src/session/schema"
 import { Database, eq } from "../../src/storage/db"
 import { SessionTable } from "../../src/session/session.sql"
+import { Storage } from "../../src/storage/storage"
 
 const projectRoot = path.join(__dirname, "../..")
 
@@ -183,6 +184,67 @@ describe("session state machine", () => {
             await SessionStatus.restore()
             expect(SessionStatus.get(session.id)).toEqual({ type: "terminal_reply", message: "Restored from DB." })
 
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("restores legacy active rows as idle instead of interrupted", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-legacy-active"),
+          fn: async () => {
+            const session = await Session.create({})
+
+            Database.use((db) =>
+              db
+                .update(SessionTable)
+                .set({
+                  status_class: "active",
+                  status: "active",
+                  status_message: null,
+                  status_detail: null,
+                  status_updated_at: Date.now(),
+                  status_source: "runtime",
+                })
+                .where(eq(SessionTable.id, session.id))
+                .run(),
+            )
+
+            const restored = await SessionStatus.restore()
+            expect(restored[session.id]).toBeUndefined()
+            expect(SessionStatus.get(session.id)).toEqual({ type: "idle" })
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("uses database rows over stale session status files", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-db-over-file"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Storage.write(["session_status", session.id], {
+              sessionID: session.id,
+              projectID: Instance.project.id,
+              directory: Instance.directory,
+              status: { type: "running" },
+              time: Date.now(),
+            })
+
+            const restored = await SessionStatus.restore()
+            expect(restored[session.id]).toBeUndefined()
+            expect(SessionStatus.get(session.id)).toEqual({ type: "idle" })
+
+            await Storage.remove(["session_status", session.id])
             await Session.remove(session.id)
           },
         }),
