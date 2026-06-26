@@ -1,5 +1,11 @@
 # Protocol Runtime Module
 
+## Protocol v2 Documentation
+
+The current protocol documentation is being rewritten as a new version under `docs/harness-protocol-v2/`. That version treats multi-agent collaboration as the top-level frame, then defines Agent, Session, Turn, Task, Assignment, Action, Result, Event, interaction gates, model-runtime carriers, recovery, and projection.
+
+This module document remains the implementation detail companion. When the two differ, current runtime code and this module document are the implementation authority; v2 protocol docs should be updated to match the implementation before replacing the old protocol entrypoint.
+
 ## Default Agent Routing Contract
 
 The `default` agent is a coordinator, not an implementation worker. It must classify every request by scale, decompose work through the project/PRD, milestone, epic slice, feature/capability, implementation task, and verification/review hierarchy, then declare the complete current-layer Agent Protocol graph.
