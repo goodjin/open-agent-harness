@@ -57,7 +57,7 @@ DB 投影中会将状态归入更粗的类别：
 - `terminal`
 - `archived`
 
-状态类别用于查询、UI 过滤、恢复和调度。具体状态仍以 `SessionStatus.Info` 为准。
+状态类别用于查询、恢复和调度。具体状态仍以 `SessionStatus.Info` 为准。
 
 ## 等待状态
 
@@ -117,7 +117,7 @@ Manual continue 适用于仍需用户判断的场景，例如：
 - 失败原因无法自动修复。
 - parent 需要用户选择下一步。
 
-UI 不应只看是否 interrupted。它要看 Runtime 是否已经完成 bootstrap recovery，以及 Session 是否仍停在需要人工介入的状态。
+外部调用方不应只看是否 interrupted。它要看 Runtime 是否已经完成 bootstrap recovery，以及 Session 是否仍停在需要人工介入的状态。
 
 ## 持久化投影
 

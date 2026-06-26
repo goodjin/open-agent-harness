@@ -101,7 +101,7 @@ Delegation 创建 child Assignment 时，会记录 parent active assignment 的 
 
 - child assignment 属于哪个上级任务。
 - child result 最后应回到哪个 parent action。
-- UI 可以把任务树、会话树和结果树对齐。
+- 外部投影可以把任务树、会话树和结果树对齐。
 
 Parent Assignment 的完成不等于 Child Assignment 的完成。Parent 可能需要多个 child result、verifier gate 或用户输入后才完成。
 

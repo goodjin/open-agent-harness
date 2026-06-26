@@ -82,7 +82,7 @@ Agent 可选择：
 - 是否存在 pending input / confirm。
 - Session 是否 still recoverable。
 
-能自动恢复时，Runtime 自动继续。不能自动判断时，UI 提供 manual continue。
+能自动恢复时，Runtime 自动继续。不能自动判断时，Runtime 暴露 manual continue 命令。
 
 ## Fallback Result
 
@@ -114,7 +114,7 @@ Runtime 应保留：
 异常需要同时服务三类读者：
 
 - Runtime：知道能否继续、如何恢复。
-- UI：知道展示什么 command。
+- 外部调用方：知道可以提交什么 command。
 - Agent：知道前一步失败原因和可选下一步。
 
-因此，错误记录应包含机器字段和人类可读摘要。机器字段用于恢复和依赖判断，人类摘要用于 timeline、debug 和后续 Agent 上下文。
+因此，错误记录应包含机器字段和人类可读摘要。机器字段用于恢复和依赖判断，人类摘要用于 trace、debug 和后续 Agent 上下文。

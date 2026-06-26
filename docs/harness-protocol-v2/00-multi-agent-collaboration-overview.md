@@ -12,7 +12,7 @@ Harness 要解决的问题是：多个 Agent 在同一个项目上下文中协�
 - Session 承载一次 Agent 运行，并能被恢复、观察和继续。
 - Task 通过 Assignment 落到具体 Agent / Session 上。
 - Parent Session 和 Child Session 通过 Runtime 协作，不直接通信。
-- Result、Event、Projection 和 UI timeline 给人和后续 Agent 提供共同事实。
+- Result、Event 和 Projection 给人、Runtime 和后续 Agent 提供共同事实。
 
 ## 核心链路
 
@@ -25,7 +25,7 @@ User request
   -> Agent returns AgentProtocolOutput or ActionResult
   -> Runtime validates protocol output
   -> Runtime executes tool / creates child Session / asks user / stores result
-  -> Runtime updates SessionStatus, Assignment, SessionResult and timeline projection
+  -> Runtime updates SessionStatus, Assignment, SessionResult and projections
   -> Parent Session continues when dependencies are satisfied
 ```
 
@@ -40,7 +40,6 @@ User request
 | Task Layer | 表达目标和任务归属 | Task、Assignment |
 | Runtime Layer | 校验、路由、执行、恢复、投影 | Action、Interaction、Event、Projection |
 | Result Layer | 保存跨 Session 交接结果 | SessionResult、ActionResult、AgentProtocolOutput terminal item |
-| Product Layer | 展示、确认、继续、审计 | Timeline、Prompt Right、Console |
 
 ## 协作边界
 

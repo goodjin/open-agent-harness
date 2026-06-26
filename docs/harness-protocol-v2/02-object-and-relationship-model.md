@@ -15,8 +15,8 @@
 | Assignment | Task 在某个 Session / Agent 上的运行时归属和投影。 | 表达谁负责做、内容版本、状态和结果引用。 |
 | Action | Agent 请求 Runtime 执行的语义动作。 | 表达工具调用、agent delegation、等待或交互。 |
 | Interaction | 需要用户参与的协议门。 | 包括 confirm、input、reply 后继续。 |
-| Result | 一个 Session 或 Action 产生的完成事实。 | 用于交接、依赖满足、审计和 UI 展示。 |
-| Event | 状态变化和投影通知事实。 | 驱动恢复、timeline、outbox 和调试。 |
+| Result | 一个 Session 或 Action 产生的完成事实。 | 用于交接、依赖满足、审计和外部读取。 |
+| Event | 状态变化和投影通知事实。 | 驱动恢复、outbox 和调试。 |
 
 ## Session 与 Turn
 
@@ -96,7 +96,7 @@ Project
           -> Child Session
           -> Interaction
       -> SessionResult
-      -> Event / Projection / Timeline
+      -> Event / Projection / Trace
 ```
 
 这张图是 v2 文档的对象基础。后续章节只扩展这些对象的状态和协议，不引入另一套命名。

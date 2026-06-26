@@ -1,6 +1,6 @@
 # 观测与投影
 
-观测层把 Runtime 事实投影给 UI、人类调试和后续 Agent。它不创造新的协议事实，而是把 Session、Assignment、Result、Event 和日志组织成可读视图。
+观测层把 Runtime 事实投影给人类调试、外部调用方和后续 Agent。它不创造新的协议事实，而是把 Session、Assignment、Result、Event 和日志组织成可读证据。
 
 ## 事实与投影
 
@@ -8,10 +8,10 @@
 |---|---|---|
 | Canonical fact | `SessionResult`、Assignment content revision、SessionStatus | 保存可恢复事实。 |
 | Event | `session.status`、event outbox | 通知其他组件发生了什么。 |
-| Projection | DB status fields、timeline row、prompt right state | 提供查询和 UI 展示。 |
+| Projection | DB status fields、outbox payload、derived summary | 提供查询和外部读取。 |
 | Evidence | raw result、session log、part、tool output | 支持审计和调试。 |
 
-文档和 UI 应尽量说明自己读取的是哪一层，避免把展示状态当成事实状态。
+文档和外部调用方应尽量说明自己读取的是哪一层，避免把投影状态当成事实状态。
 
 ## SessionResult
 
@@ -57,7 +57,7 @@ Carrier 表示结果从哪里来，不直接表示结果是否成功，也不直
 - `waiting_user`
 - `terminal_reply`
 
-`satisfying` 是依赖推进的关键字段。UI 可以展示所有结果，但 Runtime 只能用 satisfying result 推动普通依赖。
+`satisfying` 是依赖推进的关键字段。外部调用方可以读取所有结果，但 Runtime 只能用 satisfying result 推动普通依赖。
 
 ## Event Outbox
 
@@ -69,14 +69,14 @@ Carrier 表示结果从哪里来，不直接表示结果是否成功，也不直
 event notification
   -> load canonical record
   -> update projection
-  -> update UI / parent session / debug view
+  -> update parent session / debug projection / external consumers
 ```
 
 消费方不要只依赖 outbox payload 判断最终状态。
 
-## Timeline
+## Execution Trace
 
-Timeline 是面向用户的运行过程视图，应展示：
+Execution trace 是运行过程的可读投影，应记录：
 
 - user input
 - model response
@@ -88,11 +88,11 @@ Timeline 是面向用户的运行过程视图，应展示：
 - status transition
 - final result
 
-Timeline 不应吞掉 child result。即使 parent 已继续或 session 已完成，child row 仍应稳定可见。
+Execution trace 不应吞掉 child result。即使 parent 已继续或 session 已完成，child result 仍应稳定可查。
 
-## Prompt Right / Session Side Panel
+## Active Session Projection
 
-Session 右侧任务栏适合展示当前执行投影：
+Active session projection 适合保留当前执行摘要：
 
 - active Assignment。
 - pending interaction。
@@ -116,7 +116,7 @@ Session 右侧任务栏适合展示当前执行投影：
 7. Parent 是否收到 fan-in 通知。
 8. Parent deps 是否满足。
 9. Parent 是否创建继续 Turn。
-10. UI timeline 是否投影出结果。
+10. 外部投影是否能读取该结果。
 
 这套检查避免把所有问题都归为“状态不对”。
 
