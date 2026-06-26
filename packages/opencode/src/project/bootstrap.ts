@@ -28,8 +28,8 @@ export async function InstanceBootstrap() {
   await runPromiseInstance(VcsService.use((s) => s.init()))
   Snapshot.init()
   Truncate.init()
-  SessionDelegation.init()
   const restored = await SessionStatus.restore()
+  SessionDelegation.init()
   const packets = await SessionRecovery.mark().catch((err) => {
     Log.Default.warn("session recovery scan failed", {
       error: err instanceof Error ? err.message : String(err),

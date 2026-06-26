@@ -202,7 +202,7 @@ type Status = {
   type?: string
 }
 
-const closed = ["idle", "completed", "user_completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
+const closed = ["idle", "completed", "terminal_reply", "user_completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "waiting_child", "paused", "aborting"]
 const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 
@@ -238,7 +238,7 @@ export const sessionWorking = (messages: Message[] | undefined, status: Status |
 }
 
 export const sessionCompleted = (session: Session, messages: Message[] | undefined, status: Status | undefined) => {
-  if (status?.type === "completed" || status?.type === "user_completed") return true
+  if (status?.type === "completed" || status?.type === "terminal_reply" || status?.type === "user_completed") return true
   if (status?.type && failed.includes(status.type)) return false
   if (sessionWorking(messages, status)) return false
   if (!messages) return false

@@ -27,6 +27,7 @@ import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { graphLayout, graphRuns, type GraphRun } from "@/pages/session/session-graph"
+import { childSessionCount } from "@/pages/session/session-children"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import type { SessionLogResponse, SessionStatus } from "@open-agent-harness/sdk/v2/client"
 
@@ -67,7 +68,7 @@ function tone(status: GraphRun["status"] | WorkflowStatus | undefined) {
 
 function sessionStatus(input: SessionStatus | undefined): WorkflowStatus | undefined {
   if (!input || input.type === "idle") return
-  if (input.type === "completed" || input.type === "user_completed") return "completed"
+  if (input.type === "completed" || input.type === "terminal_reply" || input.type === "user_completed") return "completed"
   if (input.type === "error" || input.type === "timeout" || input.type === "failed" || input.type === "interrupted")
     return "failed"
   if (input.type === "aborted" || input.type === "archived") return "cancelled"
@@ -443,6 +444,26 @@ export function SessionSidePanel(props: {
   const [log, setLog] = createStore({ rows: [] as SessionLogResponse })
   let seq = 0
   const runs = createMemo(() => graphRuns(info()?.dsl_context, log.rows))
+  const childCount = createMemo(() => childSessionCount(sync.data.session, params.id))
+  const [seen, setSeen] = createSignal<string>()
+  createEffect(() => {
+    const id = params.id
+    if (!id) return
+    if (seen() === id) return
+    setSeen(id)
+    void sdk.client.session
+      .descendantsBatch({ body_directory: sdk.directory, ids: [id] })
+      .then((res) => {
+        const sessions = (res.data ?? []).filter((item) => !!item?.id)
+        if (sessions.length === 0) return
+        sync.set("session", (list) => {
+          const map = new Map(list.map((item) => [item.id, item] as const))
+          for (const item of sessions) map.set(item.id, item)
+          return [...map.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        })
+      })
+      .catch(() => {})
+  })
   const [selected, setSelected] = createSignal<string>()
   createEffect(() => {
     const all = runs()
@@ -713,12 +734,8 @@ export function SessionSidePanel(props: {
                         <Tabs.Trigger value="graph">
                           <div class="flex items-center gap-1.5">
                             <div>{graphName()}</div>
-                            <Show when={run()}>
-                              {(item) => (
-                                <div>
-                                  {item().completed}/{item().total}
-                                </div>
-                              )}
+                            <Show when={childCount() > 0}>
+                              <div>{childCount()}</div>
                             </Show>
                           </div>
                         </Tabs.Trigger>

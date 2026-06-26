@@ -6,6 +6,8 @@ import { SessionID } from "./schema"
 import { Storage } from "@/storage/storage"
 import z from "zod"
 import { SessionLog } from "./log"
+import { and, Database, eq } from "@/storage/db"
+import { SessionTable } from "./session.sql"
 
 export namespace SessionStatus {
   export const Info = z
@@ -85,6 +87,10 @@ export namespace SessionStatus {
         type: z.literal("completed"),
       }),
       z.object({
+        type: z.literal("terminal_reply"),
+        message: z.string().optional(),
+      }),
+      z.object({
         type: z.literal("user_completed"),
         message: z.string().optional(),
       }),
@@ -141,6 +147,9 @@ export namespace SessionStatus {
     status: Info
     time: number
   }
+  type Class = "active" | "blocked" | "interrupted" | "terminal" | "archived"
+  type Source = "runtime" | "recovery" | "user" | "system"
+  type Row = typeof SessionTable.$inferSelect
 
   const transitions: Record<Info["type"], Info["type"][]> = {
     idle: [
@@ -161,10 +170,22 @@ export namespace SessionStatus {
       "blocked",
       "interrupted",
       "completed",
+      "terminal_reply",
       "user_completed",
       "archived",
     ],
-    queued: ["idle", "starting", "running", "waiting_child", "aborted", "failed", "blocked", "interrupted", "user_completed"],
+    queued: [
+      "idle",
+      "starting",
+      "running",
+      "waiting_child",
+      "aborted",
+      "failed",
+      "blocked",
+      "interrupted",
+      "terminal_reply",
+      "user_completed",
+    ],
     starting: [
       "idle",
       "running",
@@ -179,6 +200,7 @@ export namespace SessionStatus {
       "failed",
       "blocked",
       "interrupted",
+      "terminal_reply",
       "user_completed",
     ],
     running: [
@@ -198,6 +220,7 @@ export namespace SessionStatus {
       "blocked",
       "interrupted",
       "completed",
+      "terminal_reply",
       "user_completed",
     ],
     rate_limited: [
@@ -216,6 +239,7 @@ export namespace SessionStatus {
       "failed",
       "blocked",
       "interrupted",
+      "terminal_reply",
       "user_completed",
     ],
     waiting_permission: [
@@ -232,6 +256,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
     ],
     waiting_user: [
@@ -248,6 +273,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
     ],
     waiting_child: [
@@ -266,6 +292,7 @@ export namespace SessionStatus {
       "blocked",
       "interrupted",
       "completed",
+      "terminal_reply",
       "user_completed",
     ],
     error: [
@@ -278,6 +305,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
       "archived",
     ],
@@ -293,6 +321,7 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
       "archived",
     ],
@@ -308,12 +337,13 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
     ],
-    paused: ["idle", "running", "waiting_child", "aborting", "aborted", "failed", "blocked", "user_completed"],
+    paused: ["idle", "running", "waiting_child", "aborting", "aborted", "failed", "blocked", "terminal_reply", "user_completed"],
     aborting: ["idle", "aborted", "failed"],
-    aborted: ["idle", "running", "waiting_child", "aborted", "user_completed", "archived"],
-    failed: ["idle", "running", "waiting_child", "failed", "user_completed", "archived"],
+    aborted: ["idle", "running", "waiting_child", "aborted", "terminal_reply", "user_completed", "archived"],
+    failed: ["idle", "running", "waiting_child", "failed", "terminal_reply", "user_completed", "archived"],
     blocked: [
       "idle",
       "running",
@@ -323,10 +353,12 @@ export namespace SessionStatus {
       "aborted",
       "failed",
       "blocked",
+      "terminal_reply",
       "user_completed",
     ],
-    interrupted: ["idle", "running", "waiting_child", "aborted", "failed", "blocked", "user_completed", "archived"],
-    completed: ["idle", "running", "rate_limited", "waiting_child", "completed", "user_completed", "archived"],
+    interrupted: ["idle", "running", "waiting_child", "aborted", "failed", "blocked", "terminal_reply", "user_completed", "archived"],
+    completed: ["idle", "running", "rate_limited", "waiting_child", "completed", "terminal_reply", "user_completed", "archived"],
+    terminal_reply: ["idle", "running", "waiting_child", "terminal_reply", "completed", "user_completed", "archived"],
     user_completed: ["idle", "running", "waiting_child", "user_completed", "archived"],
     archived: ["idle", "archived"],
   }
@@ -336,11 +368,12 @@ export namespace SessionStatus {
   const lost = (status: Info): status is Restart => restart.has(status.type as Restart["type"])
 
   export function get(sessionID: SessionID) {
-    return (
-      state()[sessionID] ?? {
-        type: "idle",
-      }
-    )
+    const cached = state()[sessionID]
+    if (cached) return cached
+    const status = load(sessionID)
+    if (!status || status.type === "idle") return { type: "idle" as const }
+    state()[sessionID] = status
+    return status
   }
 
   export function list() {
@@ -362,8 +395,9 @@ export namespace SessionStatus {
     const project = Instance.project.id
     const directory = Instance.directory
     const run = prior
-      .then(() =>
-        status.type === "idle" || status.type === "archived"
+      .then(() => {
+        persist(sessionID, status, "runtime")
+        return status.type === "idle" || status.type === "archived"
           ? Storage.remove(["session_status", sessionID])
           : Storage.write(["session_status", sessionID], {
               sessionID,
@@ -371,8 +405,8 @@ export namespace SessionStatus {
               directory,
               status,
               time: Date.now(),
-            } satisfies Saved),
-      )
+            } satisfies Saved)
+      })
       .catch(() => {})
       .finally(() => {
         writes().delete(run)
@@ -390,11 +424,35 @@ export namespace SessionStatus {
   export async function restore() {
     await flush()
     const data = state()
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(SessionTable)
+        .where(and(eq(SessionTable.project_id, Instance.project.id), eq(SessionTable.directory, Instance.directory)))
+        .all(),
+    )
     const keys = await Storage.list(["session_status"])
     const out: Record<string, Info> = {}
+    const seen = new Set<SessionID>()
+    for (const row of rows) {
+      const parsed = decode(row)
+      if (!parsed || parsed.type === "idle") continue
+      const status = lost(parsed)
+        ? ({
+            type: "interrupted",
+            prior: parsed.type,
+            message: `Session was ${parsed.type} when the process stopped.`,
+          } satisfies Info)
+        : parsed
+      data[row.id] = status
+      out[row.id] = status
+      seen.add(row.id)
+      if (changed(status, parsed)) persist(row.id, status, "recovery")
+    }
     for (const key of keys) {
       const item = await Storage.read<Saved>(key).catch(() => undefined)
       if (!item) continue
+      if (seen.has(item.sessionID)) continue
       if (item.projectID !== Instance.project.id) continue
       if (item.directory !== Instance.directory) continue
       const parsed = Info.safeParse(item.status)
@@ -421,6 +479,7 @@ export namespace SessionStatus {
     }
     if (status.type === "retry") return status.message
     if (status.type === "interrupted" && status.prior) return `Process stopped while ${status.prior}.`
+    if (status.type === "terminal_reply") return status.message ?? "Delegated child returned a reply."
     return `Session status changed to ${status.type}.`
   }
 
@@ -477,5 +536,111 @@ export namespace SessionStatus {
     if (current.type !== "error" && current.type !== "timeout") return current
     set(sessionID, { type: "idle" })
     return get(sessionID)
+  }
+
+  function load(sessionID: SessionID) {
+    const row = Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, sessionID)).get())
+    if (!row) return
+    if (row.project_id !== Instance.project.id) return
+    if (row.directory !== Instance.directory) return
+    return decode(row)
+  }
+
+  function persist(sessionID: SessionID, status: Info, source: Source) {
+    const row = encode(status, source)
+    Database.use((db) => {
+      db.update(SessionTable).set(row).where(eq(SessionTable.id, sessionID)).run()
+    })
+  }
+
+  function encode(status: Info, source: Source) {
+    const now = Date.now()
+    const message = "message" in status ? status.message : undefined
+    const base = {
+      status_message: message ?? null,
+      status_recoverable: recoverable(status),
+      status_updated_at: now,
+      status_source: source,
+      status_detail: detail(status),
+    }
+    if (status.type === "idle") return { ...base, status_class: "active" as Class, status: "idle" }
+    if (status.type === "queued" || status.type === "starting" || status.type === "running")
+      return { ...base, status_class: "active" as Class, status: "active" }
+    if (status.type === "rate_limited")
+      return {
+        ...base,
+        status_class: "blocked" as Class,
+        status: status.kind === "rpm" ? "blocked_rate_limit" : "blocked_concurrency",
+      }
+    if (status.type === "retry") return { ...base, status_class: "blocked" as Class, status: "blocked_retry" }
+    if (status.type === "waiting_user")
+      return { ...base, status_class: "blocked" as Class, status: "blocked_user_input" }
+    if (status.type === "waiting_permission")
+      return { ...base, status_class: "blocked" as Class, status: "blocked_permission" }
+    if (status.type === "waiting_child") return { ...base, status_class: "blocked" as Class, status: "blocked_child" }
+    if (status.type === "blocked") return { ...base, status_class: "blocked" as Class, status: "blocked" }
+    if (status.type === "interrupted")
+      return { ...base, status_class: "interrupted" as Class, status: status.prior ? "interrupted_active" : "interrupted_unknown" }
+    if (status.type === "terminal_reply")
+      return { ...base, status_class: "terminal" as Class, status: "terminal_reply" }
+    if (status.type === "completed") return { ...base, status_class: "terminal" as Class, status: "terminal_success" }
+    if (status.type === "failed") return { ...base, status_class: "terminal" as Class, status: "terminal_failure" }
+    if (status.type === "error") return { ...base, status_class: "terminal" as Class, status: "terminal_error" }
+    if (status.type === "timeout") return { ...base, status_class: "terminal" as Class, status: "terminal_timeout" }
+    if (status.type === "aborted") return { ...base, status_class: "terminal" as Class, status: "terminal_cancelled" }
+    if (status.type === "user_completed")
+      return { ...base, status_class: "terminal" as Class, status: "terminal_user_completed" }
+    if (status.type === "archived") return { ...base, status_class: "archived" as Class, status: "archived" }
+    return { ...base, status_class: "active" as Class, status: "active" }
+  }
+
+  function decode(row: Row): Info | undefined {
+    const detail = row.status_detail ?? {}
+    const msg = row.status_message ?? undefined
+    if (row.status === "idle") return { type: "idle" }
+    if (row.status_class === "active") return { type: "running" }
+    if (row.status === "blocked_user_input" || row.status === "blocked_confirm") return { type: "waiting_user" }
+    if (row.status === "blocked_permission") return { type: "waiting_permission" }
+    if (row.status === "blocked_child") return { type: "waiting_child", message: msg }
+    if (row.status === "blocked_rate_limit" || row.status === "blocked_concurrency") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "rate_limited") return parsed.data
+      return { type: "blocked", message: msg }
+    }
+    if (row.status === "blocked_retry") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "retry") return parsed.data
+      return { type: "blocked", message: msg }
+    }
+    if (row.status_class === "blocked") return { type: "blocked", message: msg }
+    if (row.status_class === "interrupted") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "interrupted") return parsed.data
+      return { type: "interrupted", message: msg }
+    }
+    if (row.status === "terminal_reply") return { type: "terminal_reply", message: msg }
+    if (row.status === "terminal_success") return { type: "completed" }
+    if (row.status === "terminal_failure") return { type: "failed", message: msg }
+    if (row.status === "terminal_error") return { type: "error", message: msg ?? "Session ended with an error." }
+    if (row.status === "terminal_timeout") return { type: "timeout", message: msg ?? "Session timed out." }
+    if (row.status === "terminal_cancelled") return { type: "aborted", message: msg }
+    if (row.status === "terminal_user_completed") return { type: "user_completed", message: msg }
+    if (row.status_class === "archived") return { type: "archived" }
+    return
+  }
+
+  function detail(status: Info) {
+    if (
+      status.type === "rate_limited" ||
+      status.type === "retry" ||
+      status.type === "interrupted" ||
+      status.type === "terminal_reply"
+    )
+      return status
+    return null
+  }
+
+  function recoverable(status: Info) {
+    return status.type !== "archived"
   }
 }

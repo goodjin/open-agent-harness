@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, index, primaryKey } from "drizzle-orm/sqlite-core"
+import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { ProjectTable } from "../project/project.sql"
 import type { MessageV2 } from "./message-v2"
 import type { Snapshot } from "../snapshot"
@@ -11,6 +11,15 @@ import { Timestamps } from "../storage/schema.sql"
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
 type InfoData = Omit<MessageV2.Info, "id" | "sessionID">
 type LogData = Record<string, unknown>
+type ResultCarrier = "action_result" | "agent_protocol_output" | "fallback_summary" | "synthetic"
+type ResultStatus = "completed" | "partial" | "blocked" | "failed" | "waiting_user" | "terminal_reply"
+type AssignmentStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "superseded"
+type AssignmentSource = "confirm" | "delegation"
+type AssignmentResult = "completed" | "partial" | "blocked" | "failed" | "waiting_user"
+type StatusClass = "active" | "blocked" | "interrupted" | "terminal" | "archived"
+type StatusSource = "runtime" | "recovery" | "user" | "system"
+type OutboxStatus = "pending" | "delivered" | "acked" | "failed"
+type OutboxKind = "parent_handoff"
 
 export const SessionTable = sqliteTable(
   "session",
@@ -36,6 +45,13 @@ export const SessionTable = sqliteTable(
     revert: text({ mode: "json" }).$type<{ messageID: MessageID; partID?: PartID; snapshot?: string; diff?: string }>(),
     permission: text({ mode: "json" }).$type<PermissionNext.Ruleset>(),
     dsl_context: text({ mode: "json" }).$type<Record<string, unknown>>(),
+    status_class: text().$type<StatusClass>().notNull().default("active"),
+    status: text().notNull().default("idle"),
+    status_message: text(),
+    status_recoverable: integer({ mode: "boolean" }).notNull().default(true),
+    status_updated_at: integer().notNull().default(0),
+    status_source: text().$type<StatusSource>().notNull().default("runtime"),
+    status_detail: text({ mode: "json" }).$type<Record<string, unknown>>(),
     ...Timestamps,
     time_compacting: integer(),
     time_archived: integer(),
@@ -97,6 +113,97 @@ export const SessionLogTable = sqliteTable(
   (table) => [
     index("session_log_session_time_id_idx").on(table.session_id, table.time_created, table.id),
     index("session_log_time_idx").on(table.time_created),
+  ],
+)
+
+export const SessionResultTable = sqliteTable(
+  "session_result",
+  {
+    id: text().primaryKey(),
+    carrier: text().$type<ResultCarrier>().notNull(),
+    status: text().$type<ResultStatus>().notNull(),
+    satisfying: integer({ mode: "boolean" }).notNull(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    parent_session_id: text().$type<SessionID>(),
+    child_session_id: text().$type<SessionID>(),
+    run_id: text(),
+    action_id: text(),
+    target_action_id: text(),
+    raw_ref: text().notNull(),
+    summary: text(),
+    created_at: integer().notNull(),
+  },
+  (table) => [
+    index("session_result_session_idx").on(table.session_id),
+    index("session_result_parent_child_idx").on(table.parent_session_id, table.child_session_id),
+    index("session_result_run_action_idx").on(table.run_id, table.action_id),
+    uniqueIndex("session_result_parent_child_run_action_unique_idx").on(
+      table.parent_session_id,
+      table.child_session_id,
+      table.run_id,
+      table.action_id,
+    ),
+  ],
+)
+
+export const SessionEventOutboxTable = sqliteTable(
+  "session_event_outbox",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    target_session_id: text().$type<SessionID>(),
+    kind: text().$type<OutboxKind>().notNull(),
+    dedupe_key: text().notNull(),
+    status: text().$type<OutboxStatus>().notNull(),
+    payload: text({ mode: "json" }).notNull().$type<Record<string, unknown>>(),
+    created_at: integer().notNull(),
+    updated_at: integer().notNull(),
+    delivered_at: integer(),
+    acked_at: integer(),
+    error: text(),
+  },
+  (table) => [
+    index("session_event_outbox_session_idx").on(table.session_id),
+    index("session_event_outbox_status_idx").on(table.status),
+    uniqueIndex("session_event_outbox_dedupe_key_idx").on(table.dedupe_key),
+  ],
+)
+
+export const AssignmentTable = sqliteTable(
+  "assignment",
+  {
+    id: text().primaryKey(),
+    parent_id: text(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    source_type: text().$type<AssignmentSource>().notNull(),
+    source_session_id: text().$type<SessionID>(),
+    source_message_id: text().$type<MessageID>(),
+    source_run_id: text(),
+    source_action_id: text(),
+    target: text().notNull(),
+    title: text().notNull(),
+    status: text().$type<AssignmentStatus>().notNull(),
+    content_ref: text().notNull(),
+    content_hash: text().notNull(),
+    content_version: integer().notNull(),
+    result_ref: text(),
+    result_status: text().$type<AssignmentResult>(),
+    time_created: integer().notNull(),
+    time_updated: integer().notNull(),
+  },
+  (table) => [
+    index("assignment_session_status_idx").on(table.session_id, table.status),
+    index("assignment_parent_idx").on(table.parent_id),
+    index("assignment_source_idx").on(table.source_session_id, table.source_run_id, table.source_action_id),
   ],
 )
 

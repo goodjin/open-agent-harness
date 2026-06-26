@@ -49,12 +49,13 @@ const StatusBadge = (props: {
 }): JSX.Element => {
   const type = createMemo(() => props.status() ?? "idle")
   const bad = createMemo(() => ["aborting", "aborted", "blocked", "error", "failed", "interrupted", "timeout"].includes(type()))
-  const done = createMemo(() => ["archived", "completed"].includes(type()))
+  const done = createMemo(() => ["archived", "completed", "terminal_reply"].includes(type()))
   const idle = createMemo(() => type() === "idle")
   const active = createMemo(() => ["queued", "rate_limited", "retry", "running", "starting", "waiting_child"].includes(type()))
   const icon = createMemo(() => {
     const value = type()
     if (value === "completed") return "check-small"
+    if (value === "terminal_reply") return "check-small"
     if (value === "idle") return "circle-dot"
     if (value === "archived") return "archive"
     if (value === "running") return "status-active"

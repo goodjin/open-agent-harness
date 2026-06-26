@@ -284,6 +284,7 @@ export namespace SessionPrompt {
       const status = SessionStatus.get(sessionID).type
       if (
         status === "completed" ||
+        status === "terminal_reply" ||
         status === "user_completed" ||
         status === "archived" ||
         status === "failed" ||
@@ -329,6 +330,7 @@ export namespace SessionPrompt {
   function ended(status: SessionStatus.Info) {
     return (
       status.type === "completed" ||
+      status.type === "terminal_reply" ||
       status.type === "user_completed" ||
       status.type === "aborted" ||
       status.type === "failed" ||
@@ -351,7 +353,7 @@ export namespace SessionPrompt {
       delete s[sessionID]
       return
     }
-    if (status.type === "blocked") {
+    if (status.type === "blocked" || status.type === "terminal_reply") {
       delete s[sessionID]
       return
     }
@@ -972,7 +974,7 @@ export namespace SessionPrompt {
     const item = object(object(ctx.protocol).delegation)
     if (item.type !== "agent.delegation.assignment") return
     const status = item.status
-    if (status !== "completed" && status !== "partial" && status !== "blocked" && status !== "failed") return
+    if (status !== "completed" && status !== "partial" && status !== "blocked" && status !== "failed" && status !== "terminal_reply") return
     const close = async (user: MessageV2.User, msg?: MessageV2.WithParts) =>
       SessionTurn.finish({
         assistantID: msg?.info.id,

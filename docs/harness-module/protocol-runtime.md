@@ -51,7 +51,23 @@ Agent Protocol v2 `input` items are runtime user-choice gates. Runtime maps them
 
 Live replies still resolve the in-memory `Question.ask` deferred. If the page reloads, the app reconnects, or the server loses the live pending map, `/question` restores pending `protocol.inputs` records into normal question requests. Replying to a restored input updates that record to `answered`, stores the selected answers, and sends a continuation prompt into the same session with the captured answer text. Rejecting the restored input marks it `rejected` and resumes the session with an explicit dismissal note.
 
+When an `input` answer resumes the model, Runtime must present a resolved-input block near the start of the next request. The block lists the input action id, original question, mode, selected option ids, labels, descriptions, custom answers, and details exactly as captured. Runtime should not infer domain meaning from the option text; it only tells the model to treat the captured values as the answer to that input action and not ask the same question again unless the answer is missing, ambiguous, or unusable.
+
 The session UI surfaces pending questions both in the timeline context and in the composer dock. The composer dock is the stable fallback: an actionable question must remain visible even if the active message changes or the timeline filter hides the original turn.
+
+## Assignment Confirmation
+
+Assignment is the persisted task-management record for a session. It is not a separate Agent Protocol item kind. Model output still uses ordinary protocol items, and assignment creation or content updates are expressed as metadata on `kind: "confirm"`.
+
+For assignment creation or update, `confirm.plan` is the complete task content approved by the user. The optional `confirm.assignment` object only describes the runtime mutation, currently `op=create|update` and `target=self|<child-session-id>`. Runtime must not require a second task-body field that duplicates `plan`.
+
+Assignment is not a hard prerequisite for clarification or exploratory delegation. A planner may ask questions or delegate read-only exploration before a root assignment exists. After the user intent is clear and the execution plan is designed, the planner should emit a final assignment confirmation before starting execution work, for example `assignment: { op: "create", target: "self" }`. A plain plan confirmation does not create an assignment.
+
+Confirmed assignment content is stored as a raw Storage snapshot under `session_assignment_content/<assignment_id>/rev-<n>`. SQLite `assignment` rows keep the queryable projection only: session linkage, parent assignment id, source ids, target, title, status, content reference, content hash, content version, result reference, result status, and timestamps.
+
+Parent-to-child delegation creates the child assignment from the parent `agent` action after the child session is created. The child does not ask the user to approve the same assignment again. The child assignment points back to the parent assignment when one exists, and its content comes from the delegated action prompt.
+
+Dependent children launched while resuming a parent run follow the same rule as initially launched children: Runtime must create both the delegation record and the child assignment before prompting the child. A resumed child with delegation context but no active assignment is invalid, because its own downstream agent work would be rejected as unassigned execution.
 
 ## LLM Request Limits
 
@@ -122,17 +138,21 @@ Delivery and dependency satisfaction are separate. A child result can be deliver
 
 After storing a child result and removing that child from the parent pending set, runtime checks the parent run graph before submitting the aggregate handoff to the parent model. If a same-run agent action is neither pending nor already delivered, and every same-run dependency has a satisfying result, runtime starts that dependent child session immediately and keeps the parent in `waiting_child`. The parent model receives the aggregate handoff only when no pending child and no newly ready dependent action remain.
 
-Planner children use the same delivery boundary with a different preferred native carrier. A delegated planner whose agent runner is `protocol` is prompted to complete the child handoff through terminal `AgentProtocolOutput` items. Worker/helper/verifier children are prompted to use `ActionResult` through the action protocol footer. At result ingestion time, runtime accepts both structured carriers for either assignment family and maps status from the terminal semantics: `success`, `answer`, and `done` are delivered and satisfying; `reply` is delivered and blocked/non-satisfying; `failure` and `error` are delivered and failed/non-satisfying.
+Planner children use the same delivery boundary with a different preferred native carrier. A delegated planner whose agent runner is `protocol` is prompted to complete the child handoff through terminal `AgentProtocolOutput` items. Worker/helper/verifier children are prompted to use `ActionResult` through the action protocol footer. At result ingestion time, runtime accepts both structured carriers for either assignment family and maps status from the terminal semantics: `success`, `answer`, and `done` are delivered and satisfying; `reply` is delivered as `terminal_reply` and non-satisfying; `failure` and `error` are delivered and failed/non-satisfying.
 
-`ResultRecord` is the canonical result index. The database projection stores only the minimal fields needed by Runtime: carrier, status, satisfying flag, session ids, run id, action id, target action id, raw result reference, short summary, and creation time. Full task-result payloads are stored as raw result files. Parent `completed_delegations`, child `dsl_context.result`, UI state, and dependency routing should keep `result_id` / `raw_ref` references instead of copying the full result object.
+`ResultRecord` is the canonical result index. The database projection stores only the minimal fields needed by Runtime: carrier, status, satisfying flag, session ids, run id, action id, target action id, raw result reference, short summary, and creation time. Full task-result payloads are stored as raw result files. Parent `completed_delegations`, child `dsl_context.result`, UI state, and dependency routing should keep `result_id` / `raw_ref` references instead of copying the full result object. The tuple `(parent_session_id, child_session_id, run_id, action_id)` is unique when all four values exist, so repeated projection of the same child handoff updates the same logical result instead of creating competing completed/blocked rows.
 
 For `ActionResult`, the raw result file stores the accepted tool input/output and trace location. For `AgentProtocolOutput`, the raw result file stores only the accepted terminal result item plus location metadata, not the full protocol `items` package. Planning, dispatch, confirmation, input, and other non-result items are not task result records.
+
+Current `packages/opencode` implementation uses `session_result` as the normalized database projection and `session_result_raw/<result_id>.json` as the raw payload file. The store API is `SessionResult` in `src/session/result.ts`; delegation writes it before parent fan-in, dependency launch, or runtime `session_result` detail reads. It also records a deduped `session_event_outbox` `parent_handoff` event before notifying the parent, then marks that event delivered after the parent pending/completed projection is updated.
 
 Ordinary failed worker actions do not create generic runtime repair tasks by themselves. Runtime records the failed, blocked, partial, fallback, or terminal child result, waits for already-started sibling child sessions in the same run, and then sends the aggregate handoff to the parent model. The parent model decides whether to declare a repair action, skip or reroute work, ask the user, or report failure upward. Runtime-owned automatic repair is limited to explicit mechanisms such as protocol package regeneration after dependency validation failure, malformed `ActionResult` fallback summary, and verifier-gate fix loops.
 
 If a remaining pending child is terminal, such as `interrupted`, `aborted`, `failed`, `timeout`, `error`, or `blocked`, Runtime records a synthetic delegation result with the child session status and removes it from pending. The parent summary then mentions that status instead of waiting indefinitely.
 
 Prompt-loop finalization also treats terminal pending children as stale wait records. Before writing `waiting_child`, runtime rechecks pending child statuses and drops terminal children from `pending_delegations`. A later turn must not inherit `waiting_child` only because an older interrupted child record remains in the parent DSL context.
+
+Delegated child `SessionStatus` changes are also parent fan-in triggers. When a child session reaches any terminal status, Runtime looks up its delegation assignment and runs the same parent-run submit path used by manual delegation submit. This path claims the run, records synthetic ResultRecords for terminal children that never produced a native carrier, removes stale pending rows, and notifies the parent once. A terminal child status alone must not leave the parent waiting forever.
 
 Manual delegation submit uses the same aggregate handoff path. The submit route accepts a parent session and run id, records current pending child statuses as synthetic ResultRecords when forced, removes those children from the pending set, and sends one collected Markdown handoff to the parent. Later child completions for that run do not notify the parent again after the run has been claimed.
 
@@ -147,6 +167,14 @@ The parent handoff prompt is Markdown prose, not JSON. It includes run counts, c
 ## Request Turn State
 
 Prompt requests are tracked as explicit turns on user message metadata. A turn records whether that single request is `queued`, `running`, or `done`; it does not represent the entire session lifecycle.
+
+## Session Status Authority
+
+Runtime stores the current session lifecycle projection on the `session` row. The queryable fields are `status_class`, `status`, `status_message`, `status_recoverable`, `status_updated_at`, `status_source`, and `status_detail`. The legacy `session_status/<session_id>.json` file is only a compatibility fallback for rows that do not yet have a DB projection.
+
+Status classes are coarse control categories: `active`, `blocked`, `interrupted`, `terminal`, and `archived`. `active` covers queued, starting, and running work. `blocked` means the session is waiting for an external event such as user input, permission, a child result, rate-limit capacity, concurrency capacity, or a retry due time; bootstrap does not auto-run these states as if they were interrupted execution. `interrupted` means process shutdown interrupted resumable work and may be auto-continued after stale tool checks. `terminal` means the current execution round ended; `terminal_reply` is the terminal non-satisfying result used for delegated replies. `archived` is the only terminal class that forbids continuation.
+
+Bootstrap restores status from DB before delegation recovery runs. If memory has no entry for a session, `SessionStatus.get()` may load the DB projection once instead of inventing an `idle` state. This prevents recovery from logging misleading `idle -> blocked` or `idle -> terminal` transitions for sessions that already had persisted status.
 
 `waiting_user` and `waiting_child` are done outcomes for the current turn. The session status remains `waiting_user` or `waiting_child` so the title bar, session tree, and prompt dock can still show the broader wait state.
 

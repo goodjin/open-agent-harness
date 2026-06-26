@@ -8,6 +8,8 @@ import { Instance } from "../../src/project/instance"
 import { Session } from "../../src/session"
 import { SessionLog } from "../../src/session/log"
 import { SessionID } from "../../src/session/schema"
+import { Database, eq } from "../../src/storage/db"
+import { SessionTable } from "../../src/session/session.sql"
 
 const projectRoot = path.join(__dirname, "../..")
 
@@ -137,6 +139,51 @@ describe("session state machine", () => {
 
             await Session.remove(waiting.id)
             await Session.remove(failed.id)
+          },
+        }),
+    })
+  })
+
+  test("persists current status in the session row and restores it as authoritative state", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-authority"),
+          fn: async () => {
+            const session = await Session.create({})
+
+            SessionStatus.set(session.id, { type: "terminal_reply", message: "Need parent decision." })
+            await SessionStatus.flush()
+
+            const row = Database.use((db) =>
+              db.select().from(SessionTable).where(eq(SessionTable.id, session.id)).get(),
+            )
+            expect(row?.status_class).toBe("terminal")
+            expect(row?.status).toBe("terminal_reply")
+            expect(row?.status_message).toBe("Need parent decision.")
+
+            SessionStatus.set(session.id, { type: "idle" })
+            await SessionStatus.flush()
+            Database.use((db) =>
+              db
+                .update(SessionTable)
+                .set({
+                  status_class: "terminal",
+                  status: "terminal_reply",
+                  status_message: "Restored from DB.",
+                  status_recoverable: true,
+                  status_source: "runtime",
+                  status_updated_at: Date.now(),
+                })
+                .where(eq(SessionTable.id, session.id))
+                .run(),
+            )
+
+            await SessionStatus.restore()
+            expect(SessionStatus.get(session.id)).toEqual({ type: "terminal_reply", message: "Restored from DB." })
+
+            await Session.remove(session.id)
           },
         }),
     })

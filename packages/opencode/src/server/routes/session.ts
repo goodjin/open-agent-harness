@@ -398,7 +398,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const body = c.req.valid("json")
         const aborted = await scoped(body.directory, async () => {
-          const done = new Set(["completed", "user_completed", "archived", "failed", "error", "timeout"])
+          const done = new Set(["completed", "terminal_reply", "user_completed", "archived", "failed", "error", "timeout"])
           const result = await Promise.all(
             body.ids.map(async (id) => {
               await Session.get(id)
@@ -447,7 +447,7 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         const mode = body.mode ?? "restore"
         const done = new Set(["completed"])
-        const stopped = new Set(["aborted", "paused", "failed", "blocked", "interrupted", "timeout", "error"])
+        const stopped = new Set(["interrupted"])
         const resumed = await scoped(body.directory, async () => {
           const result = await Promise.all(
             body.ids.map(async (id) => {

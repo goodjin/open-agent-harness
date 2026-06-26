@@ -167,6 +167,10 @@ export type SessionStatus =
       type: "completed"
     }
   | {
+      type: "terminal_reply"
+      message?: string
+    }
+  | {
       type: "user_completed"
       message?: string
     }

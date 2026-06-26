@@ -55,8 +55,8 @@ type Row = Node & {
 type ModelState = ReturnType<typeof useLocal>["model"]
 type ResumeMode = "restore" | "message"
 
-const resume = new Set(["aborted", "paused", "failed", "blocked", "interrupted", "timeout", "error"])
-const done = new Set(["completed"])
+const resume = new Set(["interrupted"])
+const done = new Set(["completed", "terminal_reply"])
 const allStatus = "__all__"
 const statuses = [
   "aborted",
@@ -75,6 +75,7 @@ const statuses = [
   "running",
   "starting",
   "timeout",
+  "terminal_reply",
   "user_completed",
   "waiting_permission",
   "waiting_user",
@@ -102,7 +103,7 @@ function rows(nodes: Node[]) {
 
 function statusClass(type: string) {
   if (type === "running" || type === "starting" || type === "queued" || type === "retry") return "bg-icon-info-base"
-  if (type === "completed" || type === "user_completed") return "bg-icon-success-base"
+  if (type === "completed" || type === "terminal_reply" || type === "user_completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"

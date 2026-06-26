@@ -49,7 +49,7 @@ const liveStatus = (label: string, description: string, tone: SessionLiveStatus[
   metrics: metrics?.length ? metrics : undefined,
 })
 
-const restorable = new Set<SessionStatus["type"]>(["aborted", "paused", "failed", "blocked", "timeout", "error"])
+const restorable = new Set<SessionStatus["type"]>(["aborted", "paused", "failed", "timeout", "error"])
 
 export const resumePrompt = (status: SessionStatus | undefined): SessionResumePrompt | undefined => {
   if (status?.type === "interrupted") {
@@ -185,7 +185,7 @@ export const deriveSessionLiveStatus = (input: {
   const now = input.now ?? Date.now()
   const user = lastUser(input.messages)
   const live = () => metric([elapsed(start(user), undefined, now)])
-  if (status === "idle" || status === "completed" || status === "user_completed" || status === "archived") return undefined
+  if (status === "idle" || status === "completed" || status === "terminal_reply" || status === "user_completed" || status === "archived") return undefined
   if (status === "waiting_permission") {
     return liveStatus("等待权限确认", "工具调用已暂停，正在等待权限选择。", "warning", live())
   }
@@ -270,7 +270,7 @@ export const turnDone = (messages: Message[], id: string, status: SessionStatus 
   if (idx === -1) return false
   const state = turn(messages[idx])
   if (state?.status === "done") return true
-  if (type !== "idle" && type !== "completed") return false
+  if (type !== "idle" && type !== "completed" && type !== "terminal_reply") return false
   const list: AssistantMessage[] = []
   for (let i = idx + 1; i < messages.length; i++) {
     const item = messages[i]

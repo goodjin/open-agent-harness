@@ -51,7 +51,14 @@ import {
   timelineQuestionVisible,
   visibleConfirmations,
 } from "@/pages/session/session-confirmation-match"
-import { delegationProgress, pendingDelegation, turn, type DelegationItem } from "@/pages/session/session-delegations"
+import {
+  delegationProgress,
+  delegationSubmitted,
+  laterUserInput,
+  pendingDelegation,
+  turn,
+  type DelegationItem,
+} from "@/pages/session/session-delegations"
 
 type MessageComment = {
   path: string
@@ -69,13 +76,14 @@ const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
 const restorable = new Set(["interrupted"])
 const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
-const done = new Set(["completed", "user_completed", "archived"])
+const done = new Set(["completed", "terminal_reply", "user_completed", "archived"])
 const fallbackable = new Set(["failed", "blocked"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
 type ConfirmStatus = "pending" | "confirmed" | "cancelled"
 type FallbackStatus = "success" | "failure" | "reply"
+type SubmitMode = "cancel_without_result" | "terminate_with_result"
 
 type ConfirmRecord = {
   action_id: string
@@ -174,12 +182,12 @@ const dot = (type: string) => {
   if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
     return "bg-icon-warning-base"
   if (live.has(type)) return "bg-icon-info-base"
-  if (type === "completed" || type === "user_completed") return "bg-icon-success-base"
+  if (type === "completed" || type === "terminal_reply" || type === "user_completed") return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   return "bg-icon-critical-base"
 }
 
-const label = (type: string) => (type === "user_completed" ? "用户标记完成" : type)
+const label = (type: string) => (type === "user_completed" ? "用户标记完成" : type === "terminal_reply" ? "已回复父会话" : type)
 
 const safe = (input: unknown) => {
   if (!record(input)) return false
@@ -587,7 +595,14 @@ export function MessageTimeline(props: {
   let more: HTMLButtonElement | undefined
 
   const [req, setReq] = createStore({ share: false, status: false, unshare: false })
-  const [op, setOp] = createStore({ child: {} as Record<string, string | undefined> })
+  const [op, setOp] = createStore({
+    child: {} as Record<string, string | undefined>,
+    run: {} as Record<string, SubmitMode | undefined>,
+  })
+  const [memo, setMemo] = createStore({
+    kids: {} as Record<string, DelegationItem[] | undefined>,
+    run: {} as Record<string, string | undefined>,
+  })
 
   const shareSession = () => {
     const id = sessionID()
@@ -893,7 +908,7 @@ export function MessageTimeline(props: {
       })
   }
 
-  const submit = (run: string, mode: "cancel_without_result" | "terminate_with_result") => {
+  const submit = (run: string, mode: SubmitMode) => {
     const id = sessionID()
     if (!id) return
     const key = `${mode}:${run}`
@@ -910,6 +925,7 @@ export function MessageTimeline(props: {
       })
       .then(async (res) => {
         if (!res.ok) throw new Error(await res.text())
+        setOp("run", run, mode)
         await sync.session.sync(id, { force: true }).catch(() => undefined)
       })
       .catch((err: unknown) =>
@@ -922,6 +938,14 @@ export function MessageTimeline(props: {
       .finally(() => {
         setOp("child", key, undefined)
       })
+  }
+
+  const confirmSubmit = (run: string, stale: boolean) => {
+    if (!stale) {
+      void submit(run, "terminate_with_result")
+      return
+    }
+    dialog.show(() => <DialogSubmitDelegation run={run} />)
   }
 
   const openFallback = (id: string) => {
@@ -1018,6 +1042,36 @@ export function MessageTimeline(props: {
                 确认提交
               </Button>
             </div>
+          </div>
+        </div>
+      </Dialog>
+    )
+  }
+
+  function DialogSubmitDelegation(props: { run: string }) {
+    const [saving, setSaving] = createSignal(false)
+    const proceed = () => {
+      if (saving()) return
+      setSaving(true)
+      Promise.resolve(submit(props.run, "terminate_with_result")).finally(() => {
+        setSaving(false)
+        dialog.close()
+      })
+    }
+
+    return (
+      <Dialog title="终止并汇总子会话" fit>
+        <div class="flex w-[min(520px,calc(100vw-32px))] max-w-full flex-col gap-4 px-6 pb-4">
+          <div class="text-13-regular text-text-weak">
+            这个子会话列表后面已经有新的输入。继续后会立即收集当前可用的子会话结果并提交给父会话，列表会保持展示但不再允许操作。
+          </div>
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" size="large" disabled={saving()} onClick={() => dialog.close()}>
+              {language.t("common.cancel")}
+            </Button>
+            <Button variant="primary" size="large" disabled={saving()} onClick={proceed}>
+              终止并汇总
+            </Button>
           </div>
         </div>
       </Dialog>
@@ -1514,7 +1568,7 @@ export function MessageTimeline(props: {
                       stats().confirmations ? `确认 ${num().format(stats().confirmations!)}` : "",
                     ].filter(Boolean)
                   })
-                  const kids = createMemo(() => {
+                  const fresh = createMemo(() => {
                     const map = new Map<string, DelegationItem>()
                     for (const item of [...delegation().active, ...delegation().completed]) {
                       if (map.has(item.id)) continue
@@ -1522,7 +1576,26 @@ export function MessageTimeline(props: {
                     }
                     return Array.from(map.values())
                   })
-                  const run = createMemo(() => kids().find((item) => item.run)?.run)
+                  createEffect(() => {
+                    const vals = fresh()
+                    if (!vals.length) return
+                    setMemo("kids", messageID, vals)
+                    setMemo("run", messageID, vals.find((item) => item.run)?.run)
+                  })
+                  const run = createMemo(() => fresh().find((item) => item.run)?.run ?? memo.run[messageID])
+                  const locked = createMemo(() => {
+                    const id = run()
+                    if (!id) return
+                    return op.run[id] ?? (delegationSubmitted(info()?.dsl_context, id) ? "terminate_with_result" : undefined)
+                  })
+                  const kids = createMemo(() => {
+                    const vals = fresh()
+                    if (vals.length > 0) return vals
+                    return locked() ? (memo.kids[messageID] ?? []) : []
+                  })
+                  const total = createMemo(() => delegation().total || kids().length)
+                  const count = createMemo(() => (delegation().total ? delegation().done : kids().length))
+                  const stale = createMemo(() => laterUserInput(sessionMessages(), messageID))
                   const question = createMemo(() => {
                     const req = props.request?.question
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
@@ -1714,7 +1787,7 @@ export function MessageTimeline(props: {
                           )
                         }}
                       </Show>
-                      <Show when={props.filter === "all" && (completed() || delegation().total > 0)}>
+                      <Show when={props.filter === "all" && (completed() || total() > 0)}>
                         <div class="px-6 md:px-8 pt-8">
                           <div class="flex items-center gap-3 text-12-regular text-text-weak">
                             <div class="h-px flex-1 bg-border-weaker-base" />
@@ -1728,9 +1801,9 @@ export function MessageTimeline(props: {
                               <span>
                                 第 {ordinal(messageID)} 轮 · {delegated() ? delegationLabel : completeLabel}
                               </span>
-                              <Show when={delegation().total > 0}>
+                              <Show when={total() > 0}>
                                 <span class="shrink-0">
-                                  （{delegation().done}/{delegation().total}）
+                                  （{count()}/{total()}）
                                 </span>
                               </Show>
                               <Show when={statText().length > 0}>
@@ -1752,7 +1825,7 @@ export function MessageTimeline(props: {
                                 <div class="min-w-0 text-12-medium text-text-strong">子会话</div>
                                 <div class="shrink-0 flex items-center gap-2">
                                   <span class="text-11-regular text-text-weak">
-                                    {delegation().done}/{delegation().total}
+                                    {count()}/{total()}
                                   </span>
                                   <span
                                     class="inline-flex text-icon-weak transition-transform"
@@ -1799,7 +1872,7 @@ export function MessageTimeline(props: {
                                             >
                                               {language.t("common.open")}
                                             </Button>
-                                            <Show when={live.has(status())}>
+                                            <Show when={!locked() && live.has(status())}>
                                               <Button
                                                 variant="ghost"
                                                 size="small"
@@ -1810,7 +1883,7 @@ export function MessageTimeline(props: {
                                                 暂停
                                               </Button>
                                             </Show>
-                                            <Show when={restorable.has(status())}>
+                                            <Show when={!locked() && restorable.has(status())}>
                                               <Button
                                                 variant="secondary"
                                                 size="small"
@@ -1821,7 +1894,7 @@ export function MessageTimeline(props: {
                                                 恢复
                                               </Button>
                                             </Show>
-                                            <Show when={fallbackable.has(status())}>
+                                            <Show when={!locked() && fallbackable.has(status())}>
                                               <Button
                                                 variant="secondary"
                                                 size="small"
@@ -1832,7 +1905,7 @@ export function MessageTimeline(props: {
                                                 确认结果
                                               </Button>
                                             </Show>
-                                            <Show when={!done.has(status())}>
+                                            <Show when={!locked() && !done.has(status())}>
                                               <Button
                                                 variant="ghost"
                                                 size="small"
@@ -1854,27 +1927,27 @@ export function MessageTimeline(props: {
                                     variant="ghost"
                                     size="small"
                                     class="h-7 px-2"
-                                    disabled={!run() || !!op.child[`cancel_without_result:${run()}`]}
+                                    disabled={!run() || !!op.child[`cancel_without_result:${run()}`] || !!locked()}
                                     onClick={() => {
                                       const id = run()
                                       if (!id) return
                                       void submit(id, "cancel_without_result")
                                     }}
                                   >
-                                    取消并继续
+                                    {locked() === "cancel_without_result" ? "已取消并继续" : "取消并继续"}
                                   </Button>
                                   <Button
                                     variant="secondary"
                                     size="small"
                                     class="h-7 px-2"
-                                    disabled={!run() || !!op.child[`terminate_with_result:${run()}`]}
+                                    disabled={!run() || !!op.child[`terminate_with_result:${run()}`] || !!locked()}
                                     onClick={() => {
                                       const id = run()
                                       if (!id) return
-                                      void submit(id, "terminate_with_result")
+                                      confirmSubmit(id, stale())
                                     }}
                                   >
-                                    终止并汇总
+                                    {locked() === "terminate_with_result" ? "已终止并汇总" : locked() ? "已提交" : "终止并汇总"}
                                   </Button>
                                 </div>
                               </Show>
