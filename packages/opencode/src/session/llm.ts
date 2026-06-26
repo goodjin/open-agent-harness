@@ -457,7 +457,7 @@ export namespace LLM {
   }
 
   async function attach(input: Record<string, Tool>, context?: StreamInput["actionResult"]) {
-    const schema = context?.verifier ? ActionResult.VerifierSchema : context ? ActionResult.WorkerSchema : ActionResult.Schema
+    const schema = context ? ActionResult.tool(context) : ActionResult.Schema
     return {
       ...input,
       [ACTION_RESULT_TOOL]: tool({

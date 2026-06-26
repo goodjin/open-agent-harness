@@ -60,6 +60,18 @@ export namespace ActionResult {
   export const VerifierSchema = VerifierInput.transform((input) => Verifier.parse({ ...input, role: "verifier" }))
   export type Value = z.infer<typeof Schema>
 
+  export function tool(input: { verifier?: boolean; target?: string } = {}) {
+    if (!input.verifier) return WorkerSchema
+    const target = input.target
+    return Input.extend({
+      target_action_id: target ? z.string().min(1).optional().default(target) : z.string().min(1),
+      status: Status,
+      issues: z.string().default(""),
+      evidence: z.string().default(""),
+      worker_feedback: z.string().default(""),
+    }).transform((val) => Verifier.parse({ ...val, role: "verifier" }))
+  }
+
   export function parse(input: unknown) {
     return Schema.safeParse(input)
   }

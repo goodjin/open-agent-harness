@@ -1154,12 +1154,20 @@ export namespace SessionPrompt {
     const worker = str(verification.worker)
     if (worker) return worker
     const deps = input.depends_on
-    if (!Array.isArray(deps)) return
-    return deps.map(str).find((item): item is string => Boolean(item))
+    const dep = Array.isArray(deps) ? deps.map(str).find((item): item is string => Boolean(item)) : undefined
+    if (dep) return dep
+    return infer(str(input.action_id))
   }
 
   function str(input: unknown) {
     return typeof input === "string" && input.trim() ? input.trim() : undefined
+  }
+
+  function infer(input: string | undefined) {
+    if (!input) return
+    for (const suffix of ["_test", "_review"]) {
+      if (input.endsWith(suffix)) return input.slice(0, -suffix.length)
+    }
   }
 
   async function stopTools(input: {

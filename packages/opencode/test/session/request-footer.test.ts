@@ -78,5 +78,20 @@ describe("RequestFooter", () => {
         },
       }).action_result_example,
     ).toContain('"status": "success"')
+    expect(
+      RequestFooter.variables({
+        sessionID: "ses_test",
+        agent: "release-runner-verifier",
+        mode: "subagent",
+        actionResult: {
+          action: "cut_v0_4_1_release_test",
+          verifier: true,
+        },
+        delegation: {
+          action_id: "cut_v0_4_1_release_test",
+          result_tool: "ActionResult",
+        },
+      }).action_result_example,
+    ).toContain('"target_action_id": "cut_v0_4_1_release"')
   })
 })

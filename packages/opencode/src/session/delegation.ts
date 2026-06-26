@@ -476,6 +476,7 @@ export namespace SessionDelegation {
 
   async function remind(sessionID: SessionID, item: Item, output: string | undefined) {
     const { SessionPrompt } = await import("./prompt")
+    const res = await ctx(item)
     await SessionPrompt.prompt({
       sessionID,
       agent: text(item.agent) ?? "default",
@@ -486,7 +487,11 @@ export namespace SessionDelegation {
             `Your delegated task must finish by calling the native ${ActionResult.TOOL} tool.`,
             "Do not return plain text as the final result.",
             "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
-            ...ActionResult.protocol({ action: item.action_id }),
+            ...ActionResult.protocol({
+              verifier: res.verifier,
+              action: item.action_id,
+              target: res.target,
+            }),
             output ? "" : "",
             output ? "Previous plain-text output:" : "",
             output ?? "",
@@ -2148,6 +2153,32 @@ export namespace SessionDelegation {
     return Object.fromEntries(
       Object.entries(item).filter((entry) => entry[0] !== "agent" && entry[0] !== "parent_agent"),
     )
+  }
+
+  async function ctx(item: Item) {
+    const agent = item.agent ? await Agent.get(item.agent).catch(() => undefined) : undefined
+    const verifier = agent?.kind === "verifier" || item.agent?.includes("verifier") === true
+    return {
+      verifier,
+      target: verifier ? anchor(item) : undefined,
+    }
+  }
+
+  function anchor(item: Item) {
+    const meta = object(item.metadata)
+    const worker = text(object(meta.verification).worker)
+    if (worker) return worker
+    const deps = object(item).depends_on
+    const dep = Array.isArray(deps) ? deps.map(text).find((entry): entry is string => Boolean(entry)) : undefined
+    if (dep) return dep
+    return infer(item.action_id)
+  }
+
+  function infer(input: string | undefined) {
+    if (!input) return
+    for (const suffix of ["_test", "_review"]) {
+      if (input.endsWith(suffix)) return input.slice(0, -suffix.length)
+    }
   }
 
   function match(

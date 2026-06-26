@@ -124,6 +124,22 @@ describe("ActionResult", () => {
     ).toBe(false)
   })
 
+  test("fills missing verifier target from tool context", () => {
+    const parsed = ActionResult.tool({ verifier: true, target: "impl" }).safeParse({
+      action_id: "impl_test",
+      status: "success",
+      result: "Verification passed.",
+      changed_files: "none",
+      verification: "bun test",
+      blockers: "none",
+    })
+
+    expect(parsed.success).toBe(true)
+    expect(parsed.success ? parsed.data.role : "").toBe("verifier")
+    expect(parsed.success && parsed.data.role === "verifier" ? parsed.data.target_action_id : "").toBe("impl")
+    expect(parsed.success && "changed_files" in parsed.data).toBe(false)
+  })
+
   test("describes strict worker and verifier protocol", () => {
     const text = ActionResult.protocol({ action: "impl" }).join("\n")
     expect(text).toContain("Status values for all results: success, failure, error, reply, skipped.")
