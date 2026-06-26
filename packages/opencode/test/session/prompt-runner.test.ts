@@ -1163,6 +1163,173 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
+  test("session loop stops after delegated ActionResult completes", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "worker", {
+            runner: "chat",
+          })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-action-result-stops-loop"),
+            fn: async () => {
+              resetRegistry()
+              let count = 0
+              const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+                input: Parameters<typeof SessionPrompt.prompt>[0],
+              ) => {
+                const user = (await Session.updateMessage({
+                  id: MessageID.ascending(),
+                  sessionID: input.sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: input.agent ?? "protocol-runner",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)) as MessageV2.User
+                const msg = (await Session.updateMessage({
+                  id: MessageID.ascending(),
+                  sessionID: input.sessionID,
+                  parentID: user.id,
+                  role: "assistant",
+                  mode: input.agent ?? "protocol-runner",
+                  agent: input.agent ?? "protocol-runner",
+                  path: { cwd: tmp.path, root: tmp.path },
+                  cost: 0,
+                  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                  modelID: ModelID.make("gpt-5.2"),
+                  providerID: ProviderID.make("openai"),
+                  time: { created: Date.now(), completed: Date.now() },
+                  finish: "stop",
+                })) as MessageV2.Assistant
+                const part = await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: msg.id,
+                  sessionID: input.sessionID,
+                  type: "text",
+                  text: "parent received result",
+                })
+                return { info: msg, parts: [part] } as MessageV2.WithParts
+              }) as never)
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => {
+                return {
+                  get message() {
+                    return input.assistantMessage
+                  },
+                  partFromToolCall() {
+                    return undefined
+                  },
+                  async process() {
+                    count++
+                    input.assistantMessage.finish = "tool-calls"
+                    input.assistantMessage.time.completed = Date.now()
+                    await Session.updateMessage(input.assistantMessage)
+                    await Session.updatePart({
+                      id: PartID.ascending(),
+                      messageID: input.assistantMessage.id,
+                      sessionID: input.sessionID,
+                      type: "tool",
+                      callID: "call-result",
+                      tool: ActionResult.TOOL,
+                      state: {
+                        status: "completed",
+                        input: {
+                          kind: "action_result",
+                          role: "worker",
+                          action_id: "impl",
+                          status: "failure",
+                          scope: "task",
+                          result: "verification failed",
+                          changed_files: "none",
+                          verification: "not passing",
+                          blockers: "needs fix",
+                        },
+                        output: "Action result received.",
+                        title: "Action Result",
+                        metadata: { action_result: true },
+                        time: {
+                          start: Date.now(),
+                          end: Date.now(),
+                        },
+                      },
+                    } satisfies MessageV2.ToolPart)
+                    return "continue"
+                  },
+                } as unknown as SessionRunner.Info
+              })
+
+              try {
+                const parent = await Session.create({ title: "ActionResult parent" })
+                const session = await Session.create({ title: "ActionResult child", parentID: parent.id, agent: "worker" })
+                const msg = MessageID.ascending()
+                const item = {
+                  type: "agent.delegation.assignment",
+                  version: "1",
+                  run_id: "run_action_result_stop",
+                  action_id: "impl",
+                  action_title: "Implement",
+                  parent_session_id: parent.id,
+                  parent_message_id: msg,
+                  parent_agent: "protocol-runner",
+                  child_session_id: session.id,
+                  agent: "worker",
+                  result_policy: "summary",
+                  result_tool: "ActionResult",
+                  created_at: Date.now(),
+                }
+                await Session.setDslContext({
+                  sessionID: parent.id,
+                  dsl_context: { protocol: { pending_delegations: { [session.id]: item } } },
+                })
+                await Session.setDslContext({ sessionID: session.id, dsl_context: { protocol: { delegation: item } } })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "worker",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "finish through ActionResult",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+
+                expect(count).toBe(1)
+                expect(SessionStatus.get(session.id).type).toBe("failed")
+                await Session.remove(parent.id)
+              } finally {
+                hook.mockRestore()
+                prompt.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
   test("session loop blocks after agent max tool calls", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"

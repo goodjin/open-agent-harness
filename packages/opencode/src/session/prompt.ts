@@ -57,6 +57,7 @@ import { Storage } from "@/storage/storage"
 import { ConflictError } from "@/storage/db"
 import { ActionResult } from "./action-result"
 import { RequestFooter } from "./request-footer"
+import { SessionDelegation } from "./delegation"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -353,7 +354,7 @@ export namespace SessionPrompt {
       delete s[sessionID]
       return
     }
-    if (status.type === "blocked" || status.type === "terminal_reply") {
+    if (ended(status)) {
       delete s[sessionID]
       return
     }
@@ -840,7 +841,8 @@ export namespace SessionPrompt {
         })
         break
       }
-      for (const item of actionResults(parts)) {
+      const results = actionResults(parts)
+      for (const item of results) {
         failures = item.ok ? 0 : failures + 1
       }
       if (failures > ACTION_RESULT_FAILURES) {
@@ -855,6 +857,10 @@ export namespace SessionPrompt {
             count: failures,
           },
         })
+        break
+      }
+      if (actionResult && results.some((item) => item.ok)) {
+        await SessionDelegation.complete({ sessionID, messageID: processor.message.id })
         break
       }
 

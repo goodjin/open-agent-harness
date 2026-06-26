@@ -701,6 +701,68 @@ describe("session state machine", () => {
     })
   })
 
+  test("allows non archived stopped sessions to enter new request states", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const limited = {
+          type: "rate_limited",
+          providerID: "p",
+          modelID: "m",
+          scope: "model",
+          active: 1,
+          limit: 1,
+          queued: 1,
+        } satisfies SessionStatus.Info
+        const states = [
+          { type: "error", message: "provider error" },
+          { type: "timeout", message: "timed out" },
+          { type: "paused", message: "paused" },
+          { type: "aborted", message: "aborted" },
+          { type: "failed", message: "failed" },
+          { type: "blocked", message: "blocked" },
+          { type: "interrupted", prior: "running", message: "interrupted" },
+          { type: "completed" },
+          { type: "terminal_reply", message: "reply" },
+          { type: "user_completed", message: "accepted" },
+        ] satisfies SessionStatus.Info[]
+        const next = [{ type: "queued" }, { type: "starting" }, { type: "running" }, limited] satisfies SessionStatus.Info[]
+
+        for (const [idx, state] of states.entries()) {
+          for (const [pos, status] of next.entries()) {
+            const id = `test-session-stopped-continue-${idx}-${pos}` as SessionID
+            SessionStatus.set(id, state)
+            SessionStatus.set(id, status)
+            expect(SessionStatus.get(id).type).toBe(status.type)
+            SessionStatus.set(id, { type: "idle" })
+          }
+        }
+      },
+    })
+  })
+
+  test("keeps archived sessions from entering rate limited directly", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const sessionID = "test-session-archived-rate-limited" as SessionID
+        SessionStatus.set(sessionID, { type: "archived" })
+        expect(() =>
+          SessionStatus.set(sessionID, {
+            type: "rate_limited",
+            providerID: "p",
+            modelID: "m",
+            scope: "model",
+            active: 1,
+            limit: 1,
+            queued: 1,
+          }),
+        ).toThrow("Invalid session status transition: archived -> rate_limited")
+        SessionStatus.set(sessionID, { type: "idle" })
+      },
+    })
+  })
+
   test("restores restart-lost active statuses as interrupted", async () => {
     const ids = await Instance.provide({
       directory: projectRoot,
