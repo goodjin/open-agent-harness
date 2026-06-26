@@ -55,6 +55,8 @@ User-completed status markers use a success-toned check indicator instead of the
 
 Sidebar parent-session summaries show recursive child progress as completed/total. Lightweight session-tree loads must carry child `status` values into the synchronized `session_status` map, because the sidebar does not load full child messages for every row. Child session creation also invalidates the directory session-tree cache so later reloads can refresh descendant totals instead of relying on stale root-loaded markers.
 
+The sidebar session tree must preserve the user's current scroll position during session navigation. Opening a session, clicking a child row, expanding or collapsing a row, and jumping to a message from the hover preview may update the route, active highlight, notification state, or workspace expansion, but they must not call `scrollIntoView` or otherwise chase the active row. The only sidebar tree scroll changes should come from direct user scrolling, explicit load-more interactions, or restoring the saved scroll position for that workspace.
+
 The session title menu exposes "mark as user completed" for unfinished, interrupted, failed, blocked, paused, waiting, timeout, and aborted sessions. The UI label must distinguish this state from natural runtime completion.
 
 The right-side session panel owns Review, Logs, Graph or Protocol, file tree, context, and file tabs. Its tab strip includes a collapse control that closes the whole right panel through `reviewPanel.close()`, allowing the timeline and composer to reclaim the width. The topbar keeps a side-panel toggle next to the file-tree control, so a collapsed panel still has a visible expand entry. Topbar Review and file-tree controls also reopen the panel before selecting their target tab.

@@ -132,7 +132,6 @@ export default function Layout(props: ParentProps) {
     busyWorkspaces: {} as Record<string, boolean>,
     hoverSession: undefined as string | undefined,
     hoverProject: undefined as string | undefined,
-    scrollSessionKey: undefined as string | undefined,
     nav: undefined as HTMLElement | undefined,
     sizing: false,
     peek: undefined as string | undefined,
@@ -516,24 +515,6 @@ export default function Layout(props: ParentProps) {
 
   useUpdatePolling()
   useSDKNotificationToasts()
-
-  function scrollToSession(sessionId: string, sessionKey: string, retry = true) {
-    if (!scrollContainerRef) return
-    if (state.scrollSessionKey === sessionKey) return
-    const element = scrollContainerRef.querySelector(`[data-session-id="${sessionId}"]`)
-    if (!element) {
-      if (retry) requestAnimationFrame(() => scrollToSession(sessionId, sessionKey, false))
-      return
-    }
-    const containerRect = scrollContainerRef.getBoundingClientRect()
-    const elementRect = element.getBoundingClientRect()
-    if (elementRect.top >= containerRect.top && elementRect.bottom <= containerRect.bottom) {
-      setState("scrollSessionKey", sessionKey)
-      return
-    }
-    setState("scrollSessionKey", sessionKey)
-    element.scrollIntoView({ block: "nearest", behavior: "smooth" })
-  }
 
   const currentProject = createMemo(() => {
     const directory = currentDir()
@@ -971,7 +952,6 @@ export default function Layout(props: ParentProps) {
     if (expanded === false) {
       setStore("workspaceExpanded", directory, true)
     }
-    requestAnimationFrame(() => scrollToSession(id, `${directory}:${id}`))
     return root
   }
 
