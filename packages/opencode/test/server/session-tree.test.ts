@@ -143,7 +143,7 @@ describe("Session tree projection", () => {
     })
   })
 
-  test("aborts selected sessions and restores interrupted sessions without sending a message by default", async () => {
+  test("restores recoverable scheduler states without sending a message by default", async () => {
     await Instance.provide({
       directory: root,
       fn: async () =>
@@ -151,7 +151,8 @@ describe("Session tree projection", () => {
           workspaceID: WorkspaceID.make("test-workspace"),
           fn: async () => {
             const parent = await Session.create({ title: "tree-root" })
-            const child = await Session.create({ title: "tree-child", parentID: parent.id })
+            const child = await Session.create({ title: "tree-interrupted", parentID: parent.id })
+            const limited = await Session.create({ title: "tree-limited", parentID: parent.id })
             const idle = await Session.create({ title: "tree-idle", parentID: parent.id })
             const app = Server.Default()
             const loops: Parameters<typeof SessionPrompt.loop>[0][] = []
@@ -162,30 +163,70 @@ describe("Session tree projection", () => {
             const prompt = spyOn(SessionPrompt, "prompt")
 
             try {
-              const abort = await app.request("/session/tree/abort", {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ids: [child.id], source_session: parent.id, reason: "bulk stop" }),
+              SessionStatus.set(child.id, { type: "interrupted", prior: "running", message: "process stopped" })
+              SessionStatus.set(limited.id, { type: "running" })
+              SessionStatus.set(limited.id, {
+                type: "rate_limited",
+                providerID: "p",
+                modelID: "m",
+                scope: "model",
+                active: 1,
+                limit: 1,
+                queued: 1,
               })
-              expect(abort.status).toBe(200)
-              expect(SessionStatus.get(child.id)).toEqual({ type: "aborted", message: "bulk stop" })
 
               const resume = await app.request("/session/tree/resume", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ids: [child.id, idle.id], source_session: parent.id, reason: "bulk resume" }),
+                body: JSON.stringify({ ids: [child.id, limited.id, idle.id], source_session: parent.id, reason: "bulk resume" }),
               })
               expect(resume.status).toBe(200)
-              expect(await resume.json()).toEqual({ resumed: 1 })
-              expect(loops).toEqual([{ sessionID: child.id }])
+              expect(await resume.json()).toEqual({ resumed: 2 })
+              expect(loops).toEqual([{ sessionID: child.id }, { sessionID: limited.id }])
               expect(prompt).not.toHaveBeenCalled()
               expect(SessionStatus.get(child.id)).toEqual({ type: "running" })
+              expect(SessionStatus.get(limited.id)).toEqual({ type: "running" })
               expect(await Session.messages({ sessionID: child.id, limit: 1 })).toHaveLength(0)
+              expect(await Session.messages({ sessionID: limited.id, limit: 1 })).toHaveLength(0)
               expect(await Session.messages({ sessionID: idle.id, limit: 1 })).toHaveLength(0)
             } finally {
               loop.mockRestore()
               prompt.mockRestore()
               await Session.remove(parent.id)
+            }
+          },
+        }),
+    })
+  })
+
+  test("does not restore stopped sessions without a resume message", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "tree-aborted" })
+            SessionStatus.set(session.id, { type: "aborted", message: "bulk stop" })
+            const app = Server.Default()
+            const loop = spyOn(SessionPrompt, "loop")
+            const prompt = spyOn(SessionPrompt, "prompt")
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [session.id], mode: "restore" }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 0 })
+              expect(loop).not.toHaveBeenCalled()
+              expect(prompt).not.toHaveBeenCalled()
+              expect(SessionStatus.get(session.id)).toEqual({ type: "aborted", message: "bulk stop" })
+            } finally {
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(session.id)
             }
           },
         }),
@@ -251,6 +292,52 @@ describe("Session tree projection", () => {
               prompt.mockRestore()
               loop.mockRestore()
               await Session.remove(parent.id)
+            }
+          },
+        }),
+    })
+  })
+
+  test("sends a structured resume message for stopped sessions", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "tree-failed" })
+            SessionStatus.set(session.id, { type: "failed", message: "tool failed" })
+            const app = Server.Default()
+            const inputs: Parameters<typeof SessionPrompt.prompt>[0][] = []
+            const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+              input: Parameters<typeof SessionPrompt.prompt>[0],
+            ) => {
+              inputs.push(input)
+              return undefined
+            }) as never)
+            const loop = spyOn(SessionPrompt, "loop")
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  ids: [session.id],
+                  mode: "message",
+                  reason: "manual continue",
+                  message: "继续修复失败的步骤",
+                }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 1 })
+              expect(loop).not.toHaveBeenCalled()
+              expect(inputs).toHaveLength(1)
+              expect(inputs[0]?.parts.find((part) => part.type === "text")?.text).toContain("继续修复失败的步骤")
+              expect(SessionStatus.get(session.id)).toEqual({ type: "running" })
+            } finally {
+              prompt.mockRestore()
+              loop.mockRestore()
+              await Session.remove(session.id)
             }
           },
         }),

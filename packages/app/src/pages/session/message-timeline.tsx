@@ -853,9 +853,18 @@ export function MessageTimeline(props: {
       })
       .then(async (res) => {
         if (!res.ok) throw new Error(await res.text())
+        const data = path.endsWith("/resume")
+          ? ((await res.json().catch(() => undefined)) as { resumed?: number } | undefined)
+          : undefined
         await sync.session.sync(id, { force: true }).catch(() => undefined)
         const current = sessionID()
         if (current) await sync.session.sync(current, { force: true }).catch(() => undefined)
+        if (data?.resumed === 0) {
+          showToast({
+            title: "No resumable run",
+            description: "This child session needs a resume message instead of restoring the previous loop.",
+          })
+        }
       })
       .finally(() => {
         setOp("child", id, undefined)

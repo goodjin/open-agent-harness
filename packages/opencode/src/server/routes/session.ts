@@ -446,15 +446,22 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const body = c.req.valid("json")
         const mode = body.mode ?? "restore"
-        const done = new Set(["completed"])
-        const stopped = new Set(["interrupted"])
+        const done = new Set(["completed", "terminal_reply", "user_completed"])
+        const restore = new Set([
+          "interrupted",
+          "queued",
+          "rate_limited",
+          "retry",
+          "running",
+          "starting",
+        ])
         const resumed = await scoped(body.directory, async () => {
           const result = await Promise.all(
             body.ids.map(async (id) => {
               const info = await Session.get(id)
               const status = SessionStatus.get(id)
               if (mode === "restore") {
-                if (!stopped.has(status.type)) return false
+                if (!restore.has(status.type)) return false
                 SessionStatus.set(id, { type: "running" })
                 void SessionPrompt.loop({ sessionID: id }).catch((err) => {
                   log.warn("session tree restore failed", { sessionID: id, err })
@@ -462,6 +469,7 @@ export const SessionRoutes = lazy(() =>
                 })
                 return true
               }
+              if (status.type === "archived") return false
               if (!body.include_completed && done.has(status.type)) return false
               const meta = {
                 command: {

@@ -320,11 +320,21 @@ export default function SessionTreeManager() {
         }
         throw new Error(text)
       }
+      const data = path.includes("/resume")
+        ? ((await res.json().catch(() => undefined)) as { resumed?: number } | undefined)
+        : undefined
       await load()
       if (params.id && ids.includes(params.id)) await sync.session.sync(params.id, { force: true }).catch(() => undefined)
+      if (data?.resumed === 0) {
+        showToast({
+          title: "No resumable sessions",
+          description: "Use resume message mode for stopped sessions, or refresh to see the latest status.",
+        })
+        return false
+      }
       showToast({
         variant: "success",
-        title: language.t("sessionTree.updated", { count: ids.length }),
+        title: language.t("sessionTree.updated", { count: data?.resumed ?? ids.length }),
       })
       return true
     } catch (err) {

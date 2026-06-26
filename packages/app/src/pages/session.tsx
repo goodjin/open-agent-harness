@@ -825,7 +825,14 @@ export default function Page() {
       })
       .then(async (res) => {
         if (!res.ok) throw new Error(await res.text())
+        const data = (await res.json().catch(() => undefined)) as { resumed?: number } | undefined
         await syncCurrentSession(id, { force: true })
+        if (data?.resumed === 0) {
+          showToast({
+            title: "No resumable run",
+            description: "This session needs a resume message instead of restoring the previous loop.",
+          })
+        }
         resumeScroll()
       })
       .catch((err: unknown) => {
@@ -1987,7 +1994,16 @@ export default function Page() {
       })
       .then((res) => {
         if (!res.ok) return Promise.reject(new Error(`request failed: ${res.status}`))
-        return syncCurrentSession(_input.sessionID, { force: true })
+        return res.json().catch(() => undefined)
+      })
+      .then(async (data: { resumed?: number } | undefined) => {
+        await syncCurrentSession(_input.sessionID, { force: true })
+        if (data?.resumed === 0) {
+          showToast({
+            title: "No resumable run",
+            description: "This session needs a resume message instead of restoring the previous loop.",
+          })
+        }
       })
       .catch(fail)
   }
