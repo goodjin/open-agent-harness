@@ -48,12 +48,14 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("error"),
         message: z.string(),
-        reason: z.enum(["output_safety"]).optional(),
+        reason: z.enum(["output_safety", "transport"]).optional(),
         recoverable: z.boolean().optional(),
       }),
       z.object({
         type: z.literal("timeout"),
         message: z.string(),
+        reason: z.enum(["transport"]).optional(),
+        recoverable: z.boolean().optional(),
       }),
       z.object({
         type: z.literal("paused"),
@@ -70,6 +72,8 @@ export namespace SessionStatus {
       z.object({
         type: z.literal("failed"),
         message: z.string().optional(),
+        reason: z.enum(["transport"]).optional(),
+        recoverable: z.boolean().optional(),
       }),
       z.object({
         type: z.literal("blocked"),
@@ -778,9 +782,21 @@ export namespace SessionStatus {
     }
     if (row.status === "terminal_reply") return { type: "terminal_reply", message: msg }
     if (row.status === "terminal_success") return { type: "completed" }
-    if (row.status === "terminal_failure") return { type: "failed", message: msg }
-    if (row.status === "terminal_error") return { type: "error", message: msg ?? "Session ended with an error." }
-    if (row.status === "terminal_timeout") return { type: "timeout", message: msg ?? "Session timed out." }
+    if (row.status === "terminal_failure") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "failed") return parsed.data
+      return { type: "failed", message: msg }
+    }
+    if (row.status === "terminal_error") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "error") return parsed.data
+      return { type: "error", message: msg ?? "Session ended with an error." }
+    }
+    if (row.status === "terminal_timeout") {
+      const parsed = Info.safeParse(detail)
+      if (parsed.success && parsed.data.type === "timeout") return parsed.data
+      return { type: "timeout", message: msg ?? "Session timed out." }
+    }
     if (row.status === "terminal_cancelled") return { type: "aborted", message: msg }
     if (row.status === "terminal_user_completed") return { type: "user_completed", message: msg }
     if (row.status_class === "archived") return { type: "archived" }
@@ -797,13 +813,17 @@ export namespace SessionStatus {
       status.type === "rate_limited" ||
       status.type === "retry" ||
       status.type === "interrupted" ||
-      status.type === "terminal_reply"
+      status.type === "terminal_reply" ||
+      status.type === "error" ||
+      status.type === "timeout" ||
+      status.type === "failed"
     )
       return status
     return null
   }
 
   function recoverable(status: Info) {
+    if ("recoverable" in status && status.recoverable !== undefined) return status.recoverable
     return status.type !== "archived"
   }
 }

@@ -29,12 +29,26 @@ export namespace SessionProcessor {
   export type Result = Awaited<ReturnType<Info["process"]>>
 
   function status(error: NonNullable<MessageV2.Assistant["error"]>): Extract<SessionStatus.Info, { type: "error" }> {
-    if (MessageV2.APIError.isInstance(error) && error.data.metadata?.code === "ProviderOutputSafety") {
-      return {
-        type: "error",
-        message: error.data.message,
-        reason: "output_safety",
-        recoverable: true,
+    if (MessageV2.APIError.isInstance(error)) {
+      if (error.data.metadata?.code === "ProviderOutputSafety") {
+        return {
+          type: "error",
+          message: error.data.message,
+          reason: "output_safety",
+          recoverable: true,
+        }
+      }
+      if (
+        error.data.metadata?.code === "TransportError" ||
+        error.data.metadata?.code === "TimeoutError" ||
+        /SSE read timed out|Unable to connect|network.*failed|fetch failed|connection.*timed out/i.test(error.data.message)
+      ) {
+        return {
+          type: "error",
+          message: error.data.message,
+          reason: "transport",
+          recoverable: true,
+        }
       }
     }
     return {
@@ -634,6 +648,8 @@ export namespace SessionProcessor {
                   SessionStatus.set(input.sessionID, {
                     type: "timeout",
                     message,
+                    reason: "transport",
+                    recoverable: true,
                   })
                   failure = e
                   break

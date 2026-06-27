@@ -233,6 +233,63 @@ describe("Session tree projection", () => {
     })
   })
 
+  test("restores recoverable transport stopped sessions without a resume message", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const err = await Session.create({ title: "tree-transport-error" })
+            const timeout = await Session.create({ title: "tree-transport-timeout" })
+            const failed = await Session.create({ title: "tree-transport-failed" })
+            SessionStatus.set(err.id, {
+              type: "error",
+              message: "Unable to connect. Is the computer able to access the url?",
+              reason: "transport",
+              recoverable: true,
+            })
+            SessionStatus.set(timeout.id, {
+              type: "timeout",
+              message: "The operation timed out after retrying. SSE read timed out",
+              reason: "transport",
+              recoverable: true,
+            })
+            SessionStatus.set(failed.id, {
+              type: "failed",
+              message: "Fallback failed after transport error",
+              reason: "transport",
+              recoverable: true,
+            })
+            const app = Server.Default()
+            const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+            const prompt = spyOn(SessionPrompt, "prompt")
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [err.id, timeout.id, failed.id], mode: "restore" }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 3 })
+              expect(loop).toHaveBeenCalledTimes(3)
+              expect(prompt).not.toHaveBeenCalled()
+              expect(SessionStatus.get(err.id)).toEqual({ type: "running" })
+              expect(SessionStatus.get(timeout.id)).toEqual({ type: "running" })
+              expect(SessionStatus.get(failed.id)).toEqual({ type: "running" })
+            } finally {
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(err.id)
+              await Session.remove(timeout.id)
+              await Session.remove(failed.id)
+            }
+          },
+        }),
+    })
+  })
+
   test("sends a structured custom resume message when message mode is selected", async () => {
     await Instance.provide({
       directory: root,

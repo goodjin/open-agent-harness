@@ -29,7 +29,10 @@ describe("session state machine", () => {
           { type: "waiting_user" as const },
           { type: "waiting_child" as const, message: "waiting for child" },
           { type: "error" as const, message: "test error" },
+          { type: "error" as const, message: "net down", reason: "transport" as const, recoverable: true },
           { type: "timeout" as const, message: "test timeout" },
+          { type: "timeout" as const, message: "net timeout", reason: "transport" as const, recoverable: true },
+          { type: "failed" as const, message: "handoff failed", reason: "transport" as const, recoverable: true },
           { type: "retry" as const, attempt: 1, message: "retry message", next: Date.now() + 2000 },
           { type: "interrupted" as const, prior: "running" as const, message: "process stopped" },
           { type: "user_completed" as const, message: "accepted by user" },
@@ -53,6 +56,24 @@ describe("session state machine", () => {
         expect(status.type).toBe("idle")
       },
     })
+  })
+
+  test("classifies provider transport errors as retryable API errors", () => {
+    const timeout = MessageV2.fromError(new Error("SSE read timed out"), {
+      providerID: ProviderID.make("minimax-cn-coding-plan"),
+    })
+    expect(MessageV2.APIError.isInstance(timeout)).toBe(true)
+    if (!MessageV2.APIError.isInstance(timeout)) return
+    expect(timeout.data.isRetryable).toBe(true)
+    expect(timeout.data.metadata?.code).toBe("TimeoutError")
+
+    const down = MessageV2.fromError(new Error("Unable to connect. Is the computer able to access the url?"), {
+      providerID: ProviderID.make("minimax-cn-coding-plan"),
+    })
+    expect(MessageV2.APIError.isInstance(down)).toBe(true)
+    if (!MessageV2.APIError.isInstance(down)) return
+    expect(down.data.isRetryable).toBe(true)
+    expect(down.data.metadata?.code).toBe("TransportError")
   })
 
   test("VAL-SESSION-003: Idle to running transition", async () => {
@@ -187,6 +208,66 @@ describe("session state machine", () => {
             expect(SessionStatus.get(session.id)).toEqual({ type: "terminal_reply", message: "Restored from DB." })
 
             await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("persists recoverable transport stopped states", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-transport-restore"),
+          fn: async () => {
+            const err = await Session.create({})
+            const timeout = await Session.create({})
+            const failed = await Session.create({})
+
+            SessionStatus.set(err.id, {
+              type: "error",
+              message: "SSE read timed out",
+              reason: "transport",
+              recoverable: true,
+            })
+            SessionStatus.set(timeout.id, {
+              type: "timeout",
+              message: "The operation timed out after retrying. SSE read timed out",
+              reason: "transport",
+              recoverable: true,
+            })
+            SessionStatus.set(failed.id, {
+              type: "failed",
+              message: "Fallback failed after transport error",
+              reason: "transport",
+              recoverable: true,
+            })
+            await SessionStatus.flush()
+
+            const restored = await SessionStatus.restore()
+
+            expect(restored[err.id]).toEqual({
+              type: "error",
+              message: "SSE read timed out",
+              reason: "transport",
+              recoverable: true,
+            })
+            expect(restored[timeout.id]).toEqual({
+              type: "timeout",
+              message: "The operation timed out after retrying. SSE read timed out",
+              reason: "transport",
+              recoverable: true,
+            })
+            expect(restored[failed.id]).toEqual({
+              type: "failed",
+              message: "Fallback failed after transport error",
+              reason: "transport",
+              recoverable: true,
+            })
+
+            await Session.remove(err.id)
+            await Session.remove(timeout.id)
+            await Session.remove(failed.id)
           },
         }),
     })

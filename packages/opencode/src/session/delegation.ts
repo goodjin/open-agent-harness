@@ -2614,6 +2614,14 @@ export namespace SessionDelegation {
   }
 
   function settle(sessionID: SessionID, status: Status, output?: string) {
+    const current = SessionStatus.get(sessionID)
+    const transport =
+      (current.type === "error" || current.type === "timeout" || current.type === "failed") &&
+      current.reason === "transport" &&
+      current.recoverable === true
+    const failed = transport
+      ? { type: "failed" as const, message: output, reason: "transport" as const, recoverable: true }
+      : { type: "failed" as const }
     const next =
       status === "completed" || status === "partial"
         ? { type: "completed" as const }
@@ -2621,10 +2629,9 @@ export namespace SessionDelegation {
           ? { type: "terminal_reply" as const, message: output }
         : status === "blocked"
           ? { type: "blocked" as const }
-          : status === "failed"
-            ? { type: "failed" as const }
-            : { type: "waiting_user" as const }
-    const current = SessionStatus.get(sessionID).type
+        : status === "failed"
+          ? failed
+        : { type: "waiting_user" as const }
     const allowed = {
       completed: ["idle", "running", "rate_limited", "waiting_child", "completed", "terminal_reply"],
       terminal_reply: [
@@ -2694,7 +2701,7 @@ export namespace SessionDelegation {
         "waiting_child",
       ],
     }[next.type]
-    if (!allowed.includes(current)) return
+    if (!allowed.includes(current.type)) return
     SessionStatus.set(sessionID, next)
   }
 

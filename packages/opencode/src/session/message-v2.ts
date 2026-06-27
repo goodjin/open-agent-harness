@@ -63,6 +63,28 @@ export namespace MessageV2 {
     z.object({ message: z.string(), responseBody: z.string().optional() }),
   )
 
+  function transport(e: unknown) {
+    const code = typeof (e as SystemError)?.code === "string" ? (e as SystemError).code : undefined
+    const msg = e instanceof Error ? e.message : typeof e === "string" ? e : undefined
+    const text = msg ?? code ?? ""
+    if (
+      !code?.match(/^(ECONNRESET|ETIMEDOUT|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ENETUNREACH)$/) &&
+      !/SSE read timed out|Unable to connect|network.*failed|fetch failed|connection.*timed out/i.test(text)
+    )
+      return
+    return new MessageV2.APIError(
+      {
+        message: msg ?? "Provider transport failed.",
+        isRetryable: true,
+        metadata: {
+          code: code ?? (/timed out|timeout/i.test(text) ? "TimeoutError" : "TransportError"),
+          message: msg ?? text,
+        },
+      },
+      { cause: e },
+    ).toObject()
+  }
+
   export const OutputFormatText = z
     .object({
       type: z.literal("text"),
@@ -926,6 +948,8 @@ export namespace MessageV2 {
   }
 
   export function fromError(e: unknown, ctx: { providerID: ProviderID }): NonNullable<Assistant["error"]> {
+    const net = transport(e)
+    if (net) return net
     switch (true) {
       case e instanceof DOMException && e.name === "AbortError":
         return new MessageV2.AbortedError(

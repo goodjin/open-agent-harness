@@ -39,6 +39,16 @@ function trim(value: string, limit: number) {
   return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`
 }
 
+function restorable(status: SessionStatus.Info) {
+  if (
+    (status.type === "error" || status.type === "timeout" || status.type === "failed") &&
+    status.reason === "transport" &&
+    status.recoverable === true
+  )
+    return true
+  return false
+}
+
 function size(value: unknown) {
   return JSON.stringify(value).length
 }
@@ -468,7 +478,7 @@ export const SessionRoutes = lazy(() =>
               const info = await Session.get(id)
               const status = SessionStatus.get(id)
               if (mode === "restore") {
-                if (!restore.has(status.type)) return false
+                if (!restore.has(status.type) && !restorable(status)) return false
                 SessionStatus.set(id, { type: "running" })
                 void SessionPrompt.loop({ sessionID: id }).catch((err) => {
                   log.warn("session tree restore failed", { sessionID: id, err })
