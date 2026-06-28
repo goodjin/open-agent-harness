@@ -39,14 +39,25 @@ function trim(value: string, limit: number) {
   return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`
 }
 
-function restorable(status: SessionStatus.Info) {
+async function restorable(sessionID: SessionID, status: SessionStatus.Info) {
   if (
     (status.type === "error" || status.type === "timeout" || status.type === "failed") &&
     status.reason === "transport" &&
     status.recoverable === true
   )
     return true
-  return false
+  if (status.type !== "error" && status.type !== "timeout" && status.type !== "failed") return false
+  const msg = await assistant(sessionID)
+  if (!msg || msg.info.role !== "assistant" || !msg.info.error) return false
+  const text = msg.parts.some((part) => part.type === "text" && part.text.trim().length > 0)
+  if (text) return false
+  const tools = msg.parts.some((part) => part.type === "tool" && (part.state.status === "completed" || part.state.status === "error"))
+  return !tools
+}
+
+async function assistant(sessionID: SessionID) {
+  const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch(() => [])
+  return msgs.findLast((msg) => msg.info.role === "assistant")
 }
 
 function size(value: unknown) {
@@ -478,7 +489,7 @@ export const SessionRoutes = lazy(() =>
               const info = await Session.get(id)
               const status = SessionStatus.get(id)
               if (mode === "restore") {
-                if (!restore.has(status.type) && !restorable(status)) return false
+                if (!restore.has(status.type) && !(await restorable(id, status))) return false
                 SessionStatus.set(id, { type: "running" })
                 void SessionPrompt.loop({ sessionID: id }).catch((err) => {
                   log.warn("session tree restore failed", { sessionID: id, err })

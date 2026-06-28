@@ -9,7 +9,7 @@ import { SessionStatus } from "../../src/session/status"
 import { SessionPrompt } from "../../src/session/prompt"
 import { Log } from "../../src/util/log"
 import { ModelID, ProviderID } from "../../src/provider/schema"
-import { MessageID } from "../../src/session/schema"
+import { MessageID, PartID } from "../../src/session/schema"
 import type { MessageV2 } from "../../src/session/message-v2"
 
 const root = path.join(__dirname, "../..")
@@ -284,6 +284,146 @@ describe("Session tree projection", () => {
               await Session.remove(err.id)
               await Session.remove(timeout.id)
               await Session.remove(failed.id)
+            }
+          },
+        }),
+    })
+  })
+
+  test("restores failed LLM requests without requiring transport status detail", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "tree-provider-error" })
+            const user = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)) as MessageV2.User
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              parentID: user.id,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: root, root },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              error: {
+                name: "UnknownError",
+                data: { message: "Provider quota is exhausted. Add credits and try again." },
+              },
+            } as MessageV2.Assistant)
+            SessionStatus.set(session.id, { type: "error", message: "Provider quota is exhausted. Add credits and try again." })
+            const app = Server.Default()
+            const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+            const prompt = spyOn(SessionPrompt, "prompt")
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [session.id], mode: "restore" }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 1 })
+              expect(loop).toHaveBeenCalledTimes(1)
+              expect(prompt).not.toHaveBeenCalled()
+              expect(SessionStatus.get(session.id)).toEqual({ type: "running" })
+            } finally {
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(session.id)
+            }
+          },
+        }),
+    })
+  })
+
+  test("does not restore failed sessions after tool results were recorded", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "tree-tool-error" })
+            const user = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+            } as MessageV2.User)) as MessageV2.User
+            const msg = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              parentID: user.id,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              path: { cwd: root, root },
+              cost: 0,
+              tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+              modelID: ModelID.make("gpt-5.2"),
+              providerID: ProviderID.make("openai"),
+              time: { created: Date.now(), completed: Date.now() },
+              error: {
+                name: "UnknownError",
+                data: { message: "Tool failed after execution." },
+              },
+            } as MessageV2.Assistant)) as MessageV2.Assistant
+            await Session.updatePart({
+              id: PartID.ascending(),
+              messageID: msg.id,
+              sessionID: session.id,
+              type: "tool",
+              callID: "call_write",
+              tool: "bash",
+              state: {
+                status: "completed",
+                input: { command: "touch file" },
+                output: "done",
+                title: "bash",
+                metadata: {},
+                time: { start: Date.now(), end: Date.now() },
+              },
+            } as MessageV2.ToolPart)
+            SessionStatus.set(session.id, { type: "failed", message: "Tool failed after execution." })
+            const app = Server.Default()
+            const loop = spyOn(SessionPrompt, "loop")
+            const prompt = spyOn(SessionPrompt, "prompt")
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [session.id], mode: "restore" }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 0 })
+              expect(loop).not.toHaveBeenCalled()
+              expect(prompt).not.toHaveBeenCalled()
+              expect(SessionStatus.get(session.id)).toEqual({ type: "failed", message: "Tool failed after execution." })
+            } finally {
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(session.id)
             }
           },
         }),
