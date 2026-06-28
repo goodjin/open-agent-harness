@@ -620,11 +620,26 @@ export namespace SessionDelegation {
     const session = await Session.get(sessionID).catch(() => undefined)
     const item = session ? assignment(session) : undefined
     if (!item) return
-    await submit({
-      sessionID: SessionID.make(item.parent_session_id),
-      runID: item.run_id,
-      agent: item.parent_agent,
-    })
+    if (await complete({ sessionID })) return
+    const fresh = await Session.get(sessionID).catch(() => undefined)
+    const next = fresh ? assignment(fresh) ?? item : item
+    if (await delivered(next)) {
+      await notified(sessionID, next)
+      return
+    }
+    const parent = SessionID.make(next.parent_session_id)
+    if (closable(SessionStatus.get(sessionID))) {
+      await submit({
+        sessionID: parent,
+        runID: next.run_id,
+        agent: next.parent_agent,
+      })
+      return
+    }
+    setTimeout(() => {
+      complete({ sessionID }).catch((err) => log.warn("delegation terminal retry failed", { err, sessionID }))
+    }, 50)
+    await hold(parent, next.run_id)
   }
 
   function packet(input: {
@@ -1544,9 +1559,13 @@ export namespace SessionDelegation {
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const mode = opts?.mode
-    const entries = Object.entries(object(protocol.pending_delegations))
+    const rows = Object.entries(object(protocol.pending_delegations))
       .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
-      .filter((entry) => entry.item.run_id === runID && (mode !== undefined || ended(SessionStatus.get(entry.id))))
+      .filter((entry) => entry.item.run_id === runID)
+    const list = await Promise.all(rows.map(async (row) => ({ ...row, done: await delivered(row.item) })))
+    const entries = list.filter(
+      (entry) => entry.done || mode !== undefined || closable(SessionStatus.get(entry.id)),
+    )
     for (const entry of entries) {
       if (await delivered(entry.item)) {
         await notified(entry.id, entry.item)
@@ -1742,6 +1761,12 @@ export namespace SessionDelegation {
       status.type === "error" ||
       status.type === "archived"
     )
+  }
+
+  function closable(status: SessionStatus.Info) {
+    if (!ended(status)) return false
+    if (status.type === "completed" || status.type === "user_completed" || status.type === "terminal_reply") return false
+    return true
   }
 
   function map(status: SessionStatus.Info): Status {

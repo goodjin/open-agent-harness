@@ -4518,7 +4518,7 @@ describe("SessionDelegation", () => {
     }
   })
 
-  test("terminal child status finalizes parent run with a synthetic result", async () => {
+  test("failed terminal child status finalizes parent run with a synthetic result", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
     const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
@@ -4592,7 +4592,7 @@ describe("SessionDelegation", () => {
               })
               await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
 
-              SessionStatus.set(child.id, { type: "completed" })
+              SessionStatus.set(child.id, { type: "failed", message: "Child failed before returning a result." })
               await new Promise((resolve) => setTimeout(resolve, 20))
 
               const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
@@ -4604,6 +4604,7 @@ describe("SessionDelegation", () => {
               expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.summary).toContain("No structured child result was recorded")
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("Child failed before returning a result.")
               expect(pctx.completed_delegations?.[0]?.result_id).toBeString()
               expect(pctx.delegation_notified_runs?.apr_terminal_status).toBeNumber()
               const sent = prompts.filter((entry) => entry.sessionID === parent.id)
@@ -4612,6 +4613,157 @@ describe("SessionDelegation", () => {
               expect(text).toContain("Delegated child sessions have finished")
               expect(text).toContain("`apr_terminal_status`")
               expect(text).toContain(child.id)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("completed terminal child status reuses a stored ActionResult before notifying parent", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              SessionDelegation.init()
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_terminal_action_result",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const msg = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_impl",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "impl",
+                    status: "success",
+                    result: "race result",
+                    changed_files: "none",
+                    verification: "checked",
+                    blockers: "none",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+
+              SessionStatus.set(child.id, { type: "completed" })
+              await new Promise((resolve) => setTimeout(resolve, 20))
+
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string; result_id?: string; summary?: string }[]
+                pending_delegations?: Record<string, unknown>
+              }
+              const raw = await SessionResult.raw(pctx.completed_delegations?.[0]?.result_id ?? "")
+
+              expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.summary).toContain("race result")
+              expect(pctx.completed_delegations?.[0]?.summary).not.toContain("No structured child result was recorded")
+              expect((raw as { carrier?: string }).carrier).toBe("action_result")
+              const sent = prompts.filter((entry) => entry.sessionID === parent.id)
+              expect(sent).toHaveLength(1)
+              expect(sent[0]?.parts?.some((part) => part.type === "text" && part.text.includes("race result"))).toBe(
+                true,
+              )
             },
           }),
       })
