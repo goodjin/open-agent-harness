@@ -2,7 +2,7 @@ Create a new OpenCode agent from this request:
 
 $ARGUMENTS
 
-Use the `agent_generate` tool to turn the request into an optimized agent template. Review the generated `meta`, `identity`, and `rules` briefly for obvious problems, then use the `agent_save` tool to save it.
+Use `agent_query` first if an existing template might fit. For protocol-delegated dynamic agents, prefer `agent_create` with a required `kind`, `identity_name`, and `persona_name`; reviewer agents are `kind: "verifier"` with `subtype: "review"`. For ordinary user-authored templates, use `agent_generate`, review the generated `meta`, `identity`, and `rules` briefly for obvious problems, then use `agent_save`.
 
 Default to project scope unless the user explicitly asks for a user/global agent. Default to a subagent unless the user clearly asks for a primary agent.
 

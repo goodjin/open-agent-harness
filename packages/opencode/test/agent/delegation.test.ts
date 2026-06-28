@@ -6,19 +6,20 @@ const all = [
   agent("build", true),
   agent("plan", true),
   agent("milestone-planner"),
-  agent("epic-planner"),
   agent("feature-planner"),
   agent("backend"),
   agent("frontend"),
+  agent("dynamic-worker", false, true),
+  agent("retired-worker", false, true, false),
 ]
 
-function agent(name: string, primary = false) {
+function agent(name: string, primary = false, hidden = false, delegable = true) {
   return {
     name,
     entry: {
       primary,
-      delegable: true,
-      hidden: false,
+      delegable,
+      hidden,
     },
   }
 }
@@ -33,7 +34,6 @@ describe("agent delegation visibility", () => {
       "build",
       "plan",
       "milestone-planner",
-      "epic-planner",
       "feature-planner",
       "backend",
       "frontend",
@@ -48,17 +48,6 @@ describe("agent delegation visibility", () => {
     expect(names("milestone-planner")).toEqual([
       "build",
       "plan",
-      "epic-planner",
-      "feature-planner",
-      "backend",
-      "frontend",
-    ])
-  })
-
-  test("epic planner sees delegable agents except itself and upstream agents", () => {
-    expect(names("epic-planner")).toEqual([
-      "build",
-      "plan",
       "feature-planner",
       "backend",
       "frontend",
@@ -67,6 +56,14 @@ describe("agent delegation visibility", () => {
 
   test("feature planner sees delegable agents except itself and upstream agents", () => {
     expect(names("feature-planner")).toEqual(["build", "plan", "backend", "frontend"])
+  })
+
+  test("hidden dynamic agents are explicit-only", () => {
+    const dynamic = all.find((item) => item.name === "dynamic-worker")
+    const retired = all.find((item) => item.name === "retired-worker")
+    expect(names("default")).not.toContain("dynamic-worker")
+    expect(dynamic && AgentDelegation.explicit(dynamic, "default")).toBe(true)
+    expect(retired && AgentDelegation.explicit(retired, "default")).toBe(false)
   })
 
   test("runtime metadata gates non-agent assignment before launch", () => {

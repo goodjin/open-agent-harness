@@ -62,7 +62,18 @@ describe("AgentTemplateLoader", () => {
       const registry = new AgentRegistry("/nonexistent/path", "/also/nonexistent")
       const agent = await registry.get("default")
       expect(agent?.meta.permission_mode).toBe("custom")
-      expect(agent?.meta.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
+      expect(agent?.meta.allowed_tools).toEqual([
+        "task",
+        "question",
+        "read",
+        "glob",
+        "grep",
+        "codesearch",
+        "lsp",
+        "external_directory",
+        "agent_query",
+        "agent_create",
+      ])
       expect(agent?.meta.inherit_permissions).toBe(false)
       expect(agent?.policy.rules).toContainEqual(
         expect.objectContaining({
@@ -74,6 +85,20 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.policy.rules).toContainEqual(
         expect.objectContaining({
           permission: "task",
+          action: "allow",
+          source: "agent",
+        }),
+      )
+      expect(agent?.policy.rules).toContainEqual(
+        expect.objectContaining({
+          permission: "agent_query",
+          action: "allow",
+          source: "agent",
+        }),
+      )
+      expect(agent?.policy.rules).toContainEqual(
+        expect.objectContaining({
+          permission: "agent_create",
           action: "allow",
           source: "agent",
         }),
@@ -96,13 +121,13 @@ describe("AgentTemplateLoader", () => {
 
     test("built-in coordinator planners keep strict graph routing footers", async () => {
       const agent = BUILTIN_AGENTS.find((item) => item.id === "default")
-      expect(agent?.rules).toContain("always split work by the project/PRD -> milestone -> epic slice -> feature/capability -> implementation task -> verification/review hierarchy")
+      expect(agent?.rules).toContain("always split work by the project/PRD -> milestone -> feature/capability -> implementation task -> verification/review hierarchy")
       expect(agent?.rules).toContain("Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan")
       expect(agent?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
       expect(agent?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
       expect(agent?.meta.concurrency).toBe(-1)
 
-      ;["milestone-planner", "epic-planner", "feature-planner"].forEach((id) => {
+      ;["milestone-planner", "feature-planner"].forEach((id) => {
         const planner = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(planner?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
         expect(planner?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
@@ -111,7 +136,7 @@ describe("AgentTemplateLoader", () => {
     })
 
     test("built-in agents keep planner and action protocols isolated", () => {
-      ;["default", "milestone-planner", "epic-planner", "feature-planner", "protocol-runner"].forEach((id) => {
+      ;["default", "milestone-planner", "feature-planner", "protocol-runner"].forEach((id) => {
         const agent = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(agent?.meta.runner).toBe("protocol")
         expect(agent?.protocol?.file).toBe("planner-protocol.md")
@@ -171,17 +196,17 @@ describe("AgentTemplateLoader", () => {
         default: ["coordination", "medium", false, true, true, true, true, false],
         "general-investigator": ["investigation", "low", false, false, true, true, false, false],
         "general-executor": ["implementation", "medium", true, false, true, true, false, false],
-        "general-executor-verifier": ["general_execution_verification", "low", false, false, true, true, false, false],
-        explore: ["code_search", "low", false, false, true, true, false, false],
+        "general-executor-verifier": ["general_execution_verification", "low", false, false, false, false, false, true],
+        explore: ["code_search", "low", false, false, false, false, false, true],
         compaction: ["system_compaction", "low", false, false, false, false, false, true],
         title: ["system_title", "low", false, false, false, false, false, true],
         summary: ["system_summary", "low", false, false, false, false, false, true],
         "technical-reviewer": ["technical_review", "high", false, false, true, true, false, false],
-        librarian: ["source_research", "low", false, false, true, true, false, false],
-        "plan-reviewer": ["plan_review", "medium", false, false, true, true, false, false],
+        librarian: ["source_research", "low", false, false, false, false, false, true],
+        "plan-reviewer": ["plan_review", "medium", false, false, false, false, false, true],
         "multimodal-looker": ["media_interpretation", "low", false, false, true, true, false, false],
-        "workflow-runner": ["workflow_profile_management", "low", true, true, false, true, false, false],
-        "protocol-runner": ["protocol_orchestration", "low", false, true, false, true, false, false],
+        "workflow-runner": ["workflow_profile_management", "low", true, false, false, false, false, true],
+        "protocol-runner": ["protocol_orchestration", "low", false, false, false, false, false, true],
       } as const
       const agents = await loader.loadAll()
 

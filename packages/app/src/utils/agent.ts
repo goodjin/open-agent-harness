@@ -6,6 +6,15 @@ type Entry = {
   entry?: Agent["entry"]
 }
 
+type Label = {
+  name: string
+  displayName?: string
+  identityName?: string
+  personaName?: string
+  identity_name?: string
+  persona_name?: string
+}
+
 const defaults: Record<string, string> = {
   ask: "var(--icon-agent-ask-base)",
   build: "var(--icon-agent-build-base)",
@@ -36,6 +45,19 @@ export function agentDelegable(item: Entry) {
 export function agentColor(name: string, custom?: string) {
   if (custom) return custom
   return defaults[name] ?? defaults[name.toLowerCase()]
+}
+
+export function agentLabel(agent: Label | undefined) {
+  if (!agent) return undefined
+  const identity = agent.identityName ?? agent.identity_name
+  const persona = agent.personaName ?? agent.persona_name
+  if (identity && persona) return `${identity}-${persona}`
+  return agent.displayName ?? agent.name
+}
+
+export function agentLabelByName(name: string | undefined, agents: readonly Label[]) {
+  if (!name) return undefined
+  return agentLabel(agents.find((agent) => agent.name === name)) ?? name
 }
 
 export function messageAgentColor(

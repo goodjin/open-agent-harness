@@ -118,6 +118,24 @@ describe("AgentTemplate.Meta", () => {
       expect(result.data.auto_append_prompt).toBe("Follow the final output contract.")
     })
 
+    test("display identity fields are optional and trimmed", () => {
+      const result = AgentTemplate.Meta.safeParse({
+        id: "backend",
+        name: "Backend Worker",
+        identity_name: " 后端开发 ",
+        persona_name: " 沈越 ",
+        subtype: " backend ",
+        role: "coding",
+        description: "A backend agent",
+      })
+      expect(result.success).toBe(true)
+      if (!result.success) return
+
+      expect(result.data.identity_name).toBe("后端开发")
+      expect(result.data.persona_name).toBe("沈越")
+      expect(result.data.subtype).toBe("backend")
+    })
+
     test("instruction file position is optional and validated", () => {
       const result = AgentTemplate.Meta.safeParse({
         id: "reviewer",
@@ -463,7 +481,7 @@ describe("AgentTemplate.Meta", () => {
           role: "coding",
           description: "A legacy agent",
         }).inherit_permissions,
-      ).toBe(true)
+      ).toBe(false)
       expect(
         AgentTemplate.Meta.parse({
           schema_version: "agent.metadata.v1",
@@ -822,13 +840,13 @@ describe("AgentTemplate.Meta", () => {
       })
 
       expect(AgentTemplate.permission(strict)).toEqual({
-        inherit: true,
+        inherit: false,
         policy: "inherit",
         allowed_tools: [],
         denied_tools: ["bash"],
       })
       expect(AgentTemplate.permission(lax)).toEqual({
-        inherit: true,
+        inherit: false,
         policy: "allow",
         allowed_tools: [],
         denied_tools: ["bash"],
@@ -876,7 +894,7 @@ describe("AgentTemplate.Meta", () => {
           workflow_mode: "auto",
           allowed_tools: [],
           denied_tools: [],
-          inherit_permissions: true,
+          inherit_permissions: false,
           permission_mode: "strict",
         })
       }
@@ -1094,7 +1112,18 @@ describe("AgentTemplate.Meta", () => {
       expect(result.data.id).toBe("default")
       expect(result.data.workflow_mode).toBe("auto")
       expect(result.data.permission_mode).toBe("custom")
-      expect(result.data.allowed_tools).toEqual(["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"])
+      expect(result.data.allowed_tools).toEqual([
+        "task",
+        "question",
+        "read",
+        "glob",
+        "grep",
+        "codesearch",
+        "lsp",
+        "external_directory",
+        "agent_query",
+        "agent_create",
+      ])
       expect(result.data.capability.writes).toBe(false)
       expect(result.data.inherit_permissions).toBe(false)
       expect(AgentTemplate.validateTemplate({ dir: "default", meta: result.data })).toEqual([])

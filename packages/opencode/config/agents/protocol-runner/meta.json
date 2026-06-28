@@ -14,15 +14,19 @@
     ]
   },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": false,
-    "mentionable": true,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "protocol_orchestration",
-    "tags": ["protocol", "toolcall", "runtime"],
+    "tags": [
+      "protocol",
+      "toolcall",
+      "runtime"
+    ],
     "cost": "low",
     "writes": false
   },
@@ -35,5 +39,9 @@
   "allowed_tools": [],
   "denied_tools": [],
   "inherit_permissions": false,
-  "permission_mode": "strict"
+  "permission_mode": "strict",
+  "identity_name": "协议运行",
+  "persona_name": "程式",
+  "subtype": "protocol",
+  "hidden": true
 }

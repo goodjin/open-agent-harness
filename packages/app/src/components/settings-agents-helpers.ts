@@ -37,6 +37,9 @@ export type Form = {
   scope: Scope
   id: string
   name: string
+  identityName: string
+  personaName: string
+  subtype: string
   role: string
   description: string
   identity: string
@@ -152,6 +155,9 @@ export const blank = (): Form => ({
   scope: "project",
   id: "",
   name: "",
+  identityName: "",
+  personaName: "",
+  subtype: "",
   role: "",
   description: "",
   identity: "",
@@ -185,6 +191,9 @@ export const fill = (item: AgentManageInfo): Form => ({
   scope: item.source === "user" ? "user" : "project",
   id: item.meta.id,
   name: item.meta.name,
+  identityName: item.meta.identity_name ?? "",
+  personaName: item.meta.persona_name ?? "",
+  subtype: item.meta.subtype ?? "",
   role: item.meta.role,
   description: item.meta.description,
   identity: item.identity,
@@ -276,6 +285,9 @@ export const meta = (form: Form): Meta => {
     ...form.raw,
     id: form.id.trim(),
     name: form.name.trim(),
+    identity_name: text(form.identityName),
+    persona_name: text(form.personaName),
+    subtype: text(form.subtype),
     role: form.role.trim(),
     description: form.description.trim(),
     mode: form.mode,

@@ -28,12 +28,12 @@
     "edges": [
       {
         "kind": "decompose",
-        "to": "feature-planner",
+        "target": "feature-planner",
         "trigger": "feature_identified"
       },
       {
         "kind": "fallback",
-        "to": "general-investigator",
+        "target": "general-investigator",
         "trigger": "unclear_domain_boundary"
       }
     ],
@@ -43,22 +43,41 @@
     }
   },
   "runtime_boundary": {
-    "resource_classes": ["service.execute", "human.ask"],
+    "resource_classes": [
+      "service.execute",
+      "human.ask"
+    ],
     "actions": {
-      "allow": ["task", "question", "filesystem.read", "code.search"],
-      "deny": ["filesystem.write", "filesystem.execute"]
+      "allow": [
+        "task",
+        "question",
+        "filesystem.read",
+        "code.search"
+      ],
+      "deny": [
+        "filesystem.write",
+        "filesystem.execute"
+      ]
     }
   },
   "completion": {
     "mode": "evidence",
-    "criteria": ["features_bounded", "feature_dependencies_declared", "risks_listed"],
+    "criteria": [
+      "features_bounded",
+      "feature_dependencies_declared",
+      "risks_listed"
+    ],
     "required_artifacts": [],
     "required_evidence": [],
     "allow_partial": true
   },
   "observability": {
     "level": "standard",
-    "events": ["assignment_started", "collaboration_planned", "completion_evaluated"]
+    "events": [
+      "assignment_started",
+      "collaboration_planned",
+      "completion_evaluated"
+    ]
   },
   "lifecycle": {
     "status": "active",
@@ -66,14 +85,20 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "epic_planning",
-    "tags": ["planning", "epic", "capability", "domain", "decomposition"],
+    "tags": [
+      "planning",
+      "epic",
+      "capability",
+      "domain",
+      "decomposition"
+    ],
     "cost": "medium",
     "writes": false
   },
@@ -87,8 +112,27 @@
     "file": "planner-protocol.md"
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["task", "question", "read", "glob", "grep", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "bash", "todowrite"],
+  "allowed_tools": [
+    "task",
+    "question",
+    "read",
+    "glob",
+    "grep",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "bash",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "史诗规划",
+  "persona_name": "宋岚",
+  "subtype": "epic",
+  "hidden": true
 }

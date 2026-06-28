@@ -38,6 +38,9 @@ export namespace AgentManage {
   const Effective = z
     .object({
       name: z.string(),
+      identity_name: z.string().optional(),
+      persona_name: z.string().optional(),
+      subtype: z.string().optional(),
       description: z.string(),
       mode: Template.RuntimeMode,
       entry: Template.Entry,
@@ -318,6 +321,9 @@ export namespace AgentManage {
     const hidden = cfg?.hidden ?? (entry.hidden || item.meta.hidden)
     return {
       name: cfg?.name ?? item.name,
+      identity_name: item.meta.identity_name,
+      persona_name: item.meta.persona_name,
+      subtype: item.meta.subtype,
       description: cfg?.description ?? item.meta.description,
       mode,
       entry: {

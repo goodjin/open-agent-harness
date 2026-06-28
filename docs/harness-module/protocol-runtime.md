@@ -8,11 +8,11 @@ This module document remains the implementation detail companion. When the two d
 
 ## Default Agent Routing Contract
 
-The `default` agent is a coordinator, not an implementation worker. It must classify every request by scale, decompose work through the project/PRD, milestone, epic slice, feature/capability, implementation task, and verification/review hierarchy, then declare the complete current-layer Agent Protocol graph.
+The `default` agent is a coordinator, not an implementation worker. It must classify every request by scale, decompose work through the project/PRD, milestone, feature/capability, implementation task, and verification/review hierarchy, then declare the complete current-layer Agent Protocol graph.
 
-User wording such as "do it all", "overall progress", or "do not handle one task at a time" changes graph completeness, not routing authority. The default agent should express that request by declaring all known graph items and dependencies in one package. It must not collapse multiple milestones, epic slices, features, or implementation tasks into a single broad worker assignment.
+User wording such as "do it all", "overall progress", or "do not handle one task at a time" changes graph completeness, not routing authority. The default agent should express that request by declaring all known graph items and dependencies in one package. It must not collapse multiple milestones, features, or implementation tasks into a single broad worker assignment.
 
-When the next layer still needs decomposition, the graph must route that item to the matching planner (`milestone-planner`, `epic-planner`, or `feature-planner`). Implementation workers are valid only for bounded implementation tasks with one objective, one main surface, and a clear verification path.
+When the next layer still needs decomposition, the graph must route that item to the matching planner (`milestone-planner` or `feature-planner`). Implementation workers are valid only for bounded implementation tasks with one objective, one main surface, and a clear verification path.
 
 The `default` agent and planner chain carry metadata `request_footer` reminders. Runtime appends these footers to each outbound request without storing them in conversation history. The footers reinforce two contracts: understand intent and clarify important details before dispatch, then autonomously continue the confirmed graph; and call the native `AgentProtocolOutput` tool exactly once with `{ "version": "2", "items": [...] }` instead of plain text or raw JSON.
 
@@ -28,10 +28,18 @@ Package agents should be named by their actual routing role and behavior. The ru
 - `helper`: gathers context or analyzes a bounded question without writing.
 - `worker`: performs a bounded implementation, migration, release, or operations task.
 - `verifier`: validates or reviews without writing.
+- `system`: runtime-owned internal agents such as title, summary, compaction, and protocol runners.
+- `skill`: imported compatibility skill templates.
 
-Do not keep broad legacy fallback agents when current explicit agents cover the behavior. Broad planning belongs to `default`, `milestone-planner`, `epic-planner`, and `feature-planner`; requirement clarification stays in `default`; broad investigation uses `general-investigator` or `explore`; bounded fallback implementation uses `general-executor`; bounded fallback review uses `general-executor-verifier` or `verifier`.
+The visible package catalog is intentionally small and purpose-based: `default`, `milestone-planner`, `feature-planner`, `general-executor`, `verifier`, `technical-reviewer`, `general-investigator`, `release-runner`, `docs-maintainer`, `multimodal-looker`, and `agent-creator`.
 
-Agents with names that do not expose their behavior, or compatibility agents that overlap with the explicit planner/helper/worker/verifier set, should be removed from the package catalog rather than renamed into new broad workers.
+Retired or overly specific package agents remain installed but hidden. Hidden agents can still resolve historical `session.agent` bindings, but ordinary session selection, mention autocomplete, and default delegation candidate lists must not expose them. A hidden agent should be made visible again only through explicit management action.
+
+Agent metadata may declare `identity_name`, `persona_name`, and `subtype`. Session-facing labels prefer `identity_name-persona_name`, then fall back to the template display `name`, then the agent id. Reviewer agents are not a top-level kind; they are `kind: "verifier"` plus `subtype: "review"`.
+
+Planner flow uses `Milestone -> Feature -> Work Task`. New session titles should preserve derivation through prefixes: `M1 ...`, `M1-F1 ...`, and work-task prefixes such as `M1-F1-DEV`, `M1-F1-TEST`, `M1-F1-REVIEW`, `M1-F1-ARCH`, `M1-F1-RESEARCH`, or `M1-F1-RELEASE`.
+
+Planners may use managed agent tools when the visible catalog is not specific enough. `agent_query` inspects existing templates, including hidden templates when requested. `agent_create` creates hidden, protocol-delegable project or user agents with a required `kind`, optional `subtype`, `identity_name`, and `persona_name`. Planner-created agents may be `planner`, `worker`, `verifier`, or `helper`; `system` and `skill` are reserved for runtime and compatibility import paths. Dynamic `worker`, `verifier`, and `helper` agents automatically receive the `action-protocol.md` request footer so parent sessions can collect terminal `ActionResult` handoffs.
 
 ## Agent Protocol Families
 
@@ -92,7 +100,7 @@ The queue has a timer for RPM waits. Unlike concurrency, RPM capacity can become
 
 Queued LLM requests carry the instance that created the queue item. Any `rate_limited`, queued-abort cleanup, or post-acquire `running` status update must run in that originating instance, even when an unrelated request in another project releases capacity and pumps the shared queue. This prevents one project directory from retaining stale provider/model limit status for a session owned by another directory.
 
-Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `default` is unlimited, `milestone-planner` runs one delegated task at a time, `epic-planner` runs two, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
+Agent-level concurrency is separate from provider/model request limits. Planner defaults are conservative unless agent metadata overrides them: `default` is unlimited, `milestone-planner` runs one delegated task at a time, and `feature-planner` runs five. Worker agents remain unlimited at this layer unless their metadata declares a `concurrency` value; provider/model `concurrency` and `rpm` still gate the actual LLM request stream.
 
 ## Invalid Protocol Output Diagnostics
 

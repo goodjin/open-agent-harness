@@ -43,5 +43,8 @@
   "allowed_tools": [],
   "denied_tools": [],
   "inherit_permissions": false,
-  "permission_mode": "strict"
+  "permission_mode": "strict",
+  "identity_name": "版本管理",
+  "persona_name": "陆序",
+  "subtype": "release"
 }

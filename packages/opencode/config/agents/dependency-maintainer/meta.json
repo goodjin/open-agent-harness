@@ -20,10 +20,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "dependency_maintenance",
@@ -44,5 +44,9 @@
     "todowrite"
   ],
   "inherit_permissions": false,
-  "permission_mode": "lax"
+  "permission_mode": "lax",
+  "identity_name": "依赖维护",
+  "persona_name": "方维",
+  "subtype": "dependency",
+  "hidden": true
 }

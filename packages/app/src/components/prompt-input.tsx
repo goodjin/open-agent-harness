@@ -37,7 +37,7 @@ import { usePlatform } from "@/context/platform"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { promptEnabled, promptProbe } from "@/testing/prompt"
-import { agentMentionable } from "@/utils/agent"
+import { agentLabel, agentMentionable } from "@/utils/agent"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
 import { createPromptAttachments } from "./prompt-input/attachments"
 import { ACCEPTED_FILE_TYPES } from "./prompt-input/files"
@@ -559,11 +559,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     sync.data.agent
       .filter(agentMentionable)
       .map(
-        (agent): AtOption => ({ type: "agent", name: agent.name, display: agent.name, description: agent.description }),
+        (agent): AtOption => ({ type: "agent", name: agent.name, display: agentLabel(agent) ?? agent.name, description: agent.description }),
       ),
   )
   const agents = createMemo(() => local.agent.list())
   const agentNames = createMemo(() => agents().map((agent) => agent.name))
+  const shown = () => agentLabel(local.agent.current()) ?? local.agent.current()?.name ?? ""
   const desc = (name: string | undefined) => agents().find((agent) => agent.name === name)?.description
   const [changingAgent, setChangingAgent] = createSignal(false)
   const lockedAgent = createMemo(() => Boolean(params.id) && !changingAgent())
@@ -1650,7 +1651,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                       <Tooltip
                         placement="top"
                         gutter={4}
-                        value={desc(local.agent.current()?.name) ?? local.agent.current()?.name ?? "Change agent"}
+                        value={(desc(local.agent.current()?.name) ?? shown()) || "Change agent"}
                       >
                         <Button
                           size="normal"
@@ -1661,7 +1662,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                           onClick={() => setChangingAgent(true)}
                         >
                           <span class="truncate text-13-regular text-text-base">
-                            Change agent: {local.agent.current()?.name ?? ""}
+                            Change agent: {shown()}
                           </span>
                           <Icon name="chevron-down" size="small" />
                         </Button>

@@ -27,7 +27,12 @@
   },
   "capability": {
     "purpose": "implementation",
-    "tags": ["implementation", "fallback", "scope", "execution"],
+    "tags": [
+      "implementation",
+      "fallback",
+      "scope",
+      "execution"
+    ],
     "cost": "medium",
     "writes": true
   },
@@ -35,8 +40,28 @@
     "file": "action-protocol.md"
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "edit", "write", "apply_patch", "task", "todowrite"],
-  "denied_tools": ["todoread"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory",
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
+  "denied_tools": [
+    "todoread"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "开发执行",
+  "persona_name": "沈越",
+  "subtype": "development"
 }

@@ -22,13 +22,22 @@
   },
   "capability": {
     "purpose": "media_interpretation",
-    "tags": ["media", "images", "documents"],
+    "tags": [
+      "media",
+      "images",
+      "documents"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read"],
+  "allowed_tools": [
+    "read"
+  ],
   "denied_tools": [],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "多模态分析",
+  "persona_name": "夏观",
+  "subtype": "multimodal"
 }

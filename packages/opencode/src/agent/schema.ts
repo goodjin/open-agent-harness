@@ -301,6 +301,9 @@ export namespace AgentTemplate {
       // Required fields - must be non-empty strings
       id: Text.describe("Unique identifier for the agent"),
       name: Text.describe("Display name of the agent"),
+      identity_name: Text.optional().describe("User-facing role identity, such as 后端开发"),
+      persona_name: Text.optional().describe("User-facing persona name, such as 沈越"),
+      subtype: Text.optional().describe("Role subtype such as backend, review, test, release, or research"),
       role: Text.describe("Role definition for the agent"),
       description: Text.describe("Description of what the agent does"),
 
@@ -390,5 +393,5 @@ export namespace AgentTemplate {
     return "primary"
   }
 
-  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "maxToolCalls" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol" | "request_footer">
+  export type OptionalFields = Pick<Meta, "schema_version" | "agent_version" | "kind" | "identity_name" | "persona_name" | "subtype" | "logo" | "model_preference" | "mode" | "entry" | "capability" | "hidden" | "runner" | "concurrency" | "maxToolCalls" | "workflow_mode" | "allowed_tools" | "denied_tools" | "inherit_permissions" | "permission_mode" | "instructions" | "auto_append_prompt" | "contracts" | "collaboration" | "runtime_boundary" | "completion" | "observability" | "lifecycle" | "protocol" | "request_footer">
 }

@@ -1,27 +1,27 @@
 # Rules
 
-- Decompose exactly one milestone into epic-slice child units.
+- Decompose exactly one milestone into feature child units.
 - Before decomposing, identify the user's intent, milestone goal, success criteria, hard constraints, known context, unresolved details, and risks.
-- Ask important clarifying questions at the beginning when they change the epic-slice graph; once clear or explicitly assumed, declare the complete epic-slice graph and continue from delegated results without asking for the next small step.
+- Ask important clarifying questions at the beginning when they change the feature graph; once clear or explicitly assumed, declare the complete feature graph and continue from delegated results without asking for the next small step.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
-- If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this milestone scope. Do not ask the user to confirm the same work again; declare the executable epic-slice graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
-- If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the epic-slice boundaries and risks, then summarize the proposed epic-slice graph for user confirmation.
-- If a missing detail can change the epic-slice graph, use an `input` item to ask the user before declaring the graph.
+- If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this milestone scope. Do not ask the user to confirm the same work again; declare the executable feature graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
+- If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the feature boundaries and risks, then summarize the proposed feature graph for user confirmation.
+- If a missing detail can change the feature graph, use an `input` item to ask the user before declaring the graph.
 - If the missing detail appears to change the original goal or the required planning layer, use an `input` item with two options: continue planning in this session with an explicit assumption, or reply to the parent session with the blocker and suggested rerouting. If the user chooses to continue, declare the confirmed graph. If the user chooses to reply, emit a terminal `reply` explaining the blocker, the user's choice, and the suggested next default-session clarification.
-- Each epic slice should have `id`, `name`, `goal`, `scope`, `out_of_scope`, `depends`, `acceptance_signals`, `risks`, and `unresolved_questions`.
-- For direct user-originated graphs, emit a `kind: "confirm"` item whose `plan` contains the full proposed epic-slice breakdown and confirmation summary, then declare executable epic-slice items in the same package.
-- For delegated graphs from a parent session, skip the `confirm` item and declare executable epic-slice items directly.
+- Each feature should have `id`, `name`, `goal`, `scope`, `out_of_scope`, `depends`, `acceptance_signals`, `risks`, and `unresolved_questions`.
+- For direct user-originated graphs, emit a `kind: "confirm"` item whose `plan` contains the full proposed feature breakdown and confirmation summary, then declare executable feature items in the same package.
+- For delegated graphs from a parent session, skip the `confirm` item and declare executable feature items directly.
 - When a `confirm` item is used, every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
-- Express the epic-slice breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
-- Declare all currently identifiable epic slices in one DSL package.
-- Add one `items[]` entry per epic slice. Each item should use `kind: "agent"` and `target: "epic-planner"`.
-- Put the epic slice details in each item's `prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare feature child items through DSL.
-- Add `depends` chains for all planner handoff items so epic slices are executed sequentially by declaration order unless a strong reason requires different ordering.
-- Use a later DSL package only for epic slices that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
+- Express the feature breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
+- Declare all currently identifiable features in one DSL package.
+- Add one `items[]` entry per feature. Each item should use `kind: "agent"` and `target: "feature-planner"`.
+- Put the feature details in each item's `prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare implementation, verification, review, documentation, migration, release, or operations child items through DSL.
+- Add `depends` chains for all planner handoff items so features are executed sequentially by declaration order unless a strong reason requires different ordering.
+- Use a later DSL package only for features that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - Do not assign implementation work to coding agents.
-- Do not create feature, implementation, or verification tasks directly.
+- Do not create implementation or verification tasks directly.
 - If source context is missing, read small local docs or known source files yourself when that is enough.
-- Delegate to `explore` only when the milestone needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
-- Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
-- Stop after declaring the confirmed epic-slice child graph.
+- Delegate to `general-investigator` only when the milestone needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
+- Do not delegate investigation for known files, narrow symbols, or context that fits in your own read/search pass.
+- Stop after declaring the confirmed feature child graph.

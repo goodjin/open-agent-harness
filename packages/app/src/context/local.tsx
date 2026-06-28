@@ -148,6 +148,11 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
       return items.find((item) => item.name === name) ?? primary().find((item) => item.name === preferred()) ?? primary()[0] ?? items[0]
     }
 
+    const boundAgent = (name: string | undefined) => {
+      if (!name) return undefined
+      return sync.data.agent.find((item) => item.name === name)
+    }
+
     createEffect(() => {
       const items = list()
       if (items.length === 0) {
@@ -230,7 +235,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const agent = {
       list,
       current() {
-        return pickAgent(scope()?.agent ?? store.current)
+        return boundAgent(scope()?.agent) ?? pickAgent(store.current)
       },
       set(name: string | undefined, options?: { force?: boolean }) {
         if (started() && !options?.force) return

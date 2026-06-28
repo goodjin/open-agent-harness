@@ -14,15 +14,19 @@
     ]
   },
   "entry": {
-    "primary": true,
+    "primary": false,
     "delegable": false,
-    "mentionable": true,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "workflow_profile_management",
-    "tags": ["workflow", "action-graph", "runtime"],
+    "tags": [
+      "workflow",
+      "action-graph",
+      "runtime"
+    ],
     "cost": "low",
     "writes": true
   },
@@ -31,5 +35,9 @@
   "allowed_tools": [],
   "denied_tools": [],
   "inherit_permissions": false,
-  "permission_mode": "strict"
+  "permission_mode": "strict",
+  "identity_name": "工作流运行",
+  "persona_name": "秦行",
+  "subtype": "workflow",
+  "hidden": true
 }

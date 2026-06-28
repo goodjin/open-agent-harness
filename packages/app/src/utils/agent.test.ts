@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { agentDelegable, agentHidden, agentMentionable, agentPrimary, agentVisible } from "./agent"
+import { agentDelegable, agentHidden, agentLabel, agentMentionable, agentPrimary, agentVisible } from "./agent"
 
 describe("agent entry helpers", () => {
   test("keeps legacy mode semantics when entry is absent", () => {
@@ -42,5 +42,13 @@ describe("agent entry helpers", () => {
     expect(agentPrimary(item)).toBe(false)
     expect(agentMentionable(item)).toBe(false)
     expect(agentDelegable(item)).toBe(false)
+  })
+
+  test("formats identity and persona labels", () => {
+    expect(agentLabel({ name: "backend", displayName: "Backend Worker", identityName: "后端开发", personaName: "沈越" })).toBe(
+      "后端开发-沈越",
+    )
+    expect(agentLabel({ name: "backend", displayName: "Backend Worker" })).toBe("Backend Worker")
+    expect(agentLabel({ name: "backend" })).toBe("backend")
   })
 })

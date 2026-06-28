@@ -23185,6 +23185,15 @@
           "name": {
             "type": "string"
           },
+          "identity_name": {
+            "type": "string"
+          },
+          "persona_name": {
+            "type": "string"
+          },
+          "subtype": {
+            "type": "string"
+          },
           "description": {
             "type": "string"
           },
@@ -23813,6 +23822,21 @@
               },
               "name": {
                 "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "identity_name": {
+                "description": "User-facing role identity, such as 后端开发",
+                "type": "string",
+                "minLength": 1
+              },
+              "persona_name": {
+                "description": "User-facing persona name, such as 沈越",
+                "type": "string",
+                "minLength": 1
+              },
+              "subtype": {
+                "description": "Role subtype such as backend, review, test, release, or research",
                 "type": "string",
                 "minLength": 1
               },
@@ -24469,6 +24493,21 @@
               },
               "name": {
                 "description": "Display name of the agent",
+                "type": "string",
+                "minLength": 1
+              },
+              "identity_name": {
+                "description": "User-facing role identity, such as 后端开发",
+                "type": "string",
+                "minLength": 1
+              },
+              "persona_name": {
+                "description": "User-facing persona name, such as 沈越",
+                "type": "string",
+                "minLength": 1
+              },
+              "subtype": {
+                "description": "Role subtype such as backend, review, test, release, or research",
                 "type": "string",
                 "minLength": 1
               },
@@ -25146,6 +25185,21 @@
                 "type": "string",
                 "minLength": 1
               },
+              "identity_name": {
+                "description": "User-facing role identity, such as 后端开发",
+                "type": "string",
+                "minLength": 1
+              },
+              "persona_name": {
+                "description": "User-facing persona name, such as 沈越",
+                "type": "string",
+                "minLength": 1
+              },
+              "subtype": {
+                "description": "Role subtype such as backend, review, test, release, or research",
+                "type": "string",
+                "minLength": 1
+              },
               "role": {
                 "description": "Role definition for the agent",
                 "type": "string",
@@ -25790,6 +25844,21 @@
                 "type": "string",
                 "minLength": 1
               },
+              "identity_name": {
+                "description": "User-facing role identity, such as 后端开发",
+                "type": "string",
+                "minLength": 1
+              },
+              "persona_name": {
+                "description": "User-facing persona name, such as 沈越",
+                "type": "string",
+                "minLength": 1
+              },
+              "subtype": {
+                "description": "Role subtype such as backend, review, test, release, or research",
+                "type": "string",
+                "minLength": 1
+              },
               "role": {
                 "description": "Role definition for the agent",
                 "type": "string",
@@ -26249,6 +26318,18 @@
         "type": "object",
         "properties": {
           "name": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "identityName": {
+            "type": "string"
+          },
+          "personaName": {
+            "type": "string"
+          },
+          "subtype": {
             "type": "string"
           },
           "description": {

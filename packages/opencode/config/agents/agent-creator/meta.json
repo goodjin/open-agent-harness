@@ -22,13 +22,42 @@
   },
   "capability": {
     "purpose": "agent_authoring",
-    "tags": ["agent", "authoring", "templates"],
+    "tags": [
+      "agent",
+      "authoring",
+      "templates"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["agent_generate", "agent_save"],
-  "denied_tools": ["task", "edit", "write", "apply_patch", "bash", "read", "glob", "grep", "list", "webfetch", "websearch", "codesearch", "lsp", "external_directory", "todowrite", "todoread"],
+  "allowed_tools": [
+    "agent_generate",
+    "agent_save",
+    "agent_query",
+    "agent_create"
+  ],
+  "denied_tools": [
+    "task",
+    "edit",
+    "write",
+    "apply_patch",
+    "bash",
+    "read",
+    "glob",
+    "grep",
+    "list",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory",
+    "todowrite",
+    "todoread"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "智能体创建",
+  "persona_name": "白栩",
+  "subtype": "agent-authoring"
 }

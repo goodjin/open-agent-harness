@@ -76,6 +76,16 @@ export namespace AgentDelegation {
     return !new Set([agent, ...(deny[agent] ?? [])]).has(item.name)
   }
 
+  export function explicit(item: Item, agent: string) {
+    if (item.kind === "system") return false
+    if (item.entry) {
+      if (item.entry.delegable !== true) return false
+    } else if (item.mode === "primary") {
+      return false
+    }
+    return !new Set([agent, ...(deny[agent] ?? [])]).has(item.name)
+  }
+
   export function list<T extends Item>(items: T[], agent: string) {
     return items.filter((item) => visible(item, agent))
   }

@@ -15,6 +15,7 @@ import { useLanguage } from "@/context/language"
 import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
+import { agentLabelByName } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
 import {
   displaySessionTitle,
@@ -463,7 +464,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
     onCleanup(() => window.clearInterval(id))
   })
 
-  const agent = createMemo(() => sessionAgentLabel(props.session, view().agent))
+  const agent = createMemo(() => sessionAgentLabel(props.session, agentLabelByName(view().agent, sessionStore.agent)))
   const durationLabel = createMemo(() => duration(props.session, messages(), view().isWorking, now()))
 
   const hoverMessages = createMemo(() => messages()?.filter((m): m is UserMessage => m.role === "user"))
@@ -477,7 +478,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   })
   const titleTip = createMemo(() => {
     const base = title()
-    const a = view().agent
+    const a = agentLabelByName(view().agent, sessionStore.agent)
     return a ? `${base} (${a})` : base
   })
   const canExpand = createMemo(() => (props.childCount ?? 0) > 0)

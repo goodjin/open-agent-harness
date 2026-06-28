@@ -19,11 +19,11 @@
     ]
   },
   "entry": {
-    "primary": true,
-    "delegable": true,
-    "mentionable": true,
+    "primary": false,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "refactoring",
@@ -45,5 +45,9 @@
     "task"
   ],
   "inherit_permissions": false,
-  "permission_mode": "lax"
+  "permission_mode": "lax",
+  "identity_name": "重构执行",
+  "persona_name": "唐砺",
+  "subtype": "refactor",
+  "hidden": true
 }

@@ -22,13 +22,24 @@
   },
   "capability": {
     "purpose": "system_title",
-    "tags": ["system", "title"],
+    "tags": [
+      "system",
+      "title"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["edit", "bash", "task"],
+  "denied_tools": [
+    "edit",
+    "bash",
+    "task"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "标题生成",
+  "persona_name": "题白",
+  "subtype": "title",
+  "hidden": true
 }

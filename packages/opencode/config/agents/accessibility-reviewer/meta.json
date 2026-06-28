@@ -15,20 +15,47 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "accessibility_review",
-    "tags": ["accessibility", "a11y", "frontend", "keyboard", "semantics", "focus"],
+    "tags": [
+      "accessibility",
+      "a11y",
+      "frontend",
+      "keyboard",
+      "semantics",
+      "focus"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "可访问性审查",
+  "persona_name": "宁达",
+  "subtype": "accessibility",
+  "hidden": true
 }

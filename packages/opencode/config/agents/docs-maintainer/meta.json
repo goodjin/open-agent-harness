@@ -56,5 +56,8 @@
     "todowrite"
   ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "文档维护",
+  "persona_name": "苏简",
+  "subtype": "docs"
 }

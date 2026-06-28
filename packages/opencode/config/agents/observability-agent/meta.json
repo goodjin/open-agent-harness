@@ -20,20 +20,34 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "observability",
-    "tags": ["logs", "metrics", "tracing", "audit", "health", "diagnostics"],
+    "tags": [
+      "logs",
+      "metrics",
+      "tracing",
+      "audit",
+      "health",
+      "diagnostics"
+    ],
     "cost": "medium",
     "writes": true
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["task", "todowrite"],
+  "denied_tools": [
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "lax"
+  "permission_mode": "lax",
+  "identity_name": "可观测性",
+  "persona_name": "纪明",
+  "subtype": "observability",
+  "hidden": true
 }

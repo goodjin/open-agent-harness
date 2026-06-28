@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "workflow_authoring",
@@ -57,5 +57,9 @@
     "todoread"
   ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "工作流创建",
+  "persona_name": "罗织",
+  "subtype": "workflow",
+  "hidden": true
 }

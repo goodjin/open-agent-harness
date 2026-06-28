@@ -5,6 +5,7 @@ import { AgentTemplate } from "@/agent/schema"
 import { Tool } from "./tool"
 
 const Scope = z.enum(["user", "project"]).default("project")
+const Kind = z.enum(["planner", "worker", "verifier", "helper"])
 
 const Generate = z.object({
   description: z.string().min(1),
@@ -19,6 +20,28 @@ const Save = z.object({
   meta: AgentTemplate.MetaInput,
   identity: z.string().default(""),
   rules: z.string().default(""),
+})
+
+const Query = z.object({
+  include_hidden: z.boolean().default(false),
+  kind: AgentTemplate.Kind.optional(),
+  subtype: z.string().min(1).optional(),
+})
+
+const Create = z.object({
+  scope: Scope.optional(),
+  id: z.string().min(1).optional(),
+  template: z.string().min(1).optional(),
+  kind: Kind,
+  subtype: z.string().min(1).optional(),
+  identity_name: z.string().min(1),
+  persona_name: z.string().min(1),
+  description: z.string().min(1),
+  role: z.string().min(1).optional(),
+  identity: z.string().default(""),
+  rules: z.string().default(""),
+  tools: z.array(z.string().min(1)).optional(),
+  writes: z.boolean().optional(),
 })
 
 function id(input: string) {
@@ -47,6 +70,57 @@ function meta(input: z.infer<typeof Generate>, out: Awaited<ReturnType<typeof Ag
     denied_tools: [],
     permission_mode: input.tools ? "custom" : "lax",
   })
+}
+
+function action(meta: AgentTemplate.Meta) {
+  if (meta.kind !== "worker" && meta.kind !== "verifier" && meta.kind !== "helper") return meta
+  return AgentTemplate.Meta.parse({
+    ...meta,
+    request_footer: meta.request_footer ?? {
+      file: "action-protocol.md",
+    },
+  })
+}
+
+function created(input: z.infer<typeof Create>, base?: AgentManage.Info) {
+  const aid = input.id ?? id([input.subtype, input.kind, Date.now().toString(36)].filter(Boolean).join("-"))
+  return action(
+    AgentTemplate.Meta.parse({
+      ...(base?.meta ?? {}),
+      id: aid,
+      name: `${input.identity_name}-${input.persona_name}`,
+      kind: input.kind,
+      subtype: input.subtype,
+      identity_name: input.identity_name,
+      persona_name: input.persona_name,
+      role: input.role ?? base?.meta.role ?? `You are ${input.identity_name}-${input.persona_name}.`,
+      description: input.description,
+      mode: "subagent",
+      entry: {
+        primary: false,
+        delegable: true,
+        mentionable: false,
+        default: false,
+        hidden: true,
+      },
+      capability: {
+        purpose: input.subtype ?? input.kind,
+        tags: [input.kind, input.subtype, input.identity_name].filter((item): item is string => !!item),
+        cost: base?.meta.capability?.cost ?? "medium",
+        writes: input.writes ?? input.kind === "worker",
+      },
+      runner: input.kind === "planner" ? "protocol" : "chat",
+      allowed_tools: input.tools ?? base?.meta.allowed_tools ?? [],
+      denied_tools: base?.meta.denied_tools ?? [],
+      permission_mode: input.tools ? "custom" : base?.meta.permission_mode ?? "lax",
+      inherit_permissions: false,
+    }),
+  )
+}
+
+function label(meta: Pick<AgentTemplate.Meta, "id" | "name" | "identity_name" | "persona_name">) {
+  if (meta.identity_name && meta.persona_name) return `${meta.identity_name}-${meta.persona_name}`
+  return meta.name || meta.id
 }
 
 export const AgentGenerateTool = Tool.define("agent_generate", {
@@ -84,6 +158,73 @@ export const AgentSaveTool = Tool.define("agent_save", {
         source: item.source,
       },
       output: `Saved agent ${item.id} to ${item.dir}`,
+    }
+  },
+})
+
+export const AgentQueryTool = Tool.define("agent_query", {
+  description: "Query managed agent templates, including hidden templates when requested.",
+  parameters: Query,
+  async execute(params) {
+    const items = await AgentManage.list()
+    const filtered = items
+      .filter((item) => params.include_hidden || !item.effective.hidden)
+      .filter((item) => !params.kind || item.meta.kind === params.kind)
+      .filter((item) => !params.subtype || item.meta.subtype === params.subtype)
+      .map((item) => ({
+        id: item.id,
+        label: label(item.meta),
+        name: item.name,
+        kind: item.meta.kind,
+        subtype: item.meta.subtype,
+        hidden: item.effective.hidden,
+        delegable: item.effective.entry.delegable,
+        description: item.effective.description,
+      }))
+    return {
+      title: "Agent query",
+      metadata: {
+        count: filtered.length,
+      },
+      output: JSON.stringify(filtered, null, 2),
+    }
+  },
+})
+
+export const AgentCreateTool = Tool.define("agent_create", {
+  description:
+    "Create a hidden project or user agent for protocol delegation. Dynamic worker, verifier, and helper agents automatically receive the ActionResult protocol footer.",
+  parameters: Create,
+  async execute(params) {
+    const base = params.template ? await AgentManage.get(params.template).catch(() => undefined) : undefined
+    const item = await AgentManage.create({
+      scope: params.scope ?? "project",
+      meta: created(params, base),
+      identity: params.identity || base?.identity || `# Identity\n\n${params.role ?? `You are ${params.identity_name}-${params.persona_name}.`}`,
+      rules: params.rules || base?.rules || "# Rules\n\n- Complete the delegated assignment within the stated scope.",
+    })
+    return {
+      title: `Created ${item.id}`,
+      metadata: {
+        id: item.id,
+        kind: item.meta.kind,
+        subtype: item.meta.subtype,
+        hidden: item.effective.hidden,
+        request_footer: item.meta.request_footer,
+      },
+      output: JSON.stringify(
+        {
+          id: item.id,
+          label: label(item.meta),
+          kind: item.meta.kind,
+          subtype: item.meta.subtype,
+          hidden: item.effective.hidden,
+          request_footer: item.meta.request_footer,
+          dir: item.dir,
+        },
+        null,
+        2,
+      ),
     }
   },
 })

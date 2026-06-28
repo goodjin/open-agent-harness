@@ -15,20 +15,46 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "debugging",
-    "tags": ["debugging", "reproduction", "root-cause", "logs", "tests"],
+    "tags": [
+      "debugging",
+      "reproduction",
+      "root-cause",
+      "logs",
+      "tests"
+    ],
     "cost": "medium",
     "writes": false
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "故障定位",
+  "persona_name": "孟析",
+  "subtype": "debug",
+  "hidden": true
 }

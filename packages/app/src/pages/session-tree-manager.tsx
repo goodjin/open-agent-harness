@@ -15,6 +15,7 @@ import { useModels } from "@/context/models"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { useLanguage } from "@/context/language"
+import { agentVisible } from "@/utils/agent"
 import { formatServerError } from "@/utils/server-errors"
 import { parseConflict, updateBody, type Conflict } from "./session-tree-manager-helpers"
 
@@ -191,7 +192,12 @@ export default function SessionTreeManager() {
       .filter((item) => resume.has(item.status.type) || (store.includeDone && done.has(item.status.type)))
       .map((item) => item.id),
   )
-  const agent = createMemo(() => sync.data.agent.map((item) => item.name).sort((a, b) => a.localeCompare(b)))
+  const agent = createMemo(() =>
+    sync.data.agent
+      .filter(agentVisible)
+      .map((item) => item.name)
+      .sort((a, b) => a.localeCompare(b)),
+  )
   const current = createMemo(() => {
     if (!store.providerID || !store.modelID) return
     return models.find({ providerID: store.providerID, modelID: store.modelID })

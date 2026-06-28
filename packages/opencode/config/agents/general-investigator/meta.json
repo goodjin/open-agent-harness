@@ -22,13 +22,37 @@
   },
   "capability": {
     "purpose": "investigation",
-    "tags": ["analysis", "investigation", "discovery", "scope"],
+    "tags": [
+      "analysis",
+      "investigation",
+      "discovery",
+      "scope"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "调研分析",
+  "persona_name": "许问",
+  "subtype": "research"
 }

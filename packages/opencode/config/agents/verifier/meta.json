@@ -22,7 +22,13 @@
   },
   "capability": {
     "purpose": "verification",
-    "tags": ["testing", "typecheck", "lint", "build", "validation"],
+    "tags": [
+      "testing",
+      "typecheck",
+      "lint",
+      "build",
+      "validation"
+    ],
     "cost": "low",
     "writes": false
   },
@@ -30,8 +36,24 @@
     "file": "action-protocol.md"
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "测试验证",
+  "persona_name": "顾准",
+  "subtype": "test"
 }

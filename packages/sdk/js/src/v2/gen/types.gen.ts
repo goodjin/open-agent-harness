@@ -2339,6 +2339,9 @@ export type ProviderAuthAuthorization = {
 
 export type AgentManageEffective = {
   name: string
+  identity_name?: string
+  persona_name?: string
+  subtype?: string
   description: string
   mode: "primary" | "subagent" | "all"
   entry: {
@@ -2569,6 +2572,18 @@ export type AgentManageInfo = {
      * Display name of the agent
      */
     name: string
+    /**
+     * User-facing role identity, such as 后端开发
+     */
+    identity_name?: string
+    /**
+     * User-facing persona name, such as 沈越
+     */
+    persona_name?: string
+    /**
+     * Role subtype such as backend, review, test, release, or research
+     */
+    subtype?: string
     /**
      * Role definition for the agent
      */
@@ -2844,6 +2859,18 @@ export type AgentManageValidateOutput = {
      * Display name of the agent
      */
     name: string
+    /**
+     * User-facing role identity, such as 后端开发
+     */
+    identity_name?: string
+    /**
+     * User-facing persona name, such as 沈越
+     */
+    persona_name?: string
+    /**
+     * Role subtype such as backend, review, test, release, or research
+     */
+    subtype?: string
     /**
      * Role definition for the agent
      */
@@ -3125,6 +3152,18 @@ export type AgentManageSaveInput = {
      */
     name: string
     /**
+     * User-facing role identity, such as 后端开发
+     */
+    identity_name?: string
+    /**
+     * User-facing persona name, such as 沈越
+     */
+    persona_name?: string
+    /**
+     * Role subtype such as backend, review, test, release, or research
+     */
+    subtype?: string
+    /**
      * Role definition for the agent
      */
     role: string
@@ -3398,6 +3437,18 @@ export type AgentManagePatchInput = {
      */
     name: string
     /**
+     * User-facing role identity, such as 后端开发
+     */
+    identity_name?: string
+    /**
+     * User-facing persona name, such as 沈越
+     */
+    persona_name?: string
+    /**
+     * Role subtype such as backend, review, test, release, or research
+     */
+    subtype?: string
+    /**
      * Role definition for the agent
      */
     role: string
@@ -3558,6 +3609,10 @@ export type Command = {
 
 export type Agent = {
   name: string
+  displayName?: string
+  identityName?: string
+  personaName?: string
+  subtype?: string
   description?: string
   kind?: "planner" | "worker" | "verifier" | "helper" | "system" | "skill"
   mode: "subagent" | "primary" | "all"

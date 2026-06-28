@@ -22,13 +22,26 @@
   },
   "capability": {
     "purpose": "system_summary",
-    "tags": ["system", "summary"],
+    "tags": [
+      "system",
+      "summary"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
   "allowed_tools": [],
-  "denied_tools": ["edit", "write", "apply_patch", "bash", "task"],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "bash",
+    "task"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "会话摘要",
+  "persona_name": "简安",
+  "subtype": "summary",
+  "hidden": true
 }

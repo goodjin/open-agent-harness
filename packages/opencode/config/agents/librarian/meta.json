@@ -15,20 +15,45 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "source_research",
-    "tags": ["docs", "research", "external"],
+    "tags": [
+      "docs",
+      "research",
+      "external"
+    ],
     "cost": "low",
     "writes": false
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "bash", "webfetch", "websearch", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite", "call_omo_agent"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "bash",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "task",
+    "todowrite",
+    "call_omo_agent"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "资料检索",
+  "persona_name": "章源",
+  "subtype": "research",
+  "hidden": true
 }

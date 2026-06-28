@@ -19,11 +19,11 @@
     ]
   },
   "entry": {
-    "primary": true,
-    "delegable": true,
-    "mentionable": true,
+    "primary": false,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "migration",
@@ -42,5 +42,9 @@
   "allowed_tools": [],
   "denied_tools": [],
   "inherit_permissions": false,
-  "permission_mode": "strict"
+  "permission_mode": "strict",
+  "identity_name": "迁移执行",
+  "persona_name": "江迁",
+  "subtype": "migration",
+  "hidden": true
 }

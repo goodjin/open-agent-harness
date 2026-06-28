@@ -3124,22 +3124,22 @@ export namespace SessionRunner {
     parent: string,
   ): Promise<{ ok: true; agent: Agent.Info } | { ok: false; error: string }> {
     const agents = AgentDelegation.list(await Agent.list(), parent)
-    const found =
-      action.executor.target === "auto"
-        ? AgentProtocolExecutor.select(
-            action,
-            agents.map((item) => ({
-              id: item.name,
-              entry: item.entry,
-              capability: item.capability,
-            })),
-          )?.id
-        : agents.find((item) => item.name === action.executor.target)?.name
+    const found = action.executor.target === "auto"
+      ? AgentProtocolExecutor.select(
+          action,
+          agents.map((item) => ({
+            id: item.name,
+            entry: item.entry,
+            capability: item.capability,
+          })),
+        )?.id
+      : action.executor.target
     if (!found)
       return { ok: false as const, error: `Protocol agent not available from ${parent}: ${action.executor.target}` }
     const selected = await Agent.get(found)
     if (!selected) return { ok: false as const, error: `Protocol agent not found: ${found}` }
-    if (AgentDelegation.visible(selected, parent)) return { ok: true as const, agent: selected }
+    if (action.executor.target === "auto" && AgentDelegation.visible(selected, parent)) return { ok: true as const, agent: selected }
+    if (action.executor.target !== "auto" && AgentDelegation.explicit(selected, parent)) return { ok: true as const, agent: selected }
     return { ok: false as const, error: `Protocol agent not available from ${parent}: ${selected.name}` }
   }
 

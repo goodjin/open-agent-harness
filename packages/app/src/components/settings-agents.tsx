@@ -413,6 +413,17 @@ export const SettingsAgents: Component<{ selected?: string }> = (props) => {
                   onChange={(value) => setForm("id", value)}
                 />
                 <Field label="Name" value={form.name} onChange={(value) => setForm("name", value)} />
+                <Field
+                  label="Identity name"
+                  value={form.identityName}
+                  onChange={(value) => setForm("identityName", value)}
+                />
+                <Field
+                  label="Persona name"
+                  value={form.personaName}
+                  onChange={(value) => setForm("personaName", value)}
+                />
+                <Field label="Subtype" value={form.subtype} onChange={(value) => setForm("subtype", value)} />
                 <Field label="Role" value={form.role} onChange={(value) => setForm("role", value)} />
                 <Field
                   label="Description"

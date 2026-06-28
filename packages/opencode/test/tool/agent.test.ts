@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
 import z from "zod"
-import { AgentSaveTool } from "../../src/tool/agent"
+import { AgentCreateTool, AgentSaveTool } from "../../src/tool/agent"
 import { AgentTemplate } from "../../src/agent/schema"
 import { tmpdir } from "../fixture/fixture"
 import { Instance } from "../../src/project/instance"
@@ -62,6 +62,42 @@ describe("agent tools", () => {
         expect(await Bun.file(path.join(tmp.path, ".opencode", "agents", "risk", "identity.md")).text()).toContain(
           "analyze risk",
         )
+      },
+    })
+  })
+
+  test("creates hidden dynamic action agents with ActionResult footer", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const tool = await AgentCreateTool.init()
+        const out = await tool.execute(
+          {
+            scope: "project",
+            id: "m1-f1-worker",
+            kind: "worker",
+            subtype: "backend",
+            identity_name: "后端开发",
+            persona_name: "沈越",
+            description: "Implement a bounded backend task.",
+            identity: "",
+            rules: "",
+          },
+          ctx(),
+        )
+
+        const meta = await Bun.file(path.join(tmp.path, ".opencode", "agents", "m1-f1-worker", "meta.json")).json()
+        expect(out.output).toContain("后端开发-沈越")
+        expect(meta.entry).toEqual({
+          primary: false,
+          delegable: true,
+          mentionable: false,
+          default: false,
+          hidden: true,
+        })
+        expect(meta.request_footer).toEqual({ file: "action-protocol.md" })
       },
     })
   })

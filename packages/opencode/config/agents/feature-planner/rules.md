@@ -16,10 +16,12 @@
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Express the task breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.
-- Add one `items[]` entry per task. Each item should use `kind: "agent"` and a concrete specialist target such as `frontend`, `backend`, `database-agent`, `refactorer`, `migration-runner`, `docs-maintainer`, `backend-verifier`, `frontend-verifier`, `database-agent-verifier`, `data-migration-runner-verifier`, `migration-runner-verifier`, `docs-maintainer-verifier`, and `verifier` when a domain-specific verifier is unavailable, plus `technical-reviewer`, `security-reviewer`, `performance-reviewer`, `accessibility-reviewer`, `devops-agent`, or `observability-agent`.
+- Add one `items[]` entry per task. Each item should use `kind: "agent"` and a visible purpose-based target such as `general-executor`, `verifier`, `technical-reviewer`, `general-investigator`, `docs-maintainer`, `release-runner`, `multimodal-looker`, or `agent-creator`.
+- Use `agent_query` before creating a narrower specialist when the visible catalog does not fit the task.
+- Use `agent_create` to create a hidden protocol-delegable specialist only when the task needs a narrower identity than the visible catalog provides. Dynamic agents require `kind`, `identity_name`, and `persona_name`; reviewer agents are `kind: "verifier"` with `subtype: "review"`.
 - Prefer one implementation worker per bounded surface area. For multi-surface features, split before dispatching so each child call has one primary domain and one verification path.
-- Do not use `build` or other broad workers for implementation tasks when a domain-specific implementation worker exists.
-- For broad discovery tasks, use `explore` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
+- Do not use hidden retired agents for new work unless a protocol-created dynamic agent explicitly names them as a template.
+- For broad discovery tasks, use `general-investigator` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
 - Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
@@ -30,6 +32,7 @@
 - An implementation task should have one objective, one main subsystem, 3 to 5 concrete work items at most, one verification path, and an expected change size of roughly 10 files or fewer.
 - Do not assign large feature work directly to implementation agents. Split it into smaller task calls first.
 - If source context is missing, read small local docs or known source files yourself when that is enough.
-- Delegate to `explore` only when the feature needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
-- Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
+- Delegate to `general-investigator` only when the feature needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
+- Do not delegate investigation for known files, narrow symbols, or context that fits in your own read/search pass.
+- Name work task sessions with the parent feature prefix plus work nature, such as `M1-F1-DEV`, `M1-F1-TEST`, `M1-F1-REVIEW`, `M1-F1-ARCH`, `M1-F1-RESEARCH`, or `M1-F1-RELEASE`.
 - Stop after declaring the confirmed execution and verification child graph.

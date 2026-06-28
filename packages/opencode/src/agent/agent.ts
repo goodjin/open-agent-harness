@@ -25,6 +25,10 @@ export namespace Agent {
   export const Info = z
     .object({
       name: z.string(),
+      displayName: z.string().optional(),
+      identityName: z.string().optional(),
+      personaName: z.string().optional(),
+      subtype: z.string().optional(),
       description: z.string().optional(),
       kind: TemplateSchema.Kind.optional(),
       mode: z.enum(["subagent", "primary", "all"]),
@@ -99,6 +103,10 @@ export namespace Agent {
     const policy = await buildPolicy(template.meta)
     return {
       name: template.id,
+      displayName: template.meta.name,
+      identityName: template.meta.identity_name,
+      personaName: template.meta.persona_name,
+      subtype: template.meta.subtype,
       description: template.meta.description,
       kind: template.meta.kind,
       mode: TemplateSchema.mode(template.meta),
@@ -133,6 +141,10 @@ export namespace Agent {
       info ??
       ({
         name,
+        displayName: cfg.name,
+        identityName: undefined,
+        personaName: undefined,
+        subtype: undefined,
         description: cfg.description,
         kind: undefined,
         mode: cfg.mode ?? "all",
@@ -161,6 +173,10 @@ export namespace Agent {
       variant: cfg.variant ?? next.variant,
       prompt: cfg.prompt ?? next.prompt,
       description: cfg.description ?? next.description,
+      displayName: next.displayName,
+      identityName: next.identityName,
+      personaName: next.personaName,
+      subtype: next.subtype,
       temperature: cfg.temperature ?? next.temperature,
       topP: cfg.top_p ?? next.topP,
       mode,

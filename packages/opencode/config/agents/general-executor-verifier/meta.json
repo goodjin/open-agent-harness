@@ -15,14 +15,19 @@
   },
   "entry": {
     "primary": false,
-    "delegable": true,
-    "mentionable": true,
+    "delegable": false,
+    "mentionable": false,
     "default": false,
-    "hidden": false
+    "hidden": true
   },
   "capability": {
     "purpose": "general_execution_verification",
-    "tags": ["verification", "review", "execution", "scope"],
+    "tags": [
+      "verification",
+      "review",
+      "execution",
+      "scope"
+    ],
     "cost": "low",
     "writes": false
   },
@@ -30,8 +35,28 @@
     "file": "action-protocol.md"
   },
   "workflow_mode": "auto",
-  "allowed_tools": ["read", "glob", "grep", "codesearch", "lsp", "external_directory"],
-  "denied_tools": ["edit", "write", "apply_patch", "bash", "task", "webfetch", "websearch", "todowrite"],
+  "allowed_tools": [
+    "read",
+    "glob",
+    "grep",
+    "codesearch",
+    "lsp",
+    "external_directory"
+  ],
+  "denied_tools": [
+    "edit",
+    "write",
+    "apply_patch",
+    "bash",
+    "task",
+    "webfetch",
+    "websearch",
+    "todowrite"
+  ],
   "inherit_permissions": false,
-  "permission_mode": "custom"
+  "permission_mode": "custom",
+  "identity_name": "开发验收",
+  "persona_name": "沈越审",
+  "subtype": "review",
+  "hidden": true
 }
