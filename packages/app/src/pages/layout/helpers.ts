@@ -205,6 +205,11 @@ type Status = {
 const closed = ["idle", "completed", "terminal_reply", "user_completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "waiting_child", "paused", "aborting"]
 const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
+const live = ["running", "queued", "starting", "retry"]
+const wait = ["waiting_permission", "waiting_user", "waiting_child", "rate_limited", "paused"]
+const stop = ["idle", "archived"]
+
+export type SessionFilter = "active" | "waiting" | "success" | "failed" | "stopped"
 
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
@@ -249,6 +254,23 @@ export const sessionCompleted = (session: Session, messages: Message[] | undefin
     if (message.role !== "assistant") return false
     return typeof (message as { time?: { completed?: unknown } }).time?.completed === "number"
   })
+}
+
+export const sessionFilter = (input: {
+  session: Session
+  messages: Message[] | undefined
+  status: Status | undefined
+  blocked: boolean
+  error: boolean
+}): SessionFilter => {
+  const type = input.status?.type
+  if (input.error || type === "failed" || type === "blocked" || type === "interrupted") return "failed"
+  if (type === "aborted" || type === "aborting" || type === "error" || type === "timeout") return "failed"
+  if (input.blocked || (type && wait.includes(type))) return "waiting"
+  if (type && live.includes(type)) return sessionWorking(input.messages, input.status) ? "active" : "stopped"
+  if (sessionCompleted(input.session, input.messages, input.status)) return "success"
+  if (type && stop.includes(type)) return "stopped"
+  return sessionWorking(input.messages, input.status) ? "active" : "stopped"
 }
 
 export const childSessionSummary = (

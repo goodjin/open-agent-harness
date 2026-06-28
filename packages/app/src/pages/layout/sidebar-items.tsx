@@ -16,11 +16,15 @@ import { getAvatarColors, type LocalProject, useLayout } from "@/context/layout"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { displaySessionTitle, hasProjectPermissions, sessionAgentLabel, sessionWorking } from "./helpers"
+import {
+  displaySessionTitle,
+  hasProjectPermissions,
+  sessionAgentLabel,
+  sessionWorking,
+  type SessionFilter,
+} from "./helpers"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
-
-export type Filter = "running" | "ended" | "failed" | "success"
 
 const indent = 24
 
@@ -103,16 +107,19 @@ const StatusBadge = (props: {
     </Tooltip>
   )
 }
-const filterLabel = (filter: Filter) => {
-  if (filter === "running") return "运行中"
-  if (filter === "ended") return "已结束"
-  if (filter === "failed") return "已失败"
-  return "已成功"
+const filters: SessionFilter[] = ["active", "waiting", "success", "failed", "stopped"]
+
+const filterLabel = (filter: SessionFilter) => {
+  if (filter === "active") return "活跃"
+  if (filter === "waiting") return "等待"
+  if (filter === "success") return "成功"
+  if (filter === "failed") return "失败"
+  return "停止"
 }
 
 export const SessionFilterBar = (props: {
-  filter: Accessor<Filter | undefined>
-  setFilter: (filter: Filter | undefined) => void
+  filter: Accessor<SessionFilter | undefined>
+  setFilter: (filter: SessionFilter | undefined) => void
 }): JSX.Element => (
   <div class="px-2 pb-1 flex flex-wrap gap-1">
     <button
@@ -130,7 +137,7 @@ export const SessionFilterBar = (props: {
     >
       全部
     </button>
-    <For each={["running", "ended", "failed", "success"] as Filter[]}>
+    <For each={filters}>
       {(item) => (
         <button
           type="button"
@@ -254,7 +261,7 @@ const SessionRow = (props: {
     <Show when={props.canExpand?.()} fallback={<span class="shrink-0 size-5" aria-hidden="true" />}>
       <button
         type="button"
-        class="shrink-0 size-5 rounded border border-transparent flex items-center justify-center text-icon-base bg-background-base/80 focus:outline-none focus-visible:border-border-interactive-base focus-visible:bg-surface-base-active"
+        class="shrink-0 size-5 rounded border border-transparent flex items-center justify-center text-icon-base bg-transparent focus:outline-none focus-visible:border-border-interactive-base focus-visible:bg-surface-base-active"
         classList={{
           "hover:bg-surface-base-hover hover:border-border-weak-base": true,
           "text-text-interactive-base border-border-interactive-base": props.expanded?.(),
@@ -324,7 +331,7 @@ const TreeLines = (props: {
         {(guide, index) => (
           <Show when={guide}>
             <div
-              class="pointer-events-none absolute top-0 bottom-0 w-px"
+              class="pointer-events-none absolute top-0 bottom-0 w-px z-[2]"
               style={{ left: `${treeX(index())}px`, ...line }}
             />
           </Show>
@@ -332,23 +339,23 @@ const TreeLines = (props: {
       </For>
       <Show when={depth() > 0}>
         <div
-          class="pointer-events-none absolute top-0 w-px"
+          class="pointer-events-none absolute top-0 w-px z-[2]"
           style={{ left: `${treeX(depth() - 1)}px`, height: mid(props.dense), ...line }}
         />
         <Show when={!props.last}>
           <div
-            class="pointer-events-none absolute bottom-0 w-px"
+            class="pointer-events-none absolute bottom-0 w-px z-[2]"
             style={{ left: `${treeX(depth() - 1)}px`, top: mid(props.dense), ...line }}
           />
         </Show>
         <div
-          class="pointer-events-none absolute h-px"
+          class="pointer-events-none absolute h-px z-[2]"
           style={{ top: mid(props.dense), left: `${treeX(depth() - 1)}px`, width: `${indent}px`, ...line }}
         />
       </Show>
       <Show when={props.expanded() && props.childCount() > 0}>
         <div
-          class="pointer-events-none absolute bottom-0 w-px"
+          class="pointer-events-none absolute bottom-0 w-px z-[2]"
           style={{ left: `${treeX(depth())}px`, top: mid(props.dense), ...line }}
         />
       </Show>

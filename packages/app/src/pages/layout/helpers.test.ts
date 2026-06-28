@@ -20,6 +20,7 @@ import {
   latestRootSession,
   sessionDescendants,
   sessionCompleted,
+  sessionFilter,
   sessionAgentLabel,
   sessionLineage,
   sessionScrollRestore,
@@ -406,6 +407,30 @@ describe("layout workspace helpers", () => {
     expect(sessionCompleted(session({ id: "done", directory: "/workspace" }), undefined, { type: "completed" })).toBe(
       true,
     )
+  })
+
+  test("classifies sidebar session status groups", () => {
+    const item = session({ id: "item", directory: "/workspace" })
+    const group = (type: string, extra?: { blocked?: boolean; error?: boolean }) =>
+      sessionFilter({
+        session: item,
+        messages: undefined,
+        status: { type },
+        blocked: extra?.blocked ?? false,
+        error: extra?.error ?? false,
+      })
+
+    expect(group("running")).toBe("active")
+    expect(group("rate_limited")).toBe("waiting")
+    expect(group("waiting_child")).toBe("waiting")
+    expect(group("completed")).toBe("success")
+    expect(group("terminal_reply")).toBe("success")
+    expect(group("failed")).toBe("failed")
+    expect(group("blocked")).toBe("failed")
+    expect(group("aborted")).toBe("failed")
+    expect(group("idle")).toBe("stopped")
+    expect(group("running", { blocked: true })).toBe("waiting")
+    expect(group("idle", { error: true })).toBe("failed")
   })
 
   test("requires a completed request turn before inferring completion from messages", () => {

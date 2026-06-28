@@ -286,9 +286,9 @@ function createGlobalSync() {
     }
 
     const promise = (async () => {
-      const status = mode === "running" ? await globalSDK.client.session.status().then((x) => x.data ?? {}) : undefined
+      const status = await globalSDK.client.session.status().then((x) => x.data ?? {})
       if (status) setStore("session_status", reconcile(status))
-      const base = status ? await runningRoots(directory, status) : undefined
+      const base = mode === "running" ? await runningRoots(directory, status) : undefined
       const list: RootLoadArgs["list"] = async (query) => {
         if (base) return { data: base }
         return globalSDK.client.session.list(query)
@@ -300,7 +300,6 @@ function createGlobalSync() {
         children: true,
         loaded: !force && meta?.mode === mode ? meta.roots : undefined,
         list,
-        tree: (query) => globalSDK.client.session.tree(query),
         descendants: (query) =>
           globalSDK.client.session.descendantsBatch({
             body_directory: query.directory,

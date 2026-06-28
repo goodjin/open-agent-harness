@@ -29,16 +29,16 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { type Filter, NewSessionItem, SessionFilterBar, SessionItem, SessionSkeleton } from "./sidebar-items"
+import { NewSessionItem, SessionFilterBar, SessionItem, SessionSkeleton } from "./sidebar-items"
 import {
   childMapByParent,
   childSummaryBySession,
   effectiveSessionExpansion,
-  sessionCompleted,
+  sessionFilter,
+  type SessionFilter,
   sessionLineage,
   sessionScrollRestore,
   sessionScrollWrite,
-  sessionWorking,
   sortedRootSessions,
   visibleSessionTree,
 } from "./helpers"
@@ -79,6 +79,41 @@ export type WorkspaceSidebarContext = {
   showResetWorkspaceDialog: (root: string, directory: string) => void
   showDeleteWorkspaceDialog: (root: string, directory: string) => void
   setScrollContainerRef: (el: HTMLDivElement | undefined, mobile?: boolean) => void
+}
+
+const indent = 24
+const treeX = (depth: number) => 18 + depth * indent
+const line = { "background-color": "var(--border-strong-base)" }
+
+const TreeSpacer = (props: {
+  height: number
+  item: ReturnType<typeof visibleSessionTree>[number] | undefined
+  tail?: boolean
+}): JSX.Element => {
+  const marks = createMemo(() => {
+    const item = props.item
+    if (!item) return []
+    const set = new Set<number>()
+    item.guides.forEach((guide, index) => {
+      if (guide) set.add(index)
+    })
+    if (!props.tail && item.depth > 0 && !item.first) set.add(item.depth - 1)
+    if (props.tail && item.depth > 0 && !item.last) set.add(item.depth - 1)
+    return [...set].sort((a, b) => a - b)
+  })
+
+  return (
+    <div class="relative" style={{ height: `${props.height}px` }}>
+      <For each={marks()}>
+        {(depth) => (
+          <div
+            class="pointer-events-none absolute top-0 bottom-0 w-px z-[2]"
+            style={{ left: `${treeX(depth)}px`, ...line }}
+          />
+        )}
+      </For>
+    </div>
+  )
 }
 
 export const WorkspaceDragOverlay = (props: {
@@ -290,11 +325,7 @@ const WorkspaceSessionList = (props: {
   const lineage = createMemo(() => sessionLineage(props.all(), params.id))
   const large = createMemo(() => props.all().length > 200)
   const open = createMemo(() => effectiveSessionExpansion(expanded, lineage()))
-  const view = createMemo(() => {
-    if (large()) return open()
-    return new Set([...props.all().map((session) => session.id), ...open()])
-  })
-  const [filter, setFilter] = createSignal<Filter | undefined>()
+  const [filter, setFilter] = createSignal<SessionFilter | undefined>()
   const shown = createMemo(() => {
     const active = filter()
     if (!active) return
@@ -310,17 +341,13 @@ const WorkspaceSessionList = (props: {
       const blocked = !!sessionPermissionRequest(store.session, store.permission, session.id, (item) => {
         return !permission.autoResponds(item, session.directory)
       })
-      const failed =
-        notification.session.unseenHasError(session.id) ||
-        status?.type === "error" ||
-        status?.type === "timeout" ||
-        status?.type === "interrupted"
-      const working = !blocked && sessionWorking(store.message[session.id], status)
-      const done = !blocked && !working && !failed && sessionCompleted(session, store.message[session.id], status)
-      if (active === "running") return working
-      if (active === "failed") return failed
-      if (active === "success") return done
-      return !working
+      return sessionFilter({
+        session,
+        messages: store.message[session.id],
+        status,
+        blocked,
+        error: notification.session.unseenHasError(session.id),
+      }) === active
     }
     const keep = (id: string): boolean => {
       const cached = memo.get(id)
@@ -342,6 +369,12 @@ const WorkspaceSessionList = (props: {
       }
     }
     return ids
+  })
+  const view = createMemo(() => {
+    const ids = shown()
+    if (ids) return new Set([...ids, ...open()])
+    if (large()) return open()
+    return new Set([...props.all().map((session) => session.id), ...open()])
   })
   const tree = createMemo(() => {
     const ids = shown()
@@ -439,7 +472,7 @@ const WorkspaceSessionList = (props: {
           props.ctx.setSessionScroll(props.directory, top)
         }}
       >
-        <div style={{ height: `${range().start * row}px` }} />
+        <TreeSpacer height={range().start * row} item={slice()[0]} />
         <For each={slice()}>
           {(item) => (
             <SessionItem
@@ -471,7 +504,7 @@ const WorkspaceSessionList = (props: {
             />
           )}
         </For>
-        <div style={{ height: `${(range().count - range().end) * row}px` }} />
+        <TreeSpacer height={(range().count - range().end) * row} item={slice().at(-1)} tail />
         <Show when={props.hasMore()}>
           <div class="relative w-full py-1">
             <Button
