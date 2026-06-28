@@ -1003,11 +1003,26 @@ export namespace SessionPrompt {
   async function repair(session: Session.Info) {
     const ctx = object(session.dsl_context)
     const res = object(ctx.result)
-    if (res.type !== "session.action_result") return
+    if (res.type !== "session.action_result") {
+      await turns(session.id)
+      return
+    }
     const item = object(object(ctx.protocol).delegation)
-    if (item.type !== "agent.delegation.assignment") return
+    if (item.type !== "agent.delegation.assignment") {
+      await turns(session.id)
+      return
+    }
     const status = item.status
-    if (status !== "completed" && status !== "partial" && status !== "blocked" && status !== "failed" && status !== "terminal_reply") return
+    if (
+      status !== "completed" &&
+      status !== "partial" &&
+      status !== "blocked" &&
+      status !== "failed" &&
+      status !== "terminal_reply"
+    ) {
+      await turns(session.id)
+      return
+    }
     const close = async (user: MessageV2.User, msg?: MessageV2.WithParts) =>
       SessionTurn.finish({
         assistantID: msg?.info.id,
@@ -1027,6 +1042,7 @@ export namespace SessionPrompt {
           messageID: msg.info.parentID,
         }).catch(() => undefined)
         if (user?.info.role === "user" && !SessionTurn.done(user.info)) await close(user.info, msg)
+        await turns(session.id)
         return
       }
     }
@@ -1040,6 +1056,41 @@ export namespace SessionPrompt {
         await close(msg.info)
       }),
     )
+    await turns(session.id)
+  }
+
+  async function turns(sessionID: SessionID) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    await Promise.all(
+      msgs.map(async (msg, index) => {
+        if (msg.info.role !== "user") return
+        if (SessionTurn.done(msg.info)) return
+        const assistant = closed(msgs, msg.info.id, index)
+        if (!assistant) return
+        await SessionTurn.finish({
+          assistantID: assistant.info.id,
+          outcome: assistant.info.error ? "error" : "completed",
+          reason: assistant.info.error ? "error" : "assistant",
+          stats: SessionTurn.stats({ message: assistant }),
+          user: msg.info,
+        })
+      }),
+    )
+  }
+
+  function closed(msgs: MessageV2.WithParts[], parent: MessageID, index: number) {
+    for (let i = index + 1; i < msgs.length; i++) {
+      const msg = msgs[i]
+      if (!msg) continue
+      if (msg.info.role === "user") return
+      if (msg.info.role !== "assistant") continue
+      if (msg.info.parentID !== parent) continue
+      if (typeof msg.info.time.completed !== "number") continue
+      if (!msg.info.error && (!msg.info.finish || msg.info.finish === "tool-calls" || msg.info.finish === "unknown"))
+        continue
+      return msg.info.role === "assistant" ? { info: msg.info, parts: msg.parts } : undefined
+    }
+    return
   }
 
   async function done(input: {

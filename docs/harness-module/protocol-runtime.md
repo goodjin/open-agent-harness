@@ -216,6 +216,8 @@ On process restart, persisted `running` and `starting` session statuses restore 
 
 Terminal assistant completion is also a done turn. If an assistant message has a terminal finish reason such as `stop` and no pending tool call, runtime action, compaction, user gate, or child wait remains, Runtime must finish the source user turn before evaluating later queue work. A complete text response is not a continuation signal by itself; only new tool results, runtime actions, compaction work, queued user messages, or wait states may drive another model request.
 
+Prompt-loop repair applies the same rule to explicit turn metadata. If a previous user turn still says `queued` or `running` but the same turn already has a completed assistant message, the loop must mark that user turn done before selecting the next queued user message. This keeps follow-up queue behavior intact while preventing stale `waiting_user` or crashed loops from blocking later user input.
+
 Turn completion is written by runtime boundaries:
 
 - protocol response or final answer after `AgentProtocolOutput` is parsed and executed,
