@@ -223,6 +223,8 @@ import type {
   SessionDescendantsBatchResponses,
   SessionDescendantsErrors,
   SessionDescendantsResponses,
+  SessionDiffDetailErrors,
+  SessionDiffDetailResponses,
   SessionDiffResponses,
   SessionDismissStatusErrors,
   SessionDismissStatusResponses,
@@ -2046,6 +2048,42 @@ export class Delegations extends HeyApiClient {
   }
 }
 
+export class Diff extends HeyApiClient {
+  /**
+   * Get detailed file diff
+   *
+   * Get full before and after contents for one file diff in a session or message.
+   */
+  public detail<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      messageID?: string
+      file: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "messageID" },
+            { in: "query", key: "file" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionDiffDetailResponses, SessionDiffDetailErrors, ThrowOnError>({
+      url: "/session/{sessionID}/diff/detail",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Session3 extends HeyApiClient {
   /**
    * List sessions
@@ -3370,6 +3408,11 @@ export class Session3 extends HeyApiClient {
   private _delegations?: Delegations
   get delegations(): Delegations {
     return (this._delegations ??= new Delegations({ client: this.client }))
+  }
+
+  private _diff?: Diff
+  get diff2(): Diff {
+    return (this._diff ??= new Diff({ client: this.client }))
   }
 }
 

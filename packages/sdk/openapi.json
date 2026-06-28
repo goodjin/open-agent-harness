@@ -4862,6 +4862,92 @@
         ]
       }
     },
+    "/session/{sessionID}/diff/detail": {
+      "get": {
+        "operationId": "session.diff.detail",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "directory",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "sessionID",
+            "schema": {
+              "type": "string",
+              "pattern": "^ses.*"
+            },
+            "required": true
+          },
+          {
+            "in": "query",
+            "name": "messageID",
+            "schema": {
+              "type": "string",
+              "pattern": "^msg.*"
+            }
+          },
+          {
+            "in": "query",
+            "name": "file",
+            "schema": {
+              "type": "string"
+            },
+            "required": true
+          }
+        ],
+        "summary": "Get detailed file diff",
+        "description": "Get full before and after contents for one file diff in a session or message.",
+        "responses": {
+          "200": {
+            "description": "Detailed file diff",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/FileDiff"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BadRequestError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "js",
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.diff.detail({\n  ...\n})"
+          }
+        ]
+      }
+    },
     "/session/{sessionID}/summarize": {
       "post": {
         "operationId": "session.summarize",
@@ -15822,7 +15908,8 @@
               "reason": {
                 "type": "string",
                 "enum": [
-                  "output_safety"
+                  "output_safety",
+                  "transport"
                 ]
               },
               "recoverable": {
@@ -15843,6 +15930,15 @@
               },
               "message": {
                 "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "transport"
+                ]
+              },
+              "recoverable": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -15904,6 +16000,15 @@
               },
               "message": {
                 "type": "string"
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "transport"
+                ]
+              },
+              "recoverable": {
+                "type": "boolean"
               }
             },
             "required": [

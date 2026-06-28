@@ -63,6 +63,7 @@ import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
+import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
 import { useSessionHashScroll } from "@/pages/session/use-session-hash-scroll"
@@ -352,6 +353,7 @@ export default function Page() {
   const terminal = useTerminal()
   const [searchParams, setSearchParams] = useSearchParams<{ prompt?: string }>()
   const { params, sessionKey, tabs, view } = useSessionLayout()
+  const [delegationLoad, setDelegationLoad] = createSignal<{ id: string; count: number }>()
 
   createEffect(() => {
     if (!untrack(() => prompt.ready())) return
@@ -1644,6 +1646,31 @@ export default function Page() {
     userScrolled: autoScroll.userScrolled,
     scroller: () => scroller,
   })
+
+  createEffect(on(() => params.id, () => setDelegationLoad(undefined), { defer: true }))
+
+  createEffect(
+    on(
+      () =>
+        [
+          params.id,
+          messagesReady(),
+          historyMore(),
+          historyLoading(),
+          hasDelegationContext(info()?.dsl_context),
+          hasDelegationTurn(info()?.dsl_context, messages(), visibleUserMessages()),
+        ] as const,
+      ([id, ready, more, loading, context, visible]) => {
+        if (!id || !ready || !more || loading || !context || visible) return
+        const prev = delegationLoad()
+        const count = prev?.id === id ? prev.count : 0
+        if (count >= 3) return
+        setDelegationLoad({ id, count: count + 1 })
+        void sync.session.history.loadMore(id)
+      },
+      { defer: true },
+    ),
+  )
 
   fill = () => {
     if (fillFrame !== undefined) return

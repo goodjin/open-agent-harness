@@ -1,6 +1,14 @@
 import type { Message, UserMessage } from "@open-agent-harness/sdk/v2"
 
-export type DelegationItem = { id: string; label: string; run?: string; current?: boolean; status?: string }
+export type DelegationItem = {
+  id: string
+  label: string
+  run?: string
+  current?: boolean
+  status?: string
+  completed?: boolean
+  notified?: boolean
+}
 
 export type DelegationState = {
   total: number
@@ -40,6 +48,8 @@ export const timelineChildren = (input: UserMessage | undefined): DelegationItem
         ...(text(value.run) ? { run: text(value.run) } : {}),
         ...(typeof value.current === "boolean" ? { current: value.current } : {}),
         ...(text(value.status) ? { status: text(value.status) } : {}),
+        ...(typeof value.completed_at === "number" || text(value.result_id) ? { completed: true } : {}),
+        ...(typeof value.notified_at === "number" ? { notified: true } : {}),
       },
     ]
   })
@@ -114,14 +124,44 @@ export const timelineProgress = (items: DelegationItem[]): DelegationState => {
     return acc
   }, new Map<string, DelegationItem>())
   const rows = Array.from(map.values())
-  const active = rows.filter((item) => item.current !== false)
+  const active = rows.filter((item) => item.current !== false && !closed(item))
   return {
     total: rows.length,
     done: rows.length - active.length,
     active,
-    completed: rows.filter((item) => item.current === false),
+    completed: rows.filter((item) => !active.includes(item)),
   }
 }
+
+const terminal = new Set([
+  "aborted",
+  "archived",
+  "blocked",
+  "completed",
+  "error",
+  "failed",
+  "interrupted",
+  "terminal_error",
+  "terminal_failure",
+  "terminal_reply",
+  "terminal_success",
+  "timeout",
+  "user_completed",
+])
+
+const closed = (item: DelegationItem) => item.completed || item.notified || terminal.has(item.status ?? "")
+
+export const hasDelegationContext = (input: unknown) => {
+  if (!record(input)) return false
+  const protocol = input.protocol
+  if (!record(protocol)) return false
+  const pending = record(protocol.pending_delegations) ? Object.keys(protocol.pending_delegations).length : 0
+  const completed = Array.isArray(protocol.completed_delegations) ? protocol.completed_delegations.length : 0
+  return pending + completed > 0
+}
+
+export const hasDelegationTurn = (input: unknown, messages: Message[], users: UserMessage[]) =>
+  users.some((msg) => timelineChildren(msg).length > 0 || delegationProgress(input, msg.id, messages).total > 0)
 
 export const delegationSubmitted = (input: unknown, run: string | undefined) => {
   if (!run) return false

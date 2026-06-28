@@ -131,12 +131,14 @@ export type SessionStatus =
   | {
       type: "error"
       message: string
-      reason?: "output_safety"
+      reason?: "output_safety" | "transport"
       recoverable?: boolean
     }
   | {
       type: "timeout"
       message: string
+      reason?: "transport"
+      recoverable?: boolean
     }
   | {
       type: "paused"
@@ -153,6 +155,8 @@ export type SessionStatus =
   | {
       type: "failed"
       message?: string
+      reason?: "transport"
+      recoverable?: boolean
     }
   | {
       type: "blocked"
@@ -5882,6 +5886,41 @@ export type SessionDiffResponses = {
 }
 
 export type SessionDiffResponse = SessionDiffResponses[keyof SessionDiffResponses]
+
+export type SessionDiffDetailData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query: {
+    directory?: string
+    messageID?: string
+    file: string
+  }
+  url: "/session/{sessionID}/diff/detail"
+}
+
+export type SessionDiffDetailErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionDiffDetailError = SessionDiffDetailErrors[keyof SessionDiffDetailErrors]
+
+export type SessionDiffDetailResponses = {
+  /**
+   * Detailed file diff
+   */
+  200: FileDiff | null
+}
+
+export type SessionDiffDetailResponse = SessionDiffDetailResponses[keyof SessionDiffDetailResponses]
 
 export type SessionSummarizeData = {
   body?: {

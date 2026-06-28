@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import type { Message } from "@open-agent-harness/sdk/v2"
+import type { Message, UserMessage } from "@open-agent-harness/sdk/v2"
 import {
   delegationProgress,
   delegationSubmitted,
+  hasDelegationContext,
+  hasDelegationTurn,
   laterUserInput,
   pendingDelegation,
   timelineChildren,
@@ -135,5 +137,68 @@ describe("session delegations", () => {
       active: [{ id: "child_2", label: "review", run: "run_1", current: true, status: "pending" }],
       completed: [{ id: "child_1", label: "worker", run: "run_1", current: false, status: "completed" }],
     })
+  })
+
+  test("treats notified completed timeline children as history even with stale current flag", () => {
+    const msg = {
+      id: "user_1",
+      sessionID: "session_1",
+      role: "user",
+      time: { created: 1 },
+      agent: "default",
+      model: { providerID: "openai", modelID: "gpt" },
+      metadata: {
+        turn: {
+          children: [
+            {
+              id: "child_1",
+              label: "worker",
+              run: "run_1",
+              current: true,
+              status: "completed",
+              result_id: "result_1",
+              notified_at: 2,
+            },
+          ],
+        },
+      },
+    } as Message
+
+    expect(timelineProgress(timelineChildren(msg as never))).toEqual({
+      total: 1,
+      done: 1,
+      active: [],
+      completed: [
+        {
+          id: "child_1",
+          label: "worker",
+          run: "run_1",
+          current: true,
+          status: "completed",
+          completed: true,
+          notified: true,
+        },
+      ],
+    })
+  })
+
+  test("detects when loaded messages still miss the delegation turn", () => {
+    const ctx = {
+      protocol: {
+        completed_delegations: [{ child_session_id: "child_1", parent_message_id: "assistant_1" }],
+      },
+    }
+    const msg = {
+      id: "user_1",
+      role: "user",
+      sessionID: "session_1",
+      time: { created: 1 },
+      agent: "default",
+      model: { providerID: "openai", modelID: "gpt" },
+    } as UserMessage
+
+    expect(hasDelegationContext(ctx)).toBe(true)
+    expect(hasDelegationTurn(ctx, [{ id: "user_2", role: "user" }] as Message[], [msg])).toBe(false)
+    expect(hasDelegationTurn(ctx, messages, [msg])).toBe(true)
   })
 })
