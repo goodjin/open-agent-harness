@@ -33,6 +33,7 @@ import { MessageV2 } from "./message-v2"
 import { Instance } from "../project/instance"
 import { SessionPrompt } from "./prompt"
 import { SessionStatus } from "./status"
+import { SessionTurn } from "./turn"
 import { fn } from "@/util/fn"
 import { Command } from "../command"
 import { Snapshot } from "@/snapshot"
@@ -1080,6 +1081,23 @@ export namespace Session {
         )
       })
       return input.messageID
+    },
+  )
+
+  export const removeQueuedMessage = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+    }),
+    async (input) => {
+      const msg = await MessageV2.get(input)
+      const turn = SessionTurn.get(msg.info)
+      if (msg.info.role !== "user" || turn?.status !== "queued") {
+        throw new ConflictError({
+          message: "Only queued user messages can be removed",
+        })
+      }
+      return removeMessage(input)
     },
   )
 

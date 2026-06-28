@@ -1565,6 +1565,40 @@ export const SessionRoutes = lazy(() =>
       },
     )
     .delete(
+      "/:sessionID/message/:messageID/queued",
+      describeRoute({
+        summary: "Cancel queued message",
+        description: "Delete a queued user message from a session without stopping the current running turn.",
+        operationId: "session.cancelQueuedMessage",
+        responses: {
+          200: {
+            description: "Successfully cancelled queued message",
+            content: {
+              "application/json": {
+                schema: resolver(z.boolean()),
+              },
+            },
+          },
+          ...errors(400, 404, 409),
+        },
+      }),
+      validator(
+        "param",
+        z.object({
+          sessionID: SessionID.zod,
+          messageID: MessageID.zod,
+        }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        await SessionPrompt.cancelQueuedMessage({
+          sessionID: params.sessionID,
+          messageID: params.messageID,
+        })
+        return c.json(true)
+      },
+    )
+    .delete(
       "/:sessionID/message/:messageID",
       describeRoute({
         summary: "Delete message",
@@ -1740,6 +1774,7 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         const session = await Session.get(sessionID)
         if (
+          !SessionPrompt.busy(sessionID) &&
           body.model &&
           (session.model?.providerID !== body.model.providerID || session.model.modelID !== body.model.modelID)
         ) {

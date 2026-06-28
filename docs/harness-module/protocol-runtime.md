@@ -178,6 +178,10 @@ The parent handoff prompt is Markdown prose, not JSON. It includes run counts, c
 
 Prompt requests are tracked as explicit turns on user message metadata. A turn records whether that single request is `queued`, `running`, or `done`; it does not represent the entire session lifecycle.
 
+A session may execute only one turn loop at a time. When a prompt arrives while `SessionPrompt` already owns that session, runtime creates a queued user message and attaches it to the existing loop callback queue; it must not start a second loop for the same session. Busy prompt admission must also avoid history-mutating side effects such as revert cleanup, turn repair, model binding, or permission writes, because the active processor may still be writing assistant parts that reference existing message rows.
+
+Queued user messages can be cancelled individually only while their turn metadata remains `status=queued`. This cancellation deletes the queued user message and its parts and removes the matching in-memory loop callback. It must not stop the currently running turn, and it must reject attempts to delete running or done turns through the queued-message route.
+
 ## Session Status Authority
 
 Runtime stores the current session lifecycle projection on the `session` row. The queryable fields are `status_class`, `status`, `status_message`, `status_recoverable`, `status_updated_at`, `status_source`, and `status_detail`. Legacy `session_status/<session_id>.json` files are not read during status restore and must not affect current state. They may remain on disk as historical artifacts, but the database is the only source for current lifecycle state.

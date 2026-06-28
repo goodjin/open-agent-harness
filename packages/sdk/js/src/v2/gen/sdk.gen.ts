@@ -197,6 +197,8 @@ import type {
   QuestionReplyResponses,
   SessionAbortErrors,
   SessionAbortResponses,
+  SessionCancelQueuedMessageErrors,
+  SessionCancelQueuedMessageResponses,
   SessionCheckpointsErrors,
   SessionCheckpointsResponses,
   SessionChildrenErrors,
@@ -2916,6 +2918,42 @@ export class Session3 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionMessageResponses, SessionMessageErrors, ThrowOnError>({
       url: "/session/{sessionID}/message/{messageID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Cancel queued message
+   *
+   * Delete a queued user message from a session without stopping the current running turn.
+   */
+  public cancelQueuedMessage<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      messageID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "messageID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).delete<
+      SessionCancelQueuedMessageResponses,
+      SessionCancelQueuedMessageErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/message/{messageID}/queued",
       ...options,
       ...params,
     })

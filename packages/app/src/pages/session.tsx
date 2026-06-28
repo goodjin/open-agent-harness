@@ -1364,6 +1364,7 @@ export default function Page() {
                 void sendFollowup(params.id!, id, { manual: true })
               },
               onEdit: editFollowup,
+              onCancel: cancelFollowup,
               onEditLoaded: clearFollowupEdit,
             }
           : undefined
@@ -1830,6 +1831,16 @@ export default function Page() {
       prompt: item.prompt,
       context: item.context,
     })
+  }
+
+  const cancelFollowup = (id: string) => {
+    const sessionID = params.id
+    if (!sessionID) return
+    if (followup.sending[sessionID]) return
+
+    setFollowup("items", sessionID, (items) => (items ?? []).filter((entry) => entry.id !== id))
+    setFollowup("failed", sessionID, (value) => (value === id ? undefined : value))
+    setFollowup("edit", sessionID, (value) => (value?.id === id ? undefined : value))
   }
 
   const clearFollowupEdit = () => {

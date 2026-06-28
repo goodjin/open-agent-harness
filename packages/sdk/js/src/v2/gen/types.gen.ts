@@ -6094,6 +6094,45 @@ export type SessionMessageResponses = {
 
 export type SessionMessageResponse = SessionMessageResponses[keyof SessionMessageResponses]
 
+export type SessionCancelQueuedMessageData = {
+  body?: never
+  path: {
+    sessionID: string
+    messageID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/message/{messageID}/queued"
+}
+
+export type SessionCancelQueuedMessageErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
+}
+
+export type SessionCancelQueuedMessageError = SessionCancelQueuedMessageErrors[keyof SessionCancelQueuedMessageErrors]
+
+export type SessionCancelQueuedMessageResponses = {
+  /**
+   * Successfully cancelled queued message
+   */
+  200: boolean
+}
+
+export type SessionCancelQueuedMessageResponse =
+  SessionCancelQueuedMessageResponses[keyof SessionCancelQueuedMessageResponses]
+
 export type PartDeleteData = {
   body?: never
   path: {

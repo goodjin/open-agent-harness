@@ -105,6 +105,10 @@ export namespace SessionPrompt {
     if (match) throw new Session.BusyError(sessionID)
   }
 
+  export function busy(sessionID: SessionID) {
+    return !!state()[sessionID]
+  }
+
   export const PromptInput = z.object({
     sessionID: SessionID.zod,
     messageID: MessageID.zod.optional(),
@@ -176,10 +180,13 @@ export namespace SessionPrompt {
 
   export const prompt = fn(PromptInput, async (input) => {
     const base = await Session.get(input.sessionID)
-    await SessionRevert.cleanup(base)
-    await repair(base)
+    const active = busy(input.sessionID)
+    if (!active) {
+      await SessionRevert.cleanup(base)
+      await repair(base)
+    }
     const session =
-      input.model && !equal(base.model, input.model)
+      !active && input.model && !equal(base.model, input.model)
         ? await Session.setModel({ sessionID: input.sessionID, model: input.model, confirm: input.confirm })
         : base
 
@@ -196,7 +203,7 @@ export namespace SessionPrompt {
         pattern: "*",
       })
     }
-    if (permissions.length > 0) {
+    if (!active && permissions.length > 0) {
       session.permission = permissions
       await Session.setPermission({ sessionID: session.id, permission: permissions })
     }
@@ -297,10 +304,30 @@ export namespace SessionPrompt {
       return
     }
     match.abort.abort()
+    match.callbacks.forEach((item) => item.reject(new Error("Session was aborted before queued user was processed.")))
     delete s[sessionID]
     SessionStatus.set(sessionID, { type: "aborted" })
     return
   }
+
+  export const cancelQueuedMessage = fn(
+    z.object({
+      sessionID: SessionID.zod,
+      messageID: MessageID.zod,
+    }),
+    async (input) => {
+      await Session.removeQueuedMessage(input)
+      const entry = state()[input.sessionID]
+      if (!entry) return true
+      const keep = entry.callbacks.filter((item) => {
+        if (item.messageID !== input.messageID) return true
+        item.reject(new Error("Queued message was cancelled."))
+        return false
+      })
+      entry.callbacks = keep
+      return true
+    },
+  )
 
   function object(input: unknown) {
     if (input && typeof input === "object" && !Array.isArray(input)) return input as Record<string, unknown>

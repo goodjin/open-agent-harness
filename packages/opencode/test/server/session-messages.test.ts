@@ -315,6 +315,70 @@ describe("session messages endpoint", () => {
     })
   })
 
+  test("cancels only queued user messages", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const queued = MessageID.ascending()
+            const running = MessageID.ascending()
+            await Session.updateMessage({
+              id: queued,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "queued",
+                  time: { queued: Date.now() },
+                },
+              },
+            } as unknown as MessageV2.Info)
+            await Session.updatePart({
+              id: PartID.ascending(),
+              sessionID: session.id,
+              messageID: queued,
+              type: "text",
+              text: "queued",
+            })
+            await Session.updateMessage({
+              id: running,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "test",
+              model: { providerID: "test", modelID: "test" },
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "running",
+                  time: { queued: Date.now(), started: Date.now() },
+                },
+              },
+            } as unknown as MessageV2.Info)
+
+            const app = Server.Default()
+            const ok = await app.request(`/session/${session.id}/message/${queued}/queued`, { method: "DELETE" })
+            expect(ok.status).toBe(200)
+            expect(await ok.json()).toBe(true)
+            expect((await Session.messages({ sessionID: session.id })).map((item) => item.info.id)).not.toContain(queued)
+
+            const blocked = await app.request(`/session/${session.id}/message/${running}/queued`, { method: "DELETE" })
+            expect(blocked.status).toBe(409)
+            expect((await Session.messages({ sessionID: session.id })).map((item) => item.info.id)).toContain(running)
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("returns exported protocol trace", async () => {
     await Instance.provide({
       directory: root,

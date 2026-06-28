@@ -10,6 +10,7 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionLog } from "../../src/session/log"
 import { LLM } from "../../src/session/llm"
 import { SessionPrompt } from "../../src/session/prompt"
+import { SessionRevert } from "../../src/session/revert"
 import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
@@ -25,6 +26,8 @@ afterEach(() => {
   LLM.stream.mockRestore?.()
   // @ts-expect-error Bun mock restore is present on spies
   Provider.getModel.mockRestore?.()
+  // @ts-expect-error Bun mock restore is present on spies
+  SessionRevert.cleanup.mockRestore?.()
 })
 
 async function agent(dir: string, id: string, cfg: Record<string, unknown> = {}) {
@@ -479,6 +482,44 @@ describe("session.prompt missing file", () => {
             expect(text[1]?.includes("Read tool failed to read")).toBe(true)
             expect(text[2]).toBe("after-file")
 
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("does not clean reverted history when prompt is queued behind a running turn", async () => {
+    spyOn(SessionRevert, "cleanup")
+
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const first = SessionPrompt.shell({
+              sessionID: session.id,
+              agent: "build",
+              command: "sleep 0.2",
+            }).catch((err) => err)
+            expect(SessionPrompt.busy(session.id)).toBe(true)
+
+            const second = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [{ type: "text", text: "second" }],
+            })
+            expect(SessionRevert.cleanup).not.toHaveBeenCalled()
+            expect(second.info.role).toBe("user")
+            if (second.info.role !== "user") throw new Error("expected user message")
+            expect(second.info.metadata?.turn?.status).toBe("queued")
+
+            await first
             await Session.remove(session.id)
           },
         }),

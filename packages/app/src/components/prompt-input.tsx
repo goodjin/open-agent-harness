@@ -1227,6 +1227,8 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
     if (!id) return permission.isAutoAcceptingDirectory(sdk.directory)
     return permission.isAutoAccepting(id, sdk.directory)
   })
+  const submittable = createMemo(() => prompt.dirty() || imageAttachments().length > 0 || commentCount() > 0)
+  const stopping = createMemo(() => working() && !submittable())
   const acceptLabel = createMemo(() =>
     language.t(accepting() ? "command.permissions.autoaccept.disable" : "command.permissions.autoaccept.enable"),
   )
@@ -1563,10 +1565,10 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
               </Show>
               <Tooltip
                 placement="top"
-                inactive={!prompt.dirty() && !working()}
+                inactive={!submittable() && !working()}
                 value={
                   <Switch>
-                    <Match when={working()}>
+                    <Match when={stopping()}>
                       <div class="flex items-center gap-2">
                         <span>{language.t("prompt.action.stop")}</span>
                         <span class="text-icon-base text-12-medium text-[10px]!">{language.t("common.key.esc")}</span>
@@ -1584,12 +1586,12 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                 <IconButton
                   data-action="prompt-submit"
                   type="submit"
-                  disabled={!prompt.dirty() && !working() && commentCount() === 0}
-                  icon={working() ? "stop" : store.mode === "shell" || autoShell() ? "terminal" : "arrow-up"}
+                  disabled={!submittable() && !working()}
+                  icon={stopping() ? "stop" : store.mode === "shell" || autoShell() ? "terminal" : "arrow-up"}
                   variant="primary"
                   class="size-8"
                   style={buttons()}
-                  aria-label={working() ? language.t("prompt.action.stop") : language.t("prompt.action.send")}
+                  aria-label={stopping() ? language.t("prompt.action.stop") : language.t("prompt.action.send")}
                 />
               </Tooltip>
             </div>
