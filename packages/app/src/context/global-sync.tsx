@@ -286,7 +286,7 @@ function createGlobalSync() {
     }
 
     const promise = (async () => {
-      const status = await globalSDK.client.session.status().then((x) => x.data ?? {})
+      const status = await globalSDK.client.session.status({ directory }).then((x) => x.data ?? {})
       if (status) setStore("session_status", reconcile(status))
       const base = mode === "running" ? await runningRoots(directory, status) : undefined
       const list: RootLoadArgs["list"] = async (query) => {

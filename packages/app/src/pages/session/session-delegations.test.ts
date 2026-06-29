@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { Message, UserMessage } from "@open-agent-harness/sdk/v2"
 import {
   delegationProgress,
+  delegationStatus,
   delegationSubmitted,
   hasDelegationContext,
   hasDelegationTurn,
@@ -180,6 +181,17 @@ describe("session delegations", () => {
         },
       ],
     })
+  })
+
+  test("uses delegation item status before falling back to idle", () => {
+    expect(delegationStatus({ id: "child", label: "child", status: "terminal_reply" }, undefined)).toBe(
+      "terminal_reply",
+    )
+    expect(delegationStatus({ id: "child", label: "child", completed: true }, undefined)).toBe("completed")
+    expect(delegationStatus({ id: "child", label: "child", status: "terminal_reply" }, { type: "running" })).toBe(
+      "running",
+    )
+    expect(delegationStatus({ id: "child", label: "child" }, undefined)).toBe("idle")
   })
 
   test("detects when loaded messages still miss the delegation turn", () => {

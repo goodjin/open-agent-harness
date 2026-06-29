@@ -138,6 +138,54 @@ describe("Session.list", () => {
     })
   })
 
+  test("returns session statuses from the requested directory", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const local = await Session.create({ title: "local-status" })
+            SessionStatus.set(local.id, { type: "running" })
+            await SessionStatus.flush()
+
+            const dir = path.join(projectRoot, "..", "__session_status_other")
+            const other = await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => {
+                    const session = await Session.create({ title: "other-status" })
+                    SessionStatus.set(session.id, { type: "blocked", message: "needs input" })
+                    await SessionStatus.flush()
+                    return session
+                  },
+                }),
+            })
+            const app = Server.Default()
+
+            const response = await app.request(`/session/status?directory=${encodeURIComponent(dir)}`)
+            expect(response.status).toBe(200)
+            const body = (await response.json()) as Record<string, unknown>
+
+            expect(body[other.id]).toEqual({ type: "blocked", message: "needs input" })
+            expect(body[local.id]).toBeUndefined()
+
+            await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => Session.remove(other.id),
+                }),
+            })
+            await Session.remove(local.id)
+          },
+        }),
+    })
+  })
+
   test("returns recursive session descendants", async () => {
     await Instance.provide({
       directory: projectRoot,

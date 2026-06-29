@@ -8,7 +8,7 @@ The session sidebar renders workspace root sessions, child session trees, status
 
 - Sidebar session loading should prefer root session list plus batched flat descendants.
 - Avoid per-root `/session/tree` fan-out for the sidebar. The tree projection aggregates message stats and is more expensive than the sidebar needs.
-- Keep session status loaded through the status endpoint and merge it into `session_status`; child session shape should remain a slim `Session.Info` projection.
+- Keep session status loaded through the directory-scoped status endpoint and merge it into `session_status`; child session shape should remain a slim `Session.Info` projection.
 - Frontend tree construction uses `parentID` and `childMapByParent`.
 
 ## Rendering Contract

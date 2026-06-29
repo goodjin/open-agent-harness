@@ -1,4 +1,5 @@
 import type { Message, UserMessage } from "@open-agent-harness/sdk/v2"
+import type { SessionStatus } from "@open-agent-harness/sdk/v2/client"
 
 export type DelegationItem = {
   id: string
@@ -16,6 +17,9 @@ export type DelegationState = {
   active: DelegationItem[]
   completed: DelegationItem[]
 }
+
+export const delegationStatus = (input: DelegationItem, status: SessionStatus | undefined) =>
+  status?.type ?? input.status ?? (input.completed || input.notified ? "completed" : "idle")
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 

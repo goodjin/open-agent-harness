@@ -136,7 +136,7 @@ describe("loadSessionTreeWithFallback", () => {
   })
 
   test("loads lightweight trees for roots and merges converted children", async () => {
-    const calls: string[] = []
+    const calls: Array<{ directory: string; root: string }> = []
     const result = await loadSessionTreeWithFallback({
       directory: "dir",
       limit: 10,
@@ -155,7 +155,7 @@ describe("loadSessionTreeWithFallback", () => {
         ] as never,
       }),
       tree: async (query) => {
-        calls.push(query.root)
+        calls.push(query)
         return {
           data: {
             nodes: [
@@ -198,7 +198,7 @@ describe("loadSessionTreeWithFallback", () => {
       },
     })
 
-    expect(calls).toEqual(["root-a"])
+    expect(calls).toEqual([{ directory: "dir", root: "root-a" }])
     expect(result.data?.map((s) => s.id)).toEqual(["root-a", "child-a"])
     expect(result.data?.find((s) => s.id === "child-a")).toMatchObject({
       directory: "dir",

@@ -252,7 +252,7 @@ export const SessionRoutes = lazy(() =>
       "/status",
       describeRoute({
         summary: "Get session status",
-        description: "Retrieve the current status of all sessions, including active, idle, and completed states.",
+        description: "Retrieve the current status of all sessions in the current or requested project directory.",
         operationId: "session.status",
         responses: {
           200: {
@@ -266,8 +266,15 @@ export const SessionRoutes = lazy(() =>
           ...errors(400),
         },
       }),
+      validator(
+        "query",
+        z.object({
+          directory: z.string().optional(),
+        }),
+      ),
       async (c) => {
-        const result = SessionStatus.list()
+        const query = c.req.valid("query")
+        const result = await scoped(query.directory, async () => SessionStatus.list())
         return c.json(result)
       },
     )

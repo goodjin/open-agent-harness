@@ -55,6 +55,7 @@ import {
 } from "@/pages/session/session-confirmation-match"
 import {
   delegationProgress,
+  delegationStatus,
   delegationSubmitted,
   laterUserInput,
   pendingDelegation,
@@ -183,15 +184,30 @@ const match = (
 }
 
 const dot = (type: string) => {
-  if (type === "waiting_user" || type === "waiting_permission" || type === "waiting_child" || type === "rate_limited" || type === "blocked")
+  if (
+    type === "waiting_user" ||
+    type === "waiting_permission" ||
+    type === "waiting_child" ||
+    type === "rate_limited" ||
+    type === "blocked" ||
+    type === "blocked_child"
+  )
     return "bg-icon-warning-base"
   if (live.has(type)) return "bg-icon-info-base"
-  if (type === "completed" || type === "terminal_reply" || type === "user_completed") return "bg-icon-success-base"
+  if (type === "completed" || type === "terminal_reply" || type === "terminal_success" || type === "user_completed")
+    return "bg-icon-success-base"
   if (type === "idle") return "bg-icon-weak-base"
   return "bg-icon-critical-base"
 }
 
-const label = (type: string) => (type === "user_completed" ? "用户标记完成" : type === "terminal_reply" ? "已回复父会话" : type)
+const label = (type: string) =>
+  type === "user_completed"
+    ? "用户标记完成"
+    : type === "terminal_reply"
+      ? "已回复父会话"
+      : type === "terminal_success"
+        ? "已完成"
+        : type
 
 const safe = (input: unknown) => {
   if (!record(input)) return false
@@ -1895,7 +1911,7 @@ export function MessageTimeline(props: {
                                 <div class="max-h-[300dvh] overflow-y-auto" data-scrollable>
                                   <For each={kids()}>
                                     {(item) => {
-                                      const status = createMemo(() => sync.data.session_status[item.id]?.type ?? "idle")
+                                      const status = createMemo(() => delegationStatus(item, sync.data.session_status[item.id]))
                                       const info = createMemo(() => sync.session.get(item.id))
                                       const busy = createMemo(() => !!op.child[item.id])
                                       return (

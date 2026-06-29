@@ -602,8 +602,13 @@ export namespace SessionStatus {
       Bus.publish(Event.Idle, {
         sessionID,
       })
-      delete state()[sessionID]
+      state()[sessionID] = status
       save(sessionID, status)
+      void chains()
+        .get(sessionID)
+        ?.finally(() => {
+          if (state()[sessionID]?.type === "idle") delete state()[sessionID]
+        })
       if (diff) record(sessionID, current, status, opts?.reason)
       return
     }
