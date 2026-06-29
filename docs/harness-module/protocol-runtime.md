@@ -55,6 +55,8 @@ Runtime accepts delegated terminal results by semantic meaning rather than by ca
 
 `reply` is terminal but non-satisfying in both protocol families. It ends the current package or action handoff with a structured response, blocker, clarification request, or reroute request, but it does not mark the assigned goal as satisfied and must not satisfy ordinary downstream dependencies.
 
+Protocol `confirm` answers are user history, not only control-plane state. After the user confirms or cancels a protocol confirmation, runtime stores the confirmation record in `dsl_context.protocol.confirmations` and writes a synthetic completed user message containing the action id, prompt, selected response, and plan text. The message is visible in the timeline and participates in `MessageV2.toModelMessages()` like other user text, while its turn metadata is already `done` so the prompt loop cannot execute it as a new request.
+
 ## Answer Dependencies
 
 Agent Protocol v2 `answer` items are response metadata, not executable actions. When an executable v2 item names a same-package `answer` id in `depends`, normalization drops that dependency and lets the executable item run as independent work. Dependencies on missing executable ids remain invalid.
@@ -189,6 +191,8 @@ Prompt requests are tracked as explicit turns on user message metadata. A turn r
 A session may execute only one turn loop at a time. When a prompt arrives while `SessionPrompt` already owns that session, runtime creates a queued user message and attaches it to the existing loop callback queue; it must not start a second loop for the same session. Busy prompt admission must also avoid history-mutating side effects such as revert cleanup, turn repair, model binding, or permission writes, because the active processor may still be writing assistant parts that reference existing message rows.
 
 Queued user messages can be cancelled individually only while their turn metadata remains `status=queued`. This cancellation deletes the queued user message and its parts and removes the matching in-memory loop callback. It must not stop the currently running turn, and it must reject attempts to delete running or done turns through the queued-message route.
+
+The session UI must expose both queue layers distinctly. Local follow-up drafts in the composer can be edited or cancelled before they are submitted. Once a follow-up is persisted as a queued user message, the timeline shows a delete action on that queued turn and calls the queued-message cancellation route instead of only clearing local composer state.
 
 ## Session Status Authority
 

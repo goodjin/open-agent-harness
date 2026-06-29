@@ -2698,8 +2698,10 @@ describe("SessionRunner", () => {
     } as never
     const plan = "Goal: persist assignments from confirmation.\nScope: use confirm.plan as the assignment content."
     let calls = 0
-    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+    const inputs: LLM.StreamInput[] = []
+    const stream = spyOn(LLM, "stream").mockImplementation(async (input) => {
       calls++
+      inputs.push(input)
       const body =
         calls === 1
           ? {
@@ -2837,6 +2839,23 @@ describe("SessionRunner", () => {
               expect(item?.status).toBe("running")
               const content = (await SessionAssignment.content(item!.id)) as { plan?: string }
               expect(content.plan).toBe(plan)
+
+              const msgs = await MessageV2.filterCompacted(MessageV2.stream(session.id))
+              const record = msgs.find(
+                (msg) =>
+                  msg.info.role === "user" &&
+                  msg.info.id !== user.id &&
+                  msg.parts.some((part) => part.type === "text" && part.text.includes("User choice: Confirm")),
+              )
+              if (!record || record.info.role !== "user") throw new Error("expected confirmation response history")
+              expect(SessionTurn.get(record.info)?.status).toBe("done")
+              expect(record.parts.some((part) => part.type === "text" && part.text.includes(plan))).toBe(true)
+              expect(JSON.stringify(inputs[1]?.messages)).toContain("Protocol confirmation response")
+              expect(JSON.stringify(inputs[1]?.messages)).toContain("User choice: Confirm")
+
+              const fresh = await MessageV2.get({ sessionID: session.id, messageID: user.id })
+              if (fresh.info.role !== "user") throw new Error("expected original user message")
+              expect(SessionTurn.get(fresh.info)?.status).toBe("done")
             },
           }),
       })

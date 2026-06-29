@@ -7,6 +7,7 @@ import {
   timelineQuestionVisible,
   visibleConfirmations,
 } from "./session-confirmation-match"
+import { queuedUserMessage } from "./message-turn-state"
 
 describe("confirmation request matching", () => {
   test("matches a protocol confirmation to its question request", () => {
@@ -89,5 +90,38 @@ describe("confirmation request matching", () => {
         confirm: { action_id: "confirm_other", message_id: "msg_1", status: "pending" },
       }),
     ).toBe(true)
+  })
+
+  test("detects persisted queued user messages as cancellable", () => {
+    expect(
+      queuedUserMessage({
+        id: "msg_queued",
+        role: "user",
+        sessionID: "ses_1",
+        time: { created: 1 },
+        agent: "default",
+        model: { providerID: "provider", modelID: "model" },
+        metadata: {
+          turn: {
+            status: "queued",
+          },
+        },
+      }),
+    ).toBe(true)
+    expect(
+      queuedUserMessage({
+        id: "msg_running",
+        role: "user",
+        sessionID: "ses_1",
+        time: { created: 1 },
+        agent: "default",
+        model: { providerID: "provider", modelID: "model" },
+        metadata: {
+          turn: {
+            status: "running",
+          },
+        },
+      }),
+    ).toBe(false)
   })
 })

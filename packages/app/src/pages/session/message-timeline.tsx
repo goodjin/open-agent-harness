@@ -42,6 +42,7 @@ import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
 import { deriveTurnStats, isSessionBusy, turnDone } from "@/pages/session/helpers"
+import { queuedUserMessage } from "@/pages/session/message-turn-state"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { lastAssistant, lastUser, modelName, statusName, totals } from "@/pages/session/session-insight-banner-helpers"
@@ -601,6 +602,7 @@ export function MessageTimeline(props: {
   const [req, setReq] = createStore({ share: false, status: false, unshare: false })
   const [op, setOp] = createStore({
     child: {} as Record<string, string | undefined>,
+    queued: {} as Record<string, boolean | undefined>,
     run: {} as Record<string, SubmitMode | undefined>,
   })
   const [memo, setMemo] = createStore({
@@ -838,6 +840,21 @@ export function MessageTimeline(props: {
 
     navigateAfterSessionRemoval(sessionID, session.parentID, nextSession?.id)
     return true
+  }
+
+  const drop = (messageID: string) => {
+    const id = sessionID()
+    if (!id || op.queued[messageID]) return
+    setOp("queued", messageID, true)
+    sdk.client.session
+      .cancelQueuedMessage({ sessionID: id, messageID })
+      .catch((err) =>
+        showToast({
+          title: language.t("common.requestFailed"),
+          description: errorMessage(err),
+        }),
+      )
+      .finally(() => setOp("queued", messageID, undefined))
   }
 
   const navigateParent = () => {
@@ -1570,6 +1587,7 @@ export function MessageTimeline(props: {
                       (item): item is UserMessage => item.id === messageID && item.role === "user",
                     ),
                   )
+                  const queued = createMemo(() => queuedUserMessage(turn()))
                   const history = createMemo(() => timelineChildren(turn()))
                   const current = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
                   const timeline = createMemo(() => timelineProgress(history()))
@@ -1692,6 +1710,19 @@ export function MessageTimeline(props: {
                               </Index>
                             </div>
                           </div>
+                        </div>
+                      </Show>
+                      <Show when={props.filter === "all" && queued()}>
+                        <div class="w-full px-6 md:px-8 pb-2 flex justify-end">
+                          <IconButton
+                            icon="trash"
+                            size="normal"
+                            variant="ghost"
+                            class="text-text-danger-base"
+                            disabled={!!op.queued[messageID]}
+                            onClick={() => drop(messageID)}
+                            aria-label={language.t("common.delete")}
+                          />
                         </div>
                       </Show>
                       <SessionTurn

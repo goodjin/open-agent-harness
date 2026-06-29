@@ -1940,6 +1940,13 @@ export namespace SessionRunner {
       sessionID: SessionID.make(input.stream.sessionID),
       status: msg.finish === "error" ? "failed" : "completed",
     })
+    await mark({
+      assistant: msg,
+      outcome: msg.finish === "error" ? "failed" : "completed",
+      reason: "protocol",
+      runID: input.run.run_id,
+      user: input.stream.user,
+    })
   }
 
   async function history(stream: LLM.StreamInput, sessionID: SessionID) {
@@ -2770,6 +2777,14 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
       status: ok ? "confirmed" : "cancelled",
     })
+    await recordConfirm({
+      action: input.action,
+      messageID: input.messageID,
+      plan,
+      response: ok ? "confirm" : "cancel",
+      runID: input.runID,
+      sessionID: input.sessionID,
+    })
     if (ok) {
       return {
         title: input.action.title,
@@ -2789,6 +2804,84 @@ export namespace SessionRunner {
   function yes(input: string) {
     const answer = input.trim()
     return /^(confirm|approve|yes)\b/i.test(answer) || answer === "确认" || answer === "確認"
+  }
+
+  async function recordConfirm(input: {
+    action: AgentProtocol.Action
+    messageID: MessageID
+    plan: string
+    response: "confirm" | "cancel"
+    runID: string
+    sessionID: SessionID
+  }) {
+    const src = await MessageV2.get({ sessionID: input.sessionID, messageID: input.messageID }).catch(() => undefined)
+    if (src?.info.role !== "assistant") return
+    const parent = await MessageV2.get({ sessionID: input.sessionID, messageID: src.info.parentID }).catch(
+      () => undefined,
+    )
+    if (parent?.info.role !== "user") return
+
+    const now = Date.now()
+    const prompt = text(object(input.action.input).prompt) || input.action.title
+    const choice = input.response === "confirm" ? "Confirm" : "Cancel"
+    const msg = (await Session.updateMessage({
+      id: MessageID.ascending(),
+      sessionID: input.sessionID,
+      role: "user",
+      time: { created: now },
+      agent: parent.info.agent,
+      model: parent.info.model,
+      system: parent.info.system,
+      tools: parent.info.tools,
+      variant: parent.info.variant,
+      metadata: {
+        protocol_confirmation: {
+          action_id: input.action.id,
+          action_title: input.action.title,
+          message_id: input.messageID,
+          response: input.response,
+          run_id: input.runID,
+        },
+        turn: {
+          kind: "user",
+          status: "done",
+          outcome: input.response === "confirm" ? "completed" : "blocked",
+          reason: "protocol",
+          assistant_id: input.messageID,
+          run_id: input.runID,
+          stats: { confirmations: 1 },
+          time: {
+            queued: now,
+            started: now,
+            completed: now,
+          },
+        },
+      },
+    } as MessageV2.User)) as MessageV2.User
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: msg.id,
+      sessionID: input.sessionID,
+      type: "text",
+      text: [
+        "Protocol confirmation response",
+        `Action: ${input.action.id}`,
+        `Prompt: ${prompt}`,
+        `User choice: ${choice}`,
+        input.plan.trim() ? ["", "Plan:", input.plan.trim()].join("\n") : "",
+      ]
+        .filter((item) => item.length > 0)
+        .join("\n"),
+      metadata: {
+        kind: "protocol_confirmation_response",
+        protocol: {
+          actionID: input.action.id,
+          runID: input.runID,
+          response: input.response,
+        },
+      },
+      time: { start: now, end: now },
+    })
   }
 
   async function storeConfirm(input: {
