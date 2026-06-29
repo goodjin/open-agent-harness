@@ -506,6 +506,28 @@ describe("layout workspace helpers", () => {
     expect(summary.get("idle")).toEqual({ completed: 0, total: 0, working: 0 })
   })
 
+  test("counts leaf children in recursive child summaries", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      session({ id: "leaf-a", directory: "/workspace", parentID: "root" }),
+      session({ id: "leaf-b", directory: "/workspace", parentID: "root" }),
+      session({ id: "branch", directory: "/workspace", parentID: "root" }),
+      session({ id: "grand", directory: "/workspace", parentID: "branch" }),
+    ]
+    const summary = childSummaryBySession(
+      list,
+      childMapByParent(list),
+      {
+        "leaf-a": turn("leaf-a"),
+        branch: turn("branch"),
+        grand: turn("grand"),
+      },
+      {},
+    )
+
+    expect(summary.get("root")).toEqual({ completed: 3, total: 4, working: 0 })
+  })
+
   test("does not keep a session working from stale pending parts after idle", () => {
     expect(
       sessionWorking(

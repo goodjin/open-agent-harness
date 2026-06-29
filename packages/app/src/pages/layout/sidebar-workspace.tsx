@@ -392,8 +392,7 @@ const WorkspaceSessionList = (props: {
     if (!dir) return new Map<string, { completed: number; total: number; working: number }>()
     const [store] = globalSync.child(dir, { bootstrap: false })
     const children = props.children()
-    const parents = props.all().filter((session) => (children.get(session.id)?.length ?? 0) > 0)
-    return childSummaryBySession(parents, children, store.message, store.session_status)
+    return childSummaryBySession(props.all(), children, store.message, store.session_status)
   })
   const set = (id: string, value: boolean) => setExpanded(id, value)
   const row = 30
