@@ -423,6 +423,116 @@ describe("session.prompt missing file", () => {
     })
   })
 
+  test("loop skips aborted running turns before processing queued user turns", async () => {
+    spyOn(Provider, "getModel").mockImplementation(async (providerID, modelID) => {
+      return {
+        id: modelID,
+        providerID,
+        limit: { context: 100_000, output: 32_000 },
+      } as Provider.Model
+    })
+    spyOn(LLM, "stream").mockImplementation(async () => {
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "start-step" as const }
+          yield { type: "text-start" as const }
+          yield { type: "text-delta" as const, text: "continued" }
+          yield { type: "text-end" as const }
+          yield {
+            type: "finish-step" as const,
+            finishReason: "stop" as const,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" as const }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            resetRegistry()
+            const session = await Session.create({})
+            const old = MessageID.ascending()
+            await Session.updateMessage({
+              id: old,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "running",
+                  time: { queued: Date.now(), started: Date.now() },
+                },
+              },
+            } as unknown as MessageV2.Info)
+            await Session.updateMessage({
+              id: MessageID.ascending(),
+              parentID: old,
+              role: "assistant",
+              mode: "build",
+              agent: "build",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+              modelID: ModelID.make("test"),
+              providerID: ProviderID.make("test"),
+              path: {
+                cwd: tmp.path,
+                root: tmp.path,
+              },
+              time: { created: Date.now() },
+              sessionID: session.id,
+            } as unknown as MessageV2.Assistant)
+            const next = MessageID.ascending()
+            await Session.updateMessage({
+              id: next,
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "build",
+              model: { providerID: "test", modelID: "test" },
+              tools: {},
+              mode: "",
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "queued",
+                  time: { queued: Date.now() },
+                },
+              },
+            } as unknown as MessageV2.Info)
+
+            const msg = await SessionPrompt.loop({ sessionID: session.id, messageID: next })
+            if (msg.info.role !== "assistant") throw new Error("expected assistant message")
+            expect(msg.info.parentID).toBe(next)
+
+            const stale = await MessageV2.get({ sessionID: session.id, messageID: old })
+            if (stale.info.role !== "user") throw new Error("expected user message")
+            expect(SessionTurn.get(stale.info)?.status).toBe("done")
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
   test("loop uses session model before queued user message model", async () => {
     const seen: { providerID: string; modelID: string }[] = []
     spyOn(Provider, "getModel").mockImplementation(async (providerID, modelID) => {

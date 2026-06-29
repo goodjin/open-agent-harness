@@ -224,6 +224,8 @@ Terminal assistant completion is also a done turn. If an assistant message has a
 
 Prompt-loop repair applies the same rule to explicit turn metadata. If a previous user turn still says `queued` or `running` but the same turn already has a completed assistant message, the loop must mark that user turn done before selecting the next queued user message. This keeps follow-up queue behavior intact while preventing stale `waiting_user` or crashed loops from blocking later user input.
 
+Abort cleanup follows the same queue-progress rule. If a previous running user turn is followed by an unfinished empty assistant shell and a later user message already exists, prompt-loop repair treats that assistant as an aborted error, persists `finish=error` and `time.completed`, and marks the old user turn done before selecting the queued follow-up. A cancelled turn must not keep preempting newer user input after the user has already continued the session.
+
 Turn completion is written by runtime boundaries:
 
 - protocol response or final answer after `AgentProtocolOutput` is parsed and executed,

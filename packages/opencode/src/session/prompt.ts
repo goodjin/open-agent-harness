@@ -1065,7 +1065,7 @@ export namespace SessionPrompt {
       msgs.map(async (msg, index) => {
         if (msg.info.role !== "user") return
         if (SessionTurn.done(msg.info)) return
-        const assistant = closed(msgs, msg.info.id, index)
+        const assistant = closed(msgs, msg.info.id, index) ?? (await aborted(msgs, msg.info.id, index))
         if (!assistant) return
         await SessionTurn.finish({
           assistantID: assistant.info.id,
@@ -1076,6 +1076,27 @@ export namespace SessionPrompt {
         })
       }),
     )
+  }
+
+  async function aborted(msgs: MessageV2.WithParts[], parent: MessageID, index: number) {
+    for (let i = index + 1; i < msgs.length; i++) {
+      const msg = msgs[i]
+      if (!msg) continue
+      if (msg.info.role === "user") return
+      if (msg.info.role !== "assistant") continue
+      if (msg.info.parentID !== parent) continue
+      if (msg.info.time.completed) return
+      if (msg.info.finish) return
+      if (!msgs.slice(i + 1).some((item) => item.info.role === "user")) return
+      const empty = msg.parts.every((part) => part.type === "step-start" || part.type === "reasoning")
+      if (!empty) return
+      msg.info.error = new MessageV2.AbortedError({ message: "Session was aborted before the assistant completed." }).toObject()
+      msg.info.finish = "error"
+      msg.info.time.completed = Date.now()
+      await Session.updateMessage(msg.info)
+      return { info: msg.info, parts: msg.parts }
+    }
+    return
   }
 
   function closed(msgs: MessageV2.WithParts[], parent: MessageID, index: number) {
