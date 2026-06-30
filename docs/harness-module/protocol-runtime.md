@@ -144,6 +144,8 @@ If either pending nested children or active verifier cycles remain, Runtime emit
 
 Parent sessions use `waiting_child` while delegated children for the current run are still unfinished. This state is distinct from `blocked`: `blocked` remains a terminal child outcome and can be counted as an ended child when aggregating results.
 
+When a protocol package starts delegated child sessions, those child sessions form an asynchronous boundary before any human `input` or `confirm` action in the same package. The executor may still launch other ready non-human actions, but it must not enter `Question.ask()` while any same-package delegated action is still pending. Instead, the parent turn is finished as `waiting_child`; after the child fan-in summary is queued and processed, the model may decide whether to ask the user.
+
 Unavailable agent dispatch is not a wait state. If a protocol action targets an agent that is not visible from the parent, such as a removed legacy package agent, or the target is denied by permission rules, runtime marks that action and run as `failed`. It must not create a child session, must not record a pending delegation, and must not put the parent into `waiting_child` for that action.
 
 Child result delivery has three phases:
@@ -225,6 +227,8 @@ Terminal assistant completion is also a done turn. If an assistant message has a
 Prompt-loop repair applies the same rule to explicit turn metadata. If a previous user turn still says `queued` or `running` but the same turn already has a completed assistant message, the loop must mark that user turn done before selecting the next queued user message. This keeps follow-up queue behavior intact while preventing stale `waiting_user` or crashed loops from blocking later user input.
 
 Abort cleanup follows the same queue-progress rule. If a previous running user turn is followed by an unfinished empty assistant shell and a later user message already exists, prompt-loop repair treats that assistant as an aborted error, persists `finish=error` and `time.completed`, and marks the old user turn done before selecting the queued follow-up. A cancelled turn must not keep preempting newer user input after the user has already continued the session.
+
+Delegation wait repair covers persisted parent turns that stopped after a native protocol `tool-calls` assistant but never recorded the expected `waiting_child` outcome. If the user turn has child metadata and those children already have result ids or notification timestamps, and a later queued user or internal continuation exists, prompt startup marks the stale turn done with `outcome=waiting_child` before selecting the queued continuation. This repair is intentionally narrower than generic `tool-calls` completion because active delegated waits must remain visible until child fan-in occurs.
 
 Turn completion is written by runtime boundaries:
 

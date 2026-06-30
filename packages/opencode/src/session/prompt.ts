@@ -1065,6 +1065,22 @@ export namespace SessionPrompt {
       msgs.map(async (msg, index) => {
         if (msg.info.role !== "user") return
         if (SessionTurn.done(msg.info)) return
+        const wait = delegated(msgs, msg.info, index)
+        if (wait) {
+          const turn = SessionTurn.get(msg.info)
+          await SessionTurn.finish({
+            assistantID: wait.info.id,
+            outcome: "waiting_child",
+            reason: "waiting_child",
+            runID: wait.runID,
+            stats: {
+              ...turn?.stats,
+              ...SessionTurn.stats({ message: wait }),
+            },
+            user: msg.info,
+          })
+          return
+        }
         const assistant = closed(msgs, msg.info.id, index) ?? (await aborted(msgs, msg.info.id, index))
         if (!assistant) return
         await SessionTurn.finish({
@@ -1076,6 +1092,28 @@ export namespace SessionPrompt {
         })
       }),
     )
+  }
+
+  function delegated(msgs: MessageV2.WithParts[], user: MessageV2.User, index: number) {
+    const turn = SessionTurn.get(user)
+    if (!turn || turn.status !== "running") return
+    if (!Array.isArray(turn.children) || turn.children.length === 0) return
+    if (!turn.children.every((child) => typeof child.notified_at === "number" || typeof child.result_id === "string")) return
+    if (!msgs.slice(index + 1).some((item) => item.info.role === "user")) return
+    for (let i = index + 1; i < msgs.length; i++) {
+      const msg = msgs[i]
+      if (!msg) continue
+      if (msg.info.role === "user") return
+      if (msg.info.role !== "assistant") continue
+      if (msg.info.parentID !== user.id) continue
+      if (typeof msg.info.time.completed !== "number") continue
+      if (msg.info.finish !== "tool-calls") continue
+      return {
+        ...msg,
+        runID: turn.run_id ?? turn.children.find((child) => typeof child.run === "string")?.run,
+      }
+    }
+    return
   }
 
   async function aborted(msgs: MessageV2.WithParts[], parent: MessageID, index: number) {

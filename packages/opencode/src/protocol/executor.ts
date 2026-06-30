@@ -38,6 +38,7 @@ export namespace AgentProtocolExecutor {
     const actions = input.declaration.payload.type === "action_graph" ? input.declaration.payload.actions : []
     const refs = new Set(actions.map((item) => item.id))
     const ok = new Set<string>()
+    const wait = new Set<string>()
     const queue = [...actions]
     while (queue.length > 0) {
       const index = queue.findIndex((item) => item.depends_on.every((dep) => !refs.has(dep) || ok.has(dep)))
@@ -70,12 +71,38 @@ export namespace AgentProtocolExecutor {
         )
         break
       }
+      if (wait.size > 0 && item.executor.type === "human") {
+        queue.unshift(item)
+        const start = Date.now()
+        const end = Date.now()
+        done.push(
+          ...queue.splice(0).map((stuck) => ({
+            id: stuck.id,
+            title: stuck.title,
+            operation: stuck.operation,
+            executor: stuck.executor,
+            input: stuck.input,
+            depends_on: stuck.depends_on,
+            verification: stuck.verification,
+            status: "blocked" as const,
+            summary: `Action '${stuck.id}' is waiting for delegated actions: ${Array.from(wait).join(", ")}`,
+            error: `Action '${stuck.id}' is waiting for delegated actions: ${Array.from(wait).join(", ")}`,
+            tool_call_ids: [],
+            duration_ms: end - start,
+            time: {
+              started: start,
+              completed: end,
+            },
+          })),
+        )
+        break
+      }
       const start = Date.now()
       const prompt = item.prompt_ref?.startsWith("md:") ? input.sections?.[item.prompt_ref.slice(3)] : undefined
       const result = (await input.execute?.(item, prompt)) ?? defaults(item, prompt, input.agents ?? [])
       const failed = result.metadata.failed === true
       const stop = result.metadata.blocked === true
-      const wait = result.metadata.delegated === true
+      const delegated = result.metadata.delegated === true
       const skipped = result.metadata.skipped === true
       const end = Date.now()
       done.push({
@@ -86,7 +113,7 @@ export namespace AgentProtocolExecutor {
         input: item.input,
         depends_on: item.depends_on,
         verification: item.verification,
-        status: stop || wait ? "blocked" : failed ? "failed" : skipped ? "skipped" : "completed",
+        status: stop || delegated ? "blocked" : failed ? "failed" : skipped ? "skipped" : "completed",
         summary: result.output,
         output: stop || failed ? undefined : result.output,
         error: stop || failed ? result.output : undefined,
@@ -99,7 +126,8 @@ export namespace AgentProtocolExecutor {
         },
       })
       if (stop) break
-      if (!wait) ok.add(item.id)
+      if (delegated) wait.add(item.id)
+      if (!delegated) ok.add(item.id)
     }
 
     const status = done.some((item) => item.status === "failed")

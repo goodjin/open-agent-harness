@@ -146,6 +146,56 @@ describe("agent protocol executor", () => {
     expect(result.actions[1]?.summary).toContain("waiting for unfinished dependencies")
   })
 
+  test("does not ask for human input while a delegated action is still pending", async () => {
+    const seen: string[] = []
+    const action = (id: string, executor: AgentProtocol.Action["executor"]): AgentProtocol.Action => ({
+      type: "action",
+      id,
+      title: id,
+      operation: id === "choice" ? "input" : "verify",
+      executor,
+      depends_on: [],
+      context_refs: [],
+      result_policy: "summary",
+    })
+    const result = await AgentProtocolExecutor.run({
+      declaration: {
+        type: "agent.protocol",
+        version: "1",
+        intent: "execute",
+        persist: false,
+        title: "Delegate then ask",
+        execution: { strategy: "sequential" },
+        payload: {
+          type: "action_graph",
+          actions: [
+            action("verify", { type: "agent", target: "verifier", capabilities: [] }),
+            action("choice", { type: "human", target: "user", capabilities: ["single"] }),
+          ],
+        },
+      },
+      execute: async (item) => {
+        seen.push(item.id)
+        if (item.id === "verify") {
+          return {
+            title: item.title,
+            output: "Delegated to verifier.",
+            metadata: { delegated: true, childSessionID: "child_verify" },
+          }
+        }
+        throw new Error("human input should wait for delegated result summary")
+      },
+    })
+
+    expect(result.status).toBe("blocked")
+    expect(seen).toEqual(["verify"])
+    expect(result.actions.map((item) => [item.id, item.status])).toEqual([
+      ["verify", "blocked"],
+      ["choice", "blocked"],
+    ])
+    expect(result.actions[1]?.summary).toContain("waiting for delegated actions")
+  })
+
   test("records every dependent blocked by pending delegated workers", async () => {
     const seen: string[] = []
     const action = (id: string, target: string, depends_on: string[]): AgentProtocol.Action => ({
