@@ -18,6 +18,7 @@ import { SessionStatus } from "../../src/session/status"
 import { SessionDelegation } from "../../src/session/delegation"
 import { SessionTurn } from "../../src/session/turn"
 import { SessionAssignment } from "../../src/session/assignment"
+import { SessionResult } from "../../src/session/result"
 import { WorkflowState } from "../../src/workflow/state"
 import { WorkflowExecutor } from "../../src/workflow/executor"
 import { tmpdir } from "../fixture/fixture"
@@ -5219,6 +5220,203 @@ describe("SessionRunner", () => {
       })
     } finally {
       hook.mockRestore()
+    }
+  })
+
+  test("protocol child session hands plain text result back to parent", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    let calls = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "text-start" }
+          yield { type: "text-delta", text: "Child task completed and docs closed." }
+          yield { type: "text-end" }
+          yield {
+            type: "finish-step",
+            finishReason: "stop",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "protocol-runner" })
+              const parentUser = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_plain_child",
+                action_id: "plain_child",
+                action_title: "Plain child",
+                parent_session_id: parent.id,
+                parent_message_id: parentUser.id,
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "protocol-runner",
+                result_policy: "summary",
+                result_tool: "AgentProtocolOutput",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: {
+                  protocol: {
+                    pending_delegations: {
+                      [child.id]: item,
+                    },
+                  },
+                },
+              })
+              await Session.setDslContext({
+                sessionID: child.id,
+                dsl_context: {
+                  protocol: {
+                    delegation: item,
+                  },
+                },
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: child.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner.process({
+                user,
+                sessionID: child.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "close child task" }],
+                tools: {},
+              })
+              const rec = await SessionResult.find({
+                parentSessionID: parent.id,
+                childSessionID: child.id,
+                runID: "apr_plain_child",
+                actionID: "plain_child",
+              })
+              const fresh = await Session.get(parent.id)
+              const ctx = fresh.dsl_context as {
+                protocol?: { completed_delegations?: { child_session_id?: string; satisfying?: boolean }[] }
+              }
+
+              expect(result).toBe("stop")
+              expect(calls).toBe(2)
+              expect(rec?.carrier).toBe("plain_text_result")
+              expect(rec?.status).toBe("completed")
+              expect(rec?.satisfying).toBe(true)
+              expect(rec?.summary).toContain("docs closed")
+              expect(ctx.protocol?.completed_delegations?.[0]).toMatchObject({
+                child_session_id: child.id,
+                satisfying: true,
+              })
+              expect(prompt).toHaveBeenCalled()
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+      prompt.mockRestore()
     }
   })
 

@@ -174,6 +174,7 @@ export namespace SessionRunner {
         messageID: chat.message.id,
         output: await textOf(chat.message.id),
         sessionID,
+        result: "plain_text_result",
         status: chat.message.finish === "error" ? "failed" : "completed",
       })
       return "stop"
@@ -1703,6 +1704,7 @@ export namespace SessionRunner {
       messages: await history(input.stream, SessionID.make(input.stream.sessionID)),
     })
     const parsed = await protocolOutput(msg.id)
+    let plainResult = false
     if (parsed?.ok) {
       const sessionID = SessionID.make(input.stream.sessionID)
       if (parsed.value.declaration.intent === "execute") {
@@ -1918,6 +1920,7 @@ export namespace SessionRunner {
         await Session.updateMessage(msg)
         return
       } else {
+        plainResult = true
         await SessionLog.emit({
           sessionID: SessionID.make(input.stream.sessionID),
           messageID: msg.id,
@@ -1937,6 +1940,7 @@ export namespace SessionRunner {
     await completeAssigned({
       messageID: msg.id,
       output: await textOf(msg.id),
+      result: plainResult ? "plain_text_result" : undefined,
       sessionID: SessionID.make(input.stream.sessionID),
       status: msg.finish === "error" ? "failed" : "completed",
     })
@@ -3320,30 +3324,47 @@ export namespace SessionRunner {
   async function completeAssigned(input: {
     messageID: MessageID
     output: string
+    result?: "plain_text_result"
     sessionID: SessionID
     status: "completed" | "failed"
   }) {
     const item = await assignment(input.sessionID)
-    if (item?.result_tool === "ActionResult") {
+    if (item?.result_tool === "ActionResult" && input.result !== "plain_text_result") {
       await SessionDelegation.complete({
         messageID: input.messageID,
         sessionID: input.sessionID,
       })
       return
     }
+    const meta = item
+      ? AgentDelegation.complete({
+          agent: item.agent,
+          meta: await AgentDelegation.meta(item.agent).catch(() => undefined),
+          result: {
+            content: input.output,
+            source: item.agent,
+            ...(input.result ? { type: input.result } : {}),
+          },
+          status: input.status,
+        })
+      : undefined
+    const done =
+      meta && input.result === "plain_text_result"
+        ? {
+            ...meta,
+            source: "protocol_plain_text",
+            result: {
+              content: input.output,
+              source: item?.agent,
+              type: "plain_text_result",
+            },
+          }
+        : meta
     await SessionDelegation.complete({
       ...input,
-      ...(item
+      ...(done
         ? {
-            metadata: AgentDelegation.complete({
-              agent: item.agent,
-              meta: await AgentDelegation.meta(item.agent).catch(() => undefined),
-              result: {
-                content: input.output,
-                source: item.agent,
-              },
-              status: input.status,
-            }),
+            metadata: done,
           }
         : {}),
     })

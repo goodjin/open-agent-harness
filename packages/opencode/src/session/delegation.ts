@@ -1075,6 +1075,8 @@ export namespace SessionDelegation {
     if (body.action_result) return "action_result"
     if (body.protocol_result) return "agent_protocol_output"
     if (object(body.metadata).source === "fallback_summary") return "fallback_summary"
+    if (object(object(body.metadata).result).type === "plain_text_result") return "plain_text_result"
+    if (object(body.metadata).source === "protocol_plain_text") return "plain_text_result"
     return "synthetic"
   }
 
@@ -1087,6 +1089,7 @@ export namespace SessionDelegation {
     const res = object(body.action_result)
     if (res.role === "worker") return res.status === "success"
     if (res.role === "verifier") return res.status === "success" || res.status === "skipped"
+    if (carrier(body) === "plain_text_result") return body.status === "completed" || body.status === "partial"
     const term = object(body.protocol_result).kind
     return term === "success" || term === "answer" || term === "done"
   }

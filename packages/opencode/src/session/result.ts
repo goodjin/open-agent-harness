@@ -5,7 +5,7 @@ import { SessionResultTable } from "./session.sql"
 import type { SessionID } from "./schema"
 
 export namespace SessionResult {
-  export type Carrier = "action_result" | "agent_protocol_output" | "fallback_summary" | "synthetic"
+  export type Carrier = "action_result" | "agent_protocol_output" | "fallback_summary" | "plain_text_result" | "synthetic"
   export type Status = "completed" | "partial" | "blocked" | "failed" | "waiting_user" | "terminal_reply"
 
   export type Info = {

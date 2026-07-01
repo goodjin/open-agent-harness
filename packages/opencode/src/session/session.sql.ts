@@ -11,7 +11,7 @@ import { Timestamps } from "../storage/schema.sql"
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
 type InfoData = Omit<MessageV2.Info, "id" | "sessionID">
 type LogData = Record<string, unknown>
-type ResultCarrier = "action_result" | "agent_protocol_output" | "fallback_summary" | "synthetic"
+type ResultCarrier = "action_result" | "agent_protocol_output" | "fallback_summary" | "plain_text_result" | "synthetic"
 type ResultStatus = "completed" | "partial" | "blocked" | "failed" | "waiting_user" | "terminal_reply"
 type AssignmentStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "superseded"
 type AssignmentSource = "confirm" | "delegation"
