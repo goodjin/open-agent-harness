@@ -469,6 +469,16 @@ export namespace SessionStatus {
     return status
   }
 
+  export function refresh(sessionID: SessionID) {
+    const status = load(sessionID)
+    if (!status || status.type === "idle") {
+      delete state()[sessionID]
+      return { type: "idle" as const }
+    }
+    state()[sessionID] = status
+    return status
+  }
+
   export function list() {
     const data = state()
     for (const [id, status] of Object.entries(data)) {

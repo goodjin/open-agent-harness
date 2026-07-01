@@ -2392,6 +2392,7 @@ export namespace SessionDelegation {
         },
       },
     })
+    SessionStatus.refresh(parent.id)
     ack(item)
   }
 

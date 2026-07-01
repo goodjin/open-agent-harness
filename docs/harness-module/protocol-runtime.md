@@ -210,7 +210,7 @@ Bootstrap restores status from DB before delegation recovery runs. If memory has
 
 Delegated child status restore also checks `dsl_context.result` before converting stale active rows into `interrupted` or dropping idle rows. When that result is a terminal `session.action_result`, restore maps it back to the corresponding terminal session status, such as `terminal_reply`, `failed`, `blocked`, or `completed`. Restore skips this recovery if the child has a later user message than the stored result timestamp, because that later user turn represents a new execution round.
 
-`waiting_child` is valid only while the parent DSL context still has live `protocol.pending_delegations`. Status restore and lazy status load reconcile stale DB projections: an empty pending set, or a pending set whose child rows are already terminal, is repaired to `completed`; mixed live and terminal children keep `waiting_child` with the live child count.
+`waiting_child` is valid only while the parent DSL context still has live `protocol.pending_delegations`. Status restore and lazy status load reconcile stale DB projections: an empty pending set, or a pending set whose child rows are already terminal, is repaired to `completed`; mixed live and terminal children keep `waiting_child` with the live child count. Delegation fan-in also refreshes the parent status immediately after removing a child from `pending_delegations`, so sidebar and tree projections do not keep showing a stale child wait until a later single-session status request happens.
 
 `waiting_user` and `waiting_child` are done outcomes for the current turn. The session status remains `waiting_user` or `waiting_child` so the title bar, session tree, and prompt dock can still show the broader wait state.
 

@@ -422,6 +422,83 @@ describe("session state machine", () => {
     })
   })
 
+  test("refresh persists completed status when waiting_child has no pending delegations", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-empty-pending"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                protocol: {
+                  pending_delegations: {},
+                },
+              },
+            })
+            SessionStatus.set(session.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
+            await SessionStatus.flush()
+
+            const status = SessionStatus.refresh(session.id)
+            const row = Database.use((db) =>
+              db.select().from(SessionTable).where(eq(SessionTable.id, session.id)).get(),
+            )
+
+            expect(status).toEqual({ type: "completed" })
+            expect(row?.status_class).toBe("terminal")
+            expect(row?.status).toBe("terminal_success")
+            expect(row?.status_message).toBeNull()
+
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("refresh persists completed status when waiting_child only references terminal children", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-terminal-child-pending"),
+          fn: async () => {
+            const parent = await Session.create({})
+            const child = await Session.create({ parentID: parent.id })
+            await Session.setDslContext({
+              sessionID: parent.id,
+              dsl_context: {
+                protocol: {
+                  pending_delegations: {
+                    [child.id]: {
+                      child_session_id: child.id,
+                      parent_session_id: parent.id,
+                    },
+                  },
+                },
+              },
+            })
+            SessionStatus.set(child.id, { type: "terminal_reply", message: "Needs parent decision." })
+            SessionStatus.set(parent.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
+            await SessionStatus.flush()
+
+            const status = SessionStatus.refresh(parent.id)
+            const row = Database.use((db) =>
+              db.select().from(SessionTable).where(eq(SessionTable.id, parent.id)).get(),
+            )
+
+            expect(status).toEqual({ type: "completed" })
+            expect(row?.status_class).toBe("terminal")
+            expect(row?.status).toBe("terminal_success")
+
+            await Session.remove(child.id)
+            await Session.remove(parent.id)
+          },
+        }),
+    })
+  })
+
   test("does not write session status snapshot files", async () => {
     await Instance.provide({
       directory: projectRoot,
