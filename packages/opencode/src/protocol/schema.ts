@@ -138,8 +138,12 @@ export namespace AgentProtocol {
     kind: z.literal("tool"),
     title: Text.optional(),
     target: Text,
+    prompt: Text.optional(),
     args: JsonRecord.default({}),
+    capabilities: z.array(Text).default([]),
+    context_refs: z.array(Ref).default([]),
     depends: V2Depends,
+    verification: Verification.optional(),
     result: Policy.default("summary"),
   })
   const V2Agent = z.object({
@@ -767,6 +771,20 @@ export namespace AgentProtocol {
 
   function action(input: Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>>, answers: Set<string>) {
     if (input.kind === "tool") {
+      if (input.prompt) {
+        return {
+          type: "action",
+          id: input.id,
+          title: input.title ?? input.id,
+          operation: input.target === "auto" ? "agent" : input.target,
+          executor: { type: "agent", target: input.target, capabilities: input.capabilities },
+          input: { prompt: input.prompt },
+          depends_on: links(input.depends, answers),
+          context_refs: input.context_refs,
+          verification: input.verification,
+          result_policy: input.result,
+        }
+      }
       return {
         type: "action",
         id: input.id,

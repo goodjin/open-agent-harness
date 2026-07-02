@@ -66,6 +66,31 @@ describe("agent protocol schema", () => {
     })
   })
 
+  test("normalizes v2 tool items with prompts as agent delegation", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "inspect_repo_layout",
+          kind: "tool",
+          target: "general-investigator",
+          prompt: "Inspect the repo layout and report facts.",
+          result: "structured",
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]).toMatchObject({
+      id: "inspect_repo_layout",
+      operation: "general-investigator",
+      executor: { type: "agent", target: "general-investigator", capabilities: [] },
+      input: { prompt: "Inspect the repo layout and report facts." },
+      result_policy: "structured",
+    })
+  })
+
   test("ignores whitespace-only v2 item strings", () => {
     const out = AgentProtocol.parse({
       version: "2",
