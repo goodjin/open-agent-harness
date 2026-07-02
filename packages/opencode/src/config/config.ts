@@ -76,7 +76,7 @@ export namespace Config {
 
     // Config loading order (low -> high precedence): https://opencode.ai/docs/config#precedence-order
     // 1) Remote .well-known/opencode (org defaults)
-    // 2) Global config (~/.config/opencode/opencode.json{,c})
+    // 2) Global config (~/.open-agent-harness/config/opencode.json{,c})
     // 3) Custom config (OPENCODE_CONFIG)
     // 4) Project config (opencode.json{,c})
     // 5) .opencode directories (.opencode/agents/, .opencode/commands/, .opencode/opencode.json{,c})

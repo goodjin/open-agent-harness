@@ -1,15 +1,15 @@
 import fs from "fs/promises"
-import { xdgData, xdgCache, xdgConfig, xdgState } from "xdg-basedir"
 import path from "path"
 import os from "os"
 import { Filesystem } from "../util/filesystem"
 
-const app = "opencode"
-
-const data = path.join(xdgData!, app)
-const cache = path.join(xdgCache!, app)
-const config = path.join(xdgConfig!, app)
-const state = path.join(xdgState!, app)
+const home = process.env.OPENCODE_TEST_HOME || os.homedir()
+const root = path.join(home, ".open-agent-harness")
+const data = path.join(root, "data")
+const cache = path.join(root, "cache")
+const config = path.join(root, "config")
+const state = path.join(root, "state")
+const log = path.join(root, "log")
 
 export namespace Global {
   export const Path = {
@@ -19,7 +19,7 @@ export namespace Global {
     },
     data,
     bin: path.join(data, "bin"),
-    log: path.join(data, "log"),
+    log,
     cache,
     config,
     state,
@@ -30,6 +30,7 @@ await Promise.all([
   fs.mkdir(Global.Path.data, { recursive: true }),
   fs.mkdir(Global.Path.config, { recursive: true }),
   fs.mkdir(Global.Path.state, { recursive: true }),
+  fs.mkdir(Global.Path.cache, { recursive: true }),
   fs.mkdir(Global.Path.log, { recursive: true }),
   fs.mkdir(Global.Path.bin, { recursive: true }),
 ])
