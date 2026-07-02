@@ -605,6 +605,7 @@ export default function Page() {
 
   const [store, setStore] = createStore({
     messageId: undefined as string | undefined,
+    sessionView: "timeline" as "timeline" | "logs",
     mobileTab: "session" as "session" | "changes" | "logs",
     changes: "session" as "session" | "turn",
     filter: "all" as SessionTurnFilter,
@@ -1082,6 +1083,7 @@ export default function Page() {
 
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   const mobileLogs = createMemo(() => !isDesktop() && store.mobileTab === "logs")
+  const logMode = createMemo(() => mobileLogs() || (isDesktop() && store.sessionView === "logs"))
 
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
@@ -1254,11 +1256,39 @@ export default function Page() {
 
   const sessionPanel = () => (
     <div class="flex-1 min-h-0 overflow-hidden flex flex-col">
+      <Show when={isDesktop() && params.id}>
+        <div class="shrink-0 border-b border-border-weaker-base bg-background-base px-3 py-2">
+          <div class="inline-flex rounded-md border border-border-weak-base bg-background-stronger p-0.5">
+            <button
+              type="button"
+              class="rounded px-2.5 py-1 text-12-medium transition-colors"
+              classList={{
+                "bg-surface-base text-text-strong": store.sessionView === "timeline",
+                "text-text-weak hover:text-text-base": store.sessionView !== "timeline",
+              }}
+              onClick={() => setStore("sessionView", "timeline")}
+            >
+              Timeline
+            </button>
+            <button
+              type="button"
+              class="rounded px-2.5 py-1 text-12-medium transition-colors"
+              classList={{
+                "bg-surface-base text-text-strong": store.sessionView === "logs",
+                "text-text-weak hover:text-text-base": store.sessionView !== "logs",
+              }}
+              onClick={() => setStore("sessionView", "logs")}
+            >
+              Logs
+            </button>
+          </div>
+        </div>
+      </Show>
       <div class="flex-1 min-h-0 overflow-hidden">
         <Switch>
           <Match when={params.id}>
             <Show
-              when={mobileLogs()}
+              when={logMode()}
               fallback={
                 <Show when={messagesReady()} fallback={sessionLoadingPanel()}>
                   <MessageTimeline

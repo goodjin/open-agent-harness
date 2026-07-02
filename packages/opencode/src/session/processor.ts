@@ -594,10 +594,31 @@ export namespace SessionProcessor {
                 if (needsCompaction) break
               }
             } finally {
-              await SessionLog.savePayload({
+              await SessionLog.savePayloadManifest({
                 id: output,
                 sessionID: input.sessionID,
-                data: response.full(),
+                kind: "llm.response",
+                meta: {
+                  providerID: input.model.providerID,
+                  modelID: input.model.id,
+                  agent: streamInput.agent.name,
+                  mode: streamInput.agent.mode,
+                  attempt,
+                },
+                sections: [
+                  {
+                    id: "raw_events",
+                    label: "Raw Events",
+                    chunks: [
+                      {
+                        kind: "provider_raw",
+                        format: "json",
+                        title: "Raw response events",
+                        data: response.full(),
+                      },
+                    ],
+                  },
+                ],
               }).catch((err) => log.warn("response payload log failed", { err, payload: output }))
               stream.release?.()
             }

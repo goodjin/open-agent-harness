@@ -133,6 +133,40 @@ const finals = new Set([
   "protocol.final.plain",
   "protocol.final.plain_tool_syntax",
 ])
+const builtins = new Set([
+  "bash",
+  "read",
+  "glob",
+  "grep",
+  "edit",
+  "write",
+  "task",
+  "agent_query",
+  "agent_create",
+  "agent_generate",
+  "agent_save",
+  "webfetch",
+  "todowrite",
+  "workflow_create",
+  "workflow_start",
+  "websearch",
+  "codesearch",
+  "apply_patch",
+  "question",
+  "invalid",
+])
+const protocols = new Set(["AgentProtocolOutput", "ActionResult"])
+
+export function toolSource(tool: string, data?: Record<string, unknown>) {
+  const source = text(data?.source) ?? text(object(data?.metadata)?.source)
+  if (source === "mcp") return { source: "mcp" as const }
+  if (source === "protocol") return { source: "protocol" as const }
+  if (protocols.has(tool)) return { source: "protocol" as const }
+  if (tool === "bash") return { source: "builtin" as const, subtype: "cli" as const }
+  if (builtins.has(tool)) return { source: "builtin" as const }
+  if (tool.startsWith("mcp_")) return { source: "mcp" as const }
+  return { source: "custom" as const }
+}
 
 export function describeLog(record: Log): Summary {
   const data = record.data
@@ -320,6 +354,7 @@ export function describeLog(record: Log): Summary {
         meta: [`attempt ${count(data.attempt) ?? 0}`, `${count(data.delay) ?? 0}ms`],
       }
     case "tool.start":
+      const start = toolSource(text(data.tool) ?? "", data)
       if (data.protocol === true) {
         return {
           title: "Protocol internal tool started",
@@ -330,9 +365,10 @@ export function describeLog(record: Log): Summary {
       return {
         title: "Tool started",
         detail: text(data.tool),
-        meta: [text(data.callID)].filter(filled),
+        meta: [start.source, start.subtype, text(data.callID)].filter(filled),
       }
     case "tool.finish":
+      const done = toolSource(text(data.tool) ?? "", data)
       if (data.protocol === true) {
         return {
           title: "Protocol internal tool finished",
@@ -343,7 +379,7 @@ export function describeLog(record: Log): Summary {
       return {
         title: "Tool finished",
         detail: text(data.title) ?? text(data.tool),
-        meta: [text(data.callID)].filter(filled),
+        meta: [done.source, done.subtype, text(data.callID)].filter(filled),
       }
     case "tool.error":
       return {
@@ -573,6 +609,31 @@ const records = (logs: Log[], names: string[]) =>
       data: log.data,
     }))
 
+const manifestSections = (input: unknown): Section[] => {
+  const data = object(input)
+  if (data?.version !== 2) return []
+  const sections = Array.isArray(data.sections) ? data.sections : []
+  return sections.flatMap((item) => {
+    const section = object(item)
+    const id = text(section?.id)
+    const label = text(section?.label)
+    const chunks = Array.isArray(section?.chunks)
+      ? section.chunks.flatMap((chunk) => {
+          const obj = object(chunk)
+          return obj ? [obj] : []
+        })
+      : []
+    if (!id || !label || chunks.length === 0) return []
+    return [
+      {
+        id,
+        label,
+        data: chunks.map((chunk) => ("data" in chunk ? chunk.data : chunk)).filter((value) => value !== undefined),
+      },
+    ]
+  })
+}
+
 export function detailSections(logs: Log[]): Section[] {
   const start = logs.find((log) => log.type === "llm.start")
   const done = logs.find((log) => log.type === "llm.finish")
@@ -589,6 +650,7 @@ export function detailSections(logs: Log[]): Section[] {
     const payload = text(req.payload)
     const response = text(req.responsePayload)
     const ids = [...new Set([user, start.messageID].filter(filled))]
+    const manifest = manifestSections(req.manifest)
     return [
       {
         id: "overview",
@@ -635,48 +697,52 @@ export function detailSections(logs: Log[]): Section[] {
             },
           ]
         : []),
-      {
-        id: "system",
-        label: "System",
-        data: req.system ?? [],
-      },
-      {
-        id: "messages",
-        label: "Messages",
-        data:
-          req.messages ??
-          compact({
-            messageCount: req.messageCount,
-            messageBytes: req.messageBytes,
-            user: req.user,
-            assistant: start.messageID,
-          }),
-        load: ids.length
-          ? {
-              key: `${start.id}:messages`,
-              messageIDs: ids,
-            }
-          : undefined,
-      },
-      {
-        id: "user",
-        label: "User",
-        data: req.user ?? {},
-        load: user
-          ? {
-              key: `${start.id}:user`,
-              messageIDs: [user],
-            }
-          : undefined,
-      },
-      {
-        id: "tools",
-        label: "Tools",
-        data: compact({
-          available: req.tools ?? [],
-          toolChoice: req.toolChoice,
-        }),
-      },
+      ...(manifest.length
+        ? manifest
+        : [
+            {
+              id: "system",
+              label: "System",
+              data: req.system ?? [],
+            },
+            {
+              id: "messages",
+              label: "Messages",
+              data:
+                req.messages ??
+                compact({
+                  messageCount: req.messageCount,
+                  messageBytes: req.messageBytes,
+                  user: req.user,
+                  assistant: start.messageID,
+                }),
+              load: ids.length
+                ? {
+                    key: `${start.id}:messages`,
+                    messageIDs: ids,
+                  }
+                : undefined,
+            },
+            {
+              id: "user",
+              label: "User",
+              data: req.user ?? {},
+              load: user
+                ? {
+                    key: `${start.id}:user`,
+                    messageIDs: [user],
+                  }
+                : undefined,
+            },
+            {
+              id: "tools",
+              label: "Tools",
+              data: compact({
+                available: req.tools ?? [],
+                toolChoice: req.toolChoice,
+              }),
+            },
+          ]),
       {
         id: "raw",
         label: "Raw",

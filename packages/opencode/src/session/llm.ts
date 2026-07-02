@@ -73,6 +73,92 @@ export namespace LLM {
     return (input.toolChoice ?? { type: "tool", toolName: PROTOCOL_OUTPUT_TOOL }) as ToolChoice<ToolSet>
   }
 
+  function obj(input: unknown) {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return {}
+    return input as Record<string, unknown>
+  }
+
+  function sections(input: { params: Record<string, unknown>; activeTools: string[] }) {
+    const prompt = Array.isArray(input.params.prompt) ? input.params.prompt : []
+    const system = prompt.filter((item) => obj(item).role === "system")
+    const turns = prompt.filter((item) => obj(item).role !== "system")
+    const tools = Array.isArray(input.params.tools) ? input.params.tools : []
+    const params = Object.fromEntries(
+      Object.entries(input.params).filter(([key]) => key !== "prompt" && key !== "tools"),
+    )
+    return [
+      ...(system.length
+        ? [
+            {
+              id: "system",
+              label: "System Prompt",
+              chunks: system.map((item, idx) => ({
+                kind: "system_prompt",
+                format: "json" as const,
+                title: `System ${idx + 1}`,
+                data: item,
+              })),
+            },
+          ]
+        : []),
+      ...(tools.length
+        ? [
+            {
+              id: "tools",
+              label: "Tools",
+              chunks: tools.map((item, idx) => ({
+                kind: "tool_definition",
+                format: "json" as const,
+                title: `Tool ${idx + 1}`,
+                data: item,
+              })),
+            },
+          ]
+        : []),
+      ...(turns.length
+        ? [
+            {
+              id: "turns",
+              label: "Turns",
+              chunks: turns.map((item, idx) => ({
+                kind: "turn",
+                format: "json" as const,
+                title: `Turn ${idx + 1}`,
+                data: item,
+              })),
+            },
+          ]
+        : []),
+      {
+        id: "params",
+        label: "Provider Params",
+        chunks: [
+          {
+            kind: "provider_params",
+            format: "json" as const,
+            title: "Provider params",
+            data: {
+              ...params,
+              activeTools: input.activeTools,
+            },
+          },
+        ],
+      },
+      {
+        id: "raw",
+        label: "Raw Provider Params",
+        chunks: [
+          {
+            kind: "provider_raw",
+            format: "json" as const,
+            title: "Raw provider params",
+            data: input.params,
+          },
+        ],
+      },
+    ]
+  }
+
   export type StreamInput = {
     user: MessageV2.User
     sessionID: SessionID
@@ -269,18 +355,19 @@ export namespace LLM {
                   delete (args.params as { toolChoice?: unknown }).toolChoice
                 }
                 if (input.payload) {
-                  await SessionLog.savePayload({
+                  const active = Object.keys(tools).filter((item) => item !== "invalid")
+                  await SessionLog.savePayloadManifest({
                     id: input.payload.id,
                     sessionID: input.sessionID,
-                    data: {
-                      type: args.type,
+                    kind: "llm.request",
+                    meta: {
                       providerID: input.model.providerID,
                       modelID: input.model.id,
                       agent: input.agent.name,
                       mode: input.agent.mode,
-                      activeTools: Object.keys(tools).filter((item) => item !== "invalid"),
-                      params: args.params,
+                      type: args.type,
                     },
+                    sections: sections({ params: obj(args.params), activeTools: active }),
                   }).catch((err) => l.warn("request payload log failed", { err, payload: input.payload?.id }))
                 }
               }

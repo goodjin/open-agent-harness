@@ -10,6 +10,7 @@ import {
   mergeLogs,
   preserveScroll,
   summarizeLogs,
+  toolSource,
 } from "./session-log-timeline"
 
 type Log = SessionLogResponse[number]
@@ -207,6 +208,50 @@ describe("session log timeline", () => {
         payloadID: "payload_response",
       },
     })
+  })
+
+  test("renders v2 payload manifests as semantic detail sections", () => {
+    const sections = detailSections([
+      record("llm", 3, "llm.start", {
+        providerID: "openai",
+        modelID: "gpt-test",
+        request: {
+          payload: "payload_manifest",
+          manifest: {
+            version: 2,
+            kind: "llm.request",
+            sections: [
+              {
+                id: "system",
+                label: "System Prompt",
+                chunks: [{ id: "chunk_a", kind: "system_prompt", format: "markdown", data: "# Rules" }],
+              },
+              {
+                id: "tools",
+                label: "Tools",
+                chunks: [{ id: "chunk_b", kind: "tool_definition", format: "json", data: { name: "bash" } }],
+              },
+              {
+                id: "skills",
+                label: "Skills",
+                chunks: [{ id: "chunk_c", kind: "skill", format: "markdown", data: "skill body" }],
+              },
+            ],
+          },
+        },
+      }),
+    ])
+
+    expect(sections.map((item) => item.id)).toEqual(["overview", "payload", "system", "tools", "skills", "raw"])
+    expect(sections.find((item) => item.id === "system")?.data).toEqual(["# Rules"])
+    expect(sections.find((item) => item.id === "tools")?.data).toEqual([{ name: "bash" }])
+  })
+
+  test("classifies builtin cli, mcp, custom, and protocol tool sources", () => {
+    expect(toolSource("bash")).toEqual({ source: "builtin", subtype: "cli" })
+    expect(toolSource("mcp_github_search")).toEqual({ source: "mcp" })
+    expect(toolSource("AgentProtocolOutput")).toEqual({ source: "protocol" })
+    expect(toolSource("project_lookup")).toEqual({ source: "custom" })
   })
 
   test("keeps model output out of llm request details", () => {

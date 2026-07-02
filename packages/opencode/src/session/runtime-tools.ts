@@ -231,6 +231,7 @@ export namespace RuntimeTools {
           title: "",
           metadata: {
             ...(result.metadata ?? {}),
+            source: "mcp",
             truncated: truncated.truncated,
             ...(truncated.truncated && { outputPath: truncated.outputPath }),
           },

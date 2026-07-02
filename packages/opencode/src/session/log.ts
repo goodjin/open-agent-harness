@@ -9,6 +9,7 @@ import { MessageID, PartID, SessionID } from "./schema"
 import path from "path"
 import { Global } from "@/global"
 import { Filesystem } from "@/util/filesystem"
+import { createHash } from "crypto"
 
 export namespace SessionLog {
   export const retention = 7 * 24 * 60 * 60 * 1000
@@ -35,6 +36,59 @@ export namespace SessionLog {
     bytes: z.number(),
   })
   export type Payload = z.infer<typeof Payload>
+
+  export const Chunk = z.object({
+    id: z.string().startsWith("chunk_"),
+    sessionID: SessionID.zod,
+    kind: z.string(),
+    format: z.enum(["markdown", "json", "text", "raw"]),
+    title: z.string().optional(),
+    hash: z.string(),
+    data: z.unknown(),
+    bytes: z.number(),
+    time: z.number(),
+  })
+  export type Chunk = z.infer<typeof Chunk>
+
+  export const Manifest = z.object({
+    id: Identifier.schema("payload"),
+    version: z.literal(2),
+    kind: z.string(),
+    sessionID: SessionID.zod,
+    time: z.number(),
+    meta: z.record(z.string(), z.unknown()).optional(),
+    sections: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        chunks: z.array(z.string().startsWith("chunk_")),
+      }),
+    ),
+  })
+  export type Manifest = z.infer<typeof Manifest>
+
+  export const ManifestInput = z.object({
+    id: Identifier.schema("payload"),
+    sessionID: SessionID.zod,
+    kind: z.string(),
+    time: z.number().optional(),
+    meta: z.record(z.string(), z.unknown()).optional(),
+    sections: z.array(
+      z.object({
+        id: z.string(),
+        label: z.string(),
+        chunks: z.array(
+          z.object({
+            kind: z.string(),
+            format: z.enum(["markdown", "json", "text", "raw"]),
+            title: z.string().optional(),
+            data: z.unknown(),
+          }),
+        ),
+      }),
+    ),
+  })
+  export type ManifestInput = z.infer<typeof ManifestInput>
 
   export const Event = {
     Created: BusEvent.define("session.log.created", z.object({ info: Info })),
@@ -151,6 +205,17 @@ export namespace SessionLog {
       if (Identifier.timestamp(entry) >= cutoff) continue
       await Bun.file(path.join(dir, entry)).delete().catch(() => {})
     }
+    const chunks = await Array.fromAsync(new Bun.Glob("*/chunk_*").scan({ cwd: dir, onlyFiles: true })).catch(
+      () => [] as string[],
+    )
+    for (const entry of chunks) {
+      const file = path.join(dir, entry)
+      const chunk = await Filesystem.readJson(file)
+        .then((data) => Chunk.parse(data))
+        .catch(() => undefined)
+      if (chunk && chunk.time >= cutoff) continue
+      await Bun.file(file).delete().catch(() => {})
+    }
   }
 
   export async function remove(input: { sessionID: SessionID; now?: number }) {
@@ -229,8 +294,51 @@ export namespace SessionLog {
     }
   }
 
+  export async function savePayloadManifest(input: ManifestInput) {
+    const at = input.time ?? Date.now()
+    const sections = []
+    for (const section of input.sections) {
+      const chunks = []
+      for (const item of section.chunks) {
+        chunks.push((await saveChunk({ ...item, sessionID: input.sessionID, time: at })).id)
+      }
+      sections.push({
+        id: section.id,
+        label: section.label,
+        chunks,
+      })
+    }
+    const data = {
+      id: input.id,
+      version: 2,
+      kind: input.kind,
+      sessionID: input.sessionID,
+      time: at,
+      meta: input.meta,
+      sections,
+    } satisfies Manifest
+    const text = JSON.stringify(data, replacer(), 2)
+    await Filesystem.write(path.join(dir, input.id), text)
+    return {
+      id: input.id,
+      bytes: Buffer.byteLength(text, "utf8"),
+    }
+  }
+
   export async function readPayload(input: { id: string; sessionID: SessionID }) {
-    const parsed = await Filesystem.readJson(path.join(dir, input.id))
+    const raw = await Filesystem.readJson(path.join(dir, input.id)).catch(() => undefined)
+    const manifest = Manifest.safeParse(raw)
+    if (manifest.success) {
+      if (manifest.data.sessionID !== input.sessionID) return undefined
+      return {
+        id: manifest.data.id,
+        sessionID: manifest.data.sessionID,
+        data: await hydrate(manifest.data),
+        time: manifest.data.time,
+        bytes: await Filesystem.size(path.join(dir, input.id)),
+      } satisfies Payload
+    }
+    const parsed = await Promise.resolve(raw)
       .then((data) => Payload.omit({ bytes: true }).parse(data))
       .catch(() => undefined)
     if (!parsed) return undefined
@@ -257,6 +365,80 @@ export namespace SessionLog {
   function object(input: unknown) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return undefined
     return input as Record<string, unknown>
+  }
+
+  async function saveChunk(input: Omit<Chunk, "id" | "hash" | "bytes">) {
+    const body = stable({
+      sessionID: input.sessionID,
+      kind: input.kind,
+      format: input.format,
+      title: input.title,
+      data: input.data,
+    })
+    const hash = createHash("sha256").update(body).digest("hex")
+    const id = `chunk_${hash}`
+    const file = path.join(dir, input.sessionID, id)
+    const found = await Filesystem.readJson(file)
+      .then((data) => Chunk.parse(data))
+      .catch(() => undefined)
+    if (found) return found
+    const data = {
+      id,
+      sessionID: input.sessionID,
+      kind: input.kind,
+      format: input.format,
+      title: input.title,
+      hash,
+      data: input.data,
+      bytes: Buffer.byteLength(body, "utf8"),
+      time: input.time,
+    } satisfies Chunk
+    await Filesystem.write(file, JSON.stringify(data, replacer(), 2))
+    return data
+  }
+
+  async function hydrate(input: Manifest) {
+    const sections = []
+    for (const section of input.sections) {
+      sections.push({
+        ...section,
+        chunks: (
+          await Promise.all(
+            section.chunks.map((id) =>
+              Filesystem.readJson(path.join(dir, input.sessionID, id))
+                .then((data) => Chunk.parse(data))
+                .catch(() => ({
+                  id,
+                  sessionID: input.sessionID,
+                  kind: "missing",
+                  format: "raw" as const,
+                  title: "Missing chunk",
+                  hash: id.replace(/^chunk_/, ""),
+                  data: { missing: id },
+                  bytes: 0,
+                  time: input.time,
+                })),
+            ),
+          )
+        ).filter((item) => item.sessionID === input.sessionID),
+      })
+    }
+    return {
+      ...input,
+      sections,
+    }
+  }
+
+  function stable(input: unknown): string {
+    if (input === null) return "null"
+    if (typeof input === "bigint") return JSON.stringify(input.toString())
+    if (typeof input !== "object") return JSON.stringify(input)
+    if (Array.isArray(input)) return `[${input.map(stable).join(",")}]`
+    const obj = input as Record<string, unknown>
+    return `{${Object.keys(obj)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stable(obj[key])}`)
+      .join(",")}}`
   }
 
   function replacer() {

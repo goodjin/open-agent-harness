@@ -12,6 +12,87 @@ afterEach(async () => {
 })
 
 describe("session log", () => {
+  test("stores payload manifests as session-local semantic chunks", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_payload_chunks"),
+          fn: async () => {
+            const session = await Session.create({})
+            const first = SessionLog.payloadID()
+            const second = SessionLog.payloadID()
+
+            await SessionLog.savePayloadManifest({
+              id: first,
+              sessionID: session.id,
+              kind: "llm.request",
+              meta: { modelID: "gpt-test" },
+              sections: [
+                {
+                  id: "system",
+                  label: "System Prompt",
+                  chunks: [
+                    {
+                      kind: "system_prompt",
+                      format: "markdown",
+                      title: "System",
+                      data: "shared system",
+                    },
+                  ],
+                },
+              ],
+            })
+            await SessionLog.savePayloadManifest({
+              id: second,
+              sessionID: session.id,
+              kind: "llm.request",
+              meta: { modelID: "gpt-test" },
+              sections: [
+                {
+                  id: "system",
+                  label: "System Prompt",
+                  chunks: [
+                    {
+                      kind: "system_prompt",
+                      format: "markdown",
+                      title: "System",
+                      data: "shared system",
+                    },
+                  ],
+                },
+              ],
+            })
+            const a = await SessionLog.readPayload({ id: first, sessionID: session.id })
+            const b = await SessionLog.readPayload({ id: second, sessionID: session.id })
+
+            expect(a?.data).toMatchObject({
+              version: 2,
+              kind: "llm.request",
+              sections: [
+                {
+                  id: "system",
+                  chunks: [
+                    {
+                      kind: "system_prompt",
+                      format: "markdown",
+                      data: "shared system",
+                    },
+                  ],
+                },
+              ],
+            })
+            expect(
+              (
+                (a?.data as { sections: { chunks: { id: string }[] }[] }).sections[0]?.chunks[0]?.id
+              ),
+            ).toBe(((b?.data as { sections: { chunks: { id: string }[] }[] }).sections[0]?.chunks[0]?.id))
+          },
+        }),
+    })
+  })
+
   test("stores timeline records and prunes records older than seven days", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
