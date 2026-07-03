@@ -216,6 +216,8 @@ Delegated child status restore also checks `dsl_context.result` before convertin
 
 `waiting_child` is valid only while the parent DSL context still has live `protocol.pending_delegations`. Status restore and lazy status load reconcile stale DB projections: an empty pending set, or a pending set whose child rows are already terminal, is repaired to `completed`; mixed live and terminal children keep `waiting_child` with the live child count. Delegation fan-in also refreshes the parent status immediately after removing a child from `pending_delegations`, so sidebar and tree projections do not keep showing a stale child wait until a later single-session status request happens.
 
+Directory-scoped status listing must include persisted DB status rows, not only process-local runtime memory. Cross-project session trees can be rendered by a server instance that has no live `SessionStatus.state()` for that directory; `/session/status?directory=...` still needs to return terminal and repaired `completed` statuses so the frontend can overwrite stale `waiting_child` values already present in its store.
+
 `waiting_user` and `waiting_child` are done outcomes for the current turn. The session status remains `waiting_user` or `waiting_child` so the title bar, session tree, and prompt dock can still show the broader wait state.
 
 Failed assistant completion is also a done turn. If the assistant message has `time.completed` and an error, Runtime writes the user turn as `status=done`, `outcome=error`, and `reason=error`. The failure remains visible through the assistant error and session status; the prompt loop must not leave the user turn unfinished and rely on a future request to retry it implicitly.

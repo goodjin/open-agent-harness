@@ -481,13 +481,36 @@ export namespace SessionStatus {
 
   export function list() {
     const data = state()
-    for (const [id, status] of Object.entries(data)) {
-      if (status.type !== "waiting_child") continue
-      const next = load(SessionID.make(id))
+    const rows = Database.use((db) =>
+      db
+        .select()
+        .from(SessionTable)
+        .where(and(eq(SessionTable.project_id, Instance.project.id), eq(SessionTable.directory, Instance.directory)))
+        .all(),
+    )
+    const map = new Map(rows.map((row) => [row.id, row]))
+    const out: Record<string, Info> = {}
+    for (const row of rows) {
+      const parsed = decode(row)
+      if (!parsed) continue
+      const next = repair(row, recover(row, parsed), map)
+      if (next.type !== "idle") out[row.id] = next
+      if (changed(next, parsed)) persist(row.id, next, "recovery")
+    }
+    for (const [key, status] of Object.entries(data)) {
+      const id = SessionID.make(key)
+      if (status.type !== "waiting_child") {
+        out[id] = status
+        continue
+      }
+      const row = map.get(id)
+      const parsed = row ? decode(row) : undefined
+      const next = row && parsed ? repair(row, recover(row, parsed), map) : load(id)
       if (!next || next.type === "idle") continue
       data[id] = next
+      out[id] = next
     }
-    return data
+    return out
   }
 
   export function shouldContinue(status: Info) {

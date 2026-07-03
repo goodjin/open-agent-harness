@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import path from "path"
+import { mkdir, rm } from "fs/promises"
 import { Instance } from "../../src/project/instance"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
@@ -7,6 +8,7 @@ import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { WorkspaceID } from "../../src/control-plane/schema"
+import { State } from "../../src/project/state"
 
 const projectRoot = path.join(__dirname, "../..")
 Log.init({ print: false })
@@ -181,6 +183,62 @@ describe("Session.list", () => {
                 }),
             })
             await Session.remove(local.id)
+          },
+        }),
+    })
+  })
+
+  test("returns repaired persisted statuses when runtime state is missing", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const dir = path.join(projectRoot, "..", "__session_status_persisted")
+            await mkdir(dir, { recursive: true })
+            const parent = await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => {
+                    const session = await Session.create({ title: "persisted waiting child" })
+                    await Session.setDslContext({
+                      sessionID: session.id,
+                      dsl_context: {
+                        protocol: {
+                          pending_delegations: {},
+                        },
+                      },
+                    })
+                    SessionStatus.set(session.id, {
+                      type: "waiting_child",
+                      message: "Waiting for 1 delegated child session.",
+                    })
+                    await SessionStatus.flush()
+                    return session
+                  },
+                }),
+            })
+            await State.dispose(path.resolve(dir))
+            const app = Server.Default()
+
+            const response = await app.request(`/session/status?directory=${encodeURIComponent(dir)}`)
+            expect(response.status).toBe(200)
+            const body = (await response.json()) as Record<string, unknown>
+
+            expect(body[parent.id]).toEqual({ type: "completed" })
+
+            await Instance.provide({
+              directory: dir,
+              fn: async () =>
+                WorkspaceContext.provide({
+                  workspaceID: WorkspaceID.make("test-workspace"),
+                  fn: async () => Session.remove(parent.id),
+                }),
+            })
+            await rm(dir, { recursive: true, force: true })
           },
         }),
     })
