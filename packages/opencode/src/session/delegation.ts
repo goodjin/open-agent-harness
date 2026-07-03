@@ -328,7 +328,7 @@ export namespace SessionDelegation {
       if (!status || output === undefined) return false
       if (output.includes(wait)) return false
 
-      const body = completed(item, status, output, input.metadata ?? item.result_metadata, found?.action, found?.protocol, {
+      const body = completed(item, status, output, input.metadata ?? found?.metadata ?? item.result_metadata, found?.action, found?.protocol, {
         partID: found?.partID,
         protocolIndex: found?.protocolIndex,
       })
@@ -736,9 +736,24 @@ export namespace SessionDelegation {
       }
     }
     if (item.result_tool === protocol) {
+      const part = msg.parts.findLast((part) => part.type === "text" && !part.ignored && part.text.trim().length > 0)
+      const output = part?.type === "text" ? part.text : msg.parts.findLast((part) => part.type === "text")?.text ?? ""
+      const status = protocolTextStatus(msg.info, part)
       return {
-        status: msg.info.finish === "error" ? ("failed" as const) : ("blocked" as const),
-        output: msg.parts.findLast((part) => part.type === "text")?.text ?? "",
+        status,
+        output,
+        metadata: {
+          ...(await meta(
+            text(item.agent) ?? "default",
+            status === "completed" || status === "partial" ? "completed" : "failed",
+            output,
+          )),
+          source: "protocol_plain_text",
+          result: {
+            type: "plain_text_result",
+            reason: "missing_agent_protocol_output_tool",
+          },
+        },
       }
     }
     if (msg.info.error) {
@@ -864,6 +879,18 @@ export namespace SessionDelegation {
     ]
       .filter((line) => line.length > 0)
       .join("\n")
+  }
+
+  function protocolTextStatus(msg: MessageV2.Assistant, part: MessageV2.Part | undefined): Status {
+    if (msg.finish === "error") return "failed"
+    if (!part || part.type !== "text") return "completed"
+    const meta = object(part.metadata)
+    if (meta.kind !== "protocol_summary") return "completed"
+    const protocol = object(meta.protocol)
+    if (protocol.status === "blocked") return "blocked"
+    if (protocol.status === "failed") return "failed"
+    if (protocol.status === "reply") return "terminal_reply"
+    return "completed"
   }
 
   async function normalize(sessionID: SessionID, item: Item, value: ActionResult.Value): Promise<ActionResult.Value> {

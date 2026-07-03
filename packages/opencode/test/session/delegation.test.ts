@@ -666,6 +666,309 @@ describe("SessionDelegation", () => {
     }
   })
 
+  test("planner AgentProtocolOutput plain text completes delegated child handoff", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "feature-planner" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_protocol_plain",
+                action_id: "plan",
+                action_title: "Plan feature",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "feature-planner",
+                result_policy: "structured",
+                result_tool: "AgentProtocolOutput",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "feature-planner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "feature-planner",
+                agent: "feature-planner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "stop",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "text",
+                text: "Plan is complete in plain text.",
+                time: { start: Date.now(), end: Date.now() },
+              } as MessageV2.TextPart)
+
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                pending_delegations?: Record<string, unknown>
+                completed_delegations?: { child_session_id?: string; result_id?: string; status?: string }[]
+              }
+              expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.status).toBe("completed")
+              const rec = await SessionResult.get(pctx.completed_delegations?.[0]?.result_id ?? "")
+              expect(rec?.carrier).toBe("plain_text_result")
+              expect(rec?.satisfying).toBe(true)
+              expect(prompts).toHaveLength(1)
+              expect(prompts[0]?.sessionID).toBe(parent.id)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("blocked protocol plain text result does not start dependent sibling", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "parent resumed",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "feature-planner" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_protocol_plain_blocked",
+                action_id: "plan",
+                action_title: "Plan feature",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "feature-planner",
+                result_policy: "structured",
+                result_tool: "AgentProtocolOutput",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: {
+                  protocol: {
+                    current: "apr_protocol_plain_blocked",
+                    runs: [
+                      {
+                        runID: "apr_protocol_plain_blocked",
+                        title: "Protocol plain blocked",
+                        status: "running",
+                        actions: [
+                          {
+                            id: "plan",
+                            title: "Plan feature",
+                            operation: "plan",
+                            executor: { type: "agent", target: "feature-planner", capabilities: [] },
+                            depends_on: [],
+                            result_policy: "structured",
+                            status: "pending",
+                            summary: "",
+                            tool_call_ids: [],
+                            duration_ms: 0,
+                            time: { started: Date.now() },
+                          },
+                          {
+                            id: "review",
+                            title: "Review plan",
+                            operation: "review",
+                            executor: { type: "agent", target: "verifier", capabilities: [] },
+                            depends_on: ["plan"],
+                            result_policy: "summary",
+                            status: "pending",
+                            summary: "",
+                            tool_call_ids: [],
+                            duration_ms: 0,
+                            time: { started: Date.now() },
+                          },
+                        ],
+                      },
+                    ],
+                    pending_delegations: { [child.id]: item },
+                  },
+                },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "feature-planner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "feature-planner",
+                agent: "feature-planner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "stop",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "text",
+                text: "Protocol blocked: plan needs parent decision.",
+                metadata: {
+                  kind: "protocol_summary",
+                  protocol: {
+                    runID: "apr_protocol_plain_blocked",
+                    status: "blocked",
+                    title: "Protocol plain blocked",
+                  },
+                },
+                time: { start: Date.now(), end: Date.now() },
+              } as MessageV2.TextPart)
+
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                pending_delegations?: Record<string, { action_id?: string }>
+                completed_delegations?: { child_session_id?: string; result_id?: string; status?: string }[]
+              }
+              expect(Object.values(pctx.pending_delegations ?? {}).some((row) => row.action_id === "review")).toBe(
+                false,
+              )
+              expect(pctx.completed_delegations?.[0]?.status).toBe("blocked")
+              const rec = await SessionResult.get(pctx.completed_delegations?.[0]?.result_id ?? "")
+              expect(rec?.carrier).toBe("plain_text_result")
+              expect(rec?.satisfying).toBe(false)
+              expect(prompts).toHaveLength(1)
+              expect(prompts[0]?.sessionID).toBe(parent.id)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("ActionResult assignment accepts AgentProtocolOutput reply handoff", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
@@ -878,7 +1181,7 @@ describe("SessionDelegation", () => {
                             title: "Review",
                             description: "Review implementation",
                             operation: "backend",
-                            executor: { type: "agent", target: "backend", capabilities: [] },
+                            executor: { type: "agent", target: "general-executor", capabilities: [] },
                             depends_on: ["impl"],
                             result_policy: "structured",
                             status: "pending",
@@ -1033,7 +1336,7 @@ describe("SessionDelegation", () => {
                             id: "review",
                             title: "Review",
                             operation: "backend",
-                            executor: { type: "agent", target: "backend", capabilities: [] },
+                            executor: { type: "agent", target: "general-executor", capabilities: [] },
                             depends_on: ["impl"],
                             result_policy: "structured",
                             status: "pending",
