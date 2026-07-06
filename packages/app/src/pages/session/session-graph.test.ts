@@ -114,6 +114,62 @@ describe("graphRuns", () => {
     ])
   })
 
+  test("overlays protocol run actions with completed delegation results", () => {
+    const runs = graphRuns({
+      protocol: {
+        completed_delegations: [
+          {
+            run_id: "apr_1",
+            action_id: "inspect",
+            status: "completed",
+            summary: "worker finished",
+          },
+          {
+            run_id: "apr_1",
+            action_id: "verify",
+            status: "terminal_reply",
+            summary: "needs parent decision",
+          },
+        ],
+        runs: [
+          {
+            runID: "apr_1",
+            title: "Protocol run",
+            status: "blocked",
+            total: 2,
+            completed: 0,
+            actions: [
+              {
+                id: "inspect",
+                title: "Inspect code",
+                operation: "delegate",
+                status: "blocked",
+                executor: { type: "agent", target: "explore" },
+              },
+              {
+                id: "verify",
+                title: "Verify patch",
+                operation: "delegate",
+                status: "blocked",
+                executor: { type: "agent", target: "verifier" },
+              },
+            ],
+          },
+        ],
+      },
+    })
+
+    expect(runs[0]).toMatchObject({
+      id: "apr_1",
+      status: "blocked",
+      completed: 1,
+    })
+    expect(runs[0]?.nodes).toEqual([
+      expect.objectContaining({ id: "inspect", status: "completed", output: "worker finished" }),
+      expect.objectContaining({ id: "verify", status: "failed", error: "needs parent decision" }),
+    ])
+  })
+
   test("adds AgentProtocolOutput records from protocol logs", () => {
     const raw = {
       version: "2",

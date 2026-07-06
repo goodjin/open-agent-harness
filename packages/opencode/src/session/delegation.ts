@@ -1023,6 +1023,7 @@ export namespace SessionDelegation {
         ...ctx,
         protocol: {
           ...prev,
+          runs: runs(prev.runs, body),
           completed_delegations: [
             ...done.filter((entry) => !object(entry) || entry.child_session_id !== sessionID),
             brief,
@@ -1096,6 +1097,56 @@ export namespace SessionDelegation {
       summary: body.summary,
       output_ref: rec.raw_ref,
     }
+  }
+
+  function runs(input: unknown, body: ReturnType<typeof completed>) {
+    if (!Array.isArray(input)) return input
+    return input.map((entry) => {
+      const run = object(entry)
+      if (run.runID !== body.run_id) return entry
+      const actions = Array.isArray(run.actions) ? run.actions.map((action) => update(action, body)) : []
+      return {
+        ...run,
+        status: rstatus(actions),
+        completed: actions.filter((action) => object(action).status === "completed").length,
+        actions,
+      }
+    })
+  }
+
+  function update(input: unknown, body: ReturnType<typeof completed>) {
+    const action = object(input)
+    if (action.id !== body.action_id) return input
+    return {
+      ...action,
+      status: astatus(body.status),
+      summary: body.summary,
+      error: error(body.status) ? body.summary : undefined,
+      result_status: body.status,
+      target_action_id: target(body),
+      time: {
+        ...object(action.time),
+        completed: body.completed_at,
+      },
+    }
+  }
+
+  function astatus(input: Status) {
+    if (input === "completed" || input === "partial") return "completed"
+    if (input === "failed") return "failed"
+    return "blocked"
+  }
+
+  function rstatus(actions: unknown[]) {
+    if (actions.some((action) => object(action).status === "failed")) return "failed"
+    if (actions.some((action) => object(action).status === "blocked")) return "blocked"
+    if (actions.some((action) => object(action).status === "running" || object(action).status === "pending"))
+      return "running"
+    return "completed"
+  }
+
+  function error(input: Status) {
+    return input === "blocked" || input === "failed" || input === "terminal_reply" || input === "waiting_user"
   }
 
   function carrier(body: ReturnType<typeof completed>): SessionResult.Carrier {

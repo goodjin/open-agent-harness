@@ -385,17 +385,55 @@ function child(input: Record<string, unknown>) {
   return match?.[1]
 }
 
-function protocol(run: Record<string, unknown>): GraphRun {
-  const nodes = (Array.isArray(run.actions) ? run.actions : []).filter(record).map(action)
+function resultStatus(input: unknown): Status | undefined {
+  if (input === "completed" || input === "partial") return "completed"
+  if (input === "failed") return "failed"
+  if (input === "blocked" || input === "terminal_reply" || input === "waiting_user") return "failed"
+}
+
+function results(input: unknown) {
+  const data = dict(dict(input).protocol)
+  const rows = Array.isArray(data.completed_delegations) ? data.completed_delegations : []
+  return new Map(
+    rows.filter(record).flatMap((row) => {
+      const run = str(row.run_id)
+      const action = str(row.action_id)
+      if (!run || !action) return []
+      return [[`${run}:${action}`, row] as const]
+    }),
+  )
+}
+
+function overlay(node: GraphNode, run: string, rows: Map<string, Record<string, unknown>>): GraphNode {
+  const row = rows.get(`${run}:${node.id}`)
+  const next = resultStatus(row?.status)
+  if (!row || !next) return node
+  return {
+    ...node,
+    status: next,
+    output: str(row.summary) || node.output,
+    error: next === "failed" ? str(row.summary) || node.error : node.error,
+  }
+}
+
+function protocol(run: Record<string, unknown>, rows: Map<string, Record<string, unknown>>): GraphRun {
+  const id = str(run.runID)
+  const nodes = (Array.isArray(run.actions) ? run.actions : []).filter(record).map(action).map((node) => overlay(node, id, rows))
   const out = new Map<string, string[]>()
   for (const node of nodes) for (const dep of node.deps) out.set(dep, unique([...(out.get(dep) ?? []), node.id]))
+  const status =
+    nodes.some((node) => node.status === "failed")
+      ? "blocked"
+      : nodes.length > 0 && nodes.every((node) => node.status === "completed")
+        ? "completed"
+        : state(run.status)
   return {
-    id: str(run.runID),
+    id,
     title: str(run.title, "Protocol run"),
     source: "protocol",
-    status: state(run.status),
+    status,
     total: num(run.total, nodes.length),
-    completed: num(run.completed, nodes.filter((node) => node.status === "completed").length),
+    completed: nodes.filter((node) => node.status === "completed").length,
     nodes: nodes.map((node) => ({ ...node, after: out.get(node.id) ?? [] })),
     metadata: record(run.metrics) ? run.metrics : undefined,
     declaration: run.declaration,
@@ -448,7 +486,8 @@ function merge(a: GraphRun[], b: GraphRun[]) {
 }
 
 export function graphRuns(input: unknown, records: Log[] = []): GraphRun[] {
-  return [...workflows(input).map(workflow), ...merge(logruns(records), protocols(input).map(protocol))].sort((a, b) => {
+  const rows = results(input)
+  return [...workflows(input).map(workflow), ...merge(logruns(records), protocols(input).map((run) => protocol(run, rows)))].sort((a, b) => {
     const left = a.time?.started ?? 0
     const right = b.time?.started ?? 0
     if (left !== right) return left - right

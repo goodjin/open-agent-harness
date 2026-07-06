@@ -735,7 +735,30 @@ describe("SessionDelegation", () => {
               }
               await Session.setDslContext({
                 sessionID: parent.id,
-                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+                dsl_context: {
+                  protocol: {
+                    pending_delegations: { [child.id]: item },
+                    runs: [
+                      {
+                        runID: "apr_protocol_plain",
+                        title: "Protocol plain",
+                        status: "blocked",
+                        total: 1,
+                        completed: 0,
+                        actions: [
+                          {
+                            id: "plan",
+                            title: "Plan feature",
+                            operation: "feature-planner",
+                            executor: { type: "agent", target: "feature-planner", capabilities: [] },
+                            status: "blocked",
+                            summary: "Delegated to feature-planner.",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
               })
               await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
               const user = (await Session.updateMessage({
@@ -776,10 +799,15 @@ describe("SessionDelegation", () => {
               const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 pending_delegations?: Record<string, unknown>
                 completed_delegations?: { child_session_id?: string; result_id?: string; status?: string }[]
+                runs?: { status?: string; completed?: number; actions?: { status?: string; summary?: string }[] }[]
               }
               expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.status).toBe("completed")
+              expect(pctx.runs?.[0]?.status).toBe("completed")
+              expect(pctx.runs?.[0]?.completed).toBe(1)
+              expect(pctx.runs?.[0]?.actions?.[0]?.status).toBe("completed")
+              expect(pctx.runs?.[0]?.actions?.[0]?.summary).toContain("Plan is complete in plain text")
               const rec = await SessionResult.get(pctx.completed_delegations?.[0]?.result_id ?? "")
               expect(rec?.carrier).toBe("plain_text_result")
               expect(rec?.satisfying).toBe(true)
@@ -3926,7 +3954,30 @@ describe("SessionDelegation", () => {
               }
               await Session.setDslContext({
                 sessionID: parent.id,
-                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+                dsl_context: {
+                  protocol: {
+                    pending_delegations: { [child.id]: item },
+                    runs: [
+                      {
+                        runID: "apr_reply_terminal",
+                        title: "Reply terminal",
+                        status: "blocked",
+                        total: 1,
+                        completed: 0,
+                        actions: [
+                          {
+                            id: "impl",
+                            title: "Implement",
+                            operation: "backend",
+                            executor: { type: "agent", target: "backend", capabilities: [] },
+                            status: "blocked",
+                            summary: "Delegated to backend.",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                },
               })
               await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
               SessionStatus.set(child.id, { type: "running" })
@@ -3988,9 +4039,19 @@ describe("SessionDelegation", () => {
 
               const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 completed_delegations?: { status?: string; satisfying?: boolean; result_id?: string }[]
+                runs?: {
+                  status?: string
+                  completed?: number
+                  actions?: { status?: string; result_status?: string; error?: string }[]
+                }[]
               }
               expect(pctx.completed_delegations?.[0]?.status).toBe("terminal_reply")
               expect(pctx.completed_delegations?.[0]?.satisfying).toBe(false)
+              expect(pctx.runs?.[0]?.status).toBe("blocked")
+              expect(pctx.runs?.[0]?.completed).toBe(0)
+              expect(pctx.runs?.[0]?.actions?.[0]?.status).toBe("blocked")
+              expect(pctx.runs?.[0]?.actions?.[0]?.result_status).toBe("terminal_reply")
+              expect(pctx.runs?.[0]?.actions?.[0]?.error).toContain("Need parent decision.")
               const rows = Database.use((db) =>
                 db
                   .select()
