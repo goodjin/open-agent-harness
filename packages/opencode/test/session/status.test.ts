@@ -9,6 +9,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
 import { SessionLog } from "../../src/session/log"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionResult } from "../../src/session/result"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { Database, eq } from "../../src/storage/db"
 import { SessionTable } from "../../src/session/session.sql"
@@ -480,6 +481,65 @@ describe("session state machine", () => {
               },
             })
             SessionStatus.set(child.id, { type: "terminal_reply", message: "Needs parent decision." })
+            SessionStatus.set(parent.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
+            await SessionStatus.flush()
+
+            const status = SessionStatus.refresh(parent.id)
+            const row = Database.use((db) =>
+              db.select().from(SessionTable).where(eq(SessionTable.id, parent.id)).get(),
+            )
+
+            expect(status).toEqual({ type: "completed" })
+            expect(row?.status_class).toBe("terminal")
+            expect(row?.status).toBe("terminal_success")
+
+            await Session.remove(child.id)
+            await Session.remove(parent.id)
+          },
+        }),
+    })
+  })
+
+  test("refresh persists completed status when waiting_child has canonical child result", async () => {
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace-status-session-result-pending"),
+          fn: async () => {
+            const parent = await Session.create({})
+            const child = await Session.create({ parentID: parent.id })
+            await Session.setDslContext({
+              sessionID: parent.id,
+              dsl_context: {
+                protocol: {
+                  pending_delegations: {
+                    [child.id]: {
+                      child_session_id: child.id,
+                      parent_session_id: parent.id,
+                      run_id: "run_result",
+                      action_id: "impl",
+                    },
+                  },
+                },
+              },
+            })
+            await SessionResult.put({
+              carrier: "action_result",
+              status: "completed",
+              satisfying: true,
+              sessionID: child.id,
+              parentSessionID: parent.id,
+              childSessionID: child.id,
+              runID: "run_result",
+              actionID: "impl",
+              summary: "child done",
+              raw: {
+                output: "child done",
+                input: { role: "worker", status: "success", action_id: "impl", result: "child done" },
+              },
+            })
+            SessionStatus.set(child.id, { type: "running" })
             SessionStatus.set(parent.id, { type: "waiting_child", message: "Waiting for 1 delegated child session." })
             await SessionStatus.flush()
 

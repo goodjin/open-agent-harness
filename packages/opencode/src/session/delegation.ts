@@ -566,21 +566,35 @@ export namespace SessionDelegation {
   }) {
     const session = await Session.get(input.sessionID)
     const prev = object(object(session.dsl_context).protocol)
+    const results = await SessionResult.listForParent(session.id)
+    const keys = new Set(
+      results.map((item) => [item.child_session_id, item.run_id, item.action_id].filter((value) => value).join(":")),
+    )
     const pending = (
       await Promise.all(
-        Object.entries(object(prev.pending_delegations)).map(([id, item]) =>
-          row(item, "pending", input.output === true, id),
-        ),
+        Object.entries(object(prev.pending_delegations)).map(async ([id, item]) => {
+          if (await delivered(object(item) as Item)) return
+          return row(item, "pending", input.output === true, id)
+        }),
       )
     )
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
     const done = (
-      await Promise.all(
-        (Array.isArray(prev.completed_delegations) ? prev.completed_delegations : []).map((item) =>
-          row(item, "completed", input.output === true),
-        ),
-      )
+      await Promise.all([
+        ...results.map((item) => resultrow(item, input.output === true)),
+        ...(Array.isArray(prev.completed_delegations) ? prev.completed_delegations : [])
+          .map((item) => object(item))
+          .filter(
+            (item) =>
+              !keys.has(
+                [text(item.child_session_id), text(item.run_id), text(item.action_id)]
+                  .filter((value) => value)
+                  .join(":"),
+              ),
+          )
+          .map((item) => row(item, "completed", input.output === true)),
+      ])
     )
       .filter((item): item is NonNullable<typeof item> => !!item)
       .filter((item) => match(item, input))
@@ -1312,6 +1326,7 @@ export namespace SessionDelegation {
     const parent = await Session.get(parentID)
     const ctx = object(parent.dsl_context)
     const state = object(ctx.protocol)
+    const results = await SessionResult.listForParentRun({ parentSessionID: parentID, runID })
     const run = (Array.isArray(state.runs) ? state.runs.map((entry) => object(entry)) : []).find(
       (entry) => entry.runID === runID,
     )
@@ -1324,13 +1339,10 @@ export namespace SessionDelegation {
         .map((entry) => object(entry))
         .flatMap((entry) => (typeof entry.action_id === "string" ? [entry.action_id] : [])),
     )
-    const done = Array.isArray(state.completed_delegations)
-      ? state.completed_delegations.map((entry) => object(entry))
-      : []
-    const seen = new Set(done.flatMap((entry) => (typeof entry.action_id === "string" ? [entry.action_id] : [])))
+    const seen = new Set(results.flatMap((entry) => (entry.action_id ? [entry.action_id] : [])))
     const ids = new Set(
-      done.flatMap((entry) => {
-        if (satisfying(entry)) return typeof entry.action_id === "string" ? [entry.action_id] : []
+      results.flatMap((entry) => {
+        if (entry.satisfying) return entry.action_id ? [entry.action_id] : []
         return []
       }),
     )
@@ -1620,15 +1632,15 @@ export namespace SessionDelegation {
     await close(parentID, runID, opts)
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
+    const results = await SessionResult.listForParentRun({ parentSessionID: parentID, runID })
+    const keys = new Set(
+      results.map((item) => [item.child_session_id, item.action_id].filter((value) => value).join(":")),
+    )
     const pending = Object.entries(object(protocol.pending_delegations))
       .map(([id, item]) => ({ id, item: object(item) }))
       .filter((entry) => entry.item.run_id === runID)
-    const done = await Promise.all(
-      (Array.isArray(protocol.completed_delegations) ? protocol.completed_delegations : [])
-        .map((entry) => object(entry))
-        .filter((entry) => entry.run_id === runID)
-        .map((entry) => row(entry, "completed", true)),
-    )
+      .filter((entry) => !keys.has([entry.id, text(entry.item.action_id)].filter((value) => value).join(":")))
+    const done = await Promise.all(results.map((entry) => resultrow(entry, true)))
     const rows = done.filter((entry): entry is Row => !!entry)
     return {
       waiting: pending.length,
@@ -2130,23 +2142,19 @@ export namespace SessionDelegation {
   async function ready(item: Item, gates: AgentProtocol.Action[]) {
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const protocol = object(object(parent.dsl_context).protocol)
-    const pending = Object.values(object(protocol.pending_delegations)).map((entry) => object(entry))
-    const done = Array.isArray(protocol.completed_delegations)
-      ? protocol.completed_delegations.map((entry) => object(entry))
-      : []
+    const results = await SessionResult.listForParentRun({
+      parentSessionID: parent.id,
+      runID: item.run_id,
+    })
+    const keys = new Set(
+      results.map((entry) => [entry.child_session_id, entry.action_id].filter((value) => value).join(":")),
+    )
+    const pending = Object.entries(object(protocol.pending_delegations))
+      .map(([id, entry]) => ({ id, entry: object(entry) }))
+      .filter((entry) => !keys.has([entry.id, text(entry.entry.action_id)].filter((value) => value).join(":")))
+      .map((entry) => entry.entry)
     const passed = new Set(
-      (
-        await Promise.all(
-          done.map(async (entry) => {
-            if (entry.satisfying === true && typeof entry.target_action_id === "string")
-              return typeof entry.action_id === "string" ? entry.action_id : undefined
-            const res = object((await payload(entry)).action_result)
-            if (res.role !== "verifier") return
-            if (res.status !== "success" && res.status !== "skipped") return
-            return typeof res.action_id === "string" ? res.action_id : undefined
-          }),
-        )
-      ).filter((entry): entry is string => typeof entry === "string"),
+      results.flatMap((entry) => (entry.satisfying && entry.action_id ? [entry.action_id] : [])),
     )
     const active = new Set(pending.flatMap((entry) => (typeof entry.action_id === "string" ? [entry.action_id] : [])))
     return gates.find((gate) => !passed.has(gate.id) && !active.has(gate.id))
@@ -2198,33 +2206,39 @@ export namespace SessionDelegation {
 
   async function workerrow(item: Item, worker: string) {
     const parent = await Session.get(SessionID.make(item.parent_session_id))
-    const done = Array.isArray(object(object(parent.dsl_context).protocol).completed_delegations)
-      ? (object(object(parent.dsl_context).protocol).completed_delegations as unknown[]).map((entry) => object(entry))
-      : []
+    const done = await SessionResult.listForParentRun({ parentSessionID: parent.id, runID: item.run_id })
     const rows = await Promise.all(
       done.map(async (entry) => ({
         entry,
-        data: await payload(entry),
+        data: await SessionResult.parse(entry.id),
       })),
     )
-    const row = rows.find((entry) => entry.entry.action_id === worker && object(entry.data.action_result).role === "worker")
+    const row = rows.find((entry) => entry.entry.action_id === worker && object(entry.data?.action_result).role === "worker")
     if (!row) return
+    const next = {
+      ...item,
+      action_id: row.entry.action_id,
+      action_title: row.data?.action_title ?? item.action_title,
+      child_session_id: row.entry.child_session_id,
+      completed_at: row.data?.completed_at ?? row.entry.created_at,
+    } as Item
     return {
-      item: row.entry as Item,
-      body: {
-        ...row.entry,
-        action_result: row.data.action_result as ActionResult.Value,
-        output: row.data.output ?? text(row.entry.output) ?? text(row.entry.summary) ?? "",
-      } as ReturnType<typeof completed>,
+      item: next,
+      body: completed(
+        next,
+        row.entry.status,
+        row.data?.output ?? row.entry.summary ?? "",
+        undefined,
+        object(row.data?.action_result) as ActionResult.Value,
+        object(row.data?.protocol_result) as Protocol,
+      ),
     }
   }
 
   async function aggregate(item: Item, body: ReturnType<typeof completed>, status: Status) {
     const parent = await Session.get(SessionID.make(item.parent_session_id))
     const protocol = object(object(parent.dsl_context).protocol)
-    const done = Array.isArray(protocol.completed_delegations)
-      ? protocol.completed_delegations.map((entry) => object(entry))
-      : []
+    const done = await SessionResult.listForParentRun({ parentSessionID: parent.id, runID: item.run_id })
     const res = object(body.action_result)
     const worker = typeof res.action_id === "string" ? res.action_id : item.action_id
     const attempts = number(object(protocol.verification_cycles)[worker]) ?? 0
@@ -2232,11 +2246,11 @@ export namespace SessionDelegation {
       await Promise.all(
         done.map(async (entry) => ({
           entry,
-          data: await payload(entry),
+          data: await SessionResult.parse(entry.id),
         })),
       )
     ).filter((entry) => {
-      const out = object(entry.data.action_result)
+      const out = object(entry.data?.action_result)
       return out.role === "verifier" && out.target_action_id === worker
     })
     const text = [
@@ -2245,7 +2259,7 @@ export namespace SessionDelegation {
       "Verification results:",
       attempts > 0 ? `Verification loop attempts: ${attempts}` : "",
       ...checks.map((entry) => {
-        const out = object(entry.data.action_result)
+        const out = object(entry.data?.action_result)
         return `- ${entry.entry.action_id}: ${out.status ?? "unknown"} - ${out.result ?? entry.entry.summary ?? ""}`
       }),
     ]
@@ -2258,7 +2272,7 @@ export namespace SessionDelegation {
       output: text,
       verification_results: checks.map((entry) => ({
         ...entry.entry,
-        action_result: entry.data.action_result,
+        action_result: entry.data?.action_result,
       })),
     }
   }
@@ -2395,13 +2409,12 @@ export namespace SessionDelegation {
   async function progress(body: ReturnType<typeof completed>) {
     const parent = await Session.get(SessionID.make(body.parent_session_id as string))
     const prev = object(object(parent.dsl_context).protocol)
-    const pend = Object.keys(object(prev.pending_delegations)).filter((item) => item !== body.child_session_id)
-    const done = Array.isArray(prev.completed_delegations)
-      ? prev.completed_delegations
-          .map((item) => object(item))
-          .filter((item) => typeof item.child_session_id === "string")
-      : []
-    const ids = new Set([...done.map((item) => item.child_session_id as string), ...pend])
+    const done = await SessionResult.listForParentRun({ parentSessionID: parent.id, runID: body.run_id })
+    const keys = new Set<string>(done.flatMap((item) => (item.child_session_id ? [item.child_session_id] : [])))
+    const pend = Object.keys(object(prev.pending_delegations)).filter(
+      (item) => item !== body.child_session_id && !keys.has(item),
+    )
+    const ids = new Set([...keys, ...pend])
     const idx = done.findIndex((item) => item.child_session_id === body.child_session_id)
     return {
       total: ids.size || 1,
@@ -2417,11 +2430,24 @@ export namespace SessionDelegation {
   }
 
   async function delivered(item: Item) {
-    const parent = await Session.get(SessionID.make(item.parent_session_id))
-    const prev = object(object(parent.dsl_context).protocol)
+    const rec = await SessionResult.find({
+      parentSessionID: SessionID.make(item.parent_session_id),
+      childSessionID: SessionID.make(item.child_session_id),
+      runID: item.run_id,
+      actionID: item.action_id,
+    })
+    if (rec) return true
+    const parent = await Session.get(SessionID.make(item.parent_session_id)).catch(() => undefined)
+    const done = object(object(parent?.dsl_context).protocol).completed_delegations
     return (
-      Array.isArray(prev.completed_delegations) &&
-      prev.completed_delegations.some((entry) => object(entry).child_session_id === item.child_session_id)
+      Array.isArray(done) &&
+      done.some((entry) => {
+        const row = object(entry)
+        if (row.child_session_id !== item.child_session_id) return false
+        if (typeof row.run_id === "string" && row.run_id !== item.run_id) return false
+        if (typeof row.action_id === "string" && row.action_id !== item.action_id) return false
+        return true
+      })
     )
   }
 
@@ -2614,6 +2640,28 @@ export namespace SessionDelegation {
       completed_at: number(item.completed_at),
       notified_at: number(item.notified_at),
       summary: text(item.summary) ?? out?.slice(0, 4000),
+      ...(output && out !== undefined ? { output: out } : {}),
+    }
+  }
+
+  async function resultrow(rec: SessionResult.Info, output: boolean): Promise<Row | undefined> {
+    const parsed = await SessionResult.parse(rec.id)
+    const out = output ? parsed?.output : undefined
+    const child = rec.child_session_id
+    if (!child) return
+    return {
+      status: rec.status,
+      run_id: rec.run_id,
+      action_id: rec.action_id,
+      action_title: parsed?.action_title,
+      parent_agent: await sessionAgent(rec.parent_session_id, parsed?.parent_agent),
+      child_session_id: child,
+      agent: await sessionAgent(child, parsed?.agent),
+      result_policy: parsed?.result_policy,
+      created_at: rec.created_at,
+      completed_at: parsed?.completed_at ?? rec.created_at,
+      notified_at: undefined,
+      summary: rec.summary ?? out?.slice(0, 4000),
       ...(output && out !== undefined ? { output: out } : {}),
     }
   }

@@ -719,7 +719,37 @@ export namespace RuntimeTools {
 
   async function resultOf(session: Session.Info, output: boolean) {
     const found = object(session.dsl_context?.result)
-    if (found.type !== "session.action_result") return {}
+    if (found.type !== "session.action_result") {
+      const item = object(object(object(session.dsl_context).protocol).delegation)
+      const parent = text(item.parent_session_id)
+      const rec = await SessionResult.find({
+        parentSessionID: parent ? SessionID.make(parent) : undefined,
+        childSessionID: session.id,
+        runID: text(item.run_id),
+        actionID: text(item.action_id),
+      })
+      const parsed = rec ? await SessionResult.parse(rec.id) : undefined
+      if (!rec) return {}
+      return {
+        result: {
+          type: "session.action_result",
+          version: "1",
+          result_id: rec.id,
+          status: rec.status,
+          run_id: rec.run_id,
+          action_id: rec.action_id,
+          target_action_id: rec.target_action_id,
+          parent_session_id: rec.parent_session_id,
+          child_session_id: rec.child_session_id,
+          result_policy: parsed?.result_policy,
+          completed_at: parsed?.completed_at ?? rec.created_at,
+          summary: rec.summary,
+          ...(parsed?.action_result ? { action_result: parsed.action_result } : {}),
+          ...(parsed?.protocol_result ? { protocol_result: parsed.protocol_result } : {}),
+          ...(output && parsed?.output !== undefined ? { output: parsed.output } : {}),
+        },
+      }
+    }
     const id = reqString(found.result_id)
     const parsed = id ? await SessionResult.parse(id) : undefined
     return {

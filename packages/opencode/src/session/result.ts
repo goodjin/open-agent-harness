@@ -24,6 +24,17 @@ export namespace SessionResult {
     created_at: number
   }
 
+  export type Parsed = Info & {
+    output?: string
+    action_result?: Record<string, unknown>
+    protocol_result?: Record<string, unknown>
+    action_title?: string
+    parent_agent?: string
+    agent?: string
+    result_policy?: string
+    completed_at?: number
+  }
+
   export type Put = {
     id?: string
     carrier: Carrier
@@ -109,6 +120,30 @@ export namespace SessionResult {
     return row ? from(row) : undefined
   }
 
+  export async function listForParentRun(input: { parentSessionID: SessionID; runID: string }) {
+    const rows = Database.use((tx) =>
+      tx
+        .select()
+        .from(SessionResultTable)
+        .where(and(eq(SessionResultTable.parent_session_id, input.parentSessionID), eq(SessionResultTable.run_id, input.runID)))
+        .orderBy(desc(SessionResultTable.created_at))
+        .all(),
+    )
+    return rows.map(from)
+  }
+
+  export async function listForParent(parentSessionID: SessionID) {
+    const rows = Database.use((tx) =>
+      tx
+        .select()
+        .from(SessionResultTable)
+        .where(eq(SessionResultTable.parent_session_id, parentSessionID))
+        .orderBy(desc(SessionResultTable.created_at))
+        .all(),
+    )
+    return rows.map(from)
+  }
+
   export async function raw(id: string) {
     const hit = cache.get(id)
     if (hit !== undefined) return hit
@@ -119,7 +154,7 @@ export namespace SessionResult {
     return out
   }
 
-  export async function parse(id: string) {
+  export async function parse(id: string): Promise<Parsed | undefined> {
     const rec = await get(id)
     if (!rec) return
     const data = object(await raw(id))
@@ -130,6 +165,11 @@ export namespace SessionResult {
       output: text(data.output),
       action_result: Object.keys(input).length ? input : undefined,
       protocol_result: Object.keys(item).length ? item : undefined,
+      action_title: text(data.action_title),
+      parent_agent: text(data.parent_agent),
+      agent: text(data.agent),
+      result_policy: text(data.result_policy),
+      completed_at: number(data.completed_at),
     }
   }
 
@@ -158,5 +198,9 @@ export namespace SessionResult {
 
   function text(input: unknown) {
     if (typeof input === "string") return input
+  }
+
+  function number(input: unknown) {
+    if (typeof input === "number" && Number.isFinite(input)) return input
   }
 }

@@ -17,6 +17,7 @@ import { SessionCompaction } from "./compaction"
 import { Instance } from "../project/instance"
 import { Bus } from "../bus"
 import { RuntimeTools } from "./runtime-tools"
+import { SessionResult } from "./result"
 import { SystemPrompt } from "./system"
 import { InstructionPrompt } from "./instruction"
 import PROMPT_PLAN from "../session/prompt/plan.txt"
@@ -334,13 +335,32 @@ export namespace SessionPrompt {
     return {}
   }
 
+  function text(input: unknown) {
+    if (typeof input === "string") return input
+  }
+
   async function waiting(sessionID: SessionID) {
     const session = await Session.get(sessionID).catch(() => undefined)
     const ctx = object(session?.dsl_context)
     const protocol = object(ctx.protocol)
     const pending = object(protocol.pending_delegations)
     const ids = Object.keys(pending)
-    const live = ids.filter((id) => !ended(SessionStatus.get(SessionID.make(id))))
+    const live = (
+      await Promise.all(
+        ids.map(async (id) => {
+          const item = object(pending[id])
+          const rec = await SessionResult.find({
+            parentSessionID: sessionID,
+            childSessionID: SessionID.make(id),
+            runID: text(item.run_id),
+            actionID: text(item.action_id),
+          })
+          if (rec) return
+          if (ended(SessionStatus.get(SessionID.make(id)))) return
+          return id
+        }),
+      )
+    ).filter((id): id is string => typeof id === "string")
     if (live.length === ids.length) return live.length
     await Session.setDslContext({
       sessionID,

@@ -6,7 +6,7 @@ import { SessionID } from "./schema"
 import z from "zod"
 import { SessionLog } from "./log"
 import { and, Database, desc, eq, gt } from "@/storage/db"
-import { MessageTable, SessionTable } from "./session.sql"
+import { MessageTable, SessionResultTable, SessionTable } from "./session.sql"
 
 export namespace SessionStatus {
   export const Info = z
@@ -699,9 +699,11 @@ export namespace SessionStatus {
 
   function repair(row: Row, status: Info, rows?: Map<string, Row>): Info {
     if (status.type !== "waiting_child") return status
-    const ids = Object.keys(obj(obj(row.dsl_context).protocol).pending_delegations ?? {})
-    if (ids.length === 0) return { type: "completed" }
-    const live = ids.filter((id) => {
+    const pending = obj(obj(row.dsl_context).protocol).pending_delegations ?? {}
+    const entries = Object.entries(obj(pending))
+    if (entries.length === 0) return { type: "completed" }
+    const live = entries.filter(([id, item]) => {
+      if (delivered(row.id, id, obj(item))) return false
       const child =
         rows?.get(id) ??
         Database.use((db) => db.select().from(SessionTable).where(eq(SessionTable.id, SessionID.make(id))).get())
@@ -711,16 +713,34 @@ export namespace SessionStatus {
       return !done(next)
     })
     if (live.length === 0) return { type: "completed" }
-    if (live.length === ids.length) return status
+    if (live.length === entries.length) return status
     return {
       type: "waiting_child",
       message: `Waiting for ${live.length} delegated child session${live.length === 1 ? "" : "s"}.`,
     }
   }
 
+  function delivered(parent: SessionID, child: string, item: Record<string, unknown>) {
+    const cond = [
+      eq(SessionResultTable.parent_session_id, parent),
+      eq(SessionResultTable.child_session_id, SessionID.make(child)),
+    ]
+    const run = str(item.run_id)
+    const action = str(item.action_id)
+    if (run) cond.push(eq(SessionResultTable.run_id, run))
+    if (action) cond.push(eq(SessionResultTable.action_id, action))
+    return Boolean(
+      Database.use((db) => db.select().from(SessionResultTable).where(and(...cond)).limit(1).get()),
+    )
+  }
+
   function obj(input: unknown) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return {} as Record<string, unknown>
     return input as Record<string, unknown>
+  }
+
+  function str(input: unknown) {
+    if (typeof input === "string") return input
   }
 
   function done(status: Info) {
