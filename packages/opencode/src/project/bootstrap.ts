@@ -39,6 +39,18 @@ export async function InstanceBootstrap() {
   const stale = new Set(packets.map((item) => item.session_id))
   for (const [id, status] of Object.entries(restored)) {
     const sessionID = id as SessionID
+    if (stale.has(sessionID) && status.type === "interrupted") {
+      void SessionDelegation.settleInterrupted({
+        sessionID,
+        reason: "Session had stale tool calls after process restart.",
+      }).catch((err) => {
+        Log.Default.warn("delegated interrupted settlement failed", {
+          sessionID: id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+      continue
+    }
     if (!revive(status, stale.has(sessionID))) continue
     SessionStatus.set(sessionID, { type: "running" })
     void SessionPrompt.loop({ sessionID }).catch((err) => {

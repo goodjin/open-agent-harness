@@ -4985,6 +4985,114 @@ describe("SessionDelegation", () => {
     }
   })
 
+  test("interrupted delegated child settles with fallback result instead of staying pending", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "protocol-runner",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "protocol-runner",
+        agent: input.agent ?? "protocol-runner",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "fallback summary",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "technical-reviewer" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_interrupted",
+                action_id: "review",
+                action_title: "Review interrupted work",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "technical-reviewer",
+                result_policy: "summary",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+
+              SessionStatus.set(child.id, { type: "running" })
+              SessionStatus.set(child.id, {
+                type: "interrupted",
+                prior: "running",
+                message: "Session was running when the process stopped.",
+              })
+
+              expect(await SessionDelegation.settleInterrupted({ sessionID: child.id })).toBe(true)
+
+              const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                completed_delegations?: { child_session_id?: string; result_id?: string; status?: string }[]
+                pending_delegations?: Record<string, unknown>
+              }
+              const rec = await SessionResult.find({
+                parentSessionID: parent.id,
+                childSessionID: child.id,
+                runID: "apr_interrupted",
+                actionID: "review",
+              })
+
+              expect(pctx.pending_delegations?.[child.id]).toBeUndefined()
+              expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
+              expect(pctx.completed_delegations?.[0]?.status).toBe("partial")
+              expect(pctx.completed_delegations?.[0]?.result_id).toBeString()
+              expect(rec?.status).toBe("partial")
+              expect(prompts.some((entry) => entry.agent === "summary")).toBe(true)
+              expect(prompts.some((entry) => entry.sessionID === parent.id)).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("completed terminal child status reuses a stored ActionResult before notifying parent", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []

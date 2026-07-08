@@ -558,6 +558,28 @@ export namespace SessionDelegation {
     }
   }
 
+  export async function settleInterrupted(input: { sessionID: SessionID; reason?: string }) {
+    const session = await Session.get(input.sessionID).catch(() => undefined)
+    const item = session ? assignment(session) : undefined
+    if (!item) return false
+    if (await complete({ sessionID: input.sessionID })) return true
+    const fresh = await Session.get(input.sessionID).catch(() => undefined)
+    const next = fresh ? assignment(fresh) ?? item : item
+    if (await delivered(next)) {
+      await notified(input.sessionID, next)
+      return true
+    }
+    const status = SessionStatus.get(input.sessionID)
+    if (status.type !== "interrupted") return false
+    return submit({
+      sessionID: SessionID.make(next.parent_session_id),
+      runID: next.run_id,
+      agent: next.parent_agent,
+      force: true,
+      reason: input.reason ?? "Delegated child was interrupted by process restart and could not be safely resumed.",
+    })
+  }
+
   export async function query(input: {
     childID?: string
     output?: boolean
