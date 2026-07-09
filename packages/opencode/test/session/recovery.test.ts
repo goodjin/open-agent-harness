@@ -121,6 +121,25 @@ describe("session recovery", () => {
         }),
     })
   })
+  test("lists sessions whose stale tools were already marked", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_recovery_marked"),
+          fn: async () => {
+            const data = await stale(tmp.path, "bun test")
+            SessionStatus.set(data.sessionID, { type: "interrupted", prior: "running" })
+
+            await SessionRecovery.mark()
+            expect(await SessionRecovery.detect()).toHaveLength(0)
+            expect(await SessionRecovery.marked()).toContain(data.sessionID)
+            SessionStatus.set(data.sessionID, { type: "idle" })
+          },
+        }),
+    })
+  })
 })
 
 async function stale(dir: string, command: string) {

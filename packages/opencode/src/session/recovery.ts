@@ -189,6 +189,45 @@ export namespace SessionRecovery {
     return packets
   }
 
+  export async function marked(input?: { directory?: string }) {
+    const dir = input?.directory ?? Instance.directory
+    const sessions = Database.use((db) =>
+      db
+        .select({ id: SessionTable.id })
+        .from(SessionTable)
+        .where(
+          and(
+            eq(SessionTable.project_id, Instance.project.id),
+            eq(SessionTable.directory, dir),
+            eq(SessionTable.status_class, "interrupted"),
+          ),
+        )
+        .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
+        .all(),
+    )
+    const ids = sessions.map((item) => item.id)
+    if (ids.length === 0) return []
+    const rows = Database.use((db) =>
+      db
+        .select({ session_id: PartTable.session_id, data: PartTable.data })
+        .from(PartTable)
+        .where(inArray(PartTable.session_id, ids))
+        .all(),
+    )
+    return [
+      ...new Set(
+        rows
+          .filter((row) => {
+            const part = row.data as MessageV2.Part
+            if (part.type !== "tool") return false
+            if (part.state.status !== "error") return false
+            return object(object(part.state.metadata)?.recovery)?.status === "stale_interrupted"
+          })
+          .map((row) => row.session_id),
+      ),
+    ]
+  }
+
   function start(state: MessageV2.ToolPart["state"], fallback: number) {
     if (state.status !== "running") return fallback
     return state.time.start

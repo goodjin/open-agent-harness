@@ -36,7 +36,13 @@ export async function InstanceBootstrap() {
     })
     return []
   })
-  const stale = new Set(packets.map((item) => item.session_id))
+  const marked = await SessionRecovery.marked().catch((err) => {
+    Log.Default.warn("session recovery marked scan failed", {
+      error: err instanceof Error ? err.message : String(err),
+    })
+    return []
+  })
+  const stale = new Set([...packets.map((item) => item.session_id), ...marked])
   for (const [id, status] of Object.entries(restored)) {
     const sessionID = id as SessionID
     if (stale.has(sessionID) && status.type === "interrupted") {
