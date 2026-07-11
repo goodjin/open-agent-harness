@@ -445,7 +445,14 @@ describe("SessionRunner", () => {
     const wait = new Promise<WorkflowState.Info>((resolve) => {
       done = resolve
     })
-    const hook = spyOn(WorkflowExecutor, "continueRun").mockImplementation(async () => wait)
+    let enter!: () => void
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve
+    })
+    const hook = spyOn(WorkflowExecutor, "continueRun").mockImplementation(async () => {
+      enter()
+      return wait
+    })
 
     try {
       await Instance.provide({
@@ -550,28 +557,35 @@ describe("SessionRunner", () => {
                 tools: {},
               })
 
-              await Bun.sleep(10)
-              const before = await MessageV2.parts(assistant.id)
-              expect(before).toHaveLength(1)
-              expect(before[0]?.type).toBe("text")
-              expect(before[0]?.type === "text" && before[0].text.includes("active")).toBe(true)
-              expect((before[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
-              expect((before[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
-
-              done({
+              const completed = {
                 ...state,
                 status: "completed",
                 completed: ["first", "second"],
                 statuses: { first: "completed", second: "completed" },
                 time: { ...state.time, completed: Date.now() },
-              })
+              } as WorkflowState.Info
 
-              expect(await pending).toBe("stop")
-              const after = await MessageV2.parts(assistant.id)
-              expect(after).toHaveLength(1)
-              expect(after[0]?.type === "text" && after[0].text.includes("completed")).toBe(true)
-              expect((after[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
-              expect((after[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
+              try {
+                await entered
+                const before = await MessageV2.parts(assistant.id)
+                expect(before).toHaveLength(1)
+                expect(before[0]?.type).toBe("text")
+                expect(before[0]?.type === "text" && before[0].text.includes("active")).toBe(true)
+                expect((before[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
+                expect((before[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
+
+                done(completed)
+
+                expect(await pending).toBe("stop")
+                const after = await MessageV2.parts(assistant.id)
+                expect(after).toHaveLength(1)
+                expect(after[0]?.type === "text" && after[0].text.includes("completed")).toBe(true)
+                expect((after[0] as MessageV2.TextPart).metadata?.kind).toBe("workflow")
+                expect((after[0] as MessageV2.TextPart).metadata?.action).toBe("continued")
+              } finally {
+                done(completed)
+                await pending
+              }
             },
           }),
       })
