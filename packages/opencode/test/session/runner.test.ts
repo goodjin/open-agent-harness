@@ -2303,7 +2303,10 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner allows verifier dependencies on completed historical child actions", async () => {
+  test.each([
+    ["allows satisfying completed historical child actions", true, 1],
+    ["rejects non-satisfying completed historical child actions", false, 2],
+  ])("protocol runner %s", async (_, satisfying, expected) => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -2316,18 +2319,24 @@ describe("SessionRunner", () => {
     const stream = spyOn(LLM, "stream").mockImplementation(async (input) => {
       calls++
       inputs.push(input)
-      const body = {
-        version: "2",
-        items: [
-          {
-            id: "verify_history",
-            kind: "agent",
-            target: "verifier",
-            prompt: "Verify historical worker evidence.",
-            depends: ["run_m2_e6_f5_v4_evidence"],
-          },
-        ],
-      }
+      const body =
+        satisfying || calls === 1
+          ? {
+              version: "2",
+              items: [
+                {
+                  id: "verify_history",
+                  kind: "agent",
+                  target: "verifier",
+                  prompt: "Verify historical worker evidence.",
+                  depends: ["run_m2_e6_f5_v4_evidence"],
+                },
+              ],
+            }
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Historical dependency was rejected." }],
+            }
       return {
         fullStream: (async function* () {
           yield { type: "start" }
@@ -2387,9 +2396,20 @@ describe("SessionRunner", () => {
     const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
     const prompt = spyOn(SessionPrompt, "prompt")
     prompt.mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
-      const msg = {
+      const user = (await Session.updateMessage({
         id: MessageID.ascending(),
         sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "verifier",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
         role: "assistant",
         mode: input.agent ?? "verifier",
         agent: input.agent ?? "verifier",
@@ -2405,15 +2425,30 @@ describe("SessionRunner", () => {
         providerID: ProviderID.make("openai"),
         time: { created: Date.now(), completed: Date.now() },
         finish: "stop",
-      } as MessageV2.Assistant
-      const part = {
+      } as MessageV2.Assistant)) as MessageV2.Assistant
+      const part = await Session.updatePart({
         id: PartID.ascending(),
         messageID: msg.id,
         sessionID: input.sessionID,
-        type: "text",
-        text: "kind: success\ntask_background: verifier\ncompletion_summary: verified\nchanged_files: none",
-        time: { start: Date.now(), end: Date.now() },
-      } as MessageV2.TextPart
+        type: "tool",
+        callID: "call_verify_history",
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: {
+            kind: "action_result",
+            role: "verifier",
+            action_id: "verify_history",
+            target_action_id: "run_m2_e6_f5_v4_evidence",
+            status: "success",
+            result: "Historical worker evidence verified.",
+          },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
       return { info: msg, parts: [part] } as MessageV2.WithParts
     }) as never)
 
@@ -2440,6 +2475,26 @@ describe("SessionRunner", () => {
                 tools: {},
                 mode: "",
               } as MessageV2.User)) as MessageV2.User
+              await SessionResult.put({
+                carrier: "action_result",
+                status: "completed",
+                satisfying,
+                sessionID: child.id,
+                parentSessionID: session.id,
+                childSessionID: child.id,
+                runID: "apr_history",
+                actionID: "run_m2_e6_f5_v4_evidence",
+                summary: "Historical evidence completed.",
+                raw: {
+                  action_result: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "run_m2_e6_f5_v4_evidence",
+                    status: "success",
+                    result: "Historical evidence completed.",
+                  },
+                },
+              })
               await Session.setDslContext({
                 sessionID: session.id,
                 dsl_context: {
@@ -2458,6 +2513,7 @@ describe("SessionRunner", () => {
                         child_session_id: child.id,
                         agent: "backend",
                         result_policy: "structured",
+                        satisfying,
                         completed_at: Date.now(),
                         summary:
                           "task_background: historical evidence\ncompletion_summary: completed\nchanged_files: none",
@@ -2506,18 +2562,30 @@ describe("SessionRunner", () => {
                 messages: [{ role: "user", content: "verify historical child" }],
                 tools: {},
               })
-              await Bun.sleep(20)
+              for (let i = 0; i < 50; i++) {
+                const current = (await Session.get(session.id)).dsl_context?.protocol as
+                  | { runs?: { status?: string }[] }
+                  | undefined
+                if (current?.runs?.[0]?.status === "completed") break
+                await Bun.sleep(10)
+              }
               const logs = await SessionLog.list({ sessionID: session.id })
+              const children = await Session.children(session.id)
+              const records = children[0] ? await Session.messages({ sessionID: children[0].id }) : []
               const messages = await Session.messages({ sessionID: session.id })
               const text = messages
                 .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
                 .join("\n")
 
               expect(result).toBe("stop")
-              expect(calls).toBe(1)
-              expect(logs.some((item) => item.type === "protocol.retry")).toBe(false)
-              expect(text).toContain("Delegated to verifier")
-              expect(text).toContain("Status: completed")
+              expect(calls).toBe(expected)
+              expect(logs.some((item) => item.type === "protocol.retry")).toBe(!satisfying)
+              expect(text).toContain(satisfying ? "Delegated to verifier" : "Historical dependency was rejected.")
+              expect(
+                records.some((item) =>
+                  item.parts.some((part) => part.type === "tool" && part.tool === "ActionResult"),
+                ),
+              ).toBe(satisfying)
             },
           }),
       })
@@ -3225,7 +3293,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner starts verifier without waiting for worker delegation completion", async () => {
+  test("protocol runner starts verifier after a satisfying worker handoff", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -3314,22 +3382,38 @@ describe("SessionRunner", () => {
         time: { created: Date.now(), completed: Date.now() },
         finish: "stop",
       })) as MessageV2.Assistant
+      const verifier = input.agent === "loose-verifier"
       const part = await Session.updatePart({
         id: PartID.ascending(),
         messageID: assistant.id,
         sessionID: input.sessionID,
-        type: "text",
-        text: [
-          "kind: success",
-          "task_background: assigned by protocol test",
-          "task_content: implement backend change",
-          "completion_summary: done",
-          "changed_files: none",
-          "verification: not run",
-          "blockers: none",
-        ].join("\n"),
-        time: { start: Date.now(), end: Date.now() },
-      } as MessageV2.TextPart)
+        type: "tool",
+        callID: verifier ? "call_verify" : "call_impl",
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: verifier
+            ? {
+                kind: "action_result",
+                role: "verifier",
+                action_id: "verify",
+                target_action_id: "impl",
+                status: "success",
+                result: "Backend change verified.",
+              }
+            : {
+                kind: "action_result",
+                role: "worker",
+                action_id: "impl",
+                status: "success",
+                result: "Backend change implemented.",
+              },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
     const items = [
@@ -3414,27 +3498,22 @@ describe("SessionRunner", () => {
                 messages: [{ role: "user", content: "implement and verify backend" }],
                 tools: {},
               })
+              for (let i = 0; i < 50; i++) {
+                const current = (await Session.get(session.id)).dsl_context?.protocol as
+                  | { runs?: { status?: string }[] }
+                  | undefined
+                if (current?.runs?.[0]?.status === "completed") break
+                await Bun.sleep(10)
+              }
               const children = await Session.children(session.id)
-              const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as
-                | {
-                    runs?: {
-                      status: string
-                      actions: { id: string; status: string; error?: string; output?: string; summary: string }[]
-                    }[]
-                  }
-                | undefined
 
               expect(result).toBe("stop")
-              expect(children).toHaveLength(2)
+              expect(children).toHaveLength(1)
               expect(children[0]?.title).toContain("@backend")
-              expect(children[1]?.title).toContain("@loose-verifier")
               expect(inputs[0]?.agent).toBe("backend")
-              expect(inputs.some((item) => item.agent === "loose-verifier")).toBe(true)
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "verify")?.summary).toContain(
-                "Delegated to loose-verifier.",
-              )
+              expect(inputs[1]?.agent).toBe("loose-verifier")
+              const verifiers = await Session.children(children[0]!.id)
+              expect(verifiers).toHaveLength(1)
             },
           }),
       })
@@ -3565,13 +3644,38 @@ describe("SessionRunner", () => {
         id: PartID.ascending(),
         messageID: assistant.id,
         sessionID: input.sessionID,
-        type: "text",
-        text: "Child agent reviewed toolbar buttons.",
-        time: { start: Date.now(), end: Date.now() },
-      } as MessageV2.TextPart)
+        type: "tool",
+        callID: "call_update_toolbar_backend",
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: {
+            kind: "action_result",
+            role: "worker",
+            action_id: "update_toolbar_backend",
+            status: "success",
+            result: "Child agent reviewed toolbar buttons.",
+          },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
       done++
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
+    const worker = {
+      name: "backend",
+      kind: "worker",
+      capability: { purpose: "implement", tags: [], writes: true },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as const
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => (name === worker.name ? worker : undefined) as never)
+    const list = spyOn(Agent, "list").mockImplementation(async () => [worker] as never)
 
     try {
       await Instance.provide({
@@ -3650,7 +3754,6 @@ describe("SessionRunner", () => {
                     runs?: { actions: { output?: string }[] }[]
                   }
                 | undefined
-              const parts = await MessageV2.parts(assistant.id)
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
               expect(children[0]?.parentID).toBe(session.id)
@@ -3667,14 +3770,6 @@ describe("SessionRunner", () => {
               expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain(
                 "The parent session will resume automatically",
               )
-              expect(
-                parts.some(
-                  (part) =>
-                    part.type === "text" &&
-                    part.metadata?.kind === "protocol_summary" &&
-                    part.text.includes("The parent session will resume automatically"),
-                ),
-              ).toBe(true)
               for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("backend")
@@ -3682,15 +3777,16 @@ describe("SessionRunner", () => {
                 providerID: ProviderID.make("minimax-cn-coding-plan"),
                 modelID: ModelID.make("MiniMax-M3"),
               })
-              expect(inputs[1]?.agent).toBe("protocol-runner")
+              const resume = inputs.find((item) => item.agent === "protocol-runner")
+              expect(resume?.agent).toBe("protocol-runner")
               expect(
-                inputs[1]?.parts?.some(
-                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                resume?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("Delegated child sessions have finished"),
                 ),
               ).toBe(true)
               expect(
-                inputs[1]?.parts?.some(
-                  (part) => part.type === "text" && part.text.includes('"action_id": "update_toolbar_backend"'),
+                resume?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("`update_toolbar_backend`"),
                 ),
               ).toBe(true)
               expect(inputs[0]?.parts?.some((part) => part.type === "agent")).toBe(false)
@@ -3707,6 +3803,8 @@ describe("SessionRunner", () => {
     } finally {
       stream.mockRestore()
       prompt.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
     }
   })
 
