@@ -108,6 +108,8 @@ Agent-level concurrency is separate from provider/model request limits. Planner 
 
 Protocol runner sessions use the native `AgentProtocolOutput` tool as the carrier for model output. If the provider returns malformed arguments for that tool, the LLM layer redirects the failed call to the internal `invalid` tool result.
 
+After one malformed protocol response, Runtime allows a clean ordinary Markdown answer to finish the retry when protocol history already exists. Provider-specific textual tool calls, XML invoke syntax, fenced textual `agent.protocol.output` payloads, and textual `AgentProtocolOutput` call objects remain malformed output: Runtime does not execute them or accept them as the Markdown fallback. Unsupported MiniMax XML variants are rejected after the bounded retry instead of being recovered as tool calls.
+
 The invalid result must preserve enough evidence for prompt and protocol debugging:
 
 - the human-readable parser error,

@@ -2444,7 +2444,7 @@ export namespace SessionRunner {
   }
 
   function pseudo(text: string) {
-    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(
+    return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|```(?:json\s+)?agent-protocol[\s\S]*?"type"\s*:\s*"agent\.protocol\.output"|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(
       text,
     )
   }

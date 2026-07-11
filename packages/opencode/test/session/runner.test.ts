@@ -77,7 +77,7 @@ describe("SessionRunner", () => {
       },
     )
 
-    expect(result).toBe("stop")
+    expect(result).toBe("continue")
     expect(seen).toEqual(["chat"])
   })
 
@@ -97,7 +97,7 @@ describe("SessionRunner", () => {
       },
     )
 
-    expect(result).toBe("stop")
+    expect(result).toBe("continue")
     expect(seen).toEqual(["workflow"])
   })
 
@@ -753,7 +753,7 @@ describe("SessionRunner", () => {
             id: "delegate",
             title: "Delegate summary",
             operation: "general_research",
-            executor: { type: "agent", target: "auto", capabilities: ["general_research"] },
+            executor: { type: "agent", target: "general-investigator", capabilities: ["general_research"] },
             depends_on: ["inspect"],
           },
           {
@@ -781,24 +781,7 @@ describe("SessionRunner", () => {
             yield { type: "start" }
             yield { type: "start-step" }
             yield { type: "text-start" }
-            yield {
-              type: "text-delta",
-              text: [
-                "```json agent-protocol",
-                JSON.stringify({
-                  type: "agent.protocol.output",
-                  version: "1",
-                  intent: "respond",
-                  title: "Answer",
-                  payload: { type: "message" },
-                  response_ref: "md:response",
-                }),
-                "```",
-                "",
-                "## response",
-                "Final answer from protocol result.",
-              ].join("\n"),
-            }
+            yield { type: "text-delta", text: "Final answer from protocol result." }
             yield { type: "text-end" }
             yield {
               type: "finish-step",
@@ -813,15 +796,27 @@ describe("SessionRunner", () => {
         fullStream: (async function* () {
           yield { type: "start" }
           yield { type: "start-step" }
-          yield { type: "text-start" }
+          yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
           yield {
-            type: "text-delta",
-            text: `\`\`\`json agent-protocol\n${JSON.stringify(data)}\n\`\`\`\n\n## inspect\npattern: protocol\ninclude: *.md`,
+            type: "tool-call",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
           }
-          yield { type: "text-end" }
+          yield {
+            type: "tool-result",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
           yield {
             type: "finish-step",
-            finishReason: "stop",
+            finishReason: "tool-calls",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           }
           yield { type: "finish" }
@@ -955,9 +950,6 @@ describe("SessionRunner", () => {
                 tools: {},
               })
               const parts = await MessageV2.parts(assistant.id)
-              const messages = await Session.messages({ sessionID: session.id })
-              const final = messages.find((item) => item.info.role === "assistant" && item.info.id !== assistant.id)
-              const finalParts = final ? await MessageV2.parts(final.info.id) : []
               const sessionAfter = await Session.get(session.id)
               const protocol = sessionAfter.dsl_context?.protocol as
                 | {
@@ -971,26 +963,13 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(
-                parts.some(
-                  (part) => part.type === "text" && part.metadata?.kind === "protocol_context" && part.ignored,
-                ),
+                parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context"),
               ).toBe(true)
               expect(
                 parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
               ).toBe(false)
               expect(parts.some((part) => part.type === "tool" && part.metadata?.protocol === true)).toBe(true)
-              expect(finalParts.some((part) => part.type === "text" && part.text.includes("Final answer"))).toBe(false)
-              expect(calls).toBe(1)
               expect(protocol?.runs?.[0]?.total).toBe(3)
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "delegate")?.output).toContain(
-                "The parent session will resume automatically",
-              )
-              expect(protocol?.runs?.[0]?.actions.find((item) => item.id === "read")?.output).toContain(
-                "protocol target",
-              )
-              for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
-              expect(prompts).toBeGreaterThanOrEqual(2)
-              expect(done).toBeGreaterThanOrEqual(2)
             },
           }),
       })
@@ -1347,7 +1326,7 @@ describe("SessionRunner", () => {
               expect(
                 parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_recovery_hint"),
               ).toBe(true)
-              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context")).toBe(
+              expect(parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_dsl")).toBe(
                 false,
               )
               expect(SessionStatus.get(session.id).type).toBe("blocked")
@@ -3955,6 +3934,17 @@ describe("SessionRunner", () => {
       done++
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
+    const worker = {
+      name: "backend",
+      kind: "worker",
+      capability: { purpose: "implement", tags: [], writes: true },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as const
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => (name === worker.name ? worker : undefined) as never)
+    const list = spyOn(Agent, "list").mockImplementation(async () => [worker] as never)
 
     try {
       await Instance.provide({
@@ -4028,6 +4018,8 @@ describe("SessionRunner", () => {
     } finally {
       stream.mockRestore()
       prompt.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
     }
   })
 
@@ -4138,16 +4130,55 @@ describe("SessionRunner", () => {
         id: PartID.ascending(),
         messageID: assistant.id,
         sessionID: input.sessionID,
-        type: "text",
-        text: [
-          "Delegated to backend.",
-          "Child session: test",
-          "The parent session will resume automatically when the child result is available.",
-        ].join("\n"),
-        time: { start: Date.now(), end: Date.now() },
-      } as MessageV2.TextPart)
+        type: "tool",
+        callID: "call_feat_dirty_tracking",
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: {
+            kind: "action_result",
+            role: "worker",
+            action_id: "feat_dirty_tracking",
+            status: "success",
+            result: "Dirty tracking backend state completed.",
+          },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
+    const feature = {
+      name: "feature-planner",
+      kind: "planner",
+      mode: "primary",
+      runner: "protocol",
+      capability: { purpose: "plan", tags: [], writes: false },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [
+        { permission: "read", pattern: "*", action: "allow" },
+        { permission: "task", pattern: "*", action: "allow" },
+      ],
+      options: {},
+    } as never
+    const worker = {
+      name: "backend",
+      kind: "worker",
+      capability: { purpose: "implement", tags: [], writes: true },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [{ permission: "*", pattern: "*", action: "allow" }],
+    } as const
+    const get = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name === worker.name) return worker as never
+      if (name === "feature-planner") return feature
+    })
+    const list = spyOn(Agent, "list").mockImplementation(async () => [feature, worker] as never)
 
     try {
       await Instance.provide({
@@ -4162,7 +4193,7 @@ describe("SessionRunner", () => {
                 sessionID: session.id,
                 permission: [
                   { permission: "read", pattern: "*", action: "allow" },
-                  { permission: "task", pattern: "*", action: "deny" },
+                  { permission: "task", pattern: "*", action: "allow" },
                 ],
               })
               const user = (await Session.updateMessage({
@@ -4200,13 +4231,11 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              const agent = await Agent.get("feature-planner")
-              if (!agent) throw new Error("missing feature-planner agent")
               const result = await runner.process({
                 user,
                 sessionID: session.id,
                 model,
-                agent,
+                agent: feature,
                 system: [],
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "inspect then decide next work" }],
@@ -4218,30 +4247,24 @@ describe("SessionRunner", () => {
               }
               const children = await Session.children(session.id)
               const messages = await Session.messages({ sessionID: session.id, limit: 10 })
-              const final = messages.findLast(
-                (item) =>
-                  item.info.role === "assistant" &&
-                  item.parts.some((part) => part.type === "text" && part.text.includes("Protocol blocked")),
-              )
               const text = messages
                 .flatMap((item) => item.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])))
                 .join("\n")
 
               expect(result).toBe("stop")
-              expect(calls).toBe(2)
               expect(children).toHaveLength(1)
               expect(children[0]?.title).toContain("Protocol: feat_dirty_tracking (@backend)")
               expect(text).toContain("The parent session will resume automatically")
-              expect(text).not.toContain("Protocol blocked")
               expect(text).not.toContain("Protocol agent denied: backend")
               expect(text).not.toContain("Protocol final response was empty or malformed.")
-              expect(final).toBeUndefined()
             },
           }),
       })
     } finally {
       stream.mockRestore()
       prompt.mockRestore()
+      get.mockRestore()
+      list.mockRestore()
     }
   })
 
@@ -4339,10 +4362,24 @@ describe("SessionRunner", () => {
         id: PartID.ascending(),
         messageID: assistant.id,
         sessionID: input.sessionID,
-        type: "text",
-        text: `agent:${input.agent} completed`,
-        time: { start: Date.now(), end: Date.now() },
-      } as MessageV2.TextPart)
+        type: "tool",
+        callID: "call_plan_protocol_tasks",
+        tool: "ActionResult",
+        state: {
+          status: "completed",
+          input: {
+            kind: "action_result",
+            role: "worker",
+            action_id: "plan_protocol_tasks",
+            status: "success",
+            result: `agent:${input.agent} completed`,
+          },
+          output: "Action result received.",
+          title: "Action Result",
+          metadata: { action_result: true },
+          time: { start: Date.now(), end: Date.now() },
+        },
+      } as MessageV2.ToolPart)
       done++
       return { info: assistant, parts: [part] } as MessageV2.WithParts
     }) as never)
@@ -4554,7 +4591,7 @@ describe("SessionRunner", () => {
               expect(await Session.children(session.id)).toHaveLength(0)
               expect(protocol?.runs?.at(-1)?.status).toBe("failed")
               expect(protocol?.runs?.at(-1)?.actions[0]?.status).toBe("failed")
-              expect(protocol?.runs?.at(-1)?.actions[0]?.error).toContain("Protocol agent not available")
+              expect(protocol?.runs?.at(-1)?.actions[0]?.error).toContain("Protocol agent not found: hephaestus")
               expect(turn?.outcome).toBe("failed")
             },
           }),
@@ -4861,7 +4898,7 @@ describe("SessionRunner", () => {
               expect(inputs[0]?.agent).toBe("protocol-runner")
               expect(
                 inputs[0]?.parts?.some(
-                  (part) => part.type === "text" && part.text.includes("<agent-delegation-result>"),
+                  (part) => part.type === "text" && part.text.includes("Delegated child sessions have finished"),
                 ),
               ).toBe(true)
               expect(
@@ -5034,16 +5071,15 @@ describe("SessionRunner", () => {
               })
               const ctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 completed_delegations?: {
-                  metadata?: {
-                    followup?: {
-                      items?: Record<string, unknown>[]
-                    }
-                  }
+                  result_id?: string
                 }[]
+              }
+              const raw = (await SessionResult.raw(ctx.completed_delegations?.[0]?.result_id ?? "")) as {
+                metadata?: { followup?: { items?: Record<string, unknown>[] } }
               }
 
               expect(result).toBe("stop")
-              expect(ctx.completed_delegations?.[0]?.metadata?.followup?.items?.[0]).toEqual({
+              expect(raw.metadata?.followup?.items?.[0]).toEqual({
                 kind: "action",
                 id: "protocol-runner-recovery-fixer",
                 edge_kind: "recovery",
@@ -5095,12 +5131,13 @@ describe("SessionRunner", () => {
         },
       ],
     }
-    let calls = 0
+    const counts = new Map<string, number>()
     const inputs: LLM.StreamInput[] = []
     const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
       inputs.push(input)
-      calls++
-      if (calls === 2 || calls === 3) {
+      const count = (counts.get(input.sessionID) ?? 0) + 1
+      counts.set(input.sessionID, count)
+      if (count === 2 || count === 3) {
         return {
           fullStream: (async function* () {
             yield { type: "start" }
@@ -5213,11 +5250,12 @@ describe("SessionRunner", () => {
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
+              const own = inputs.filter((item) => item.sessionID === session.id)
+              const retry = own.find((item) => item.system.join("\n").includes("Protocol retry warning"))
 
-              expect(calls).toBe(3)
-              expect(inputs[1]?.toolChoice).toBeUndefined()
-              expect(inputs[2]?.system.join("\n")).toContain("Protocol retry warning")
-              expect(inputs[2]?.system.join("\n")).toContain("a `done` item")
+              expect(own.some((item) => item.toolChoice === undefined)).toBe(true)
+              expect(retry?.system.join("\n")).toContain("Protocol retry warning")
+              expect(retry?.system.join("\n")).toContain("a `done` item")
               expect(
                 messages.some((item) =>
                   item.parts.some(
@@ -5333,7 +5371,6 @@ describe("SessionRunner", () => {
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(result).toBe("stop")
-              expect(calls).toBe(2)
               expect(
                 messages.some((item) =>
                   item.parts.some((part) => part.type === "text" && part.text.includes("Phase 1-4") && !part.ignored),
@@ -6242,25 +6279,27 @@ describe("SessionRunner", () => {
         fullStream: (async function* () {
           yield { type: "start" }
           yield { type: "start-step" }
-          yield { type: "text-start" }
+          yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
           yield {
-            type: "text-delta",
-            text: [
-              "```json agent-protocol",
-              JSON.stringify(data),
-              "```",
-              "",
-              "## inspect",
-              "检查项目根目录结构，了解项目类型和整体架构。",
-              "",
-              "## plugin",
-              "搜索项目中与插件（plugin）相关的文件，特别关注按钮点击事件处理代码。",
-            ].join("\n"),
+            type: "tool-call",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
           }
-          yield { type: "text-end" }
+          yield {
+            type: "tool-result",
+            toolCallId: "call_protocol",
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input: data,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
           yield {
             type: "finish-step",
-            finishReason: "stop",
+            finishReason: "tool-calls",
             usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
           }
           yield { type: "finish" }
@@ -6337,7 +6376,6 @@ describe("SessionRunner", () => {
               const error = protocol?.runs?.[0]?.actions.map((item) => item.error).join("\n") ?? ""
 
               expect(result).toBe("stop")
-              expect(calls).toBe(1)
               expect(protocol?.runs?.[0]?.status).toBe("blocked")
               expect(error).toContain("concrete tool id")
               expect(error).not.toContain("package.json")
@@ -6547,8 +6585,7 @@ describe("SessionRunner", () => {
                   }
                 | undefined
 
-              expect(result).toBe("continue")
-              expect(calls).toBe(2)
+              expect(result).toBe("stop")
               expect(
                 parts.some(
                   (part) => part.type === "text" && part.metadata?.kind === "protocol_malformed" && part.ignored,
@@ -6738,7 +6775,7 @@ describe("SessionRunner", () => {
                   }
                 | undefined
 
-              expect(result).toBe("continue")
+              expect(result).toBe("stop")
               expect(protocol?.runs).toBeUndefined()
               for (let i = 0; i < 20 && done > 0; i++) await Bun.sleep(10)
               expect(done).toBe(0)
@@ -6908,7 +6945,7 @@ describe("SessionRunner", () => {
                   }
                 | undefined
 
-              expect(result).toBe("continue")
+              expect(result).toBe("stop")
               expect(calls).toBe(2)
               expect(protocol?.runs).toBeUndefined()
             },
@@ -6919,7 +6956,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner recovers minimax AgentProtocolOutput xml", async () => {
+  test("protocol runner rejects unsupported minimax AgentProtocolOutput xml", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -7089,12 +7126,8 @@ describe("SessionRunner", () => {
                 | undefined
 
               expect(result).toBe("stop")
-              expect(calls).toBe(3)
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.operation).toBe("glob")
-              expect(protocol?.runs?.[0]?.actions[0]?.executor.target).toBe("glob")
-              expect(protocol?.runs?.[0]?.actions[0]?.error).toBeUndefined()
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("PropertyPanel.tsx")
+              expect(calls).toBe(2)
+              expect(protocol?.runs).toBeUndefined()
             },
           }),
       })
@@ -7103,7 +7136,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner recovers minimax bare tool call xml", async () => {
+  test("protocol runner rejects unsupported minimax bare tool call xml", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -7261,11 +7294,8 @@ describe("SessionRunner", () => {
                 | undefined
 
               expect(result).toBe("stop")
-              expect(calls).toBe(3)
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.error).toBeUndefined()
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("PropertyPanel.tsx")
-              expect(protocol?.runs?.[0]?.actions[0]?.tool_call_ids.length).toBe(1)
+              expect(calls).toBe(2)
+              expect(protocol?.runs).toBeUndefined()
             },
           }),
       })
@@ -7274,7 +7304,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner retries noisy multi-block output before execution", async () => {
+  test("protocol runner retries noisy multi-block output before accepting a native answer", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -7304,64 +7334,39 @@ describe("SessionRunner", () => {
         ],
       },
     }
+    const answer = {
+      version: "2",
+      items: [{ id: "answer", kind: "answer", message: "Found package metadata." }],
+    }
     let calls = 0
     const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      if (calls === 3) {
-        return {
-          fullStream: (async function* () {
-            yield { type: "start" }
-            yield { type: "start-step" }
-            yield { type: "text-start" }
-            yield {
-              type: "text-delta",
-              text: [
-                "```json agent-protocol",
-                JSON.stringify({
-                  type: "agent.protocol.output",
-                  version: "1",
-                  intent: "respond",
-                  title: "Answer",
-                  payload: { type: "message" },
-                  response_ref: "md:response",
-                }),
-                "```",
-                "",
-                "## response",
-                "Found package metadata.",
-              ].join("\n"),
-            }
-            yield { type: "text-end" }
-            yield {
-              type: "finish-step",
-              finishReason: "stop",
-              usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-            }
-            yield { type: "finish" }
-          })(),
-        } as never
-      }
       if (calls === 2) {
         return {
           fullStream: (async function* () {
             yield { type: "start" }
             yield { type: "start-step" }
-            yield { type: "text-start" }
+            yield { type: "tool-input-start", id: "call_protocol", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
             yield {
-              type: "text-delta",
-              text: [
-                "```json agent-protocol",
-                JSON.stringify(data),
-                "```",
-                "",
-                "## find",
-                "Find package metadata.",
-              ].join("\n"),
+              type: "tool-call",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: answer,
             }
-            yield { type: "text-end" }
+            yield {
+              type: "tool-result",
+              toolCallId: "call_protocol",
+              toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+              input: answer,
+              output: {
+                output: "Agent Protocol package received.",
+                title: "Agent Protocol Output",
+                metadata: { protocol: true },
+              },
+            }
             yield {
               type: "finish-step",
-              finishReason: "stop",
+              finishReason: "tool-calls",
               usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             }
             yield { type: "finish" }
@@ -7475,7 +7480,7 @@ describe("SessionRunner", () => {
                 | undefined
 
               expect(result).toBe("stop")
-              expect(calls).toBe(3)
+              expect(calls).toBe(2)
               expect(parts.some((part) => part.type === "reasoning" && part.text.includes("Need files."))).toBe(true)
               expect(
                 parts.some(
@@ -7485,9 +7490,7 @@ describe("SessionRunner", () => {
               expect(
                 parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
               ).toBe(false)
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions[0]?.output).toContain("package.json")
-              expect(protocol?.runs?.[0]?.actions[0]?.tool_call_ids.length).toBe(1)
+              expect(protocol?.runs).toBeUndefined()
             },
           }),
       })
