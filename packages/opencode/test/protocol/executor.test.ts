@@ -292,24 +292,30 @@ describe("agent protocol executor", () => {
     ).toBe("general")
   })
 
-  test("marks tool failures without blocking remaining actions", async () => {
+  test("does not satisfy downstream dependencies after tool failures", async () => {
+    const calls: string[] = []
     const result = await AgentProtocolExecutor.run({
       declaration: decl,
       sections: { inspect: "Find source files" },
-      execute: async (action) => ({
-        title: action.title,
-        output: action.id === "inspect" ? "missing file" : `ran ${action.id}`,
-        metadata: action.id === "inspect" ? { callID: `call_${action.id}`, failed: true } : { callID: `call_${action.id}` },
-      }),
+      execute: async (action) => {
+        calls.push(action.id)
+        return {
+          title: action.title,
+          output: action.id === "inspect" ? "missing file" : `ran ${action.id}`,
+          metadata:
+            action.id === "inspect" ? { callID: `call_${action.id}`, failed: true } : { callID: `call_${action.id}` },
+        }
+      },
     })
 
     expect(result.status).toBe("failed")
     expect(result.actions.map((item) => [item.id, item.status])).toEqual([
       ["inspect", "failed"],
-      ["bad", "completed"],
+      ["bad", "blocked"],
     ])
     expect(result.actions[0]?.error).toBe("missing file")
-    expect(result.metrics.internal_tool_calls).toBe(2)
+    expect(calls).toEqual(["inspect"])
+    expect(result.metrics.internal_tool_calls).toBe(1)
   })
 
   test("marks skipped actions without failing the run", async () => {

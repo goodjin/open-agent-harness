@@ -31,6 +31,7 @@ import { SessionStatus } from "./status"
 import { SessionTurn } from "./turn"
 import { ActionResult } from "./action-result"
 import { SessionAssignment } from "./assignment"
+import { SessionResult } from "./result"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -897,12 +898,23 @@ export namespace SessionRunner {
         })),
     )
     if (missing.length === 0) return []
-    const rows = await SessionDelegation.query({
-      sessionID,
-      status: "completed",
-      output: false,
+    const session = await Session.get(sessionID)
+    const rows = await SessionResult.listForParent(sessionID)
+    const refs = new Set<string>()
+    const done = new Set<string>()
+    rows.forEach((item) => {
+      if (!item.action_id || refs.has(item.action_id)) return
+      refs.add(item.action_id)
+      if (item.satisfying) done.add(item.action_id)
     })
-    const done = new Set(rows.completed.flatMap((item) => (item.action_id ? [item.action_id] : [])))
+    const protocol = object(object(session.dsl_context).protocol)
+    if (Array.isArray(protocol.completed_delegations)) {
+      protocol.completed_delegations.forEach((entry) => {
+        const item = object(entry)
+        const id = text(item.action_id)
+        if (id && item.satisfying === true && !refs.has(id)) done.add(id)
+      })
+    }
     return missing.flatMap((item) => {
       if (done.has(item.dep)) return []
       return [

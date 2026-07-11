@@ -127,7 +127,7 @@ export namespace AgentProtocolExecutor {
       })
       if (stop) break
       if (delegated) wait.add(item.id)
-      if (!delegated) ok.add(item.id)
+      if (!delegated && !failed) ok.add(item.id)
     }
 
     const status = done.some((item) => item.status === "failed")
