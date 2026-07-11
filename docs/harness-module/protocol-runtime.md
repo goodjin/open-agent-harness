@@ -128,6 +128,14 @@ For `ActionResult`, runtime records an explicit `tool.action_result` log for eve
 
 The prompt loop counts consecutive failed `ActionResult` calls from persisted tool parts. More than three consecutive failed `ActionResult` attempts marks the turn blocked, emits `tool.action_result_limit`, and stops the loop. The loop also counts consecutive tool calls for the active agent and stops with `tool.loop_limit` when the count exceeds `agent.maxToolCalls`; the runtime default is `1000` when the agent has no override.
 
+## Final Response Loop Bounds
+
+After a protocol execution run, Runtime asks for one native terminal `AgentProtocolOutput`. A missing native call gets one retry. If that retry contains non-empty ordinary Markdown without provider-specific tool-call syntax, Runtime accepts it as the bounded plain-response fallback; a second empty or malformed response is stored as `protocol_malformed` and terminates with an error.
+
+An executable final package may continue the run when it adds different useful work. The follow-up counter is monotonic across those executions. An exact or semantically equivalent repeat is stopped by `protocol_loop_guard` after the first warning cycle, while distinct follow-ups receive the soft-limit warning from the seventh final request onward and are forcibly stopped if execution continues through the hard guard. Every final branch therefore either completes the assistant message or performs one bounded recursive step.
+
+Focused Runtime tests must provide an explicit deterministic `runtimeTools` catalog. A synthetic agent object does not inherit session permissions unless its metadata sets `inheritPermissions`; allowing `*` on the session alone must not silently bypass that production agent rule. Tests that omit the catalog can wait on a real permission request before reaching final-response handling and therefore do not demonstrate a final-loop failure.
+
 ## Nested Delegation Wait Gate
 
 Delegated sessions can create their own child sessions. When they do, dispatching nested work is only a wait state, not a completed parent handoff.

@@ -27,6 +27,27 @@ import { Agent } from "../../src/agent/agent"
 import { AgentProtocol } from "../../src/protocol/schema"
 
 describe("SessionRunner", () => {
+  const finalTools = {
+    catalog: [
+      {
+        id: "read",
+        description: "Read a file",
+        schema: { type: "object", properties: { filePath: { type: "string" } }, required: ["filePath"] },
+      },
+      {
+        id: "glob",
+        description: "Find files",
+        schema: { type: "object", properties: { pattern: { type: "string" } }, required: ["pattern"] },
+      },
+    ],
+    prompt: "# Available Protocol Tools",
+    execute: async (id: string, args: unknown) => ({
+      title: id,
+      output: JSON.stringify(args),
+      metadata: {},
+    }),
+  } as never
+
   test("selects chat for ordinary agents", () => {
     expect(SessionRunner.select({})).toBe("chat")
     expect(SessionRunner.select({ runner: "chat" })).toBe("chat")
@@ -5162,7 +5183,6 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              console.log("DEBUG before process")
               const result = await runner.process({
                 user,
                 sessionID: session.id,
@@ -5175,6 +5195,7 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "read package" }],
                 tools: {},
+                runtimeTools: finalTools,
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
@@ -5182,7 +5203,7 @@ describe("SessionRunner", () => {
               expect(calls).toBe(3)
               expect(inputs[1]?.toolChoice).toBeUndefined()
               expect(inputs[2]?.system.join("\n")).toContain("Protocol retry warning")
-              expect(inputs[2]?.system.join("\n")).toContain('kind: "done"')
+              expect(inputs[2]?.system.join("\n")).toContain("a `done` item")
               expect(
                 messages.some((item) =>
                   item.parts.some(
@@ -5807,6 +5828,7 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "read package" }],
                 tools: {},
+                runtimeTools: finalTools,
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
@@ -5865,7 +5887,7 @@ describe("SessionRunner", () => {
     let calls = 0
     const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      if (calls === 3) {
+      if (calls >= 3) {
         return {
           fullStream: (async function* () {
             yield { type: "start" }
@@ -5976,12 +5998,13 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "check config" }],
                 tools: {},
+                runtimeTools: finalTools,
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
 
               expect(result).toBe("stop")
-              expect(calls).toBe(3)
+              expect(calls).toBe(4)
               expect(
                 messages.some((item) =>
                   item.parts.some(
@@ -6024,7 +6047,7 @@ describe("SessionRunner", () => {
     const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
       inputs.push(input)
       calls++
-      if (calls === 8) {
+      if (calls >= 8) {
         return {
           fullStream: (async function* () {
             yield { type: "start" }
@@ -6136,12 +6159,13 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "inspect several files" }],
                 tools: {},
+                runtimeTools: finalTools,
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
 
               expect(result).toBe("stop")
-              expect(calls).toBe(8)
+              expect(calls).toBe(9)
               expect(inputs[7]?.system.join("\n")).toContain("Soft runtime limit reached")
               expect(
                 messages.some((item) =>
