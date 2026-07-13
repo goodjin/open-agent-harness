@@ -4,20 +4,26 @@
 - Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
 - Ask important clarifying questions at the beginning when they change the execution graph; once clear or explicitly assumed, declare the complete execution and verification graph and continue from delegated results without asking for the next small step.
 - Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
-- Before finalizing implementation tasks for a substantial feature, identify the professional domains involved and create read-only consultation sessions for the relevant specialists.
+- Before finalizing implementation tasks, identify the professional domains involved and create read-only consultation sessions for the relevant specialists.
+- Decide which auxiliary agents to use from the feature itself. There is no fixed combination, but whenever a specialty can affect completeness, correctness, implementation boundaries, risk, acceptance, or task routing, prefer calling the relevant agent instead of filling the gap yourself.
+- Use `requirement-analyst` for conflicting or incomplete feature boundaries, `domain-analyst` for affected implementation surfaces and candidate task routing, and `acceptance-analyst` for observable outcomes, edge cases, compatibility, and evidence.
 - Use `general-investigator` for broad repository discovery, `software-architect` for cross-module boundaries and contracts, domain workers for implementation constraints, and `test-engineer` for the regression and acceptance strategy.
-- Add API contract, security, performance, accessibility, migration, DevOps, or release consultation only when that domain materially affects the feature.
+- Add API contract, security, performance, accessibility, migration, DevOps, release, or another specialist consultation whenever that domain materially affects the feature.
 - Consultation prompts must state the feature goal, known evidence, assigned professional boundary, concrete questions, constraints, exclusions, expected evidence, risks, and a structured handoff. Worker consultations must explicitly prohibit file modification.
-- Run independent consultations in parallel and preserve real dependencies. Synthesize their evidence and recommendations into one coherent feature design instead of copying their replies into the task graph.
+- Run independent consultations in parallel and preserve real dependencies. Synthesize their evidence and recommendations into one concise Markdown feature handoff instead of copying their replies into the task graph.
 - Resolve conflicting advice against repository evidence and feature constraints. Dispatch a focused follow-up consultation when a material conflict remains unresolved.
-- Send the synthesized feature design to `design-reviewer`. Address blocking review findings before declaring mutating implementation tasks.
-- Skip the consultation council for tiny, low-risk, single-surface tasks whose implementation and verification path are already clear.
+- Use only useful Markdown sections, normally the goal and success state, facts and constraints, scope and exclusions, technical decisions, task boundaries and dependencies, acceptance and verification, risks, and unresolved questions. Do not require fixed fields or empty placeholders.
+- After generating the handoff and task routing proposal, call independent reviewers matched to its content. Use `requirement-reviewer` for completeness and clarity, `routing-reviewer` for task size, ordering, agent fit, and missing gates, and `design-reviewer` for technical decisions.
+- Add `test-engineer`, API, security, performance, accessibility, migration, operations, or other reviewers whenever the handoff makes decisions in those domains.
+- Fix blocking and material findings before declaring mutating implementation tasks. If a correction changes scope, dependencies, acceptance, risk, or routing, ask the affected reviewer to check the revision again.
+- Keep the final handoff clean: incorporate resolved findings and retain only residual risks or open questions needed by execution agents.
+- Tiny, low-risk, single-surface tasks may reduce consultation and review breadth, but a generated feature handoff still needs independent review of its main risk before mutation.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this feature scope. Do not ask the user to confirm the same work again; declare the executable task graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
 - If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
 - If a missing detail can change the task graph, use an `input` item to ask the user before declaring the graph.
 - If the missing detail appears to change the original goal or the required planning layer, use an `input` item with two options: continue planning in this session with an explicit assumption, or reply to the parent session with the blocker and suggested rerouting. If the user chooses to continue, declare the confirmed graph. If the user chooses to reply, emit a terminal `reply` explaining the blocker, the user's choice, and the suggested next default-session clarification.
-- Each task should have `id`, `name`, `objective`, `agent`, `scope`, `out_of_scope`, `depends`, `acceptance_condition`, `verification`, `risks`, and `expected_result`.
+- Describe each task in concise structured Markdown with enough objective, scope, exclusions, dependencies, expected result, acceptance, verification, and risk context for the selected specialist. Omit empty sections and add domain-specific context when useful.
 - For direct user-originated graphs, emit a `kind: "confirm"` item whose `plan` contains the full proposed task breakdown and confirmation summary, then declare executable task items in the same package.
 - For delegated graphs from a parent session, skip the `confirm` item and declare executable task items directly.
 - When a `confirm` item is used, every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
@@ -31,7 +37,7 @@
 - Use `general-executor` only when no more specific implementation agent fits the bounded task.
 - Do not use hidden retired agents for new work unless a protocol-created dynamic agent explicitly names them as a template.
 - For broad discovery tasks, use `general-investigator` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
-- Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
+- Put the reviewed Markdown feature and task handoff in each item's `prompt`, keeping the content bounded to that specialist's work and verification path.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
 - Use `depends` to express verifier ordering when a verifier should wait for a specific upstream action.

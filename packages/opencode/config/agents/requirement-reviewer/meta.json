@@ -1,0 +1,33 @@
+{
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
+  "id": "requirement-reviewer",
+  "name": "Requirement Reviewer",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only requirement review specialist for completeness, clarity, consistency, boundaries, and testability.",
+  "description": "Read-only verifier for structured requirement handoffs before routing.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": false,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "requirement_review",
+    "tags": ["requirements", "review", "completeness", "consistency", "testability"],
+    "cost": "medium",
+    "writes": false
+  },
+  "request_footer": {
+    "file": "action-protocol.md"
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": false,
+  "permission_mode": "custom",
+  "identity_name": "需求审查",
+  "persona_name": "顾清",
+  "subtype": "requirement-review"
+}

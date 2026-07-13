@@ -91,65 +91,13 @@ Planner agents must follow this order:
 
 After the user confirms, the runtime automatically executes the remaining items from the persisted package.
 
-## Requirement Documents
+## Planner Handoff Documents
 
-The default agent may emit a requirement document when the request is large, ambiguous, high-risk, long-lived, or needs a durable product contract before planning. Small focused tasks do not need a requirement document unless the user asks for one or the missing context would change the work graph.
+Planner handoffs are structured Markdown written for the next agent, not a runtime-parsed document schema. Put the reviewed handoff inside an `agent` item's `prompt` or a `confirm` item's `plan`; the surrounding protocol package remains JSON DSL.
 
-Requirement documents are user-visible terminal content, not a separate protocol item kind. Emit them as an `answer` or `reply` item whose `message` is exactly one JSON object. The runtime recognizes the document by these top-level fields:
+Use only sections that help the next agent continue. Typical content includes the goal and success state, known facts, scope and exclusions, constraints and dependencies, conflicts or open questions, acceptance and verification, risks, and settled decisions. Omit empty sections and add domain-specific sections when useful.
 
-- `type`: must be `"requirements_document"`.
-- `schema_version`: must be `"requirements.document.v1"`.
-- `review_state`: `"draft"` before review, `"reviewed"` after review. This is a document marker, not the loop guard.
-- `review_count`: starts at `0` and increments when the same session rewrites the document during review. This is a document marker, not the loop guard.
-
-Required content fields:
-
-```json
-{
-  "type": "requirements_document",
-  "schema_version": "requirements.document.v1",
-  "review_state": "draft",
-  "review_count": 0,
-  "id": "short_stable_id",
-  "title": "Short title",
-  "goal": "User-visible goal",
-  "background": "Why this is needed, or an empty string when not available",
-  "users": [],
-  "scope": [],
-  "out_of_scope": [],
-  "constraints": [],
-  "acceptance": [],
-  "risks": [],
-  "assumptions": [],
-  "open_questions": [],
-  "must": [],
-  "must_not": []
-}
-```
-
-The runtime should validate required fields before review. If fields are missing or have the wrong shape, return the validation issues to the same model turn path and require a regenerated requirement document before planning.
-
-When a valid document has `review_state: "draft"`, the runtime may submit it back into the same session for requirement review. The review instruction must ask the default agent to review against this section and output a complete replacement requirement document, not review comments. The reviewed output must set `review_state` to `"reviewed"` and increment `review_count`. If the draft is already acceptable, copy it forward with the reviewed marker.
-
-The runtime must maintain its own private requirement-review ledger and must not rely on model-generated `review_state` or `review_count` to detect loops. The ledger should be stored outside the model context and include at least:
-
-- session id
-- source message id that first produced the requirement document
-- runtime-generated review run id
-- normalized document hash before review
-- normalized document hashes produced by review attempts
-- attempt count
-- final reviewed message id when review succeeds
-- status: `pending`, `reviewed`, `blocked`, or `failed`
-
-Normalize the document for hashing by parsing the JSON object, sorting keys recursively, and excluding volatile marker fields such as `review_state` and `review_count`. The runtime should block automatic review and surface a loop-guard message when any of these happen:
-
-- the same normalized document hash is submitted for review more than once in the same review run
-- the review attempt count exceeds the runtime limit, recommended default `2`
-- the model returns comments instead of a complete replacement document
-- the model keeps returning invalid requirement documents after validation feedback
-
-When a valid document has `review_state: "reviewed"` and the runtime ledger marks the review run as `reviewed`, the runtime must not send it through the automatic requirement review loop again unless the user explicitly asks for a new revision. Hidden review prompts, review logs, and ledger details should not be forwarded to downstream planner context; pass only the final reviewed requirement document.
+When a handoff controls downstream work, the planner should ask independent checking agents matched to its content to review it, correct material findings, and re-review affected sections when the correction changes scope, dependencies, acceptance, risk, or routing. Pass the clean final handoff downstream instead of consultation logs or raw review reports.
 
 ## Workflow Assets
 

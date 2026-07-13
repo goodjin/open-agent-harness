@@ -123,24 +123,25 @@ describe("AgentTemplateLoader", () => {
       const agent = BUILTIN_AGENTS.find((item) => item.id === "default")
       expect(agent?.rules).toContain("always split work by the project/PRD -> milestone -> feature/capability -> implementation task -> verification/review hierarchy")
       expect(agent?.rules).toContain("Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan")
-      expect(agent?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
-      expect(agent?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
+      expect(agent?.meta.request_footer?.prompt).toContain("Requirement First / Assisted Review")
+      expect(agent?.meta.request_footer?.prompt).toContain("call the native AgentProtocolOutput tool exactly once")
       expect(agent?.meta.concurrency).toBe(-1)
-      expect(agent?.rules).toContain("## Professional Design Consultation")
-      expect(agent?.rules).toContain("Submit the synthesized design to `design-reviewer`")
+      expect(agent?.rules).toContain("## Assisted Requirement Analysis")
+      expect(agent?.rules).toContain("Use `requirement-reviewer` for completeness")
+      expect(agent?.rules).toContain("Do not emit a fixed requirement JSON schema")
       expect(agent?.rules).toContain("Use `general-executor` only for bounded cross-domain implementation")
 
       ;["milestone-planner", "feature-planner"].forEach((id) => {
         const planner = BUILTIN_AGENTS.find((item) => item.id === id)
-        expect(planner?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
-        expect(planner?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
+        expect(planner?.meta.request_footer?.prompt).toContain("Assisted Design / Independent Review")
+        expect(planner?.meta.request_footer?.prompt).toContain("Call AgentProtocolOutput exactly once")
         expect(planner?.rules).toContain("without asking for the next small step")
+        expect(planner?.rules).toContain("There is no fixed combination")
+        expect(planner?.rules).toContain("call independent reviewers matched to its content")
       })
       const milestone = BUILTIN_AGENTS.find((item) => item.id === "milestone-planner")
-      expect(milestone?.rules).toContain("Create only the relevant read-only consultation sessions")
-      expect(milestone?.rules).toContain("Submit the synthesized milestone design to `design-reviewer`")
-      expect(milestone?.rules).toContain("shared architecture decisions and contracts")
-      expect(milestone?.rules).toContain("Small, low-risk milestones")
+      expect(milestone?.rules).toContain("one concise Markdown milestone handoff")
+      expect(milestone?.rules).toContain("Use `requirement-reviewer` for completeness")
       expect(BUILTIN_AGENTS.find((item) => item.id === "feature-planner")?.rules).toContain(
         "create read-only consultation sessions",
       )
@@ -153,6 +154,11 @@ describe("AgentTemplateLoader", () => {
         "test-engineer": ["worker", "test_implementation", true],
         "code-reviewer": ["verifier", "code_review", false],
         "design-reviewer": ["verifier", "design_review", false],
+        "requirement-analyst": ["helper", "requirement_analysis", false],
+        "domain-analyst": ["helper", "domain_analysis", false],
+        "acceptance-analyst": ["helper", "acceptance_analysis", false],
+        "requirement-reviewer": ["verifier", "requirement_review", false],
+        "routing-reviewer": ["verifier", "routing_review", false],
         debugger: ["helper", "debugging", false],
         frontend: ["worker", "frontend_implementation", true],
         backend: ["worker", "backend_implementation", true],

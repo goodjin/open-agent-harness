@@ -1,0 +1,33 @@
+{
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
+  "id": "routing-reviewer",
+  "name": "Routing Reviewer",
+  "kind": "verifier",
+  "role": "You are OpenCode's read-only routing review specialist for planning layers, task boundaries, dependencies, agent fit, and verification coverage.",
+  "description": "Read-only verifier for task decomposition and agent routing before downstream dispatch.",
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": false,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "routing_review",
+    "tags": ["routing", "review", "decomposition", "dependencies", "agent-selection"],
+    "cost": "medium",
+    "writes": false
+  },
+  "request_footer": {
+    "file": "action-protocol.md"
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": ["read", "glob", "grep", "bash", "codesearch", "lsp", "external_directory"],
+  "denied_tools": ["edit", "write", "apply_patch", "task", "todowrite"],
+  "inherit_permissions": false,
+  "permission_mode": "custom",
+  "identity_name": "路由审查",
+  "persona_name": "方径",
+  "subtype": "routing-review"
+}
