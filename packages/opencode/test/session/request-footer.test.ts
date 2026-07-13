@@ -93,5 +93,22 @@ describe("RequestFooter", () => {
         },
       }).action_result_example,
     ).toContain('"target_action_id": "cut_v0_4_1_release"')
+
+    const missing = RequestFooter.variables({
+      sessionID: "ses_final",
+      agent: "verifier",
+      mode: "subagent",
+      actionResult: {
+        action: "final_qa_check",
+        verifier: true,
+      },
+      delegation: {
+        action_id: "final_qa_check",
+        result_tool: "ActionResult",
+      },
+    }).action_result_example
+    expect(missing).toContain('"target_action_id": "worker_action_id"')
+    expect(missing).toContain('"evidence"')
+    expect(missing).not.toContain('"changed_files"')
   })
 })

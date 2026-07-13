@@ -97,7 +97,7 @@ describe("agent tools", () => {
           default: false,
           hidden: true,
         })
-        expect(meta.request_footer).toEqual({ file: "action-protocol.md" })
+        expect(meta.request_footer).toEqual({ file: "action-worker.md" })
       },
     })
   })

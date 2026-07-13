@@ -191,20 +191,21 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.protocol?.prompt).not.toContain("Worker result fields")
       })
 
-      ;[
-        "backend",
-        "frontend",
-        "general-executor",
-        "test-engineer",
-        "verifier",
-        "code-reviewer",
-        "design-reviewer",
-        "backend-verifier",
-      ].forEach((id) => {
+      ;["backend", "frontend", "general-executor", "test-engineer"].forEach((id) => {
         const agent = BUILTIN_AGENTS.find((item) => item.id === id)
-        expect(agent?.requestFooter?.file).toBe("action-protocol.md")
-        expect(agent?.requestFooter?.prompt).toContain("You are running as an action agent")
-        expect(agent?.requestFooter?.prompt).toContain("terminal but non-satisfying result")
+        expect(agent?.requestFooter?.file).toBe("action-worker.md")
+        expect(agent?.requestFooter?.prompt).toContain("worker action agent")
+        expect(agent?.requestFooter?.prompt).toContain("changed_files")
+        expect(agent?.requestFooter?.prompt).not.toContain("target_action_id")
+        expect(agent?.protocol).toBeUndefined()
+      })
+
+      ;["verifier", "code-reviewer", "design-reviewer", "requirement-reviewer", "routing-reviewer", "backend-verifier"].forEach((id) => {
+        const agent = BUILTIN_AGENTS.find((item) => item.id === id)
+        expect(agent?.requestFooter?.file).toBe("action-verifier.md")
+        expect(agent?.requestFooter?.prompt).toContain("verifier action agent")
+        expect(agent?.requestFooter?.prompt).toContain("target_action_id")
+        expect(agent?.requestFooter?.prompt).not.toContain("changed_files")
         expect(agent?.protocol).toBeUndefined()
       })
     })

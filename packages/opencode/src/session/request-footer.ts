@@ -28,12 +28,13 @@ export namespace RequestFooter {
       action_id: action,
       target_action_id: target,
       result_tool: tool,
-      action_result_example: example(action, target),
+      action_result_example: example(action, target, input.actionResult?.verifier === true),
     }
   }
 
-  function example(action: string | undefined, target: string | undefined) {
-    if (target) return JSON.stringify(ActionResult.sample({ verifier: true, action, target }), null, 2)
+  function example(action: string | undefined, target: string | undefined, verifier: boolean) {
+    if (verifier)
+      return JSON.stringify(ActionResult.sample({ verifier: true, action, target: target ?? "worker_action_id" }), null, 2)
     return JSON.stringify(ActionResult.sample({ action }), null, 2)
   }
 

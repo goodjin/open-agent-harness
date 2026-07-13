@@ -77,7 +77,7 @@ function action(meta: AgentTemplate.Meta) {
   return AgentTemplate.Meta.parse({
     ...meta,
     request_footer: meta.request_footer ?? {
-      file: "action-protocol.md",
+      file: meta.kind === "verifier" ? "action-verifier.md" : "action-worker.md",
     },
   })
 }
