@@ -136,6 +136,11 @@ describe("AgentTemplateLoader", () => {
         expect(planner?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
         expect(planner?.rules).toContain("without asking for the next small step")
       })
+      const milestone = BUILTIN_AGENTS.find((item) => item.id === "milestone-planner")
+      expect(milestone?.rules).toContain("Create only the relevant read-only consultation sessions")
+      expect(milestone?.rules).toContain("Submit the synthesized milestone design to `design-reviewer`")
+      expect(milestone?.rules).toContain("shared architecture decisions and contracts")
+      expect(milestone?.rules).toContain("Small, low-risk milestones")
       expect(BUILTIN_AGENTS.find((item) => item.id === "feature-planner")?.rules).toContain(
         "create read-only consultation sessions",
       )

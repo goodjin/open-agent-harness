@@ -33,8 +33,23 @@
       },
       {
         "kind": "verifier",
+        "target": "design-reviewer",
+        "trigger": "milestone_design_ready"
+      },
+      {
+        "kind": "consult",
+        "target": "software-architect",
+        "trigger": "shared_architecture_domain"
+      },
+      {
+        "kind": "consult",
+        "target": "test-engineer",
+        "trigger": "milestone_test_strategy_required"
+      },
+      {
+        "kind": "verifier",
         "target": "technical-reviewer",
-        "trigger": "plan_ready"
+        "trigger": "high_risk_tradeoff"
       }
     ],
     "limits": {
@@ -97,7 +112,9 @@
       "milestone",
       "prd",
       "roadmap",
-      "decomposition"
+      "decomposition",
+      "design-consultation",
+      "cross-feature"
     ],
     "cost": "medium",
     "writes": false
