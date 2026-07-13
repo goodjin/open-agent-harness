@@ -407,10 +407,23 @@ describe("SessionDelegation", () => {
               const last = await MessageV2.get({ sessionID: parent.id, messageID: user.id })
               expect(last.info.role).toBe("user")
               const lastTurn = last.info.role === "user" ? last.info.metadata?.turn : undefined
-              const rows = (lastTurn as { children?: { id?: string; current?: boolean; status?: string; result_id?: string }[] })
-                .children
+              const rows = (
+                lastTurn as {
+                  children?: {
+                    id?: string
+                    current?: boolean
+                    status?: string
+                    result_id?: string
+                    summary?: string
+                    fallback?: boolean
+                  }[]
+                }
+              ).children
               expect(rows).toMatchObject([{ id: child.id, current: false, status: "completed" }])
               expect(rows?.[0]?.result_id).toBeString()
+              expect(rows?.[0]?.summary).toContain("Implemented timeline record.")
+              expect(rows?.[0]?.summary?.length).toBeLessThanOrEqual(4000)
+              expect(rows?.[0]?.fallback).toBe(false)
             },
           }),
       })
@@ -3246,6 +3259,16 @@ describe("SessionDelegation", () => {
             fn: async () => {
               const parent = await Session.create({ agent: "feature-planner" })
               const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const owner = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "feature-planner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
               const item = {
                 type: "agent.delegation.assignment",
                 version: "1",
@@ -3253,7 +3276,7 @@ describe("SessionDelegation", () => {
                 action_id: "impl",
                 action_title: "Implement",
                 parent_session_id: parent.id,
-                parent_message_id: MessageID.ascending(),
+                parent_message_id: owner.id,
                 parent_agent: "feature-planner",
                 child_session_id: child.id,
                 agent: "backend",
@@ -3313,11 +3336,26 @@ describe("SessionDelegation", () => {
                 sessionID: child.id,
                 type: "tool",
                 tool: "ActionResult",
-                callID: "call_failed",
+                callID: "call_failed_1",
                 state: {
                   status: "error",
-                  input: {},
-                  error: "ActionResult input schema/parse failed.",
+                  input: { action_id: "impl", result: "x".repeat(3000) },
+                  error: "ActionResult rejected an oversized result.",
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: msg.id,
+                sessionID: child.id,
+                type: "tool",
+                tool: "ActionResult",
+                callID: "call_failed_2",
+                state: {
+                  status: "error",
+                  input: { action_id: "impl", status: "success" },
+                  error:
+                    'ActionResult input schema/parse failed. Raw tool input: {"result":"Error message: secret-result"} Parser error: Invalid input.\nError message: target_action_id is required.',
                   time: { start: Date.now(), end: Date.now() },
                 },
               } as MessageV2.ToolPart)
@@ -3336,19 +3374,33 @@ describe("SessionDelegation", () => {
                 completed_delegations?: {
                   child_session_id?: string
                   result_id?: string
+                  carrier?: string
                   status?: string
+                  fallback?: boolean
                   summary?: string
                   metadata?: unknown
                 }[]
               }
               const summary = prompts.find((item) => item.agent === "summary")
+              const body = summary?.parts?.find((part) => part.type === "text")?.text ?? ""
 
               expect(ok).toBe(true)
               expect(summary?.sessionID).not.toBe(child.id)
-              expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Child Transcript"))).toBe(true)
-              expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Failure Reason"))).toBe(false)
+              expect(body).toContain("Child Transcript")
+              expect(body).not.toContain("Failure Reason")
+              expect(body).toContain("[ActionResult failure 1/2]")
+              expect(body).toContain("[ActionResult failure 2/2]")
+              expect(body).toContain('Input: {"action_id":"impl"}')
+              expect(body).toContain("Omitted: result(string length=3000)")
+              expect(body).not.toContain("x".repeat(200))
+              expect(body).toContain('Input: {"action_id":"impl","status":"success"}')
+              expect(body).toContain("Error: ActionResult input schema/parse failed.")
+              expect(body).toContain("Error message: target_action_id is required.")
+              expect(body).not.toContain("secret-result")
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.status).toBe("failed")
+              expect(pctx.completed_delegations?.[0]?.carrier).toBe("fallback_summary")
+              expect(pctx.completed_delegations?.[0]?.fallback).toBe(true)
               expect(pctx.completed_delegations?.[0]?.summary).toContain("Task result: created docs/audit.md")
               expect(pctx.completed_delegations?.[0]?.summary).not.toContain("ActionResult")
               expect(pctx.completed_delegations?.[0]?.summary).not.toContain("ConflictError")
@@ -3358,6 +3410,12 @@ describe("SessionDelegation", () => {
               expect(meta).toContain("confirmed_by_user")
               expect(meta).toContain("ActionResult input schema/parse failed")
               expect(meta).toContain("ConflictError")
+              const updated = await MessageV2.get({ sessionID: parent.id, messageID: owner.id })
+              expect(updated.info.role).toBe("user")
+              const turn = updated.info.role === "user" ? updated.info.metadata?.turn : undefined
+              const rows = (turn as { children?: { summary?: string; fallback?: boolean }[] })?.children
+              expect(rows?.[0]?.summary).toContain("Task result: created docs/audit.md")
+              expect(rows?.[0]?.fallback).toBe(true)
             },
           }),
       })

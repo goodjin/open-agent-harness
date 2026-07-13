@@ -46,6 +46,22 @@
 4. 在 `packages/app` 运行相关测试、`bun typecheck` 和 `bun test:e2e:local -- app/smoke.spec.ts`。
 5. 通过实际会话数据确认 blocked 运行状态与 partial fallback 交付状态可同时被解释。
 
+## 实施结果
+
+- fallback transcript 会记录失败的 `ActionResult` 次数、受限协议字段和校验错误；长 result 等字段只记录类型与长度。
+- user-turn child 投影新增有界 `summary` 和明确的 `fallback` 标记。
+- Timeline 保留实时 `blocked` 状态，并额外显示 partial fallback 已交付及摘要；普通 partial 不会被标记为 fallback。
+- 旧历史可从 `completed_delegations` 按 child session id 补齐交付摘要。
+
+## 验证结果
+
+- `packages/opencode`: `bun test test/session/delegation.test.ts --timeout 30000`，36 项通过。
+- `packages/opencode`: `bun typecheck` 通过。
+- `packages/app`: delegation helper 测试 15 项通过。
+- `packages/app`: `bun typecheck` 通过。
+- `packages/app`: `bun test:e2e:local -- app/smoke.spec.ts`，1 项通过。
+- `git diff --check` 通过。
+
 ## 非目标
 
 - 不修复 verifier assignment 缺少 `target_action_id`。

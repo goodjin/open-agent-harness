@@ -1606,7 +1606,7 @@ export function MessageTimeline(props: {
                   const queued = createMemo(() => queuedUserMessage(turn()))
                   const history = createMemo(() => timelineChildren(turn()))
                   const current = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
-                  const timeline = createMemo(() => timelineProgress(history()))
+                  const timeline = createMemo(() => timelineProgress(history(), current().completed))
                   const delegation = createMemo(() => (history().length > 0 ? timeline() : current()))
                   const delegated = createMemo(
                     () =>
@@ -1934,6 +1934,20 @@ export function MessageTimeline(props: {
                                               <span class="shrink-0 text-11-regular text-text-weak">{label(status())}</span>
                                             </div>
                                             <div class="mt-0.5 truncate text-11-regular text-text-weak">{item.id}</div>
+                                            <Show when={item.delivery === "partial"}>
+                                              <div class="mt-1 rounded-md border border-border-weak-base bg-background-stronger px-2 py-1.5">
+                                                <div class="text-11-medium text-text-warning-base">
+                                                  {item.fallback ? "fallback 部分结果已交付" : "部分结果已交付"}
+                                                </div>
+                                                <Show when={item.summary}>
+                                                  {(summary) => (
+                                                    <div class="mt-1 line-clamp-4 whitespace-pre-wrap break-words text-11-regular text-text-weak">
+                                                      {summary()}
+                                                    </div>
+                                                  )}
+                                                </Show>
+                                              </div>
+                                            </Show>
                                           </button>
                                           <div class="flex items-center gap-1">
                                             <Button

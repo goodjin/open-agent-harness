@@ -29,6 +29,8 @@ export namespace SessionTurn {
     status?: string
     current?: boolean
     result_id?: string
+    summary?: string
+    fallback?: boolean
     created_at?: number
     completed_at?: number
     notified_at?: number

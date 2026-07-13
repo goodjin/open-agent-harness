@@ -7,6 +7,9 @@ export type DelegationItem = {
   run?: string
   current?: boolean
   status?: string
+  delivery?: string
+  fallback?: boolean
+  summary?: string
   completed?: boolean
   notified?: boolean
 }
@@ -26,11 +29,36 @@ const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 
-const child = (input: { child_session_id: string; action_title?: unknown; run_id?: unknown }): DelegationItem => ({
+const child = (
+  input: {
+    child_session_id: string
+    action_title?: unknown
+    run_id?: unknown
+    status?: unknown
+    satisfying?: unknown
+    fallback?: unknown
+    source?: unknown
+    metadata?: unknown
+    summary?: unknown
+    notified_at?: unknown
+  },
+  done = false,
+): DelegationItem => ({
   id: input.child_session_id,
   label: text(input.action_title) || `子会话 ${String(input.child_session_id)}`,
   ...(text(input.run_id) ? { run: text(input.run_id) } : {}),
+  ...(done && text(input.status) ? { delivery: text(input.status) } : {}),
+  ...(done && fallback(input) ? { fallback: true } : {}),
+  ...(done && text(input.summary) ? { summary: text(input.summary) } : {}),
+  ...(done && typeof input.notified_at === "number" ? { notified: true } : {}),
 })
+
+const fallback = (input: { fallback?: unknown; source?: unknown; metadata?: unknown }) => {
+  if (input.fallback === true || input.source === "fallback_summary") return true
+  if ("status" in input && input.status === "partial" && "satisfying" in input && input.satisfying === false) return true
+  if (!record(input.metadata)) return false
+  return input.metadata.source === "fallback_summary" || record(input.metadata.fallback)
+}
 
 const turnctx = (input: UserMessage | undefined) => {
   const metadata = input?.metadata
@@ -52,6 +80,9 @@ export const timelineChildren = (input: UserMessage | undefined): DelegationItem
         ...(text(value.run) ? { run: text(value.run) } : {}),
         ...(typeof value.current === "boolean" ? { current: value.current } : {}),
         ...(text(value.status) ? { status: text(value.status) } : {}),
+        ...(text(value.result_id) && text(value.status) ? { delivery: text(value.status) } : {}),
+        ...(fallback(value) ? { fallback: true } : {}),
+        ...(text(value.summary) ? { summary: text(value.summary) } : {}),
         ...(typeof value.completed_at === "number" || text(value.result_id) ? { completed: true } : {}),
         ...(typeof value.notified_at === "number" ? { notified: true } : {}),
       },
@@ -83,7 +114,7 @@ const rows = (input: unknown, messageID: string, messages: Message[]) => {
     )
     .reduce((acc: Map<string, DelegationItem>, value) => {
       if (acc.has(value.child_session_id)) return acc
-      acc.set(value.child_session_id, child(value))
+      acc.set(value.child_session_id, child(value, true))
       return acc
     }, new Map<string, DelegationItem>())
   return Array.from(vals.values())
@@ -108,7 +139,7 @@ export const delegationProgress = (input: unknown, messageID: string, messages: 
       (value): value is { parent_message_id: string; child_session_id: string; action_title?: unknown; run_id?: unknown } =>
         item(value) && turn(messages, messageID, value.parent_message_id),
     )
-    .map(child)
+    .map((value) => child(value))
 
   const completed = rows(protocol.completed_delegations, messageID, messages)
   const ids = new Set(active.map((value) => value.id).concat(completed.map((value) => value.id)))
@@ -121,10 +152,18 @@ export const delegationProgress = (input: unknown, messageID: string, messages: 
   }
 }
 
-export const timelineProgress = (items: DelegationItem[]): DelegationState => {
+export const timelineProgress = (items: DelegationItem[], results: DelegationItem[] = []): DelegationState => {
+  const delivered = new Map(results.map((item) => [item.id, item]))
   const map = items.reduce((acc: Map<string, DelegationItem>, value) => {
     if (acc.has(value.id)) return acc
-    acc.set(value.id, value)
+    const result = delivered.get(value.id)
+    acc.set(value.id, {
+      ...value,
+      ...(result?.delivery ? { delivery: result.delivery } : {}),
+      ...(result?.fallback ? { fallback: true } : {}),
+      ...(result?.summary ? { summary: result.summary } : {}),
+      ...(result?.notified ? { notified: true } : {}),
+    })
     return acc
   }, new Map<string, DelegationItem>())
   const rows = Array.from(map.values())

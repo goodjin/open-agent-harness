@@ -1111,6 +1111,8 @@ export namespace SessionDelegation {
       status: body.status,
       completed_at: body.completed_at,
       result_id: rec.id,
+      summary: body.summary.slice(0, 4000),
+      fallback: carrier(body) === "fallback_summary",
     })
   }
 
@@ -1119,8 +1121,10 @@ export namespace SessionDelegation {
       type: body.type,
       version: body.version,
       result_id: rec.id,
+      carrier: rec.carrier,
       status: body.status,
       satisfying: rec.satisfying,
+      fallback: rec.carrier === "fallback_summary",
       run_id: body.run_id,
       action_id: body.action_id,
       target_action_id: rec.target_action_id,
@@ -1931,7 +1935,8 @@ export namespace SessionDelegation {
             "Produce a concise task-result summary only.",
             "Include the original delegated requirement, final result and produced artifacts, verification evidence or confidence level, important findings for continuation, and remaining blockers, risks, or next steps.",
             "Do not include execution process details.",
-            "Do not include protocol, tool-call, ActionResult, or handoff failure details.",
+            "Do not reproduce protocol, tool-call, ActionResult, or handoff failure details verbatim.",
+            "Use ActionResult failure diagnostics only to avoid claiming no handoff was attempted and to state their effect on confidence or verification when relevant.",
             "If evidence is missing, say what result can be inferred from the transcript and what remains unverified.",
             "",
             "## Assignment",
@@ -1970,12 +1975,19 @@ export namespace SessionDelegation {
 
   async function transcript(sessionID: SessionID) {
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
+    const failures = msgs
+      .flatMap((msg) => msg.parts)
+      .filter(
+        (part): part is MessageV2.ToolPart =>
+          part.type === "tool" && part.tool === ActionResult.TOOL && part.state.status === "error",
+      )
     const out = msgs
       .flatMap((msg) => {
         const head = [`[${msg.info.role}${msg.info.role === "assistant" ? ` finish=${msg.info.finish ?? "unknown"}` : ""}]`]
         const parts = msg.parts.flatMap((part) => {
           if (part.type === "text") return [part.text]
-          return []
+          if (part.type !== "tool" || part.tool !== ActionResult.TOOL || part.state.status !== "error") return []
+          return [failure(part.state, failures.indexOf(part), failures.length)]
         })
         return parts.length ? [[...head, ...parts].join("\n")] : []
       })
@@ -1983,6 +1995,54 @@ export namespace SessionDelegation {
       .trim()
     if (!out) return "No assistant text or ActionResult evidence was recorded."
     return out.length > 12000 ? out.slice(out.length - 12000) : out
+  }
+
+  function failure(state: MessageV2.ToolStateError, index: number, total: number) {
+    return [
+      `[ActionResult failure ${index + 1}/${total}]`,
+      ...args(state.input),
+      `Error: ${clip(errtext(state.error), 2000)}`,
+    ].join("\n")
+  }
+
+  function errtext(input: string) {
+    const raw = input.indexOf(" Raw tool input:")
+    const parsed = input.indexOf(" Parser error:")
+    const cut = [raw, parsed].filter((index) => index >= 0).sort((a, b) => a - b)[0]
+    if (cut === undefined) return input
+    const detail = parsed >= 0 ? input.indexOf("\nError message:", parsed) : -1
+    return [input.slice(0, cut).trim(), detail >= 0 ? input.slice(detail + 1).trim() : undefined]
+      .filter((line): line is string => Boolean(line))
+      .join("\n")
+  }
+
+  function args(input: Record<string, unknown>) {
+    const keys = new Set(["kind", "role", "action_id", "target_action_id", "status"])
+    const kept = Object.entries(input).flatMap(([key, value]) => {
+      if (!keys.has(key) || typeof value !== "string") return []
+      return [[key, clip(value, 160)] as const]
+    })
+    const omitted = Object.entries(input).flatMap(([key, value]) => {
+      if (keys.has(key) && typeof value === "string") return []
+      return [`${clip(key, 80)}(${shape(value)})`]
+    })
+    return [
+      `Input: ${JSON.stringify(Object.fromEntries(kept))}`,
+      omitted.length ? `Omitted: ${omitted.join(", ")}` : undefined,
+    ].filter((line): line is string => Boolean(line))
+  }
+
+  function shape(input: unknown) {
+    if (typeof input === "string") return `string length=${input.length}`
+    if (Array.isArray(input)) return `array length=${input.length}`
+    if (input && typeof input === "object") return `object fields=${Object.keys(input).length}`
+    if (input === null) return "null"
+    return typeof input
+  }
+
+  function clip(input: string, limit: number) {
+    if (input.length <= limit) return input
+    return `${input.slice(0, limit)}… [truncated ${input.length - limit} chars]`
   }
 
   function actionfail(input: string) {

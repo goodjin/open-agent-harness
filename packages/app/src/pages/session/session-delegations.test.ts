@@ -58,6 +58,41 @@ describe("session delegations", () => {
     })
   })
 
+  test("keeps partial fallback delivery separate from child runtime status", () => {
+    const ctx = {
+      protocol: {
+        completed_delegations: [
+          {
+            parent_message_id: "assistant_2",
+            child_session_id: "child_1",
+            action_title: "final_qa_check",
+            status: "partial",
+            satisfying: false,
+            summary: "QA evidence was recovered after ActionResult validation failed.",
+            notified_at: 2,
+          },
+        ],
+      },
+    }
+
+    expect(delegationProgress(ctx, "user_1", messages).completed).toEqual([
+      {
+        id: "child_1",
+        label: "final_qa_check",
+        delivery: "partial",
+        fallback: true,
+        summary: "QA evidence was recovered after ActionResult validation failed.",
+        notified: true,
+      },
+    ])
+    expect(
+      delegationStatus(
+        delegationProgress(ctx, "user_1", messages).completed[0],
+        { type: "blocked" },
+      ),
+    ).toBe("blocked")
+  })
+
   test("detects pending child sessions created by assistant messages in the turn", () => {
     const ctx = {
       protocol: {
@@ -176,10 +211,126 @@ describe("session delegations", () => {
           run: "run_1",
           current: true,
           status: "completed",
+          delivery: "completed",
           completed: true,
           notified: true,
         },
       ],
+    })
+  })
+
+  test("enriches timeline history with the canonical partial fallback summary", () => {
+    const msg = {
+      id: "user_1",
+      sessionID: "session_1",
+      role: "user",
+      time: { created: 1 },
+      agent: "default",
+      model: { providerID: "openai", modelID: "gpt" },
+      metadata: {
+        turn: {
+          children: [
+            {
+              id: "child_1",
+              label: "final_qa_check",
+              current: false,
+              status: "partial",
+              result_id: "result_1",
+              notified_at: 2,
+            },
+          ],
+        },
+      },
+    } as Message
+    const result = {
+      id: "child_1",
+      label: "final_qa_check",
+      delivery: "partial",
+      fallback: true,
+      summary: "Recovered QA evidence.",
+      notified: true,
+    }
+
+    expect(timelineProgress(timelineChildren(msg as never), [result]).completed).toEqual([
+      {
+        id: "child_1",
+        label: "final_qa_check",
+        current: false,
+        status: "partial",
+        delivery: "partial",
+        fallback: true,
+        summary: "Recovered QA evidence.",
+        completed: true,
+        notified: true,
+      },
+    ])
+  })
+
+  test("reads a partial fallback summary directly from timeline metadata", () => {
+    const msg = {
+      id: "user_1",
+      sessionID: "session_1",
+      role: "user",
+      time: { created: 1 },
+      agent: "default",
+      model: { providerID: "openai", modelID: "gpt" },
+      metadata: {
+        turn: {
+          children: [
+            {
+              id: "child_1",
+              label: "final_qa_check",
+              current: false,
+              status: "partial",
+              result_id: "result_1",
+              fallback: true,
+              summary: "ActionResult failed validation; QA evidence was recovered.",
+              notified_at: 2,
+            },
+          ],
+        },
+      },
+    } as Message
+
+    expect(timelineChildren(msg as never)).toEqual([
+      {
+        id: "child_1",
+        label: "final_qa_check",
+        current: false,
+        status: "partial",
+        delivery: "partial",
+        fallback: true,
+        summary: "ActionResult failed validation; QA evidence was recovered.",
+        completed: true,
+        notified: true,
+      },
+    ])
+  })
+
+  test("does not label an ordinary partial delivery as fallback", () => {
+    const msg = {
+      metadata: {
+        turn: {
+          children: [
+            {
+              id: "child_1",
+              label: "partial_worker",
+              status: "partial",
+              result_id: "result_1",
+              summary: "Partial output without fallback provenance.",
+            },
+          ],
+        },
+      },
+    } as never
+
+    expect(timelineChildren(msg)[0]).toEqual({
+      id: "child_1",
+      label: "partial_worker",
+      status: "partial",
+      delivery: "partial",
+      summary: "Partial output without fallback provenance.",
+      completed: true,
     })
   })
 
