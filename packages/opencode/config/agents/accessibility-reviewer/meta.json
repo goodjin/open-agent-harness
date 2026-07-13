@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "accessibility_review",
@@ -56,6 +56,5 @@
   "permission_mode": "custom",
   "identity_name": "可访问性审查",
   "persona_name": "宁达",
-  "subtype": "accessibility",
-  "hidden": true
+  "subtype": "accessibility"
 }

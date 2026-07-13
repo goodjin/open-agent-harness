@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "frontend_verification",
@@ -54,6 +54,5 @@
   "permission_mode": "custom",
   "identity_name": "前端验收",
   "persona_name": "林照审",
-  "subtype": "frontend",
-  "hidden": true
+  "subtype": "frontend"
 }

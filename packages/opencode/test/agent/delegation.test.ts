@@ -9,6 +9,10 @@ const all = [
   agent("feature-planner"),
   agent("backend"),
   agent("frontend"),
+  agent("software-architect"),
+  agent("test-engineer"),
+  agent("code-reviewer"),
+  agent("design-reviewer"),
   agent("dynamic-worker", false, true),
   agent("retired-worker", false, true, false),
 ]
@@ -37,6 +41,10 @@ describe("agent delegation visibility", () => {
       "feature-planner",
       "backend",
       "frontend",
+      "software-architect",
+      "test-engineer",
+      "code-reviewer",
+      "design-reviewer",
     ])
   })
 
@@ -51,11 +59,24 @@ describe("agent delegation visibility", () => {
       "feature-planner",
       "backend",
       "frontend",
+      "software-architect",
+      "test-engineer",
+      "code-reviewer",
+      "design-reviewer",
     ])
   })
 
   test("feature planner sees delegable agents except itself and upstream agents", () => {
-    expect(names("feature-planner")).toEqual(["build", "plan", "backend", "frontend"])
+    expect(names("feature-planner")).toEqual([
+      "build",
+      "plan",
+      "backend",
+      "frontend",
+      "software-architect",
+      "test-engineer",
+      "code-reviewer",
+      "design-reviewer",
+    ])
   })
 
   test("hidden dynamic agents are explicit-only", () => {

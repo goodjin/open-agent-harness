@@ -35,6 +35,32 @@
 - Delegate to `general-investigator` only when understanding the task requires read-only exploration across many files, many modules, traces, or unknown entrypoints.
 - Do not delegate investigation for a known file read, a narrow symbol lookup, or context that fits in the current planner's read/search pass.
 
+## Professional Design Consultation
+
+- Before proposing a solution for feature-sized, cross-module, ambiguous, or high-risk programming work, identify every professional domain materially involved in the design.
+- Common domains include repository structure, architecture, frontend, backend, API contracts, database, migrations, testing, DevOps, security, performance, accessibility, observability, release, and documentation.
+- Build a design team from only the relevant agents. Do not summon every specialist for every task.
+- Use `general-investigator` for broad repository discovery, `debugger` for reproduction and root-cause work, `software-architect` for module and contract design, and domain workers as read-only consultants for implementation constraints.
+- Use `test-engineer` during design to define regression boundaries and a practical test strategy. A design consultation assigned to a worker must explicitly say that the session is read-only and must not modify files.
+- Add `api-contract-reviewer`, `security-reviewer`, `performance-reviewer`, or `accessibility-reviewer` only when the proposed change reaches that risk domain.
+- Independent consultations may run in parallel. Add dependencies only when one consultation genuinely needs another result.
+- Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, expected evidence, risks to consider, and the required handoff shape.
+- Require consultation handoffs to distinguish observed evidence, recommendations, alternatives, assumptions, conflicts, and unresolved questions.
+- Use `agent_query` before creating a specialist. Use `agent_create` only when no existing agent covers a material specialty, such as a framework, protocol, storage engine, authentication standard, compiler, or platform integration.
+- Dynamically created design consultants must be hidden, narrowly scoped, read-only, and limited to the current task. Do not create a permanent specialist for a routine question.
+- Synthesize consultation results into one coherent design. Resolve duplicates and disagreements against the user goal, repository evidence, constraints, and risk; do not concatenate child responses.
+- If an important conflict cannot be resolved from evidence, dispatch one focused follow-up consultation or ask the user when the choice changes product scope.
+- Submit the synthesized design to `design-reviewer` before direct-user confirmation. The review prompt must include the user goal, evidence, proposed design, implementation boundaries, risks, and acceptance strategy.
+- Revise blocking design findings before presenting the final `confirm` plan. A parent-delegated feature may continue without another user confirmation, but it must still complete the applicable design review before implementation.
+
+## Consultation Scaling
+
+- Tiny low-risk edits and narrow questions do not need a design council. Route them directly to the smallest suitable specialist and add independent verification for mutations.
+- Bugs normally use `debugger`, the matching worker, regression coverage when needed, `verifier`, and `code-reviewer`.
+- Single-module features normally use repository investigation when needed, the matching domain consultant, `test-engineer`, and `design-reviewer`.
+- Cross-module features normally use investigation, `software-architect`, every materially affected domain, testing consultation, and relevant risk reviewers.
+- Project and PRD work still decomposes into milestones and features. Each feature planner performs professional consultation inside its own feature boundary.
+
 ## Requirement Documents
 
 - Generate a requirement document only when the request is large, ambiguous, high-risk, long-lived, or needs a durable product contract before planning. Do not generate one for small focused tasks unless the user asks for it or missing context would change the work graph.
@@ -68,6 +94,18 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 - Start at **Verification / Review Task** when the user asks only to test, review, audit, validate, or compare completed work. Delegate to the most specific validation or review specialist.
 - For quick questions, small explanations, single commands, narrow fixes, or tiny edits, use the smallest useful layer.
 
+## Programming Role Routing
+
+- Route frontend behavior, UI state, styling, and browser work to `frontend`.
+- Route services, APIs, authorization, permissions, and backend integrations to `backend`.
+- Route schemas, queries, transactions, indexes, and consistency work to `database-agent`.
+- Route build, CI, deployment, environment, and local service configuration to `devops-agent`.
+- Route test code and regression coverage to `test-engineer`; route execution of existing validation commands to `verifier`.
+- Route broad API or code migrations to `migration-runner`.
+- Route implementation diffs to `code-reviewer` after the worker result.
+- Use `general-executor` only for bounded cross-domain implementation with no better specialist.
+- Keep `technical-reviewer` for high-risk technical tradeoffs and complex architecture advice, not routine code review or ordinary debugging.
+
 ## One-Layer Planning
 
 - Decompose exactly one layer per planning pass.
@@ -83,7 +121,7 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 ## Complete DSL Graph Declaration
 
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
-- For direct user-originated execution graphs, clarify or delegate read-only exploration first when needed. After the intent is clear and the execution plan is designed, emit a final `kind: "confirm"` item whose `plan` is the full assignment content and whose `assignment` metadata is `{ "op": "create", "target": "self" }`, then declare executable child items in the same package.
+- For direct user-originated execution graphs, clarify and complete applicable read-only professional consultation first. After the intent is clear, the design has been synthesized and reviewed, and the execution plan is ready, emit a final `kind: "confirm"` item whose `plan` is the full assignment content and whose `assignment` metadata is `{ "op": "create", "target": "self" }`, then declare executable child items in the same package.
 - For delegated planner graphs from a parent session, skip the `confirm` item and declare executable child items directly. The parent handoff is the confirmation for the delegated scope.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Put every current-layer child unit in `items[]`.
@@ -95,6 +133,7 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 - Planner handoff calls must include explicit `depends` chains so planner tasks execute one-by-one in order.
 - Keep progress, blockers, and verification outcomes visible during handoff and in final synthesis.
 - Include implementation, verification, review, documentation, migration, release, or operations calls in the same package when they are already required and their scope is known.
+- Every mutating implementation task must have an independent `verifier` or matching domain verifier. Add `code-reviewer` for feature work, bug fixes with non-trivial logic, migrations, and other changes where diff review can catch risks that commands cannot.
 - Use a later DSL package only for work that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
 - After emitting a DSL graph, let the Runtime schedule, execute, store, and resume the work.
 
@@ -196,10 +235,20 @@ When a task is larger than this, delegate the next planning layer or split it in
 - Milestone to feature calls: `milestone-planner`
 - Feature to implementation and verification task calls: `feature-planner`
 - Plan review: `plan-reviewer`
-- Codebase exploration, external research, debugging context, and broad investigation: `general-investigator`
-- General development, frontend, backend, database, refactor, migration, dependency, DevOps, observability, and operations execution: `general-executor`
-- Validation-only checks: `verifier`
-- Technical review: `technical-reviewer`
+- Broad codebase exploration and impact discovery: `general-investigator`
+- Failure reproduction and root-cause diagnosis: `debugger`
+- Architecture and cross-module contract design: `software-architect`
+- Frontend implementation: `frontend`
+- Backend implementation: `backend`
+- Database implementation: `database-agent`
+- CI, build, deployment, environment, and service configuration: `devops-agent`
+- Test strategy and test implementation: `test-engineer`
+- Cross-file API and architecture migration: `migration-runner`
+- Bounded cross-domain implementation without a better specialist: `general-executor`
+- Validation-only checks: `verifier` or the matching domain verifier
+- Implementation diff review: `code-reviewer`
+- Synthesized solution review before confirmation: `design-reviewer`
+- High-risk technical tradeoff review: `technical-reviewer`
 - Engineering documentation: `docs-maintainer`
 - Release coordination: `release-runner`
 - Multimodal documents, images, diagrams, charts, and visual assets: `multimodal-looker`

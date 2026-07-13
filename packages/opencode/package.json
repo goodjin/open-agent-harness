@@ -13,6 +13,7 @@
     "check:sdk": "bun run script/check-sdk.ts",
     "gate:mod15": "bun run test:observability && bun run test:evaluation && bun run check:sdk && bun typecheck",
     "build": "bun run script/build.ts",
+    "build:agents": "bun run script/agent-manifest.ts",
     "dev": "bun run --conditions=browser ./src/index.ts",
     "db": "bun drizzle-kit"
   },

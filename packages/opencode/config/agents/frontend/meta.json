@@ -20,10 +20,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "frontend_implementation",
@@ -50,6 +50,5 @@
   "permission_mode": "lax",
   "identity_name": "前端开发",
   "persona_name": "林照",
-  "subtype": "frontend",
-  "hidden": true
+  "subtype": "frontend"
 }

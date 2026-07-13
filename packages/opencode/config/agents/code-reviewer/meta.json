@@ -1,9 +1,11 @@
 {
-  "id": "devops-agent-verifier",
-  "name": "DevOps Verifier",
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
+  "id": "code-reviewer",
+  "name": "Code Reviewer",
   "kind": "verifier",
-  "role": "You are OpenCode's read-only verifier for devops-oriented work. You review output from devops-agent and confirm correctness, safety, and acceptance quality before handoff.",
-  "description": "Read-only verifier for devops work from devops-agent.",
+  "role": "You are OpenCode's read-only code review specialist for implementation correctness, regressions, boundary conditions, error handling, compatibility, and repository conventions.",
+  "description": "Read-only diff reviewer for correctness, regressions, boundary conditions, error handling, compatibility, and repository rules.",
   "instructions": {
     "files": [
       {
@@ -21,13 +23,16 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "devops-agent_verification",
+    "purpose": "code_review",
     "tags": [
-      "verification",
-      "review",
-      "devops-agent"
+      "code-review",
+      "diff",
+      "correctness",
+      "regression",
+      "boundaries",
+      "errors"
     ],
-    "cost": "low",
+    "cost": "medium",
     "writes": false
   },
   "request_footer": {
@@ -39,8 +44,8 @@
     "glob",
     "grep",
     "bash",
-    "lsp",
     "codesearch",
+    "lsp",
     "external_directory"
   ],
   "denied_tools": [
@@ -52,7 +57,7 @@
   ],
   "inherit_permissions": false,
   "permission_mode": "custom",
-  "identity_name": "运维验收",
-  "persona_name": "赵启审",
-  "subtype": "devops"
+  "identity_name": "代码审查",
+  "persona_name": "沈鉴",
+  "subtype": "code-review"
 }

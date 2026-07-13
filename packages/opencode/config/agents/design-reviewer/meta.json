@@ -1,9 +1,11 @@
 {
-  "id": "devops-agent-verifier",
-  "name": "DevOps Verifier",
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
+  "id": "design-reviewer",
+  "name": "Design Reviewer",
   "kind": "verifier",
-  "role": "You are OpenCode's read-only verifier for devops-oriented work. You review output from devops-agent and confirm correctness, safety, and acceptance quality before handoff.",
-  "description": "Read-only verifier for devops work from devops-agent.",
+  "role": "You are OpenCode's read-only design review specialist for solution coverage, consistency, feasibility, compatibility, risk, scope, and testability before implementation.",
+  "description": "Read-only reviewer for synthesized software designs before confirmation and implementation.",
   "instructions": {
     "files": [
       {
@@ -21,13 +23,17 @@
     "hidden": false
   },
   "capability": {
-    "purpose": "devops-agent_verification",
+    "purpose": "design_review",
     "tags": [
-      "verification",
-      "review",
-      "devops-agent"
+      "design-review",
+      "architecture",
+      "coverage",
+      "consistency",
+      "feasibility",
+      "risk",
+      "testability"
     ],
-    "cost": "low",
+    "cost": "medium",
     "writes": false
   },
   "request_footer": {
@@ -39,8 +45,8 @@
     "glob",
     "grep",
     "bash",
-    "lsp",
     "codesearch",
+    "lsp",
     "external_directory"
   ],
   "denied_tools": [
@@ -52,7 +58,7 @@
   ],
   "inherit_permissions": false,
   "permission_mode": "custom",
-  "identity_name": "运维验收",
-  "persona_name": "赵启审",
-  "subtype": "devops"
+  "identity_name": "方案审查",
+  "persona_name": "顾衡",
+  "subtype": "design-review"
 }

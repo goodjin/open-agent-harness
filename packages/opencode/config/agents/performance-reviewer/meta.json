@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "performance_review",
@@ -56,6 +56,5 @@
   "permission_mode": "custom",
   "identity_name": "性能审查",
   "persona_name": "裴速",
-  "subtype": "performance",
-  "hidden": true
+  "subtype": "performance"
 }

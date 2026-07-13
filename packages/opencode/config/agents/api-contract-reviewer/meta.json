@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "api_contract_review",
@@ -56,6 +56,5 @@
   "permission_mode": "custom",
   "identity_name": "接口审查",
   "persona_name": "杜契",
-  "subtype": "api-contract",
-  "hidden": true
+  "subtype": "api-contract"
 }

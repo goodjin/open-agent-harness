@@ -126,12 +126,48 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
       expect(agent?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
       expect(agent?.meta.concurrency).toBe(-1)
+      expect(agent?.rules).toContain("## Professional Design Consultation")
+      expect(agent?.rules).toContain("Submit the synthesized design to `design-reviewer`")
+      expect(agent?.rules).toContain("Use `general-executor` only for bounded cross-domain implementation")
 
       ;["milestone-planner", "feature-planner"].forEach((id) => {
         const planner = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(planner?.meta.request_footer?.prompt).toContain("Intent First / Autonomous Continuation")
         expect(planner?.meta.request_footer?.prompt).toContain("AgentProtocolOutput tool exactly once")
         expect(planner?.rules).toContain("without asking for the next small step")
+      })
+      expect(BUILTIN_AGENTS.find((item) => item.id === "feature-planner")?.rules).toContain(
+        "create read-only consultation sessions",
+      )
+    })
+
+    test("built-in programming team exposes specialist consultation and delivery roles", async () => {
+      const agents = await loader.loadAll()
+      const target = {
+        "software-architect": ["helper", "architecture_design", false],
+        "test-engineer": ["worker", "test_implementation", true],
+        "code-reviewer": ["verifier", "code_review", false],
+        "design-reviewer": ["verifier", "design_review", false],
+        debugger: ["helper", "debugging", false],
+        frontend: ["worker", "frontend_implementation", true],
+        backend: ["worker", "backend_implementation", true],
+        "database-agent": ["worker", "database", true],
+        "devops-agent": ["worker", "devops", true],
+      } as const
+
+      Object.entries(target).forEach(([id, row]) => {
+        const agent = agents.find((item) => item.id === id)
+        expect(agent).toBeDefined()
+        expect(agent?.meta.kind).toBe(row[0])
+        expect(agent?.meta.capability.purpose).toBe(row[1])
+        expect(agent?.meta.capability.writes).toBe(row[2])
+        expect(agent?.meta.entry).toEqual({
+          primary: false,
+          delegable: true,
+          mentionable: false,
+          default: false,
+          hidden: false,
+        })
       })
     })
 
@@ -144,7 +180,16 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.protocol?.prompt).not.toContain("Worker result fields")
       })
 
-      ;["backend", "frontend", "general-executor", "verifier", "backend-verifier"].forEach((id) => {
+      ;[
+        "backend",
+        "frontend",
+        "general-executor",
+        "test-engineer",
+        "verifier",
+        "code-reviewer",
+        "design-reviewer",
+        "backend-verifier",
+      ].forEach((id) => {
         const agent = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(agent?.requestFooter?.file).toBe("action-protocol.md")
         expect(agent?.requestFooter?.prompt).toContain("You are running as an action agent")

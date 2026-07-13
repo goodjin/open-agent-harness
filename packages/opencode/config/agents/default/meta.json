@@ -41,6 +41,26 @@
         "kind": "fallback",
         "target": "general-investigator",
         "trigger": "no_specialist_match"
+      },
+      {
+        "kind": "consult",
+        "target": "software-architect",
+        "trigger": "architecture_domain"
+      },
+      {
+        "kind": "consult",
+        "target": "test-engineer",
+        "trigger": "test_strategy_required"
+      },
+      {
+        "kind": "verifier",
+        "target": "design-reviewer",
+        "trigger": "substantial_design_ready"
+      },
+      {
+        "kind": "verifier",
+        "target": "code-reviewer",
+        "trigger": "implementation_review_required"
       }
     ],
     "limits": {
@@ -104,7 +124,9 @@
       "coordination",
       "planning",
       "routing",
-      "protocol"
+      "protocol",
+      "design-consultation",
+      "programming"
     ],
     "cost": "medium",
     "writes": false

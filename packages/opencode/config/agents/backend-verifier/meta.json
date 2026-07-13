@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "backend_verification",
@@ -54,6 +54,5 @@
   "permission_mode": "custom",
   "identity_name": "后端验收",
   "persona_name": "韩岳审",
-  "subtype": "backend",
-  "hidden": true
+  "subtype": "backend"
 }

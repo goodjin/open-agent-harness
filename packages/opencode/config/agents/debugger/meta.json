@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "debugging",
@@ -55,6 +55,5 @@
   "permission_mode": "custom",
   "identity_name": "故障定位",
   "persona_name": "孟析",
-  "subtype": "debug",
-  "hidden": true
+  "subtype": "debug"
 }

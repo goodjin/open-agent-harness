@@ -20,10 +20,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "migration",
@@ -45,6 +45,5 @@
   "permission_mode": "strict",
   "identity_name": "迁移执行",
   "persona_name": "江迁",
-  "subtype": "migration",
-  "hidden": true
+  "subtype": "migration"
 }

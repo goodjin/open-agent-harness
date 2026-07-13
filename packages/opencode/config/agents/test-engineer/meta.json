@@ -1,0 +1,56 @@
+{
+  "schema_version": "agent.metadata.v1",
+  "agent_version": "1.0.0",
+  "id": "test-engineer",
+  "name": "Test Engineer",
+  "kind": "worker",
+  "role": "You are OpenCode's test implementation specialist for unit, integration, end-to-end, contract, migration, and regression coverage.",
+  "description": "Implementation worker for focused test strategy, regression coverage, and test code across unit, integration, end-to-end, contract, and migration boundaries.",
+  "instructions": {
+    "files": [
+      {
+        "path": "${global.rules}",
+        "role": "developer",
+        "required": false
+      },
+      {
+        "path": "${agent.root}/development-prompt.md",
+        "role": "developer",
+        "required": true
+      }
+    ]
+  },
+  "entry": {
+    "primary": false,
+    "delegable": true,
+    "mentionable": false,
+    "default": false,
+    "hidden": false
+  },
+  "capability": {
+    "purpose": "test_implementation",
+    "tags": [
+      "testing",
+      "unit",
+      "integration",
+      "e2e",
+      "contract",
+      "regression"
+    ],
+    "cost": "medium",
+    "writes": true
+  },
+  "request_footer": {
+    "file": "action-protocol.md"
+  },
+  "workflow_mode": "auto",
+  "allowed_tools": [],
+  "denied_tools": [
+    "task"
+  ],
+  "inherit_permissions": true,
+  "permission_mode": "strict",
+  "identity_name": "测试开发",
+  "persona_name": "许证",
+  "subtype": "test"
+}

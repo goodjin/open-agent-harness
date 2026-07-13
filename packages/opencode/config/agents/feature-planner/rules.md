@@ -4,6 +4,14 @@
 - Before decomposing, identify the user's intent, feature goal, success criteria, hard constraints, known context, unresolved details, and risks.
 - Ask important clarifying questions at the beginning when they change the execution graph; once clear or explicitly assumed, declare the complete execution and verification graph and continue from delegated results without asking for the next small step.
 - Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
+- Before finalizing implementation tasks for a substantial feature, identify the professional domains involved and create read-only consultation sessions for the relevant specialists.
+- Use `general-investigator` for broad repository discovery, `software-architect` for cross-module boundaries and contracts, domain workers for implementation constraints, and `test-engineer` for the regression and acceptance strategy.
+- Add API contract, security, performance, accessibility, migration, DevOps, or release consultation only when that domain materially affects the feature.
+- Consultation prompts must state the feature goal, known evidence, assigned professional boundary, concrete questions, constraints, exclusions, expected evidence, risks, and a structured handoff. Worker consultations must explicitly prohibit file modification.
+- Run independent consultations in parallel and preserve real dependencies. Synthesize their evidence and recommendations into one coherent feature design instead of copying their replies into the task graph.
+- Resolve conflicting advice against repository evidence and feature constraints. Dispatch a focused follow-up consultation when a material conflict remains unresolved.
+- Send the synthesized feature design to `design-reviewer`. Address blocking review findings before declaring mutating implementation tasks.
+- Skip the consultation council for tiny, low-risk, single-surface tasks whose implementation and verification path are already clear.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this feature scope. Do not ask the user to confirm the same work again; declare the executable task graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
 - If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the task boundaries and risks, then summarize the proposed task graph for user confirmation.
@@ -16,16 +24,18 @@
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Express the task breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable implementation, verification, review, documentation, migration, release, and operations tasks in one DSL package.
-- Add one `items[]` entry per task. Each item should use `kind: "agent"` and a visible purpose-based target such as `general-executor`, `verifier`, `technical-reviewer`, `general-investigator`, `docs-maintainer`, `release-runner`, `multimodal-looker`, or `agent-creator`.
+- Add one `items[]` entry per task. Each item should use `kind: "agent"` and the most specific purpose-based target such as `frontend`, `backend`, `database-agent`, `devops-agent`, `test-engineer`, `migration-runner`, `general-executor`, `verifier`, `code-reviewer`, `technical-reviewer`, `general-investigator`, `docs-maintainer`, `release-runner`, `multimodal-looker`, or `agent-creator`.
 - Use `agent_query` before creating a narrower specialist when the visible catalog does not fit the task.
 - Use `agent_create` to create a hidden protocol-delegable specialist only when the task needs a narrower identity than the visible catalog provides. Dynamic agents require `kind`, `identity_name`, and `persona_name`; reviewer agents are `kind: "verifier"` with `subtype: "review"`.
 - Prefer one implementation worker per bounded surface area. For multi-surface features, split before dispatching so each child call has one primary domain and one verification path.
+- Use `general-executor` only when no more specific implementation agent fits the bounded task.
 - Do not use hidden retired agents for new work unless a protocol-created dynamic agent explicitly names them as a template.
 - For broad discovery tasks, use `general-investigator` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
 - Put the task details in each item's `prompt`, including planning path, objective, in-scope files or subsystem when known, explicit exclusions, dependencies, expected output, verification criteria, acceptance condition, and stop condition.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
 - Use `depends` to express verifier ordering when a verifier should wait for a specific upstream action.
+- Add a `verifier` or matching domain verifier for every mutating worker. Add `code-reviewer` when the feature changes non-trivial behavior, contracts, state, concurrency, migrations, or multiple modules.
 - Verifier `depends` are action-level edges. The verifier target name does not need to match the upstream target name; multiple items may use the same agent target.
 - Runtime does not reject a model-declared verifier only because it lacks a worker dependency. Missing verification for workers is handled by system-injected verifier actions.
 - Use a later DSL package only for tasks that cannot be defined until a prior runtime result, user answer, artifact, or error is available.

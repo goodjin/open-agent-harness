@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "database-agent_verification",
@@ -54,6 +54,5 @@
   "permission_mode": "custom",
   "identity_name": "数据库验收",
   "persona_name": "程渊审",
-  "subtype": "database",
-  "hidden": true
+  "subtype": "database"
 }

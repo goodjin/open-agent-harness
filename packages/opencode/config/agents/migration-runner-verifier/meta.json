@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "migration-runner_verification",
@@ -54,6 +54,5 @@
   "permission_mode": "custom",
   "identity_name": "迁移验收",
   "persona_name": "江迁审",
-  "subtype": "migration",
-  "hidden": true
+  "subtype": "migration"
 }

@@ -20,10 +20,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "devops",
@@ -48,6 +48,5 @@
   "permission_mode": "lax",
   "identity_name": "运维开发",
   "persona_name": "赵启",
-  "subtype": "devops",
-  "hidden": true
+  "subtype": "devops"
 }

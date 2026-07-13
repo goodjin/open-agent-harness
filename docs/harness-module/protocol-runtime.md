@@ -20,6 +20,12 @@ Planner confirmation depends on the task source. For a direct user task, planner
 
 Planner graphs should be complete for their layer. When multiple child units are knowable, the planner emits all of them in one package and uses `depends` to encode ordering, blockers, verification waits, or required sequential handoff. A broad task should not be collapsed into one worker just to avoid declaring dependencies.
 
+For substantial programming work, design is itself a delegated collaboration phase. Before the final direct-user confirmation, `default` identifies the professional domains and risks involved, creates only the relevant read-only consultation sessions, reconciles their evidence and disagreements into one design, and sends that design to `design-reviewer`. Parent-delegated feature planning uses the same consultation and review boundary without repeating user confirmation for the already authorized feature scope.
+
+Consultation scales with the task. Tiny low-risk changes can route directly to one specialist plus independent verification. Bugs normally use diagnosis, the matching worker, regression coverage when needed, validation, and code review. Single-module features add the relevant domain and test consultation. Cross-module or high-risk features add architecture plus only the applicable API contract, security, performance, accessibility, migration, DevOps, release, or operations reviewers.
+
+Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, evidence expectations, risks, and handoff shape. A worker used as a design consultant is explicitly read-only for that assignment. Planner synthesis must separate evidence from inference, resolve conflicts, and request a focused follow-up when a material disagreement cannot be settled from available evidence.
+
 ## Package Agent Catalog
 
 Package agents should be named by their actual routing role and behavior. The runtime keeps the coarse `kind` taxonomy for collaboration semantics:
@@ -31,15 +37,19 @@ Package agents should be named by their actual routing role and behavior. The ru
 - `system`: runtime-owned internal agents such as title, summary, compaction, and protocol runners.
 - `skill`: imported compatibility skill templates.
 
-The visible package catalog is intentionally small and purpose-based: `default`, `milestone-planner`, `feature-planner`, `general-executor`, `verifier`, `technical-reviewer`, `general-investigator`, `release-runner`, `docs-maintainer`, `multimodal-looker`, and `agent-creator`.
+The user-selectable package catalog remains intentionally small and purpose-based. The protocol delegation catalog additionally exposes programming specialists that are neither primary nor mentionable: `software-architect`, `frontend`, `backend`, `database-agent`, `devops-agent`, `debugger`, `test-engineer`, `migration-runner`, `code-reviewer`, `design-reviewer`, matching domain verifiers, and risk reviewers for API contracts, security, performance, and accessibility. `general-executor` is the bounded cross-domain fallback, not the default target for work that has a matching specialist.
 
-Retired or overly specific package agents remain installed but hidden. Hidden agents can still resolve historical `session.agent` bindings, but ordinary session selection, mention autocomplete, and default delegation candidate lists must not expose them. A hidden agent should be made visible again only through explicit management action.
+Agent entry dimensions have distinct purposes. `primary` controls ordinary session selection, `mentionable` controls explicit user mention, and `delegable` controls planner routing. Programming specialists use `primary: false`, `mentionable: false`, and `delegable: true`, so planners can create professional sessions without filling ordinary user entrypoints. Retired package agents remain installed and hidden; hidden agents can still resolve historical `session.agent` bindings but do not enter ordinary planner candidate lists.
 
 Agent metadata may declare `identity_name`, `persona_name`, and `subtype`. Session-facing labels prefer `identity_name-persona_name`, then fall back to the template display `name`, then the agent id. Reviewer agents are not a top-level kind; they are `kind: "verifier"` plus `subtype: "review"`.
 
 Planner flow uses `Milestone -> Feature -> Work Task`. New session titles should preserve derivation through prefixes: `M1 ...`, `M1-F1 ...`, and work-task prefixes such as `M1-F1-DEV`, `M1-F1-TEST`, `M1-F1-REVIEW`, `M1-F1-ARCH`, `M1-F1-RESEARCH`, or `M1-F1-RELEASE`.
 
 Planners may use managed agent tools when the visible catalog is not specific enough. `agent_query` inspects existing templates, including hidden templates when requested. `agent_create` creates hidden, protocol-delegable project or user agents with a required `kind`, optional `subtype`, `identity_name`, and `persona_name`. Planner-created agents may be `planner`, `worker`, `verifier`, or `helper`; `system` and `skill` are reserved for runtime and compatibility import paths. Dynamic `worker`, `verifier`, and `helper` agents automatically receive the `action-protocol.md` request footer so parent sessions can collect terminal `ActionResult` handoffs.
+
+Dynamic design consultants are created only when no built-in agent covers a material specialty such as a framework, protocol, storage engine, authentication standard, compiler, or platform integration. They are hidden, narrowly scoped, read-only by default, and limited to the current task. Routine questions should reuse an existing specialist rather than creating permanent catalog noise.
+
+Programming delivery separates test authoring from validation. `test-engineer` is a worker that may write focused regression coverage after confirmation, while `verifier` and matching domain verifiers remain read-only and execute the validation path. `code-reviewer` independently inspects implementation diffs, and `design-reviewer` checks a synthesized solution before execution. Every mutating worker has independent verification; code review and specialist review are added according to change risk rather than mechanically attached to every tiny edit.
 
 ## Agent Protocol Families
 
