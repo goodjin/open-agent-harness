@@ -6,6 +6,7 @@ import { Instance } from "../../src/project/instance"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
+import { SessionRuns } from "../../src/session/runs"
 import { Storage } from "../../src/storage/storage"
 import { tmpdir } from "../fixture/fixture"
 
@@ -21,6 +22,12 @@ describe("session run endpoints", () => {
             const session = await Session.create({})
             const run = result("run_route")
             await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+            await SessionRuns.finish({
+              sessionID: session.id,
+              runID: run.run_id,
+              summary: "Completed",
+              messageID: "msg_run_route",
+            })
             await Bun.write(
               path.join(tmp.path, ".harness", "sessions", session.id, "runs", run.run_id, "plans", "app.md"),
               "# App plan\n",
@@ -30,8 +37,32 @@ describe("session run endpoints", () => {
 
             const listed = await app.request(`/session/${session.id}/runs?${dir}`)
             expect(listed.status).toBe(200)
-            const runs = (await listed.json()) as Array<{ run_id: string; documents: Array<{ path: string }> }>
+            const runs = (await listed.json()) as Array<{
+              kind: string
+              run_id: string
+              task: string
+              summary?: string
+              summary_source?: string
+              execution_summary?: string
+              action_id?: string
+              fallback: boolean
+              status: string
+              actions: unknown[]
+              documents: Array<{ path: string }>
+              metrics: { actions: number }
+            }>
             expect(runs[0]?.run_id).toBe(run.run_id)
+            expect(runs[0]).toMatchObject({
+              kind: "protocol",
+              task: "Planning run",
+              summary: "Completed",
+              summary_source: "protocol",
+              execution_summary: "Completed",
+              fallback: false,
+              status: "completed",
+              actions: [],
+              metrics: { actions: 0 },
+            })
             expect(runs[0]?.documents[0]?.path).toBe("plans/app.md")
 
             const doc = await app.request(
@@ -92,11 +123,32 @@ describe("session run endpoints", () => {
   test("generated OpenAPI includes session run endpoints", async () => {
     const spec = await Bun.file(new URL("../../../sdk/openapi.json", import.meta.url)).json()
     const paths = spec.paths as Record<string, { get?: { operationId?: string } }>
+    const schema = spec.paths["/session/{sessionID}/runs"].get.responses["200"].content["application/json"].schema
+      .items as { properties: Record<string, unknown>; required: string[] }
 
     expect(paths["/session/{sessionID}/runs"]?.get?.operationId).toBe("session.runs")
     expect(paths["/session/{sessionID}/runs/{runID}"]?.get?.operationId).toBe("session.run")
     expect(paths["/session/{sessionID}/runs/{runID}/documents"]?.get?.operationId).toBe("session.run.documents")
     expect(paths["/session/{sessionID}/runs/{runID}/document"]?.get?.operationId).toBe("session.run.document")
+    expect(Object.keys(schema.properties)).toEqual(
+      expect.arrayContaining([
+        "kind",
+        "task",
+        "summary",
+        "summary_source",
+        "execution_summary",
+        "action_id",
+        "fallback",
+        "status",
+        "actions",
+        "documents",
+        "metrics",
+      ]),
+    )
+    expect(schema.required).toEqual(
+      expect.arrayContaining(["kind", "task", "fallback", "status", "actions", "metrics"]),
+    )
+    expect(schema.required).not.toEqual(expect.arrayContaining(["summary", "summary_source", "execution_summary", "action_id"]))
   })
 })
 

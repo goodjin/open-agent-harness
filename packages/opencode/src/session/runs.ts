@@ -69,7 +69,7 @@ export namespace SessionRuns {
       summary_source: Source.optional(),
       execution_summary: z.string().optional(),
       action_id: z.string().optional(),
-      fallback: z.boolean().default(false),
+      fallback: z.boolean(),
       documents: z.array(Document).default([]),
     })
     .strict()
@@ -388,7 +388,7 @@ export namespace SessionRuns {
       summary: outcome?.summary ?? old?.summary,
       summary_source: outcome ? "protocol" : old?.source,
       execution_summary: run.summary || undefined,
-      fallback: !outcome && old?.source === "fallback_summary",
+      fallback: false,
       documents: await documents(sessionID, run.run_id),
     })
   }

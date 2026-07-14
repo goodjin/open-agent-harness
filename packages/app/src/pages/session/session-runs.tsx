@@ -5,7 +5,7 @@ import { For, Show, createEffect } from "solid-js"
 import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
-import { groups, progress, task } from "@/pages/session/session-runs-data"
+import { groups, outcome, progress, task, view } from "@/pages/session/session-runs-data"
 import { formatServerError } from "@/utils/server-errors"
 
 type Run = SessionRunsResponse[number]
@@ -17,6 +17,12 @@ const tone = (status: Run["status"] | Action["status"]) => {
   if (status === "failed" || status === "blocked") return "text-icon-critical-base bg-surface-critical-weak"
   if (status === "running") return "text-icon-info-base bg-surface-info-base/20"
   return "text-text-weak bg-surface-raised-base"
+}
+
+const mark = (value: "recorded" | "fallback" | "missing") => {
+  if (value === "recorded") return "text-icon-success-base bg-surface-success-base/20"
+  if (value === "fallback") return "text-icon-warning-base bg-surface-raised-base"
+  return "text-icon-critical-base bg-surface-critical-weak"
 }
 
 const time = (value: number) =>
@@ -36,7 +42,6 @@ export function SessionRuns(props: { sessionID: string }) {
   })
 
   const selected = () => state.runs.find((run) => run.run_id === state.selected)
-
   const load = async (id: string) => {
     setState({
       runs: [],
@@ -111,32 +116,60 @@ export function SessionRuns(props: { sessionID: string }) {
 
         <div class="flex flex-col gap-1">
           <For each={state.runs}>
-            {(run) => (
-              <button
-                type="button"
-                class="rounded-md px-2.5 py-2 text-left transition-colors"
-                classList={{
-                  "bg-surface-raised-base": state.selected === run.run_id,
-                  "hover:bg-surface-raised-base/50": state.selected !== run.run_id,
-                }}
-                onClick={() =>
-                  setState({ selected: run.run_id, reading: undefined, doc: undefined, docError: undefined })
-                }
-              >
-                <div class="flex items-start justify-between gap-2">
+            {(run) => {
+              const item = view(run)
+              return (
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-2 text-left transition-colors"
+                  classList={{
+                    "bg-surface-raised-base": state.selected === run.run_id,
+                    "hover:bg-surface-raised-base/50": state.selected !== run.run_id,
+                  }}
+                  onClick={() =>
+                    setState({ selected: run.run_id, reading: undefined, doc: undefined, docError: undefined })
+                  }
+                >
                   <div class="min-w-0 truncate text-12-medium text-text-strong">{run.title ?? run.run_id}</div>
-                  <span class={`shrink-0 rounded px-1.5 py-0.5 text-10-medium ${tone(run.status)}`}>{run.status}</span>
-                </div>
-                <div class="mt-1 text-10-regular text-text-weak">{time(run.time.started)}</div>
-                <div class="mt-1 text-10-regular text-text-weak">
-                  {language.t("session.runs.summary", {
-                    done: progress(run.actions).done,
-                    tasks: run.actions.length,
-                    documents: run.documents?.length ?? 0,
-                  })}
-                </div>
-              </button>
-            )}
+                  <div class="mt-1 flex flex-wrap gap-1">
+                    <span class={`rounded px-1.5 py-0.5 text-10-medium ${tone(item.status.value)}`}>
+                      {language.t(item.status.label)}
+                    </span>
+                    <Show when={item.result}>
+                      {(result) => (
+                        <span class={`rounded px-1.5 py-0.5 text-10-medium ${mark(result().value)}`}>
+                          {language.t(result().label)}
+                        </span>
+                      )}
+                    </Show>
+                  </div>
+                  <div class="mt-1.5 truncate font-mono text-10-regular text-text-weak">
+                    {language.t("session.runs.runID", { id: item.meta.id })}
+                  </div>
+                  <div class="mt-1 text-10-regular text-text-weak">
+                    {language.t("session.runs.started", { time: time(item.meta.started) })}
+                  </div>
+                  <Show when={item.meta.completed}>
+                    {(completed) => (
+                      <div class="mt-1 text-10-regular text-text-weak">
+                        {language.t("session.runs.completedAt", { time: time(completed()) })}
+                      </div>
+                    )}
+                  </Show>
+                  <div class="mt-1 flex items-center justify-between gap-2 text-10-regular text-text-weak">
+                    <span>
+                      {language.t("session.runs.progress", {
+                        done: item.meta.progress.done,
+                        total: item.meta.progress.total,
+                      })}
+                    </span>
+                    <span class="shrink-0">
+                      {language.t("session.runs.documentCount", { count: item.meta.documents })}
+                    </span>
+                  </div>
+                </button>
+              )
+            }}
           </For>
         </div>
       </aside>
@@ -154,50 +187,98 @@ export function SessionRuns(props: { sessionID: string }) {
                         <h2 class="text-16-medium text-text-strong">{run().title ?? run().run_id}</h2>
                         <div class="mt-1 font-mono text-10-regular text-text-weak">{run().run_id}</div>
                       </div>
-                      <span class={`rounded px-2 py-1 text-11-medium ${tone(run().status)}`}>{run().status}</span>
+                      <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                        <span class={`rounded px-2 py-1 text-11-medium ${tone(view(run()).status.value)}`}>
+                          {language.t(view(run()).status.label)}
+                        </span>
+                        <Show when={view(run()).result}>
+                          {(result) => (
+                            <span class={`rounded px-2 py-1 text-11-medium ${mark(result().value)}`}>
+                              {language.t(result().label)}
+                            </span>
+                          )}
+                        </Show>
+                      </div>
                     </div>
-                    <Show when={run().summary}>
-                      <p class="mt-3 text-13-regular text-text-base">{run().summary}</p>
-                    </Show>
                   </section>
 
                   <section>
-                    <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.tasks")}</h3>
-                    <div class="flex flex-col gap-2">
-                      <For each={run().actions}>
-                        {(action) => (
-                          <article class="rounded-md border border-border-weaker-base bg-background-base p-3">
-                            <div class="flex items-start justify-between gap-3">
-                              <div class="min-w-0">
-                                <div class="text-12-medium text-text-strong">{action.title}</div>
-                                <div class="mt-0.5 text-10-regular text-text-weak">
-                                  {action.executor.target ?? action.executor.type} · {action.operation}
-                                </div>
-                              </div>
-                              <span class={`shrink-0 rounded px-1.5 py-0.5 text-10-medium ${tone(action.status)}`}>
-                                {action.status}
-                              </span>
-                            </div>
-                            <Show when={task(action)}>
-                              {(value) => (
-                                <pre class="mt-3 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-background-stronger p-2 text-11-regular text-text-base">
-                                  {value()}
-                                </pre>
-                              )}
-                            </Show>
-                            <Show when={action.summary ?? action.error}>
-                              <div class="mt-2 text-11-regular text-text-weak">{action.error ?? action.summary}</div>
-                            </Show>
-                            <Show when={(action.depends_on?.length ?? 0) > 0}>
-                              <div class="mt-2 text-10-regular text-text-weak">
-                                {language.t("session.runs.depends", { ids: action.depends_on?.join(", ") ?? "" })}
-                              </div>
-                            </Show>
-                          </article>
-                        )}
-                      </For>
+                    <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.task")}</h3>
+                    <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                      <Markdown text={run().task} />
                     </div>
                   </section>
+
+                  <Show when={outcome(run()) !== "running"}>
+                    <section>
+                      <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.result")}</h3>
+                      <Show
+                        when={run().summary}
+                        fallback={
+                          <div class="rounded-md border border-border-weaker-base bg-background-base p-4 text-12-regular text-text-weak">
+                            {language.t("session.runs.missingResult")}
+                          </div>
+                        }
+                      >
+                        {(summary) => (
+                          <div
+                            class="rounded-md border bg-background-base p-4"
+                            classList={{
+                              "border-icon-warning-base/40": outcome(run()) === "fallback",
+                              "border-border-weaker-base": outcome(run()) !== "fallback",
+                            }}
+                          >
+                            <Show when={outcome(run()) === "fallback"}>
+                              <div class="mb-3 text-11-medium text-icon-warning-base">
+                                {language.t("session.runs.fallbackHint")}
+                              </div>
+                            </Show>
+                            <Markdown text={summary()} />
+                          </div>
+                        )}
+                      </Show>
+                    </section>
+                  </Show>
+
+                  <Show when={run().actions.length > 0}>
+                    <section>
+                      <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.tasks")}</h3>
+                      <div class="flex flex-col gap-2">
+                        <For each={run().actions}>
+                          {(action) => (
+                            <article class="rounded-md border border-border-weaker-base bg-background-base p-3">
+                              <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                  <div class="text-12-medium text-text-strong">{action.title}</div>
+                                  <div class="mt-0.5 text-10-regular text-text-weak">
+                                    {action.executor.target ?? action.executor.type} · {action.operation}
+                                  </div>
+                                </div>
+                                <span class={`shrink-0 rounded px-1.5 py-0.5 text-10-medium ${tone(action.status)}`}>
+                                  {action.status}
+                                </span>
+                              </div>
+                              <Show when={task(action)}>
+                                {(value) => (
+                                  <pre class="mt-3 max-h-52 overflow-auto whitespace-pre-wrap rounded bg-background-stronger p-2 text-11-regular text-text-base">
+                                    {value()}
+                                  </pre>
+                                )}
+                              </Show>
+                              <Show when={action.summary ?? action.error}>
+                                <div class="mt-2 text-11-regular text-text-weak">{action.error ?? action.summary}</div>
+                              </Show>
+                              <Show when={(action.depends_on?.length ?? 0) > 0}>
+                                <div class="mt-2 text-10-regular text-text-weak">
+                                  {language.t("session.runs.depends", { ids: action.depends_on?.join(", ") ?? "" })}
+                                </div>
+                              </Show>
+                            </article>
+                          )}
+                        </For>
+                      </div>
+                    </section>
+                  </Show>
 
                   <section>
                     <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.documents")}</h3>
@@ -241,6 +322,73 @@ export function SessionRuns(props: { sessionID: string }) {
                     <Show when={state.docError}>
                       {(error) => <div class="mt-3 text-12-regular text-icon-critical-base">{error()}</div>}
                     </Show>
+                  </section>
+
+                  <section>
+                    <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.runs.execution")}</h3>
+                    <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                      <div class="grid grid-cols-1 gap-3 text-11-regular sm:grid-cols-2">
+                        <div>
+                          <div class="text-text-weak">{language.t("session.runs.startedLabel")}</div>
+                          <div class="mt-0.5 text-text-base">{time(run().time.started)}</div>
+                        </div>
+                        <Show when={run().time.completed}>
+                          {(completed) => (
+                            <div>
+                              <div class="text-text-weak">{language.t("session.runs.completed")}</div>
+                              <div class="mt-0.5 text-text-base">{time(completed())}</div>
+                            </div>
+                          )}
+                        </Show>
+                        <div>
+                          <div class="text-text-weak">{language.t("session.runs.progressLabel")}</div>
+                          <div class="mt-0.5 text-text-base">
+                            {language.t("session.runs.progress", {
+                              done: progress(run().actions).done,
+                              total: progress(run().actions).total,
+                            })}
+                          </div>
+                        </div>
+                        <div>
+                          <div class="text-text-weak">{language.t("session.runs.duration")}</div>
+                          <div class="mt-0.5 text-text-base">{run().metrics.duration_ms} ms</div>
+                        </div>
+                      </div>
+                      <div class="mt-4 border-t border-border-weaker-base pt-3">
+                        <div class="mb-2 text-11-medium text-text-strong">{language.t("session.runs.metrics")}</div>
+                        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-10-regular sm:grid-cols-3">
+                          <div class="text-text-weak">
+                            {language.t("session.runs.metricActions", { count: run().metrics.actions })}
+                          </div>
+                          <div class="text-text-weak">
+                            {language.t("session.runs.metricInternal", {
+                              count: run().metrics.internal_tool_calls,
+                            })}
+                          </div>
+                          <div class="text-text-weak">
+                            {language.t("session.runs.metricModel", {
+                              count: run().metrics.direct_model_tool_calls,
+                            })}
+                          </div>
+                          <div class="text-text-weak">
+                            {language.t("session.runs.metricVisible", { count: run().metrics.model_visible_bytes })}
+                          </div>
+                          <div class="text-text-weak">
+                            {language.t("session.runs.metricRaw", { count: run().metrics.raw_output_bytes })}
+                          </div>
+                        </div>
+                      </div>
+                      <Show when={run().execution_summary}>
+                        {(summary) => (
+                          <div class="mt-4 border-t border-border-weaker-base pt-3">
+                            <div class="mb-2 text-11-medium text-text-strong">
+                              {language.t("session.runs.executionSummary")}
+                            </div>
+                            <Markdown text={summary()} />
+                          </div>
+                        )}
+                      </Show>
+                    </div>
                   </section>
                 </div>
               }

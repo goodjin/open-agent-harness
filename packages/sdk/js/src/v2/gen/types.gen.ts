@@ -6638,7 +6638,6 @@ export type SessionRunsResponses = {
         completed?: number
       }
     }>
-    summary: string
     time: {
       started: number
       completed?: number
@@ -6651,7 +6650,14 @@ export type SessionRunsResponses = {
       raw_output_bytes: number
       duration_ms: number
     }
+    kind: "protocol" | "delegation"
     status: "running" | "completed" | "blocked" | "failed"
+    task: string
+    summary?: string
+    summary_source?: "protocol" | "action_result" | "fallback_summary"
+    execution_summary?: string
+    action_id?: string
+    fallback: boolean
     documents?: Array<{
       path: string
       name: string
@@ -6736,7 +6742,6 @@ export type SessionRunResponses = {
         completed?: number
       }
     }>
-    summary: string
     time: {
       started: number
       completed?: number
@@ -6749,7 +6754,14 @@ export type SessionRunResponses = {
       raw_output_bytes: number
       duration_ms: number
     }
+    kind: "protocol" | "delegation"
     status: "running" | "completed" | "blocked" | "failed"
+    task: string
+    summary?: string
+    summary_source?: "protocol" | "action_result" | "fallback_summary"
+    execution_summary?: string
+    action_id?: string
+    fallback: boolean
     documents?: Array<{
       path: string
       name: string

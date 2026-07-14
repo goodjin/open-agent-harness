@@ -6612,9 +6612,6 @@
                           "additionalProperties": false
                         }
                       },
-                      "summary": {
-                        "type": "string"
-                      },
                       "time": {
                         "type": "object",
                         "properties": {
@@ -6678,6 +6675,13 @@
                         ],
                         "additionalProperties": false
                       },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "protocol",
+                          "delegation"
+                        ]
+                      },
                       "status": {
                         "type": "string",
                         "enum": [
@@ -6686,6 +6690,29 @@
                           "blocked",
                           "failed"
                         ]
+                      },
+                      "task": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "type": "string"
+                      },
+                      "summary_source": {
+                        "type": "string",
+                        "enum": [
+                          "protocol",
+                          "action_result",
+                          "fallback_summary"
+                        ]
+                      },
+                      "execution_summary": {
+                        "type": "string"
+                      },
+                      "action_id": {
+                        "type": "string"
+                      },
+                      "fallback": {
+                        "type": "boolean"
                       },
                       "documents": {
                         "default": [],
@@ -6738,10 +6765,12 @@
                       "version",
                       "run_id",
                       "actions",
-                      "summary",
                       "time",
                       "metrics",
-                      "status"
+                      "kind",
+                      "status",
+                      "task",
+                      "fallback"
                     ],
                     "additionalProperties": false
                   }
@@ -7007,9 +7036,6 @@
                         "additionalProperties": false
                       }
                     },
-                    "summary": {
-                      "type": "string"
-                    },
                     "time": {
                       "type": "object",
                       "properties": {
@@ -7073,6 +7099,13 @@
                       ],
                       "additionalProperties": false
                     },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "protocol",
+                        "delegation"
+                      ]
+                    },
                     "status": {
                       "type": "string",
                       "enum": [
@@ -7081,6 +7114,29 @@
                         "blocked",
                         "failed"
                       ]
+                    },
+                    "task": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "summary_source": {
+                      "type": "string",
+                      "enum": [
+                        "protocol",
+                        "action_result",
+                        "fallback_summary"
+                      ]
+                    },
+                    "execution_summary": {
+                      "type": "string"
+                    },
+                    "action_id": {
+                      "type": "string"
+                    },
+                    "fallback": {
+                      "type": "boolean"
                     },
                     "documents": {
                       "default": [],
@@ -7133,10 +7189,12 @@
                     "version",
                     "run_id",
                     "actions",
-                    "summary",
                     "time",
                     "metrics",
-                    "status"
+                    "kind",
+                    "status",
+                    "task",
+                    "fallback"
                   ],
                   "additionalProperties": false
                 }
