@@ -7,15 +7,397 @@ import { Instance } from "../../src/project/instance"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
+import { SessionAssignment } from "../../src/session/assignment"
 import { MessageV2 } from "../../src/session/message-v2"
+import { SessionResult } from "../../src/session/result"
 import { SessionRuns } from "../../src/session/runs"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
-import { PartTable } from "../../src/session/session.sql"
+import { AssignmentTable, PartTable } from "../../src/session/session.sql"
 import { Database, eq } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session runs", () => {
+  test("projects a running delegated run from its verified assignment", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_running"),
+          fn: async () => {
+            const item = await delegation("run_delegation_running", "Implement backend\n\nKeep the API stable.")
+
+            const listed = await SessionRuns.list(item.child.id)
+            const saved = await SessionRuns.get(item.child.id, item.run)
+
+            expect(listed).toHaveLength(1)
+            expect(saved).toMatchObject({
+              kind: "delegation",
+              run_id: item.run,
+              action_id: "backend",
+              task: "Implement backend\n\nKeep the API stable.",
+              status: "running",
+              fallback: false,
+              actions: [],
+              documents: [],
+            })
+            expect(saved?.summary).toBeUndefined()
+            expect(saved?.summary_source).toBeUndefined()
+            expect(saved?.metrics).toEqual({
+              actions: 0,
+              internal_tool_calls: 0,
+              direct_model_tool_calls: 0,
+              model_visible_bytes: 0,
+              raw_output_bytes: 0,
+              duration_ms: 0,
+            })
+            expect(listed[0]).toEqual(saved!)
+          },
+        }),
+    })
+  })
+
+  test("projects a canonical action result onto its delegated run", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_result"),
+          fn: async () => {
+            const item = await delegation("run_delegation_result", "Implement backend\n\nPreserve compatibility.")
+            const rec = await SessionResult.put({
+              carrier: "action_result",
+              status: "completed",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: "backend",
+              summary: "Untrusted stored summary",
+              raw: {
+                input: {
+                  kind: "action_result",
+                  role: "worker",
+                  action_id: "backend",
+                  status: "success",
+                  result: "Backend implementation completed.",
+                },
+              },
+            })
+            await Session.setDslContext({
+              sessionID: item.child.id,
+              dsl_context: {
+                protocol: { delegation: item.packet },
+                result: { result_id: rec.id },
+              },
+            })
+
+            const saved = await SessionRuns.get(item.child.id, item.run)
+            expect(saved).toMatchObject({
+              kind: "delegation",
+              run_id: item.run,
+              action_id: "backend",
+              task: expect.stringContaining("Implement backend"),
+              summary: "Backend implementation completed.",
+              summary_source: "action_result",
+              status: "completed",
+              fallback: false,
+              actions: [],
+              documents: [],
+            })
+            expect((await SessionRuns.list(item.child.id))[0]).toEqual(saved!)
+          },
+        }),
+    })
+  })
+
+  test("uses only the trusted summary field for each canonical carrier", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_carriers"),
+          fn: async () => {
+            const cases = [
+              {
+                run: "run_fallback_output",
+                carrier: "fallback_summary" as const,
+                raw: { output: "Fallback output" },
+                summary: "Stored fallback summary",
+                expected: "Fallback output",
+                source: "fallback_summary",
+                fallback: true,
+              },
+              {
+                run: "run_fallback_summary",
+                carrier: "fallback_summary" as const,
+                raw: {},
+                summary: "Stored fallback summary",
+                expected: "Stored fallback summary",
+                source: "fallback_summary",
+                fallback: true,
+              },
+              {
+                run: "run_protocol_message",
+                carrier: "agent_protocol_output" as const,
+                raw: { item: { message: "Protocol message", summary: "Protocol summary" }, output: "Output" },
+                summary: "Stored summary",
+                expected: "Protocol message",
+                source: "protocol",
+                fallback: false,
+              },
+              {
+                run: "run_plain_output",
+                carrier: "plain_text_result" as const,
+                raw: { output: "Plain output" },
+                summary: "Stored summary",
+                expected: "Plain output",
+                source: undefined,
+                fallback: false,
+              },
+            ] as const
+            for (const entry of cases) {
+              const item = await delegation(entry.run, `Plan for ${entry.run}`)
+              const rec = await SessionResult.put({
+                carrier: entry.carrier,
+                status: "completed",
+                satisfying: true,
+                sessionID: item.child.id,
+                parentSessionID: item.parent.id,
+                childSessionID: item.child.id,
+                runID: item.run,
+                actionID: "backend",
+                summary: entry.summary,
+                raw: entry.raw,
+              })
+              await resultref(item.child.id, item.packet, rec.id)
+
+              const saved = await SessionRuns.get(item.child.id, item.run)
+              expect(saved?.summary).toBe(entry.expected)
+              expect(saved?.summary_source).toBe(entry.source)
+              expect(saved?.fallback).toBe(entry.fallback)
+            }
+          },
+        }),
+    })
+  })
+
+  test("does not substitute action result metadata when result text is missing", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_empty_action"),
+          fn: async () => {
+            const item = await delegation("run_empty_action", "Implement backend")
+            const rec = await SessionResult.put({
+              carrier: "action_result",
+              status: "completed",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: "backend",
+              summary: "Do not expose this summary",
+              raw: { input: { action_id: "backend", status: "success", result: 42 } },
+            })
+            await resultref(item.child.id, item.packet, rec.id)
+
+            const saved = await SessionRuns.get(item.child.id, item.run)
+            expect(saved?.status).toBe("completed")
+            expect(saved?.summary).toBeUndefined()
+            expect(saved?.summary_source).toBeUndefined()
+          },
+        }),
+    })
+  })
+
+  test("maps canonical terminal statuses onto delegated runs", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_status"),
+          fn: async () => {
+            const cases = [
+              ["terminal_reply", "blocked", false],
+              ["failed", "failed", false],
+              ["blocked", "blocked", false],
+              ["waiting_user", "blocked", false],
+              ["partial", "completed", true],
+            ] as const
+            for (const [status, expected, satisfying] of cases) {
+              const item = await delegation(`run_${status}`, `Plan for ${status}`)
+              const rec = await SessionResult.put({
+                carrier: "plain_text_result",
+                status,
+                satisfying,
+                sessionID: item.child.id,
+                parentSessionID: item.parent.id,
+                childSessionID: item.child.id,
+                runID: item.run,
+                actionID: "backend",
+                raw: { output: `${status} output` },
+              })
+              await resultref(item.child.id, item.packet, rec.id)
+              expect((await SessionRuns.get(item.child.id, item.run))?.status).toBe(expected)
+            }
+          },
+        }),
+    })
+  })
+
+  test("keeps the delegated run separate from an internal protocol run", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_internal"),
+          fn: async () => {
+            const item = await delegation("run_parent", "Implement backend")
+            const rec = await SessionResult.put({
+              carrier: "fallback_summary",
+              status: "completed",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: "backend",
+              raw: { output: "Overall delegated result" },
+            })
+            await resultref(item.child.id, item.packet, rec.id)
+            const internal = result("run_internal")
+            await Storage.write(["session_protocol_run", item.child.id, internal.run_id], internal)
+
+            const listed = await SessionRuns.list(item.child.id)
+            const outer = listed.find((run) => run.run_id === item.run)
+            const inner = listed.find((run) => run.run_id === internal.run_id)
+            expect(listed).toHaveLength(2)
+            expect(outer?.kind).toBe("delegation")
+            expect(outer?.summary).toBe("Overall delegated result")
+            expect(inner?.kind).toBe("protocol")
+            expect(inner?.summary).toBeUndefined()
+            expect(await SessionRuns.get(item.child.id, item.run)).toEqual(outer)
+            expect(await SessionRuns.get(item.child.id, internal.run_id)).toEqual(inner)
+          },
+        }),
+    })
+  })
+
+  test("rejects mismatched canonical result identities without leaking summaries", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_result_security"),
+          fn: async () => {
+            const fields = ["missing", "parent", "child", "run", "action"] as const
+            for (const field of fields) {
+              const item = await delegation(`run_result_${field}`, `Private plan ${field}`)
+              if (field === "missing") {
+                await resultref(item.child.id, item.packet, "result_missing")
+              } else {
+                const other = await Session.create({})
+                const rec = await SessionResult.put({
+                  carrier: "fallback_summary",
+                  status: "completed",
+                  satisfying: true,
+                  sessionID: item.child.id,
+                  parentSessionID: field === "parent" ? other.id : item.parent.id,
+                  childSessionID: field === "child" ? other.id : item.child.id,
+                  runID: field === "run" ? "run_other" : item.run,
+                  actionID: field === "action" ? "other" : "backend",
+                  raw: { output: `Secret ${field}` },
+                })
+                await resultref(item.child.id, item.packet, rec.id)
+              }
+              const saved = await SessionRuns.get(item.child.id, item.run)
+              expect(saved?.status).toBe("running")
+              expect(saved?.summary).toBeUndefined()
+            }
+          },
+        }),
+    })
+  })
+
+  test("falls back to the delegation title when assignment associations do not match", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_assignment_security"),
+          fn: async () => {
+            const fields = ["session_id", "source_session_id", "source_run_id", "source_action_id"] as const
+            for (const field of fields) {
+              const item = await delegation(`run_assignment_${field}`, `Secret assignment plan ${field}`)
+              const assignment = await SessionAssignment.bySource({
+                sessionID: item.parent.id,
+                runID: item.run,
+                actionID: "backend",
+              })
+              Database.use((db) =>
+                db
+                  .update(AssignmentTable)
+                  .set({
+                    [field]: field === "session_id" ? item.parent.id : field === "source_session_id" ? item.child.id : "other",
+                  })
+                  .where(eq(AssignmentTable.id, assignment!.id))
+                  .run(),
+              )
+
+              const saved = await SessionRuns.get(item.child.id, item.run)
+              expect(saved?.task).toBe("Backend task")
+              expect(saved?.task).not.toContain("Secret assignment plan")
+            }
+          },
+        }),
+    })
+  })
+
+  test("does not project ordinary or malformed delegation sessions", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_packet_security"),
+          fn: async () => {
+            const ordinary = await Session.create({})
+            expect(await SessionRuns.list(ordinary.id)).toEqual([])
+
+            const fields = ["type", "parent_session_id", "child_session_id"] as const
+            for (const field of fields) {
+              const item = await delegation(`run_packet_${field}`, `Plan ${field}`)
+              await Session.setDslContext({
+                sessionID: item.child.id,
+                dsl_context: {
+                  protocol: {
+                    delegation: {
+                      ...item.packet,
+                      [field]: field === "type" ? "agent.delegation.fake" : ordinary.id,
+                    },
+                  },
+                },
+              })
+              expect(await SessionRuns.list(item.child.id)).toEqual([])
+              expect(await SessionRuns.get(item.child.id, item.run)).toBeUndefined()
+            }
+          },
+        }),
+    })
+  })
+
   test("maps executor summary to execution summary without exposing a model outcome", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -642,4 +1024,53 @@ async function reply(
     metadata: { kind: "protocol_response" },
   })
   return { assistant, part, user }
+}
+
+async function delegation(run: string, plan: string) {
+  const parent = await Session.create({ agent: "protocol-runner" })
+  const child = await Session.create({ parentID: parent.id, agent: "backend" })
+  const action = AgentProtocol.Action.parse({
+    id: "backend",
+    title: "Backend task",
+    operation: "agent",
+    executor: { type: "agent", target: "backend" },
+    input: { prompt: "Implement backend" },
+    result_policy: "structured",
+  })
+  const message = MessageID.ascending()
+  const packet = {
+    type: "agent.delegation.assignment",
+    version: "1",
+    run_id: run,
+    action_id: action.id,
+    action_title: action.title,
+    parent_session_id: parent.id,
+    parent_message_id: message,
+    parent_agent: "protocol-runner",
+    child_session_id: child.id,
+    agent: "backend",
+    result_policy: "structured",
+    result_tool: "ActionResult",
+    created_at: Date.now(),
+  }
+  await SessionAssignment.delegate({
+    action,
+    childID: child.id,
+    messageID: message,
+    plan,
+    runID: run,
+    sessionID: parent.id,
+  })
+  await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: packet } } })
+  return { parent, child, action, packet, run }
+}
+
+async function resultref(child: SessionID, packet: Awaited<ReturnType<typeof delegation>>["packet"], id: string) {
+  await Session.setDslContext({
+    sessionID: child,
+    dsl_context: {
+      protocol: { delegation: packet },
+      result: { result_id: id },
+    },
+  })
 }

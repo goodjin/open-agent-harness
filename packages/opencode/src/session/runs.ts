@@ -6,7 +6,9 @@ import { Instance } from "@/project/instance"
 import { AgentProtocol } from "@/protocol/schema"
 import { Storage } from "@/storage/storage"
 import { Session } from "."
+import { SessionAssignment } from "./assignment"
 import { MessageV2 } from "./message-v2"
+import { SessionResult } from "./result"
 import { SessionID } from "./schema"
 import { SessionTurn } from "./turn"
 
@@ -37,6 +39,17 @@ export namespace SessionRuns {
   export type Content = z.infer<typeof Content>
 
   const Source = z.enum(["protocol", "action_result", "fallback_summary"])
+
+  const Delegation = z
+    .object({
+      type: z.literal("agent.delegation.assignment"),
+      run_id: z.string().min(1),
+      action_id: z.string().min(1),
+      action_title: z.string(),
+      parent_session_id: z.string().min(1),
+      child_session_id: z.string().min(1),
+    })
+    .passthrough()
 
   const Outcome = z
     .object({
@@ -78,8 +91,10 @@ export namespace SessionRuns {
     const runs = await Promise.all(
       keys.map((key) => Storage.read<AgentProtocol.Result>(key).then(AgentProtocol.Result.parse)),
     )
-    const projected = await projections(sessionID)
-    if (!runs.length && !projected.length) return []
+    const session = await Session.get(sessionID)
+    const projected = projections(session)
+    const delegated = await delegation(session)
+    if (!runs.length && !projected.length && !delegated) return []
     const ids = new Set([...runs.map((run) => run.run_id), ...projected.map((run) => run.runID)])
     const outcomes = new Map(
       (
@@ -100,15 +115,19 @@ export namespace SessionRuns {
       if (out.has(run.runID)) continue
       out.set(run.runID, await map(sessionID, projection(run), outcomes.get(run.runID), run, old.get(run.runID)))
     }
+    if (delegated) out.set(delegated.run_id, delegated)
     return [...out.values()].sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id))
   }
 
   export async function get(sessionID: SessionID, runID: string) {
     if (!ID.safeParse(runID).success) return
+    const session = await Session.get(sessionID)
+    const delegated = await delegation(session, runID)
+    if (delegated?.run_id === runID) return delegated
     const stored = await Storage.read<AgentProtocol.Result>(["session_protocol_run", sessionID, runID]).catch(
       () => undefined,
     )
-    const projected = (await projections(sessionID)).find((item) => item.runID === runID)
+    const projected = projections(session).find((item) => item.runID === runID)
     if (!stored && !projected) return
     const outcome = await readoutcome(sessionID, runID)
     const old = outcome ? undefined : (await history(sessionID, runID)).get(runID)
@@ -123,7 +142,7 @@ export namespace SessionRuns {
       input.sessionID,
       input.runID,
     ]).catch(() => undefined)
-    const projected = (await projections(input.sessionID)).some((item) => item.runID === input.runID)
+    const projected = projections(await Session.get(input.sessionID)).some((item) => item.runID === input.runID)
     if (!stored && !projected) throw new Error(`Protocol run not found: ${input.runID}`)
     const key = ["session_protocol_run_outcome", input.sessionID, input.runID]
     const outcome = Outcome.parse({
@@ -253,14 +272,99 @@ export namespace SessionRuns {
     return body
   }
 
-  async function projections(sessionID: SessionID) {
-    const session = await Session.get(sessionID)
+  function projections(session: Session.Info) {
     const protocol = record(session.dsl_context?.protocol)
     const runs = Array.isArray(protocol.runs) ? protocol.runs : []
     return runs.flatMap((item) => {
       const parsed = Projection.safeParse(item)
       return parsed.success ? [parsed.data] : []
     })
+  }
+
+  async function delegation(session: Session.Info, runID?: string) {
+    if (!session.parentID) return
+    const parsed = Delegation.safeParse(record(session.dsl_context?.protocol).delegation)
+    if (!parsed.success) return
+    const item = parsed.data
+    if (item.child_session_id !== session.id || item.parent_session_id !== session.parentID) return
+    if (runID && item.run_id !== runID) return
+    const assignment = await SessionAssignment.bySource({
+      sessionID: session.parentID,
+      runID: item.run_id,
+      actionID: item.action_id,
+    })
+    const valid =
+      assignment?.session_id === session.id &&
+      assignment.source_session_id === session.parentID &&
+      assignment.source_run_id === item.run_id &&
+      assignment.source_action_id === item.action_id
+    const content = valid ? record(await SessionAssignment.content(assignment.id)) : {}
+    const plan = typeof content.plan === "string" ? content.plan : item.action_title
+    const ref = record(session.dsl_context?.result).result_id
+    const result = typeof ref === "string" ? await SessionResult.parse(ref) : undefined
+    const trusted =
+      result?.parent_session_id === session.parentID &&
+      result.child_session_id === session.id &&
+      result.session_id === session.id &&
+      result.run_id === item.run_id &&
+      result.action_id === item.action_id
+        ? result
+        : undefined
+    const summary = trusted ? text(summaryof(trusted)) : undefined
+    const status = trusted ? runstatus(trusted.status) : "running"
+    const completed = trusted?.completed_at ?? trusted?.created_at
+    return Run.parse({
+      type: "agent.protocol.result",
+      version: "1",
+      kind: "delegation",
+      run_id: item.run_id,
+      action_id: item.action_id,
+      status,
+      title: item.action_title || undefined,
+      task: plan,
+      summary,
+      summary_source: summary ? source(trusted?.carrier) : undefined,
+      fallback: trusted?.carrier === "fallback_summary",
+      actions: [],
+      documents: [],
+      time: {
+        started: assignment?.time_created ?? trusted?.created_at ?? 0,
+        ...(trusted && completed !== undefined ? { completed } : {}),
+      },
+      metrics: {
+        actions: 0,
+        internal_tool_calls: 0,
+        direct_model_tool_calls: 0,
+        model_visible_bytes: 0,
+        raw_output_bytes: 0,
+        duration_ms: 0,
+      },
+    })
+  }
+
+  function summaryof(result: SessionResult.Parsed) {
+    if (result.carrier === "action_result") return result.action_result?.result
+    if (result.carrier === "fallback_summary") return result.output ?? result.summary
+    if (result.carrier === "agent_protocol_output")
+      return result.protocol_result?.message ?? result.protocol_result?.summary ?? result.output ?? result.summary
+    return result.output ?? result.summary
+  }
+
+  function text(input: unknown) {
+    if (typeof input !== "string" || !input.trim()) return
+    return input.trim()
+  }
+
+  function source(carrier: SessionResult.Carrier | undefined): z.infer<typeof Source> | undefined {
+    if (carrier === "action_result") return "action_result"
+    if (carrier === "fallback_summary") return "fallback_summary"
+    if (carrier === "agent_protocol_output") return "protocol"
+  }
+
+  function runstatus(status: SessionResult.Status): Run["status"] {
+    if (status === "failed") return "failed"
+    if (status === "completed" || status === "partial") return "completed"
+    return "blocked"
   }
 
   function record(input: unknown): Record<string, unknown> {
