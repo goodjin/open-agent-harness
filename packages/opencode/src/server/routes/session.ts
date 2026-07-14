@@ -52,7 +52,9 @@ async function restorable(sessionID: SessionID, status: SessionStatus.Info) {
   if (!msg || msg.info.role !== "assistant" || !msg.info.error) return false
   const text = msg.parts.some((part) => part.type === "text" && part.text.trim().length > 0)
   if (text) return false
-  const tools = msg.parts.some((part) => part.type === "tool" && (part.state.status === "completed" || part.state.status === "error"))
+  const tools = msg.parts.some(
+    (part) => part.type === "tool" && (part.state.status === "completed" || part.state.status === "error"),
+  )
   return !tools
 }
 
@@ -134,15 +136,16 @@ function slim(session: Session.Info): Session.Info {
 
 function view(message: MessageV2.WithParts): MessageV2.WithParts {
   return {
-    info: message.info.role === "user" && message.info.summary?.diffs
-      ? {
-          ...message.info,
-          summary: {
-            ...message.info.summary,
-            diffs: SessionSummary.slim(message.info.summary.diffs),
-          },
-        }
-      : message.info,
+    info:
+      message.info.role === "user" && message.info.summary?.diffs
+        ? {
+            ...message.info,
+            summary: {
+              ...message.info.summary,
+              diffs: SessionSummary.slim(message.info.summary.diffs),
+            },
+          }
+        : message.info,
     parts: message.parts.map(part),
   }
 }
@@ -298,10 +301,13 @@ export const SessionRoutes = lazy(() =>
           ...errors(400, 403, 404),
         },
       }),
-      validator("json", z.object({
-        directory: z.string().optional(),
-        ids: SessionID.zod.array().min(1),
-      })),
+      validator(
+        "json",
+        z.object({
+          directory: z.string().optional(),
+          ids: SessionID.zod.array().min(1),
+        }),
+      ),
       async (c) => {
         const body = c.req.valid("json")
         const sessions = await (body.directory
@@ -434,7 +440,15 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const body = c.req.valid("json")
         const aborted = await scoped(body.directory, async () => {
-          const done = new Set(["completed", "terminal_reply", "user_completed", "archived", "failed", "error", "timeout"])
+          const done = new Set([
+            "completed",
+            "terminal_reply",
+            "user_completed",
+            "archived",
+            "failed",
+            "error",
+            "timeout",
+          ])
           const result = await Promise.all(
             body.ids.map(async (id) => {
               await Session.get(id)
@@ -461,7 +475,13 @@ export const SessionRoutes = lazy(() =>
             description: "Resumed sessions",
             content: {
               "application/json": {
-                schema: resolver(z.object({ resumed: z.number() })),
+                schema: resolver(
+                  z.object({
+                    resumed: z.number(),
+                    restored: z.number().optional(),
+                    messaged: z.number().optional(),
+                  }),
+                ),
               },
             },
           },
@@ -474,7 +494,7 @@ export const SessionRoutes = lazy(() =>
           source: CommandSource.optional(),
           source_session: SessionID.zod.optional(),
           include_completed: z.boolean().optional(),
-          mode: z.enum(["restore", "message"]).optional(),
+          mode: z.enum(["restore", "message", "auto"]).optional(),
           reason: z.string().optional(),
           message: z.string().optional(),
         }),
@@ -483,30 +503,24 @@ export const SessionRoutes = lazy(() =>
         const body = c.req.valid("json")
         const mode = body.mode ?? "restore"
         const done = new Set(["completed", "terminal_reply", "user_completed"])
-        const restore = new Set([
-          "interrupted",
-          "queued",
-          "rate_limited",
-          "retry",
-          "running",
-          "starting",
-        ])
+        const restore = new Set(["interrupted", "queued", "rate_limited", "retry", "running", "starting"])
         const resumed = await scoped(body.directory, async () => {
           const result = await Promise.all(
             body.ids.map(async (id) => {
               const info = await Session.get(id)
               const status = SessionStatus.get(id)
-              if (mode === "restore") {
-                if (!restore.has(status.type) && !(await restorable(id, status))) return false
+              const recoverable = restore.has(status.type) || (await restorable(id, status))
+              if ((mode === "restore" || mode === "auto") && recoverable) {
                 SessionStatus.set(id, { type: "running" })
                 void SessionPrompt.loop({ sessionID: id }).catch((err) => {
                   log.warn("session tree restore failed", { sessionID: id, err })
                   SessionStatus.set(id, { type: "error", message: err instanceof Error ? err.message : String(err) })
                 })
-                return true
+                return "restore" as const
               }
+              if (mode === "restore") return false
               if (status.type === "archived") return false
-              if (!body.include_completed && done.has(status.type)) return false
+              if (mode === "message" && !body.include_completed && done.has(status.type)) return false
               const meta = {
                 command: {
                   source: body.source ?? "user",
@@ -523,16 +537,19 @@ export const SessionRoutes = lazy(() =>
                 parts: [
                   {
                     type: "text",
-                    text: command({
-                      source: body.source ?? "user",
-                      source_session: body.source_session,
-                      target_session: id,
-                      intent: "resume_aborted_session",
-                      reason: body.reason,
-                      expected_action:
-                        "Continue from the last recoverable state, report blockers if recovery is not possible.",
-                      message: body.message,
-                    }),
+                    text:
+                      mode === "auto"
+                        ? "继续"
+                        : command({
+                            source: body.source ?? "user",
+                            source_session: body.source_session,
+                            target_session: id,
+                            intent: "resume_aborted_session",
+                            reason: body.reason,
+                            expected_action:
+                              "Continue from the last recoverable state, report blockers if recovery is not possible.",
+                            message: body.message,
+                          }),
                   },
                 ],
               }).catch((err) => {
@@ -540,12 +557,15 @@ export const SessionRoutes = lazy(() =>
                 SessionStatus.set(id, { type: "error", message: err instanceof Error ? err.message : String(err) })
               })
               SessionStatus.set(id, { type: "running" })
-              return true
+              return "message" as const
             }),
           )
-          return result.filter(Boolean).length
+          return result
         })
-        return c.json({ resumed })
+        const restored = resumed.filter((item) => item === "restore").length
+        const messaged = resumed.filter((item) => item === "message").length
+        if (mode === "auto") return c.json({ resumed: restored + messaged, restored, messaged })
+        return c.json({ resumed: restored + messaged })
       },
     )
     .get(
@@ -583,7 +603,8 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Mark session as user completed",
         tags: ["Session"],
-        description: "Mark a waiting, interrupted, failed, or otherwise unfinished session as completed by user decision.",
+        description:
+          "Mark a waiting, interrupted, failed, or otherwise unfinished session as completed by user decision.",
         operationId: "session.status.userCompleted",
         responses: {
           200: {
@@ -844,7 +865,8 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Preview delegated child fallback result",
         tags: ["Session"],
-        description: "Return the latest assistant text from a delegated child session for user-confirmed fallback handoff.",
+        description:
+          "Return the latest assistant text from a delegated child session for user-confirmed fallback handoff.",
         operationId: "session.delegations.fallbackPreview",
         responses: {
           200: {
@@ -921,7 +943,8 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Cancel delegated child sessions",
         tags: ["Session"],
-        description: "Cancel pending delegated child sessions for a parent run and submit their statuses back to the parent.",
+        description:
+          "Cancel pending delegated child sessions for a parent run and submit their statuses back to the parent.",
         operationId: "session.delegations.cancel",
         responses: {
           200: {
@@ -1799,11 +1822,14 @@ export const SessionRoutes = lazy(() =>
         ) {
           await Session.setModel({ sessionID, model: body.model, confirm: body.confirm })
         }
-        c.status(204)
-        c.header("Content-Type", "application/json")
-        return stream(c, async () => {
-          SessionPrompt.prompt({ ...body, sessionID })
-        })
+        const msg = await SessionPrompt.enqueue({ ...body, sessionID })
+        if (body.noReply !== true) {
+          void SessionPrompt.loop({ sessionID, messageID: msg.info.id }).catch((err) => {
+            log.warn("async session prompt failed", { sessionID, err })
+            SessionStatus.set(sessionID, { type: "error", message: err instanceof Error ? err.message : String(err) })
+          })
+        }
+        return c.body(null, 204)
       },
     )
     .post(

@@ -5101,7 +5101,7 @@ export type SessionTreeResumeData = {
     source?: "user" | "parent_session" | "runtime"
     source_session?: string
     include_completed?: boolean
-    mode?: "restore" | "message"
+    mode?: "restore" | "message" | "auto"
     reason?: string
     message?: string
   }
@@ -5135,6 +5135,8 @@ export type SessionTreeResumeResponses = {
    */
   200: {
     resumed: number
+    restored?: number
+    messaged?: number
   }
 }
 

@@ -18,6 +18,7 @@ import { useLanguage } from "@/context/language"
 import { agentVisible } from "@/utils/agent"
 import { formatServerError } from "@/utils/server-errors"
 import { parseConflict, updateBody, type Conflict } from "./session-tree-manager-helpers"
+import { automaticResumeMode } from "./session/helpers"
 
 type Status = { type: string; message?: string }
 
@@ -54,7 +55,7 @@ type Row = Node & {
 }
 
 type ModelState = ReturnType<typeof useLocal>["model"]
-type ResumeMode = "restore" | "message"
+type ResumeMode = "auto" | "message"
 
 const resume = new Set(["interrupted"])
 const done = new Set(["completed", "terminal_reply"])
@@ -161,7 +162,7 @@ export default function SessionTreeManager() {
     statusDraft: allStatus,
     status: allStatus,
     includeDone: false,
-    resumeMode: "restore" as ResumeMode,
+    resumeMode: automaticResumeMode() as ResumeMode,
     resumeMessage: "",
     agentConflict: undefined as AgentConflict | undefined,
     modelConflict: undefined as ModelConflict | undefined,
@@ -403,7 +404,7 @@ export default function SessionTreeManager() {
     })
   }
   const cont = () => {
-    setStore("resumeMode", "restore")
+    setStore("resumeMode", automaticResumeMode())
     setStore("resumeMessage", language.t("sessionTree.resumeDialog.defaultMessage"))
     dialog.show(() => <DialogResume />)
   }
@@ -504,12 +505,12 @@ export default function SessionTreeManager() {
             <button
               class="text-left rounded-md border border-border-weak-base px-3 py-2 hover:bg-surface-raised-base-hover"
               classList={{
-                "border-border-focus-base bg-surface-raised-base-active": store.resumeMode === "restore",
+                "border-border-focus-base bg-surface-raised-base-active": store.resumeMode === "auto",
               }}
-              onClick={() => setStore("resumeMode", "restore")}
+              onClick={() => setStore("resumeMode", automaticResumeMode())}
             >
               <div class="flex items-center gap-2 text-13-medium text-text-strong">
-                <input type="radio" checked={store.resumeMode === "restore"} readOnly />
+                <input type="radio" checked={store.resumeMode === "auto"} readOnly />
                 {language.t("sessionTree.resumeDialog.restore")}
               </div>
               <div class="mt-1 pl-6 text-12-regular text-text-weak">

@@ -24,6 +24,8 @@ type TabsInput = {
 
 export const getSessionKey = (dir: string | undefined, id: string | undefined) => `${dir ?? ""}${id ? `/${id}` : ""}`
 
+export const automaticResumeMode = () => "auto" as const
+
 export const isSessionBusy = (status: SessionStatus | undefined, _messages?: Message[]) => {
   const type = status?.type ?? "idle"
   return type === "running" || type === "retry" || type === "rate_limited" || type === "waiting_permission" || type === "waiting_user" || type === "waiting_child"
@@ -229,7 +231,17 @@ export const deriveSessionLiveStatus = (input: {
   if (input.status?.type === "starting") return liveStatus("请求发送中", "正在准备模型请求。", "info", live())
   if (status !== "running") return undefined
 
-  if (turn(user)?.status === "done") return undefined
+  const state = turn(user)
+  if (state?.status === "done") return undefined
+  if (state?.status === "queued") {
+    const time = record(state.time) ? num(state.time.queued) : undefined
+    return liveStatus(
+      "请求排队中",
+      "请求已持久化，等待当前运行结束后消费。",
+      "info",
+      metric([elapsed(time, undefined, now)]),
+    )
+  }
 
   const msg = pendingAssistant(input.messages)
   if (msg) {

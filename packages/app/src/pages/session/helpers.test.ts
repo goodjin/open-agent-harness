@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createMemo, createRoot } from "solid-js"
 import { createStore } from "solid-js/store"
 import {
+  automaticResumeMode,
   createOpenReviewFile,
   createOpenSessionFileTab,
   createSessionTabs,
@@ -44,6 +45,10 @@ describe("isSessionBusy", () => {
 })
 
 describe("resumePrompt", () => {
+  test("uses automatic fallback for continue actions", () => {
+    expect(automaticResumeMode()).toBe("auto")
+  })
+
   test("does not show while bootstrap can auto continue", () => {
     expect(resumePrompt({ type: "running" })).toBeUndefined()
     expect(resumePrompt({ type: "queued" })).toBeUndefined()
@@ -340,6 +345,33 @@ describe("deriveSessionLiveStatus", () => {
     })
 
     expect(deriveSessionLiveStatus({ status: { type: "completed" }, messages: [user("u1")], parts: {} })).toBeUndefined()
+  })
+
+  test("keeps a persisted queued turn distinct from a started request", () => {
+    expect(
+      deriveSessionLiveStatus({
+        status: { type: "running" },
+        now: 5_000,
+        messages: [
+          {
+            ...user("u1", 1_000),
+            metadata: {
+              turn: {
+                kind: "user",
+                status: "queued",
+                time: { queued: 1_000 },
+              },
+            },
+          } as Message,
+        ],
+        parts: {
+          u1: [{ id: "p1", sessionID: "ses_1", messageID: "u1", type: "text", text: "hello" }],
+        },
+      }),
+    ).toMatchObject({
+      label: "请求排队中",
+      description: "请求已持久化，等待当前运行结束后消费。",
+    })
   })
 
   test("adds elapsed duration for non-output live states when turn timing exists", () => {

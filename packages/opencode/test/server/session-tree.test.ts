@@ -233,6 +233,57 @@ describe("Session tree projection", () => {
     })
   })
 
+  test("auto resume sends a continue message when no run can be restored", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "tree-auto-continue" })
+            SessionStatus.set(session.id, { type: "aborted", message: "bulk stop" })
+            const app = Server.Default()
+            const loop = spyOn(SessionPrompt, "loop")
+            const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+              input: Parameters<typeof SessionPrompt.prompt>[0],
+            ) => {
+              return {
+                info: {
+                  id: MessageID.ascending(),
+                  sessionID: input.sessionID,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "build",
+                  model: { providerID: "test", modelID: "test" },
+                },
+                parts: [],
+              }
+            }) as never)
+
+            try {
+              const res = await app.request("/session/tree/resume", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: [session.id], mode: "auto" }),
+              })
+              expect(res.status).toBe(200)
+              expect(await res.json()).toEqual({ resumed: 1, restored: 0, messaged: 1 })
+              expect(loop).not.toHaveBeenCalled()
+              expect(prompt).toHaveBeenCalledTimes(1)
+              expect(prompt.mock.calls[0]?.[0]).toMatchObject({
+                sessionID: session.id,
+                parts: [{ type: "text", text: "继续" }],
+              })
+            } finally {
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(session.id)
+            }
+          },
+        }),
+    })
+  })
+
   test("restores recoverable transport stopped sessions without a resume message", async () => {
     await Instance.provide({
       directory: root,
@@ -740,6 +791,55 @@ describe("Session tree projection", () => {
             }
 
             await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("persists async prompts before accepting and then wakes the queue", async () => {
+    await Instance.provide({
+      directory: root,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({ title: "async-persist-first" })
+            const id = MessageID.ascending()
+            const enqueue = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => ({
+              info: {
+                id,
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "build",
+                model: { providerID: "test", modelID: "test" },
+              },
+              parts: [],
+            })) as never)
+            const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+            const prompt = spyOn(SessionPrompt, "prompt")
+
+            try {
+              const res = await Server.Default().request(`/session/${session.id}/prompt_async`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  messageID: id,
+                  agent: "build",
+                  parts: [{ type: "text", text: "queued" }],
+                }),
+              })
+
+              expect(res.status).toBe(204)
+              expect(enqueue).toHaveBeenCalledTimes(1)
+              expect(loop).toHaveBeenCalledWith({ sessionID: session.id, messageID: id })
+              expect(prompt).not.toHaveBeenCalled()
+            } finally {
+              enqueue.mockRestore()
+              loop.mockRestore()
+              prompt.mockRestore()
+              await Session.remove(session.id)
+            }
           },
         }),
     })

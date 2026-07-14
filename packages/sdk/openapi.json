@@ -2934,6 +2934,12 @@
                   "properties": {
                     "resumed": {
                       "type": "number"
+                    },
+                    "restored": {
+                      "type": "number"
+                    },
+                    "messaged": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -3010,7 +3016,8 @@
                     "type": "string",
                     "enum": [
                       "restore",
-                      "message"
+                      "message",
+                      "auto"
                     ]
                   },
                   "reason": {

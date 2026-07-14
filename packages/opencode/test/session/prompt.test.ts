@@ -11,6 +11,7 @@ import { SessionLog } from "../../src/session/log"
 import { LLM } from "../../src/session/llm"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionRevert } from "../../src/session/revert"
+import { SessionSummary } from "../../src/session/summary"
 import { MessageID, PartID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { SessionTurn } from "../../src/session/turn"
@@ -29,6 +30,8 @@ afterEach(() => {
   Provider.getModel.mockRestore?.()
   // @ts-expect-error Bun mock restore is present on spies
   SessionRevert.cleanup.mockRestore?.()
+  // @ts-expect-error Bun mock restore is present on spies
+  SessionSummary.summarize.mockRestore?.()
 })
 
 async function agent(dir: string, id: string, cfg: Record<string, unknown> = {}) {
@@ -417,6 +420,8 @@ describe("session.prompt missing file", () => {
             const msgs = await MessageV2.filterCompacted(MessageV2.stream(session.id))
             expect(msgs.filter((item) => item.info.role === "assistant" && item.info.parentID === old)).toHaveLength(1)
 
+            SessionPrompt.cancel(session.id)
+            await Bun.sleep(100)
             await Session.remove(session.id)
           },
         }),
@@ -552,6 +557,8 @@ describe("session.prompt missing file", () => {
             expect(turn?.reason).toBe("waiting_child")
             expect(turn?.assistant_id).toBe(stale)
 
+            SessionPrompt.cancel(session.id)
+            await Bun.sleep(100)
             await Session.remove(session.id)
           },
         }),
@@ -850,7 +857,7 @@ describe("session.prompt missing file", () => {
     })
   })
 
-  test("does not clean reverted history when prompt is queued behind a running turn", async () => {
+  test("does not clean reverted history when noReply context is added behind a running turn", async () => {
     spyOn(SessionRevert, "cleanup")
 
     await using tmp = await tmpdir({ git: true })
@@ -879,9 +886,203 @@ describe("session.prompt missing file", () => {
             expect(SessionRevert.cleanup).not.toHaveBeenCalled()
             expect(second.info.role).toBe("user")
             if (second.info.role !== "user") throw new Error("expected user message")
-            expect(second.info.metadata?.turn?.status).toBe("queued")
+            expect(second.info.metadata?.turn).toBeUndefined()
 
             await first
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+})
+
+describe("session.prompt durable queue", () => {
+  test("enqueue persists a queued turn without starting a runner", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const msg = await SessionPrompt.enqueue({
+              sessionID: session.id,
+              agent: "build",
+              parts: [{ type: "text", text: "queued" }],
+            })
+            const stored = await MessageV2.get({ sessionID: session.id, messageID: msg.info.id })
+
+            expect(SessionPrompt.busy(session.id)).toBe(false)
+            expect(SessionTurn.get(stored.info)?.status).toBe("queued")
+            expect(stored.parts).toHaveLength(1)
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("inserts a complete queued message as one durable unit", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const id = MessageID.ascending()
+            await Session.insert({
+              info: {
+                id,
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "build",
+                model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+                metadata: {
+                  turn: { kind: "user", status: "queued", time: { queued: Date.now() } },
+                },
+              },
+              parts: [
+                {
+                  id: PartID.ascending(),
+                  sessionID: session.id,
+                  messageID: id,
+                  type: "text",
+                  text: "queued",
+                },
+              ],
+            })
+
+            const stored = await MessageV2.get({ sessionID: session.id, messageID: id })
+            expect(SessionTurn.get(stored.info)?.status).toBe("queued")
+            expect(stored.parts).toHaveLength(1)
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("does not recreate a queued message when cancellation wins the claim race", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const msg = await SessionPrompt.enqueue({
+              sessionID: session.id,
+              agent: "build",
+              parts: [{ type: "text", text: "cancel" }],
+            })
+            if (msg.info.role !== "user") throw new Error("expected user message")
+            await SessionPrompt.cancelQueuedMessage({ sessionID: session.id, messageID: msg.info.id })
+
+            expect(await SessionTurn.run({ user: msg.info })).toBeUndefined()
+            await expect(MessageV2.get({ sessionID: session.id, messageID: msg.info.id })).rejects.toThrow()
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("noReply persists context without creating a queue turn", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const msg = await SessionPrompt.prompt({
+              sessionID: session.id,
+              agent: "build",
+              noReply: true,
+              parts: [{ type: "text", text: "context" }],
+            })
+
+            expect(SessionTurn.get(msg.info)).toBeUndefined()
+            expect(SessionPrompt.busy(session.id)).toBe(false)
+            await Session.remove(session.id)
+          },
+        }),
+    })
+  })
+
+  test("finishing a run consumes the next persisted turn without a callback", async () => {
+    let calls = 0
+    spyOn(SessionSummary, "summarize").mockImplementation((async () => undefined) as never)
+    spyOn(Provider, "getModel").mockImplementation(async (providerID, modelID) => {
+      return {
+        id: modelID,
+        providerID,
+        api: { id: "openai", npm: "" },
+        limit: { context: 100_000, output: 32_000 },
+      } as Provider.Model
+    })
+    spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" as const }
+          yield { type: "start-step" as const }
+          yield { type: "text-start" as const }
+          yield { type: "text-delta" as const, text: "reply" }
+          yield { type: "text-end" as const }
+          yield {
+            type: "finish-step" as const,
+            finishReason: "stop" as const,
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" as const }
+        })(),
+      } as unknown as Awaited<ReturnType<typeof LLM.stream>>
+    })
+
+    await using tmp = await tmpdir({ git: true })
+    await agent(tmp.path, "build")
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("test-workspace"),
+          fn: async () => {
+            const session = await Session.create({})
+            const first = SessionPrompt.shell({
+              sessionID: session.id,
+              agent: "build",
+              command: "sleep 1",
+            })
+            for (let i = 0; i < 100 && !SessionPrompt.busy(session.id); i++) await Bun.sleep(5)
+            const second = await SessionPrompt.enqueue({
+              sessionID: session.id,
+              agent: "build",
+              parts: [{ type: "text", text: "second" }],
+            })
+            const queued = await MessageV2.get({ sessionID: session.id, messageID: second.info.id })
+            expect(SessionTurn.get(queued.info)?.status).toBe("queued")
+            expect(SessionPrompt.busy(session.id)).toBe(true)
+
+            await first
+            let stored = await MessageV2.get({ sessionID: session.id, messageID: second.info.id })
+            for (let i = 0; i < 100 && SessionTurn.get(stored.info)?.status !== "done"; i++) {
+              await Bun.sleep(5)
+              stored = await MessageV2.get({ sessionID: session.id, messageID: second.info.id })
+            }
+
+            expect(calls).toBeGreaterThan(0)
+            expect(SessionTurn.get(stored.info)?.status).toBe("done")
+            SessionPrompt.cancel(session.id)
+            await Bun.sleep(20)
             await Session.remove(session.id)
           },
         }),

@@ -657,7 +657,7 @@ export const dict = {
   "sessionTree.resumeDialog.messagePlaceholder": "Message to send to selected sessions",
   "sessionTree.resumeDialog.restore": "Restore interrupted sessions",
   "sessionTree.resumeDialog.restore.description":
-    "Default. Restart the existing session loop for interrupted sessions only, without adding a new user message.",
+    'Default. Restore the interrupted run when possible; otherwise automatically send "Continue".',
   "sessionTree.resumeDialog.title": "Resume sessions",
   "sessionTree.search": "Search",
   "sessionTree.selectAll": "Select all",

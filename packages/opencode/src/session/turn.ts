@@ -62,6 +62,18 @@ export namespace SessionTurn {
     return get(input)?.status === "done"
   }
 
+  export function next(messages: MessageV2.WithParts[]) {
+    return messages
+      .filter((item) => item.info.role === "user" && get(item.info)?.status === "queued")
+      .sort((a, b) => {
+        if (a.info.role !== "user" || b.info.role !== "user") return 0
+        const first = get(a.info)?.time.queued ?? a.info.time.created
+        const second = get(b.info)?.time.queued ?? b.info.time.created
+        if (first !== second) return first - second
+        return a.info.id.localeCompare(b.info.id)
+      })[0]
+  }
+
   export async function queue(input: { user: MessageV2.User; kind?: Kind }) {
     const turn = get(input.user)
     if (turn) return input.user
@@ -76,14 +88,24 @@ export namespace SessionTurn {
     const turn = get(input.user)
     if (turn?.status === "running") return input.user
     if (turn?.status === "done") return input.user
-    return write(input.user, {
+    const next = {
       ...(turn ?? { kind: kind(input.user), time: { queued: input.user.time.created } }),
       status: "running",
       time: {
         ...(turn?.time ?? { queued: input.user.time.created }),
         started: turn?.time.started ?? Date.now(),
       },
-    })
+    } satisfies Info
+    if (turn?.status === "queued") {
+      return Session.claim({
+        ...input.user,
+        metadata: {
+          ...input.user.metadata,
+          turn: next,
+        },
+      })
+    }
+    return write(input.user, next)
   }
 
   export async function finish(input: {

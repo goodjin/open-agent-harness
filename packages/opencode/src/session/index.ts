@@ -23,6 +23,7 @@ import {
   like,
   inArray,
   lt,
+  sql,
 } from "../storage/db"
 import type { SQL } from "../storage/db"
 import { SessionTable, MessageTable, PartTable } from "./session.sql"
@@ -843,6 +844,22 @@ export namespace Session {
     },
   )
 
+  export function queuedSessions() {
+    return Database.use((db) => {
+      const rows = db
+        .select({ id: MessageTable.id, session_id: MessageTable.session_id, data: MessageTable.data })
+        .from(MessageTable)
+        .all()
+      return new Set(
+        rows.flatMap((row) => {
+          const info = { id: row.id, sessionID: row.session_id, ...row.data } as MessageV2.Info
+          if (info.role !== "user" || SessionTurn.get(info)?.status !== "queued") return []
+          return [row.session_id]
+        }),
+      )
+    })
+  }
+
   export function* list(input?: {
     directory?: string
     roots?: boolean
@@ -1062,6 +1079,75 @@ export namespace Session {
     return msg
   })
 
+  export async function insert(input: { info: MessageV2.Info; parts: MessageV2.Part[] }) {
+    Database.transaction((db) => {
+      const info = input.info
+      const data = {
+        ...info,
+        id: undefined,
+        sessionID: undefined,
+      }
+      db.insert(MessageTable)
+        .values({
+          id: info.id,
+          session_id: info.sessionID,
+          time_created: info.time.created,
+          data,
+        })
+        .onConflictDoUpdate({ target: MessageTable.id, set: { data } })
+        .run()
+      input.parts.forEach((part) => {
+        const data = {
+          ...part,
+          id: undefined,
+          messageID: undefined,
+          sessionID: undefined,
+        }
+        db.insert(PartTable)
+          .values({
+            id: part.id,
+            message_id: part.messageID,
+            session_id: part.sessionID,
+            time_created: Date.now(),
+            data,
+          })
+          .onConflictDoUpdate({ target: PartTable.id, set: { data } })
+          .run()
+      })
+      Database.effect(() => {
+        Bus.publish(MessageV2.Event.Updated, { info })
+        input.parts.forEach((part) => Bus.publish(MessageV2.Event.PartUpdated, { part: structuredClone(part) }))
+      })
+    })
+    return input
+  }
+
+  export function claim(user: MessageV2.User) {
+    return Database.use((db) => {
+      const data = {
+        ...user,
+        id: undefined,
+        sessionID: undefined,
+      }
+      const rows = db
+        .update(MessageTable)
+        .set({ data })
+        .where(
+          and(
+            eq(MessageTable.id, user.id),
+            eq(MessageTable.session_id, user.sessionID),
+            sql`json_extract(${MessageTable.data}, '$.role') = 'user'`,
+            sql`json_extract(${MessageTable.data}, '$.metadata.turn.status') = 'queued'`,
+          ),
+        )
+        .returning({ id: MessageTable.id })
+        .all()
+      if (rows.length === 0) return
+      Database.effect(() => Bus.publish(MessageV2.Event.Updated, { info: user }))
+      return user
+    })
+  }
+
   export const removeMessage = fn(
     z.object({
       sessionID: SessionID.zod,
@@ -1090,14 +1176,34 @@ export namespace Session {
       messageID: MessageID.zod,
     }),
     async (input) => {
-      const msg = await MessageV2.get(input)
-      const turn = SessionTurn.get(msg.info)
-      if (msg.info.role !== "user" || turn?.status !== "queued") {
+      const removed = Database.use((db) => {
+        const result = db
+          .delete(MessageTable)
+          .where(
+            and(
+              eq(MessageTable.id, input.messageID),
+              eq(MessageTable.session_id, input.sessionID),
+              sql`json_extract(${MessageTable.data}, '$.role') = 'user'`,
+              sql`json_extract(${MessageTable.data}, '$.metadata.turn.status') = 'queued'`,
+            ),
+          )
+          .returning({ id: MessageTable.id })
+          .all()
+        if (result.length === 0) return false
+        Database.effect(() =>
+          Bus.publish(MessageV2.Event.Removed, {
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+          }),
+        )
+        return true
+      })
+      if (!removed) {
         throw new ConflictError({
           message: "Only queued user messages can be removed",
         })
       }
-      return removeMessage(input)
+      return input.messageID
     },
   )
 

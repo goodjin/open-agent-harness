@@ -179,7 +179,7 @@ export namespace SessionPrompt {
   })
   export type PromptInput = z.infer<typeof PromptInput>
 
-  export const prompt = fn(PromptInput, async (input) => {
+  export const enqueue = fn(PromptInput, async (input) => {
     const base = await Session.get(input.sessionID)
     const active = busy(input.sessionID)
     if (!active) {
@@ -209,10 +209,12 @@ export namespace SessionPrompt {
       await Session.setPermission({ sessionID: session.id, permission: permissions })
     }
 
-    if (input.noReply === true) {
-      return message
-    }
+    return message
+  })
 
+  export const prompt = fn(PromptInput, async (input) => {
+    const message = await enqueue(input)
+    if (input.noReply === true) return message
     return loop({ sessionID: input.sessionID, messageID: message.info.id })
   })
 
@@ -396,12 +398,18 @@ export namespace SessionPrompt {
     const entry = s[sessionID]
     if (!entry) return
 
+    const queued = await next(sessionID)
     if (status.type === "error" || status.type === "timeout") {
-      entry.callbacks.forEach((item) => item.reject(status))
-      delete s[sessionID]
-      return
+      entry.callbacks
+        .filter((item) => !item.messageID || item.messageID === after)
+        .forEach((item) => item.reject(status))
+      entry.callbacks = entry.callbacks.filter((item) => item.messageID && item.messageID !== after)
+      if (!queued) {
+        delete s[sessionID]
+        return
+      }
     }
-    if (ended(status)) {
+    if (ended(status) && !queued) {
       delete s[sessionID]
       return
     }
@@ -413,11 +421,6 @@ export namespace SessionPrompt {
         ? { type: "waiting_child", message: `Waiting for ${pending} delegated child session${pending === 1 ? "" : "s"}.` }
         : { type: "completed" },
     )
-
-    if (entry.callbacks.length === 0) {
-      delete s[sessionID]
-      return
-    }
 
     void resumeAfter(sessionID, after).catch((error) => {
       const callbacks = s[sessionID]?.callbacks
@@ -485,6 +488,7 @@ export namespace SessionPrompt {
       }
       const tasks = next.tasks
       const lastUser = await SessionTurn.run({ user: next.info })
+      if (!lastUser) continue
       lastUserID = lastUser.id
       const agentName = pref(session).agent ?? lastUser.agent
       const selected = pref(session).model ?? lastUser.model
@@ -998,18 +1002,21 @@ export namespace SessionPrompt {
   }
 
   function turn(messages: MessageV2.WithParts[]) {
-    const found: { index: number; info: MessageV2.User; internal: boolean }[] = []
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i]
-      if (msg?.info.role !== "user") continue
-      if (SessionTurn.done(msg.info)) continue
-      if (SessionTurn.fallback({ messages, user: msg.info })) continue
-      found.push({ index: i, info: msg.info, internal: SessionTurn.get(msg.info)?.kind === "internal" })
-    }
-    const picked = found.find((item) => !item.internal) ?? found[0]
-    if (!picked) return
+    const item = SessionTurn.next(messages)
+    const legacy = item
+      ? undefined
+      : messages.find(
+          (msg) =>
+            msg.info.role === "user" &&
+            !SessionTurn.done(msg.info) &&
+            !SessionTurn.get(msg.info) &&
+            !SessionTurn.fallback({ messages, user: msg.info }),
+        )
+    const picked = item ?? legacy
+    if (!picked || picked.info.role !== "user") return
+    const index = messages.findIndex((msg) => msg.info.id === picked.info.id)
     const tasks: (MessageV2.CompactionPart | MessageV2.SubtaskPart)[] = []
-    for (let j = picked.index + 1; j < messages.length; j++) {
+    for (let j = index + 1; j < messages.length; j++) {
       const next = messages[j]
       if (!next || next.info.role === "user") break
       tasks.push(...next.parts.filter((part) => part.type === "compaction" || part.type === "subtask"))
@@ -1225,17 +1232,21 @@ export namespace SessionPrompt {
     if (!entry) return
 
     const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch(() => [])
-    const user = msgs.findLast((item) => item.info.role === "user")
+    const user = SessionTurn.next(msgs)
 
-    if (!user || (after && user.info.id <= after)) {
+    if (!user) {
       const callbacks = entry.callbacks
       callbacks.forEach((item) => item.reject(new Error("Session loop ended before pending user was processed.")))
       delete state()[sessionID]
       return
     }
 
-    if (entry.callbacks.length === 0) return
     await loop({ sessionID, resume_existing: true })
+  }
+
+  async function next(sessionID: SessionID) {
+    const msgs = await MessageV2.filterCompacted(MessageV2.stream(sessionID)).catch(() => [])
+    return SessionTurn.next(msgs)
   }
 
   async function stopCompact(input: { sessionID: SessionID; assistant: MessageV2.Assistant }) {
@@ -1614,14 +1625,17 @@ export namespace SessionPrompt {
       system: input.system,
       format: input.format,
       variant,
-      metadata: {
-        ...input.metadata,
-        turn: input.metadata?.turn ?? {
-          kind: input.metadata?.internal === true ? "internal" : "user",
-          status: "queued",
-          time: { queued: now },
-        },
-      },
+      metadata:
+        input.noReply === true && input.metadata?.turn === undefined
+          ? input.metadata
+          : {
+              ...input.metadata,
+              turn: input.metadata?.turn ?? {
+                kind: input.metadata?.internal === true ? "internal" : "user",
+                status: "queued",
+                time: { queued: now },
+              },
+            },
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1940,10 +1954,7 @@ export namespace SessionPrompt {
       }),
     ).then((x) => x.flat().map(assign))
 
-    await Session.updateMessage(info)
-    for (const part of parts) {
-      await Session.updatePart(part)
-    }
+    await Session.insert({ info, parts })
 
     return {
       info,
@@ -2110,18 +2121,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Session.BusyError(input.sessionID)
     }
 
-    using _ = defer(() => {
-      // If no queued callbacks, cancel (the default)
-      const callbacks = state()[input.sessionID]?.callbacks ?? []
-      if (callbacks.length === 0) {
-        cancel(input.sessionID)
-      } else {
-        // Otherwise, trigger the session loop to process queued items
-        loop({ sessionID: input.sessionID, resume_existing: true }).catch((error) => {
-          log.error("session loop failed to resume after shell command", { sessionID: input.sessionID, error })
-        })
-      }
-    })
+    using _ = defer(() => void resumeShell(input.sessionID))
 
     const session = await Session.get(input.sessionID)
     bound(session, input.agent)
@@ -2343,6 +2343,17 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       await Session.updatePart(part)
     }
     return { info: msg, parts: [part] }
+  }
+
+  async function resumeShell(sessionID: SessionID) {
+    const queued = await next(sessionID)
+    if (!queued) {
+      cancel(sessionID)
+      return
+    }
+    await loop({ sessionID, resume_existing: true }).catch((error) => {
+      log.error("session loop failed to resume after shell command", { sessionID, error })
+    })
   }
 
   export const CommandInput = z.object({

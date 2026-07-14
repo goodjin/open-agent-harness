@@ -34,4 +34,9 @@ describe("project bootstrap session restore policy", () => {
     expect(revive({ type: "waiting_permission" }, false)).toBe(false)
     expect(revive({ type: "failed", message: "failed" }, false)).toBe(false)
   })
+
+  test("continues sessions with persisted queued turns regardless of stale session status", () => {
+    expect(revive({ type: "completed" }, false, true)).toBe(true)
+    expect(revive({ type: "idle" }, false, true)).toBe(true)
+  })
 })

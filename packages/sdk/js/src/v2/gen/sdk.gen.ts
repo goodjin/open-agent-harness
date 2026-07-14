@@ -1705,7 +1705,7 @@ export class Tree extends HeyApiClient {
       source?: "user" | "parent_session" | "runtime"
       source_session?: string
       include_completed?: boolean
-      mode?: "restore" | "message"
+      mode?: "restore" | "message" | "auto"
       reason?: string
       message?: string
     },

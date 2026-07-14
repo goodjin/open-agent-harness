@@ -621,7 +621,7 @@ export const dict = {
   "sessionTree.resumeDialog.message.description": "添加一条结构化用户消息，让模型继续处理。适合空闲或已完成但需要新指令的会话。",
   "sessionTree.resumeDialog.messagePlaceholder": "发送给选中会话的消息",
   "sessionTree.resumeDialog.restore": "恢复中断会话",
-  "sessionTree.resumeDialog.restore.description": "默认选项。只对中断状态会话重新启动原会话循环，不新增用户消息。",
+  "sessionTree.resumeDialog.restore.description": "默认选项。优先恢复中断运行；无法无消息恢复时自动发送“继续”。",
   "sessionTree.resumeDialog.title": "继续会话",
   "sessionTree.search": "搜索",
   "sessionTree.selectAll": "全选",

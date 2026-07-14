@@ -123,14 +123,22 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
     sessionDirectory: input.draft.sessionDirectory,
   })
 
+  const now = Date.now()
   const message: Message = {
     id: messageID,
     sessionID: input.draft.sessionID,
     role: "user",
-    time: { created: Date.now() },
+    time: { created: now },
     agent: input.draft.agent,
     model: input.draft.model,
     variant: input.draft.variant,
+    metadata: {
+      turn: {
+        kind: "user",
+        status: "queued",
+        time: { queued: now },
+      },
+    },
   }
 
   const add = () =>

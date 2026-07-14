@@ -48,8 +48,10 @@ import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
+import { persistFollowup } from "@/pages/session/session-followup"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
 import {
+  automaticResumeMode,
   createOpenReviewFile,
   createSessionTabs,
   createSizing,
@@ -863,7 +865,7 @@ export default function Page() {
           ids: [id],
           source: "user",
           source_session: id,
-          mode: "restore",
+          mode: automaticResumeMode(),
           reason: "User chose to continue an interrupted session.",
         }),
       })
@@ -1850,17 +1852,19 @@ export default function Page() {
   }
 
   const queueFollowup = (draft: FollowupDraft) => {
-    setFollowup("items", draft.sessionID, (items) => [
-      ...(items ?? []),
-      { id: Identifier.ascending("message"), ...draft },
-    ])
+    const item = { id: Identifier.ascending("message"), ...draft }
+    persistFollowup({
+      item,
+      append: (next) => setFollowup("items", draft.sessionID, (items) => [...(items ?? []), next]),
+      send: (id) => void sendFollowup(draft.sessionID, id, { queued: true }),
+    })
     setFollowup("failed", draft.sessionID, undefined)
     setFollowup("paused", draft.sessionID, undefined)
   }
 
   const followupDock = createMemo(() => queuedFollowups().map((item) => ({ id: item.id, text: followupText(item) })))
 
-  const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean }) => {
+  const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean; queued?: boolean }) => {
     const item = (followup.items[sessionID] ?? []).find((entry) => entry.id === id)
     if (!item) return Promise.resolve()
     if (followup.sending[sessionID]) return Promise.resolve()
@@ -1874,7 +1878,7 @@ export default function Page() {
       sync,
       globalSync,
       draft: item,
-      optimisticBusy: item.sessionDirectory === sdk.directory,
+      optimisticBusy: item.sessionDirectory === sdk.directory && !opts?.queued,
     })
       .then((ok) => {
         if (ok === false) return
@@ -2114,7 +2118,7 @@ export default function Page() {
       directory: sdk.directory,
       ids: [_input.sessionID],
       source_session: _input.sessionID,
-      mode: "restore" as const,
+      mode: automaticResumeMode(),
     }
     return sdk
       .request("/session/tree/resume", {

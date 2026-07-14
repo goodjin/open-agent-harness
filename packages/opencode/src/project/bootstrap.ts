@@ -16,6 +16,7 @@ import { SessionDelegation } from "@/session/delegation"
 import { SessionRecovery } from "@/session/recovery"
 import { SessionStatus } from "@/session/status"
 import { SessionPrompt } from "@/session/prompt"
+import { Session } from "@/session"
 import type { SessionID } from "@/session/schema"
 
 export async function InstanceBootstrap() {
@@ -29,6 +30,7 @@ export async function InstanceBootstrap() {
   Snapshot.init()
   Truncate.init()
   const restored = await SessionStatus.restore()
+  const queued = Session.queuedSessions()
   SessionDelegation.init()
   const packets = await SessionRecovery.mark().catch((err) => {
     Log.Default.warn("session recovery scan failed", {
@@ -57,7 +59,7 @@ export async function InstanceBootstrap() {
       })
       continue
     }
-    if (!revive(status, stale.has(sessionID))) continue
+    if (!revive(status, stale.has(sessionID), queued.has(sessionID))) continue
     SessionStatus.set(sessionID, { type: "running" })
     void SessionPrompt.loop({ sessionID }).catch((err) => {
       Log.Default.warn("session auto-continue failed", {
@@ -75,7 +77,8 @@ export async function InstanceBootstrap() {
   })
 }
 
-export function revive(status: SessionStatus.Info, stale: boolean) {
+export function revive(status: SessionStatus.Info, stale: boolean, queued = false) {
+  if (queued && status.type !== "archived") return true
   if (SessionStatus.shouldContinue(status)) return true
   if (status.type !== "interrupted") return false
   if (status.prior !== "running" && status.prior !== "starting") return false

@@ -73,3 +73,49 @@ describe("SessionTurn.fallback", () => {
     ).toBe(false)
   })
 })
+
+describe("SessionTurn.next", () => {
+  test("selects queued turns in persisted FIFO order regardless of kind", () => {
+    const internal = user({
+      id: "u1",
+      turn: {
+        kind: "internal",
+        status: "queued",
+        time: { queued: 1 },
+      },
+    })
+    const regular = user({
+      id: "u2",
+      turn: {
+        kind: "user",
+        status: "queued",
+        time: { queued: 2 },
+      },
+    })
+
+    expect(String(SessionTurn.next([regular, internal])?.info.id)).toBe("u1")
+  })
+
+  test("ignores running and completed turns", () => {
+    const running = user({
+      id: "u1",
+      turn: {
+        kind: "user",
+        status: "running",
+        time: { queued: 1, started: 2 },
+      },
+    })
+    const done = user({
+      id: "u2",
+      turn: {
+        kind: "user",
+        status: "done",
+        outcome: "completed",
+        reason: "assistant",
+        time: { queued: 2, started: 3, completed: 4 },
+      },
+    })
+
+    expect(SessionTurn.next([running, done])).toBeUndefined()
+  })
+})

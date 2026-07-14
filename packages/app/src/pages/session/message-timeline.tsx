@@ -41,7 +41,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { messageAgentColor } from "@/utils/agent"
 import { parseCommentNote, readCommentMetadata } from "@/utils/comment-note"
-import { deriveTurnStats, isSessionBusy, turnDone } from "@/pages/session/helpers"
+import { automaticResumeMode, deriveTurnStats, isSessionBusy, turnDone } from "@/pages/session/helpers"
 import { queuedUserMessage } from "@/pages/session/message-turn-state"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
@@ -922,7 +922,7 @@ export function MessageTimeline(props: {
     )
 
   const resume = (id: string) =>
-    post(id, "/session/tree/resume", { mode: "restore" }).catch((err: unknown) =>
+    post(id, "/session/tree/resume", { mode: automaticResumeMode() }).catch((err: unknown) =>
       showToast({
         variant: "error",
         title: language.t("common.requestFailed"),
