@@ -25,6 +25,7 @@ import { tmpdir } from "../fixture/fixture"
 import { AgentDelegation } from "../../src/agent/delegation"
 import { Agent } from "../../src/agent/agent"
 import { AgentProtocol } from "../../src/protocol/schema"
+import { Storage } from "../../src/storage/storage"
 
 describe("SessionRunner", () => {
   const finalTools = {
@@ -997,6 +998,13 @@ describe("SessionRunner", () => {
           args: { filePath: "package.json" },
           result: "summary",
         },
+        {
+          id: "read_source",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "src/index.ts" },
+          result: "summary",
+        },
       ],
     }
     const reply = {
@@ -1140,7 +1148,9 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(1)
               expect(protocol?.runs?.[0]?.status).toBe("completed")
+              expect(protocol?.runs?.[0]?.actions).toHaveLength(2)
               expect(protocol?.runs?.[0]?.actions[0]?.summary ?? protocol?.runs?.[0]?.actions[0]?.output).toContain(
                 "native-protocol",
               )
@@ -1154,6 +1164,412 @@ describe("SessionRunner", () => {
       })
     } finally {
       hook.mockRestore()
+    }
+  })
+
+  test("protocol runner persists a failed run when verifier preparation throws after action start", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        {
+          id: "verify_package",
+          kind: "agent",
+          target: "failing-verifier",
+          prompt: "Verify package state.",
+          result: "summary",
+        },
+      ],
+    }
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const input =
+        calls === 1
+          ? body
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "The tool failed." }],
+            }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_protocol_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_protocol_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_protocol_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
+      if (name === "failing-verifier") return { name, kind: "verifier" } as never
+      return undefined
+    })
+    const query = spyOn(SessionDelegation, "query").mockImplementation(async () => {
+      throw new Error("verifier preparation failed")
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              const result = await runner
+                .process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: {
+                    name: "protocol-runner",
+                    runner: "protocol",
+                  } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [{ role: "user", content: "read package" }],
+                  tools: {},
+                })
+                .catch((err) => err)
+              const rows = await Storage.list(["session_protocol_run", session.id])
+              const stored = rows[0] ? await Storage.read<AgentProtocol.Result>(rows[0]) : undefined
+              const current = await Session.get(session.id)
+              const protocol = current.dsl_context?.protocol as
+                | { runs?: { status?: string; actions?: { status?: string; error?: string }[] }[] }
+                | undefined
+
+              expect(rows).toHaveLength(1)
+              expect(result).toBe("stop")
+              expect(stored?.status).toBe("failed")
+              expect(stored?.actions[0]?.status).toBe("failed")
+              expect(stored?.actions[0]?.error).toContain("verifier preparation failed")
+              expect(protocol?.runs?.[0]?.status).toBe("failed")
+              expect(protocol?.runs?.[0]?.actions?.[0]?.status).toBe("failed")
+              expect(protocol?.runs?.[0]?.actions?.[0]?.error).toContain("verifier preparation failed")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      query.mockRestore()
+    }
+  })
+
+  test("protocol runner rethrows aborts after action start without running independent actions", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [
+        {
+          id: "confirm_tools",
+          kind: "confirm",
+          prompt: "Run tools?",
+          plan: "Run the confirmed tools.",
+        },
+        {
+          id: "read_failed",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "failed.json" },
+        },
+        {
+          id: "read_abort",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "abort.json" },
+        },
+        {
+          id: "read_after_abort",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "after.json" },
+        },
+      ],
+    }
+    const abort = new AbortController()
+    let calls = 0
+    let tools = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const input =
+        calls === 1
+          ? body
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Unexpected final follow-up." }],
+            }
+      return {
+        fullStream: (async function* () {
+          yield { type: "start" }
+          yield { type: "start-step" }
+          yield { type: "tool-input-start", id: `call_abort_${calls}`, toolName: LLM.PROTOCOL_OUTPUT_TOOL }
+          yield {
+            type: "tool-call",
+            toolCallId: `call_abort_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+          }
+          yield {
+            type: "tool-result",
+            toolCallId: `call_abort_${calls}`,
+            toolName: LLM.PROTOCOL_OUTPUT_TOOL,
+            input,
+            output: {
+              output: "Agent Protocol package received.",
+              title: "Agent Protocol Output",
+              metadata: { protocol: true },
+            },
+          }
+          yield {
+            type: "finish-step",
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          }
+          yield { type: "finish" }
+        })(),
+      } as never
+    })
+    const emit = SessionLog.emit
+    const cleanup = spyOn(SessionLog, "emit").mockImplementation(async (input) => {
+      if (input.type === "tool.error") throw new Error("simulated abort cleanup failure")
+      return emit(input)
+    })
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: {
+                  input: 0,
+                  output: 0,
+                  reasoning: 0,
+                  cache: { read: 0, write: 0 },
+                },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: abort.signal,
+              })
+              const run = runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                } as never,
+                system: [],
+                abort: abort.signal,
+                messages: [{ role: "user", content: "verify then read" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [
+                    {
+                      id: "read",
+                      description: "Read file",
+                      schema: {
+                        type: "object",
+                        properties: { filePath: { type: "string" } },
+                        required: ["filePath"],
+                      },
+                    },
+                  ],
+                  prompt: "",
+                  execute: async (_id: string, args: unknown) => {
+                    const file = (args as { filePath?: string }).filePath
+                    if (file === "failed.json") {
+                      return {
+                        title: "failed",
+                        output: "unique failed output before abort",
+                        metadata: { failed: true, toolCallIDs: ["inner_failed"] },
+                      }
+                    }
+                    if (file === "abort.json") {
+                      const err = new DOMException("Aborted", "AbortError")
+                      abort.abort(err)
+                      throw err
+                    }
+                    tools++
+                    return { title: "read", output: "unexpected", metadata: {} }
+                  },
+                } as never,
+              })
+              let questions = await Question.list()
+              for (let i = 0; i < 20 && questions.length === 0; i++) {
+                await Bun.sleep(10)
+                questions = await Question.list()
+              }
+              expect(questions).toHaveLength(1)
+              const released = Date.now()
+              await Question.reply({
+                requestID: questions[0]!.id,
+                answers: [["Confirm"]],
+                response: "confirm",
+              })
+              const result = await run.catch((err) => err)
+              const messages = await Session.messages({ sessionID: session.id })
+              const part = messages
+                .flatMap((item) => item.parts)
+                .find((item): item is MessageV2.ToolPart => item.type === "tool" && item.callID === "call_read_abort")
+              const current = await Session.get(session.id)
+              const protocol = current.dsl_context?.protocol as { runs?: { status?: string }[] } | undefined
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const rows = await Storage.list(["session_protocol_run", session.id])
+              const stored = rows[0] ? await Storage.read<AgentProtocol.Result>(rows[0]) : undefined
+              const trace = stored
+                ? await SessionLog.protocolTrace({ sessionID: session.id, runID: stored.run_id })
+                : undefined
+              const events = logs
+                .filter((item) => item.type === "protocol.action.tool_call" && item.data.runID === stored?.run_id)
+                .map((item) => item.data.callID)
+              const lifecycle = logs
+                .filter((item) =>
+                  [
+                    "protocol.started",
+                    "protocol.action.completed",
+                    "protocol.action.failed",
+                    "protocol.action.blocked",
+                    "protocol.completed",
+                    "protocol.failed",
+                    "protocol.final.started",
+                  ].includes(item.type),
+                )
+                .map((item) => item.type)
+
+              expect(result).toBe(abort.signal.reason)
+              expect(calls).toBe(1)
+              expect(tools).toBe(0)
+              expect(part?.state.status).toBe("error")
+              expect(rows).toHaveLength(1)
+              expect(stored?.status).toBe("failed")
+              expect(stored?.actions[0]?.status).toBe("completed")
+              expect(stored?.actions[1]?.status).toBe("failed")
+              expect(stored?.actions[1]?.output).toBeUndefined()
+              expect(stored?.actions[1]?.error).toBe("unique failed output before abort")
+              expect(stored?.actions[1]?.summary).toBe("unique failed output before abort")
+              expect(stored?.actions[1]?.tool_call_ids).toEqual(["call_read_failed", "inner_failed"])
+              expect(stored?.actions[1]?.duration_ms).toBeGreaterThanOrEqual(0)
+              expect(stored?.actions[2]?.status).toBe("failed")
+              expect(stored?.actions[2]?.error).toContain("cancelled")
+              expect(stored?.actions[3]?.status).toBe("blocked")
+              expect(stored?.metrics.internal_tool_calls).toBe(2)
+              expect(events).toEqual(["call_read_failed", "inner_failed"])
+              expect(trace?.tool_calls.map((item) => item.call_id)).toEqual(events)
+              expect(trace?.metrics.internal_tool_calls).toBe(stored?.metrics.internal_tool_calls)
+              expect(stored?.time.started).toBeGreaterThanOrEqual(released)
+              expect((stored?.time.started ?? released) - released).toBeLessThan(1000)
+              expect(protocol?.runs?.[0]?.status).toBe("failed")
+              expect(lifecycle).toEqual([
+                "protocol.started",
+                "protocol.action.completed",
+                "protocol.action.failed",
+                "protocol.action.failed",
+                "protocol.action.blocked",
+                "protocol.failed",
+              ])
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      cleanup.mockRestore()
     }
   })
 
@@ -2625,9 +3041,9 @@ describe("SessionRunner", () => {
       items: [
         {
           id: "impl",
-          kind: "agent",
-          target: "backend",
-          prompt: "Implement backend change.",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "package.json" },
         },
         {
           id: "confirm_plan",
@@ -2641,16 +3057,28 @@ describe("SessionRunner", () => {
         },
         {
           id: "verify",
-          kind: "agent",
-          target: "backend-verifier",
-          prompt: "Verify backend change.",
+          kind: "tool",
+          target: "read",
+          args: { filePath: "src/index.ts" },
         },
       ],
     }
-    const stream = spyOn(LLM, "stream").mockImplementation(
-      async () =>
-        ({
-          fullStream: (async function* () {
+    let calls = 0
+    let enter = () => {}
+    let release = () => {}
+    const entered = new Promise<void>((resolve) => (enter = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const input =
+        calls === 1
+          ? body
+          : {
+              version: "2",
+              items: [{ id: "answer", kind: "answer", message: "Backend work completed." }],
+            }
+      return {
+        fullStream: (async function* () {
             yield { type: "start" }
             yield { type: "start-step" }
             yield { type: "tool-input-start", id: "call_1", toolName: LLM.PROTOCOL_OUTPUT_TOOL }
@@ -2658,13 +3086,13 @@ describe("SessionRunner", () => {
               type: "tool-call",
               toolCallId: "call_1",
               toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-              input: body,
+              input,
             }
             yield {
               type: "tool-result",
               toolCallId: "call_1",
               toolName: LLM.PROTOCOL_OUTPUT_TOOL,
-              input: body,
+              input,
               output: {
                 output: "Agent Protocol package received.",
                 title: "Agent Protocol Output",
@@ -2677,13 +3105,8 @@ describe("SessionRunner", () => {
               usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
             }
             yield { type: "finish" }
-          })(),
-        }) as never,
-    )
-    const agent = spyOn(Agent, "get").mockImplementation(async (name) => {
-      if (name === "backend") return { name, kind: "worker" } as never
-      if (name === "backend-verifier") return { name, kind: "verifier" } as never
-      return undefined
+        })(),
+      } as never
     })
     const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
 
@@ -2742,6 +3165,25 @@ describe("SessionRunner", () => {
                 abort: new AbortController().signal,
                 messages: [{ role: "user", content: "implement and verify backend" }],
                 tools: {},
+                runtimeTools: {
+                  catalog: [
+                    {
+                      id: "read",
+                      description: "Read file",
+                      schema: {
+                        type: "object",
+                        properties: { filePath: { type: "string" } },
+                        required: ["filePath"],
+                      },
+                    },
+                  ],
+                  prompt: "",
+                  execute: async () => {
+                    enter()
+                    await blocked
+                    return { title: "read", output: "ok", metadata: {} }
+                  },
+                } as never,
               })
 
               let questions = await Question.list()
@@ -2756,17 +3198,59 @@ describe("SessionRunner", () => {
 
               expect(children).toHaveLength(0)
               expect(questions).toHaveLength(1)
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
               expect(questions[0]?.tool?.callID).toBe("call_confirm_plan")
               expect(protocol?.confirmations?.[0]?.status).toBe("pending")
 
-              await Question.reject(questions[0]!.id).catch(() => {})
-              await run.catch(() => undefined)
+              await Question.reply({
+                requestID: questions[0]!.id,
+                answers: [["Confirm"]],
+                response: "confirm",
+              })
+              await entered
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              const pending = await Session.get(session.id)
+              const pendingProtocol = pending.dsl_context?.protocol as { runs?: { status?: string }[] } | undefined
+              const active = await SessionLog.list({ sessionID: session.id })
+              const lifecycle = active.filter((item) =>
+                [
+                  "protocol.started",
+                  "protocol.action.completed",
+                  "protocol.action.failed",
+                  "protocol.completed",
+                  "protocol.failed",
+                ].includes(item.type),
+              )
+              expect(pendingProtocol?.runs?.[0]?.status).toBe("running")
+              expect(lifecycle.map((item) => item.type)).toEqual(["protocol.started"])
+              release()
+              await run
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(1)
+              const done = await SessionLog.list({ sessionID: session.id })
+              expect(done.filter((item) => item.type === "protocol.validated")).toHaveLength(1)
+              const events = done
+                .filter((item) =>
+                  [
+                    "protocol.started",
+                    "protocol.action.completed",
+                    "protocol.action.failed",
+                    "protocol.completed",
+                    "protocol.failed",
+                  ].includes(item.type),
+                )
+                .map((item) => item.type)
+              expect(events).toEqual([
+                "protocol.started",
+                "protocol.action.completed",
+                "protocol.action.completed",
+                "protocol.action.completed",
+                "protocol.completed",
+              ])
             },
           }),
       })
     } finally {
       stream.mockRestore()
-      agent.mockRestore()
       provider.mockRestore()
     }
   })
@@ -2915,7 +3399,9 @@ describe("SessionRunner", () => {
                 answers: [["Confirm"]],
                 response: "confirm",
               })
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
               await run
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
 
               const item = await SessionAssignment.active(session.id)
               expect(item?.title).toBe("Confirm assignment")
@@ -2948,7 +3434,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner allows confirm-only packages", async () => {
+  test("protocol runner rejects confirm and agent packages before creating a run or child", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -2969,6 +3455,12 @@ describe("SessionRunner", () => {
                   kind: "confirm",
                   prompt: "Confirm the plan.",
                   plan: "Run backend implementation and verifier after confirmation.",
+                },
+                {
+                  id: "implement_plan_v2",
+                  kind: "agent",
+                  target: "backend",
+                  prompt: "Implement the confirmed plan.",
                 },
               ],
             }
@@ -3083,9 +3575,17 @@ describe("SessionRunner", () => {
               expect(calls).toBe(1)
               expect(questions).toHaveLength(1)
               expect(retry).toBeUndefined()
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await Session.children(session.id)).toHaveLength(0)
+              const pending = await SessionLog.list({ sessionID: session.id })
+              expect(pending.filter((item) => item.data.runID)).toHaveLength(0)
 
               await Question.reject(questions[0]!.id).catch(() => {})
               await run.catch(() => undefined)
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await Session.children(session.id)).toHaveLength(0)
+              const done = await SessionLog.list({ sessionID: session.id })
+              expect(done.filter((item) => item.data.runID)).toHaveLength(0)
             },
           }),
       })
@@ -3262,6 +3762,7 @@ describe("SessionRunner", () => {
               expect(pendingProtocol?.inputs?.[0]?.action_id).toBe("resolve_path_and_contracts")
               expect(pendingProtocol?.inputs?.[0]?.status).toBe("pending")
               expect(pendingProtocol?.inputs?.[0]?.questions).toHaveLength(2)
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
 
               await Question.reply({
                 requestID: questions[0]!.id,
@@ -3293,6 +3794,18 @@ describe("SessionRunner", () => {
                 ["src/visual-state/history.ts"],
                 ["Truncate redo branch"],
               ])
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              const logs = await SessionLog.list({ sessionID: session.id })
+              const lifecycle = logs.filter(
+                (item) =>
+                  item.data.runID &&
+                  (item.type === "protocol.started" ||
+                    item.type.startsWith("protocol.action.") ||
+                    item.type === "protocol.completed" ||
+                    item.type === "protocol.failed" ||
+                    item.type === "protocol.validated"),
+              )
+              expect(lifecycle).toHaveLength(0)
               expect(summary?.type === "text" ? summary.metadata?.action : undefined).toBe("input_received")
               expect(text).toContain("Protocol input received: Resolve path and provide contracts")
               expect(text).toContain("- Resolve path and provide contracts: input received")

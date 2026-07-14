@@ -548,8 +548,9 @@ export namespace SessionRunner {
       })
       return "stop"
     }
-    const run = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: !!fixed })
-    await settle({ chat, stream, sessionID, run })
+    const exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: !!fixed })
+    const run = exec.run
+    await settle({ chat, stream, sessionID, ...exec })
     await mark({
       assistant: chat.message,
       outcome: outcome(run),
@@ -655,13 +656,13 @@ export namespace SessionRunner {
         chat,
         stream,
         sessionID: input.sessionID,
-        run: await execute({
+        ...(await execute({
           chat,
           stream,
           sessionID: input.sessionID,
           parsed: single(input.parsed, action),
           recovered: true,
-        }),
+        })),
       })
       return
     }
@@ -671,13 +672,13 @@ export namespace SessionRunner {
         chat,
         stream,
         sessionID: input.sessionID,
-        run: await execute({
+        ...(await execute({
           chat,
           stream,
           sessionID: input.sessionID,
           parsed: single(input.parsed, action),
           recovered: true,
-        }),
+        })),
       })
       return
     }
@@ -795,6 +796,7 @@ export namespace SessionRunner {
     stream: LLM.StreamInput
     sessionID: SessionID
     run: AgentProtocol.Result
+    tracked: boolean
   }) {
     const run = input.run
     const chat = input.chat
@@ -811,7 +813,7 @@ export namespace SessionRunner {
       metadata: context(run),
       time: { start: Date.now(), end: Date.now() },
     })
-    await project(sessionID, run)
+    if (input.tracked) await project(sessionID, run)
     chat.message.finish = run.status === "failed" ? "error" : "stop"
     chat.message.time.completed = Date.now()
     const action = summaryAction(run)
@@ -957,6 +959,51 @@ export namespace SessionRunner {
     return [...gates, ...actions.filter((item) => !ids.has(item.id))]
   }
 
+  function tracks(actions: AgentProtocol.Action[]) {
+    return actions.some((item) => item.executor.type !== "human")
+  }
+
+  function aborted(err: unknown, signal: AbortSignal) {
+    return signal.aborted || (err instanceof Error && err.name === "AbortError")
+  }
+
+  function record(
+    action: AgentProtocol.Action,
+    tool: AgentProtocolExecutor.ToolResult,
+    start: number,
+    end: number,
+  ): AgentProtocol.ResultAction {
+    const failed = tool.metadata.failed === true
+    const blocked = tool.metadata.blocked === true
+    const delegated = tool.metadata.delegated === true
+    const skipped = tool.metadata.skipped === true
+    const call = typeof tool.metadata.callID === "string" ? tool.metadata.callID : undefined
+    const calls = Array.isArray(tool.metadata.toolCallIDs)
+      ? tool.metadata.toolCallIDs.filter((item): item is string => typeof item === "string")
+      : []
+    const child = tool.metadata.childSessionID
+    return {
+      id: action.id,
+      title: action.title,
+      operation: action.operation,
+      executor: action.executor,
+      input: action.input,
+      depends_on: action.depends_on,
+      verification: action.verification,
+      status: blocked || delegated ? "blocked" : failed ? "failed" : skipped ? "skipped" : "completed",
+      summary: tool.output,
+      output: blocked || failed ? undefined : tool.output,
+      error: blocked || failed ? tool.output : undefined,
+      sessionID: typeof child === "string" && child.length > 0 ? child : undefined,
+      tool_call_ids: call ? [call, ...calls] : calls,
+      duration_ms: end - start,
+      time: {
+        started: start,
+        completed: end,
+      },
+    }
+  }
+
   async function execute(input: {
     chat: SessionProcessor.Info
     stream: LLM.StreamInput
@@ -981,21 +1028,24 @@ export namespace SessionRunner {
           }
         : input.parsed.declaration
     let actions = declaration.payload.type === "action_graph" ? declaration.payload.actions : []
-    await SessionLog.emit({
-      sessionID: input.sessionID,
-      messageID: input.chat.message.id,
-      level: "info",
-      type: "protocol.validated",
-      data: {
-        runID,
-        declaration,
-        raw: input.parsed.raw,
-        recovered: input.recovered,
-        verification: { injected: checked.injected },
-      },
-    })
+    const work = tracks(actions)
+    const audit = {
+      declaration,
+      raw: input.parsed.raw,
+      recovered: input.recovered,
+      verification: { injected: checked.injected },
+    }
+    if (!work) {
+      await SessionLog.emit({
+        sessionID: input.sessionID,
+        messageID: input.chat.message.id,
+        level: "info",
+        type: "protocol.validated",
+        data: audit,
+      })
+    }
     const issues = await packageIssues(actions, input.sessionID)
-    if (issues.length > 0) return rejected(runID, declaration, issues)
+    if (issues.length > 0) return { run: rejected(runID, declaration, issues), tracked: false }
     const plan = actions
     const runtime =
       input.stream.runtimeTools ??
@@ -1008,78 +1058,178 @@ export namespace SessionRunner {
         bypassAgentCheck: false,
         messages: [],
       }))
-    await pending(input.sessionID, runID, declaration)
-    const completed = new Set<string>()
-    const run = await AgentProtocolExecutor.run({
-      declaration,
-      sections: input.parsed.sections,
-      runID,
-      agents: agents.map((item) => ({
-        id: item.name,
-        entry: item.entry,
-        capability: item.capability,
-      })),
-      execute: async (action, prompt) => {
-        const check = await verifierPrompt({
-          action,
-          actions: plan,
-          prompt,
-          sections: input.parsed.sections,
-          sessionID: input.sessionID,
-        })
-        if ("skip" in check) {
-          return {
-            title: action.title,
-            output: check.reason ?? "",
-            metadata: { skipped: true, reason: "verification_no_change" },
+    let started = false
+    let active: AgentProtocol.Action | undefined
+    let began: number | undefined
+    const evidence = new Map<string, AgentProtocol.ResultAction>()
+    const starts = new Map<string, number>()
+    let run: AgentProtocol.Result
+    try {
+      run = await AgentProtocolExecutor.run({
+        declaration,
+        sections: input.parsed.sections,
+        runID,
+        agents: agents.map((item) => ({
+          id: item.name,
+          entry: item.entry,
+          capability: item.capability,
+        })),
+        execute: async (action, prompt) => {
+          const start = Date.now()
+          const finish = (tool: AgentProtocolExecutor.ToolResult | undefined) => {
+            if (tool) evidence.set(action.id, record(action, tool, start, Date.now()))
+            return tool
           }
-        }
-        if (action.executor.type === "runtime" && action.executor.target === "wait") {
-          return {
-            title: action.title,
-            output: [
-              "`wait` is reserved and is not supported by the current Agent Protocol runtime.",
-              "Use `depends` for dependencies inside the current package.",
-              "Use `confirm` for approval gates and `input` for user choices or additional information.",
-            ].join("\n"),
-            metadata: { blocked: true, reason: "wait_unsupported" },
-          }
-        }
-        const result = await (action.executor.type === "tool"
-          ? tool({
-              action,
-              prompt,
-              sessionID: input.sessionID,
-              messageID: input.chat.message.id,
-              agent: input.stream.agent.name,
-              abort: input.stream.abort,
-              messages: [],
-              model: input.stream.model,
-              runtimeTools: runtime,
-            })
-          : action.executor.type === "agent"
-            ? delegate({
-                action,
-                prompt: check.prompt,
-                parentAgent: input.stream.agent.name,
-                runID,
+          starts.set(action.id, start)
+          active = action
+          try {
+            if (work && action.executor.type !== "human" && !started) {
+              began = start
+              await pending(input.sessionID, runID, declaration)
+              started = true
+              await SessionLog.emit({
                 sessionID: input.sessionID,
                 messageID: input.chat.message.id,
-                abort: input.stream.abort,
-                model: input.stream.model,
+                level: "info",
+                type: "protocol.validated",
+                data: { ...audit, runID },
               })
-            : action.executor.type === "human"
-              ? human({
+              await SessionLog.emit({
+                sessionID: input.sessionID,
+                messageID: input.chat.message.id,
+                level: "info",
+                type: "protocol.started",
+                data: { runID, title: input.parsed.declaration.title },
+              })
+            }
+            const check = await verifierPrompt({
+              action,
+              actions: plan,
+              prompt,
+              sections: input.parsed.sections,
+              sessionID: input.sessionID,
+            })
+            if ("skip" in check) {
+              return finish({
+                title: action.title,
+                output: check.reason ?? "",
+                metadata: { skipped: true, reason: "verification_no_change" },
+              })
+            }
+            if (action.executor.type === "runtime" && action.executor.target === "wait") {
+              return finish({
+                title: action.title,
+                output: [
+                  "`wait` is reserved and is not supported by the current Agent Protocol runtime.",
+                  "Use `depends` for dependencies inside the current package.",
+                  "Use `confirm` for approval gates and `input` for user choices or additional information.",
+                ].join("\n"),
+                metadata: { blocked: true, reason: "wait_unsupported" },
+              })
+            }
+            const result = await (action.executor.type === "tool"
+              ? tool({
                   action,
-                  runID,
+                  prompt,
                   sessionID: input.sessionID,
                   messageID: input.chat.message.id,
+                  agent: input.stream.agent.name,
+                  abort: input.stream.abort,
+                  messages: [],
+                  model: input.stream.model,
+                  runtimeTools: runtime,
                 })
-              : Promise.resolve(undefined))
-        if (result && result.metadata.blocked !== true && result.metadata.failed !== true) completed.add(action.id)
-        return result
-      },
-    })
+              : action.executor.type === "agent"
+                ? delegate({
+                    action,
+                    prompt: check.prompt,
+                    parentAgent: input.stream.agent.name,
+                    runID,
+                    sessionID: input.sessionID,
+                    messageID: input.chat.message.id,
+                    abort: input.stream.abort,
+                    model: input.stream.model,
+                  })
+                : action.executor.type === "human"
+                  ? human({
+                      action,
+                      runID,
+                      sessionID: input.sessionID,
+                      messageID: input.chat.message.id,
+                    })
+                  : Promise.resolve(undefined))
+            return finish(result)
+          } catch (err) {
+            if (!started || aborted(err, input.stream.abort)) throw err
+            return finish({
+              title: action.title,
+              output: err instanceof Error ? err.message : String(err),
+              metadata: { failed: true },
+            })
+          }
+        },
+      })
+    } catch (err) {
+      if (!started || !aborted(err, input.stream.abort)) throw err
+      const failed = cancelled(runID, declaration, evidence, starts, active, began ?? Date.now())
+      const cleanup = [
+        () => project(input.sessionID, failed),
+        ...failed.actions.flatMap((item) => [
+          () =>
+            SessionLog.emit({
+              sessionID: input.sessionID,
+              messageID: input.chat.message.id,
+              level: "warn",
+              type: `protocol.action.${item.status}`,
+              data: {
+                runID,
+                actionID: item.id,
+                operation: item.operation,
+                executor: item.executor,
+                depends_on: item.depends_on,
+                verification: item.verification,
+                status: item.status,
+                durationMs: item.duration_ms,
+              },
+            }),
+          ...item.tool_call_ids.map((callID) => () =>
+            SessionLog.emit({
+              sessionID: input.sessionID,
+              messageID: input.chat.message.id,
+              level: "info",
+              type: "protocol.action.tool_call",
+              data: {
+                runID,
+                actionID: item.id,
+                callID,
+                tool: item.executor.target,
+                outputBytes: (item.output ?? item.summary).length,
+              },
+            }),
+          ),
+        ]),
+        () =>
+          SessionLog.emit({
+            sessionID: input.sessionID,
+            messageID: input.chat.message.id,
+            level: "warn",
+            type: "protocol.failed",
+            data: {
+              runID,
+              result: failed,
+              metrics: {
+                modelVisibleBytes: failed.metrics.model_visible_bytes,
+                durationMs: failed.metrics.duration_ms,
+              },
+            },
+          }),
+      ]
+      const settled: PromiseSettledResult<unknown>[] = []
+      for (const task of cleanup) settled.push((await Promise.allSettled([task()]))[0]!)
+      const failures = settled.filter((item) => item.status === "rejected").length
+      if (failures > 0) log.warn("protocol abort cleanup failed", { runID, failures })
+      throw err
+    }
     await verifierGate({
       actions: plan,
       run,
@@ -1091,13 +1241,7 @@ export namespace SessionRunner {
       run,
       sessionID: input.sessionID,
     })
-    await SessionLog.emit({
-      sessionID: input.sessionID,
-      messageID: input.chat.message.id,
-      level: "info",
-      type: "protocol.started",
-      data: { runID: run.run_id, title: input.parsed.declaration.title },
-    })
+    if (!started) return { run, tracked: false }
     for (const item of run.actions) {
       await SessionLog.emit({
         sessionID: input.sessionID,
@@ -1145,7 +1289,70 @@ export namespace SessionRunner {
         },
       },
     })
-    return run
+    return { run, tracked: started }
+  }
+
+  function cancelled(
+    runID: string,
+    declaration: AgentProtocol.Declaration,
+    evidence: Map<string, AgentProtocol.ResultAction>,
+    starts: Map<string, number>,
+    active: AgentProtocol.Action | undefined,
+    began: number,
+  ): AgentProtocol.Result {
+    const end = Date.now()
+    const actions = declaration.payload.type === "action_graph" ? declaration.payload.actions : []
+    const result: AgentProtocol.ResultAction[] = actions.map((item) => {
+      const done = evidence.get(item.id)
+      if (done) return done
+      const current = item.id === active?.id
+      const start = starts.get(item.id) ?? end
+      const status = current ? ("failed" as const) : ("blocked" as const)
+      const summary = current
+        ? "Protocol action cancelled."
+        : "Action was not started because the protocol run was cancelled."
+      return {
+        id: item.id,
+        title: item.title,
+        operation: item.operation,
+        executor: item.executor,
+        input: item.input,
+        depends_on: item.depends_on,
+        verification: item.verification,
+        status,
+        summary,
+        error: summary,
+        tool_call_ids: [],
+        duration_ms: current ? end - start : 0,
+        time: {
+          started: current ? start : end,
+          completed: end,
+        },
+      }
+    })
+    const summary = "Protocol run cancelled after execution started."
+    const raw = result.reduce((sum, item) => sum + (item.output ?? item.error ?? item.summary).length, 0)
+    return {
+      type: "agent.protocol.result",
+      version: "1",
+      run_id: runID,
+      status: "failed",
+      title: declaration.title,
+      actions: result,
+      summary,
+      time: {
+        started: began,
+        completed: end,
+      },
+      metrics: {
+        actions: result.length,
+        internal_tool_calls: result.reduce((sum, item) => sum + item.tool_call_ids.length, 0),
+        direct_model_tool_calls: 0,
+        model_visible_bytes: summary.length,
+        raw_output_bytes: raw,
+        duration_ms: end - began,
+      },
+    }
   }
 
   function rejected(runID: string, declaration: AgentProtocol.Declaration, issues: Issue[]): AgentProtocol.Result {
@@ -1736,13 +1943,14 @@ export namespace SessionRunner {
           })
           return
         }
-        const run = await execute({
+        const exec = await execute({
           chat: processor,
           stream: input.stream,
           sessionID,
           parsed: parsed.value,
           recovered: false,
         })
+        const run = exec.run
         const raw = await Session.updatePart({
           id: PartID.ascending(),
           messageID: processor.message.id,
@@ -1754,7 +1962,7 @@ export namespace SessionRunner {
           metadata: context(run),
           time: { start: Date.now(), end: Date.now() },
         })
-        await project(sessionID, run)
+        if (exec.tracked) await project(sessionID, run)
         const action = summaryAction(run)
         if (run.status !== "blocked") {
           await Session.updatePart({
@@ -3618,26 +3826,36 @@ export namespace SessionRunner {
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
-        await Session.updatePart({
-          ...part,
-          state: {
-            status: "error",
-            input: args,
-            error: msg,
-            metadata: { protocol: true, actionID: input.action.id },
-            time: {
-              start: now,
-              end: Date.now(),
+        const update = () =>
+          Session.updatePart({
+            ...part,
+            state: {
+              status: "error",
+              input: args,
+              error: msg,
+              metadata: { protocol: true, actionID: input.action.id },
+              time: {
+                start: now,
+                end: Date.now(),
+              },
             },
-          },
-        })
-        await SessionLog.emit({
-          sessionID: input.sessionID,
-          messageID: input.messageID,
-          level: "error",
-          type: "tool.error",
-          data: { partID: part.id, callID, tool: item.id, error: msg, protocol: true, actionID: input.action.id },
-        })
+          })
+        const emit = () =>
+          SessionLog.emit({
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            level: "error",
+            type: "tool.error",
+            data: { partID: part.id, callID, tool: item.id, error: msg, protocol: true, actionID: input.action.id },
+          })
+        if (aborted(err, input.abort)) {
+          const settled = await Promise.allSettled([update(), emit()])
+          const failures = settled.filter((item) => item.status === "rejected").length
+          if (failures > 0) log.warn("protocol tool abort cleanup failed", { actionID: input.action.id, failures })
+          throw err
+        }
+        await update()
+        await emit()
         results.push({
           callID,
           tool: item.id,
