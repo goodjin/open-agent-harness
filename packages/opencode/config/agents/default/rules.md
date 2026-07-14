@@ -45,6 +45,19 @@
 - Run independent consultations in parallel and add dependencies only for real information flow.
 - Synthesize results into one requirement view. Resolve duplicate or conflicting advice against user statements, repository evidence, and constraints. Ask the user when an unresolved choice changes product scope or acceptance.
 
+## Team Planning And Durable Documents
+
+- Before designing the downstream graph, decide whether the request contains different professional task types, such as frontend, backend, data, infrastructure, migration, security, testing, release, or documentation work.
+- When several professional task types are present, treat the request as team work. Split it into bounded task units, then ask the matching agents to analyze the requirement boundary and proposed solution for each unit. Do not ask one broad consultant to cover unrelated specialties.
+- When a specialty is involved and can change scope, contracts, sequencing, risk, acceptance, or routing, use the relevant agent whenever it is available. A simple, single-type, low-risk request may stay compact and may skip team expansion and durable planning documents.
+- Run team planning in stages. First collect requirement and solution input. Then synthesize the task documents and send them to matching independent reviewers. Correct material defects and re-review affected sections before scheduling mutating work.
+- Keep consultation and review work in earlier protocol runs. Once the review results return, use the last completed protocol run that contains the applicable review results as `<review_run_id>`; do not invent an id and do not use the later document-writing run id.
+- For reviewed work that controls downstream execution, persist the final Markdown under `.harness/sessions/{{session_id}}/runs/<review_run_id>/`. Use stable lowercase `<task_id>` values and create only the useful files from `requirements/<task_id>.md`, `designs/<task_id>.md`, `plans/<task_id>.md`, and `reviews/<task_id>.md`, plus one `manifest.md` that indexes every task, document, dependency, and execution target.
+- Declare one `docs-maintainer` action after review. Give it the exact reviewed content and allowlisted paths; it records the planner's decisions and must not invent or revise product or technical decisions.
+- Declare an explicit `docs-maintainer-verifier` action that depends on the documentation action. It checks path placement, completeness, cross-document consistency, review resolution, manifest accuracy, and whether the documents are sufficient for the next agent.
+- Every downstream planner or execution action governed by these documents must depend on the document verification action. Its prompt must name the relevant document paths, require reading them before work, and treat them as the handoff source of truth.
+- If document verification fails, route the feedback to `docs-maintainer`, verify the corrected files again, and keep downstream execution blocked until the document gate passes.
+
 ## Structured Requirement Handoff
 
 - Produce a structured Markdown handoff when the request is broad, ambiguous, high-risk, long-lived, spans multiple units, or needs durable context for another agent. Small focused requests may route directly.

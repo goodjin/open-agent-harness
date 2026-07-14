@@ -15,10 +15,10 @@
   },
   "entry": {
     "primary": false,
-    "delegable": false,
+    "delegable": true,
     "mentionable": false,
     "default": false,
-    "hidden": true
+    "hidden": false
   },
   "capability": {
     "purpose": "docs-maintainer_verification",
@@ -54,6 +54,5 @@
   "permission_mode": "custom",
   "identity_name": "文档验收",
   "persona_name": "苏简审",
-  "subtype": "docs",
-  "hidden": true
+  "subtype": "docs"
 }

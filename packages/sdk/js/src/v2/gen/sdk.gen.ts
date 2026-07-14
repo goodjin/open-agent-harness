@@ -256,6 +256,14 @@ import type {
   SessionRestoreResponses,
   SessionRevertErrors,
   SessionRevertResponses,
+  SessionRunDocumentErrors,
+  SessionRunDocumentResponses,
+  SessionRunDocumentsErrors,
+  SessionRunDocumentsResponses,
+  SessionRunErrors,
+  SessionRunResponses,
+  SessionRunsErrors,
+  SessionRunsResponses,
   SessionSetDslContextErrors,
   SessionSetDslContextResponses,
   SessionShareErrors,
@@ -2084,6 +2092,74 @@ export class Diff extends HeyApiClient {
   }
 }
 
+export class Run extends HeyApiClient {
+  /**
+   * List session run documents
+   *
+   * List Markdown planning documents stored for one session protocol run.
+   */
+  public documents<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionRunDocumentsResponses, SessionRunDocumentsErrors, ThrowOnError>({
+      url: "/session/{sessionID}/runs/{runID}/documents",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Read session run document
+   *
+   * Read one Markdown planning document within the current session and run boundary.
+   */
+  public document<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      runID: string
+      directory?: string
+      path: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "path" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionRunDocumentResponses, SessionRunDocumentErrors, ThrowOnError>({
+      url: "/session/{sessionID}/runs/{runID}/document",
+      ...options,
+      ...params,
+    })
+  }
+}
+
 export class Session3 extends HeyApiClient {
   /**
    * List sessions
@@ -2170,7 +2246,7 @@ export class Session3 extends HeyApiClient {
   /**
    * Get session status
    *
-   * Retrieve the current status of all sessions, including active, idle, and completed states.
+   * Retrieve the current status of all sessions in the current or requested project directory.
    */
   public status<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -3235,6 +3311,68 @@ export class Session3 extends HeyApiClient {
   }
 
   /**
+   * List session protocol runs
+   *
+   * List persisted Agent Protocol runs and planning documents for one session.
+   */
+  public runs<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionRunsResponses, SessionRunsErrors, ThrowOnError>({
+      url: "/session/{sessionID}/runs",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get session protocol run
+   *
+   * Get one persisted Agent Protocol run with its task content and planning documents.
+   */
+  public run<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      runID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "runID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionRunResponses, SessionRunErrors, ThrowOnError>({
+      url: "/session/{sessionID}/runs/{runID}",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * List session checkpoints
    *
    * Get all checkpoint hashes and timestamps for a session.
@@ -3413,6 +3551,11 @@ export class Session3 extends HeyApiClient {
   private _diff?: Diff
   get diff2(): Diff {
     return (this._diff ??= new Diff({ client: this.client }))
+  }
+
+  private _run?: Run
+  get run2(): Run {
+    return (this._run ??= new Run({ client: this.client }))
   }
 }
 
@@ -3853,7 +3996,7 @@ export class Workflow extends HeyApiClient {
   }
 }
 
-export class Run extends HeyApiClient {
+export class Run2 extends HeyApiClient {
   /**
    * Create harness run
    */
@@ -4166,9 +4309,9 @@ export class Harness extends HeyApiClient {
     })
   }
 
-  private _run?: Run
-  get run(): Run {
-    return (this._run ??= new Run({ client: this.client }))
+  private _run?: Run2
+  get run(): Run2 {
+    return (this._run ??= new Run2({ client: this.client }))
   }
 
   private _agent?: Agent

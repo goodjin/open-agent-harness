@@ -6566,6 +6566,295 @@ export type PermissionRespondResponses = {
 
 export type PermissionRespondResponse = PermissionRespondResponses[keyof PermissionRespondResponses]
 
+export type SessionRunsData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/runs"
+}
+
+export type SessionRunsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRunsError = SessionRunsErrors[keyof SessionRunsErrors]
+
+export type SessionRunsResponses = {
+  /**
+   * Session protocol runs
+   */
+  200: Array<{
+    type: "agent.protocol.result"
+    version: "1"
+    run_id: string
+    title?: string
+    actions: Array<{
+      id: string
+      title: string
+      operation: string
+      executor: {
+        type: "tool" | "agent" | "runtime" | "human"
+        target?: string
+        capabilities?: Array<string>
+      }
+      input?: {
+        [key: string]: unknown
+      }
+      depends_on?: Array<string>
+      verification?: {
+        role?: "test" | "review"
+        worker?: string
+        required?: boolean
+        reason?: string
+        system?: boolean
+        allow_skip_on_no_change?: boolean
+      }
+      status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+      summary?: string
+      output?: string
+      error?: string
+      sessionID?: string
+      tool_call_ids?: Array<string>
+      duration_ms?: number
+      time: {
+        started: number
+        completed?: number
+      }
+    }>
+    summary: string
+    time: {
+      started: number
+      completed?: number
+    }
+    metrics: {
+      actions: number
+      internal_tool_calls: number
+      direct_model_tool_calls: number
+      model_visible_bytes: number
+      raw_output_bytes: number
+      duration_ms: number
+    }
+    status: "running" | "completed" | "blocked" | "failed"
+    documents?: Array<{
+      path: string
+      name: string
+      type: "requirements" | "designs" | "plans" | "reviews" | "manifest"
+      task_id?: string
+      size: number
+      updated_at: number
+    }>
+  }>
+}
+
+export type SessionRunsResponse = SessionRunsResponses[keyof SessionRunsResponses]
+
+export type SessionRunData = {
+  body?: never
+  path: {
+    sessionID: string
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/runs/{runID}"
+}
+
+export type SessionRunErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRunError = SessionRunErrors[keyof SessionRunErrors]
+
+export type SessionRunResponses = {
+  /**
+   * Session protocol run
+   */
+  200: {
+    type: "agent.protocol.result"
+    version: "1"
+    run_id: string
+    title?: string
+    actions: Array<{
+      id: string
+      title: string
+      operation: string
+      executor: {
+        type: "tool" | "agent" | "runtime" | "human"
+        target?: string
+        capabilities?: Array<string>
+      }
+      input?: {
+        [key: string]: unknown
+      }
+      depends_on?: Array<string>
+      verification?: {
+        role?: "test" | "review"
+        worker?: string
+        required?: boolean
+        reason?: string
+        system?: boolean
+        allow_skip_on_no_change?: boolean
+      }
+      status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+      summary?: string
+      output?: string
+      error?: string
+      sessionID?: string
+      tool_call_ids?: Array<string>
+      duration_ms?: number
+      time: {
+        started: number
+        completed?: number
+      }
+    }>
+    summary: string
+    time: {
+      started: number
+      completed?: number
+    }
+    metrics: {
+      actions: number
+      internal_tool_calls: number
+      direct_model_tool_calls: number
+      model_visible_bytes: number
+      raw_output_bytes: number
+      duration_ms: number
+    }
+    status: "running" | "completed" | "blocked" | "failed"
+    documents?: Array<{
+      path: string
+      name: string
+      type: "requirements" | "designs" | "plans" | "reviews" | "manifest"
+      task_id?: string
+      size: number
+      updated_at: number
+    }>
+  }
+}
+
+export type SessionRunResponse = SessionRunResponses[keyof SessionRunResponses]
+
+export type SessionRunDocumentsData = {
+  body?: never
+  path: {
+    sessionID: string
+    runID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/runs/{runID}/documents"
+}
+
+export type SessionRunDocumentsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRunDocumentsError = SessionRunDocumentsErrors[keyof SessionRunDocumentsErrors]
+
+export type SessionRunDocumentsResponses = {
+  /**
+   * Session run documents
+   */
+  200: Array<{
+    path: string
+    name: string
+    type: "requirements" | "designs" | "plans" | "reviews" | "manifest"
+    task_id?: string
+    size: number
+    updated_at: number
+  }>
+}
+
+export type SessionRunDocumentsResponse = SessionRunDocumentsResponses[keyof SessionRunDocumentsResponses]
+
+export type SessionRunDocumentData = {
+  body?: never
+  path: {
+    sessionID: string
+    runID: string
+  }
+  query: {
+    directory?: string
+    path: string
+  }
+  url: "/session/{sessionID}/runs/{runID}/document"
+}
+
+export type SessionRunDocumentErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionRunDocumentError = SessionRunDocumentErrors[keyof SessionRunDocumentErrors]
+
+export type SessionRunDocumentResponses = {
+  /**
+   * Session run document
+   */
+  200: {
+    document: {
+      path: string
+      name: string
+      type: "requirements" | "designs" | "plans" | "reviews" | "manifest"
+      task_id?: string
+      size: number
+      updated_at: number
+    }
+    body: string
+  }
+}
+
+export type SessionRunDocumentResponse = SessionRunDocumentResponses[keyof SessionRunDocumentResponses]
+
 export type SessionCheckpointsData = {
   body?: never
   path: {

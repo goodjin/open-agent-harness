@@ -128,7 +128,8 @@ describe("agent protocol executor", () => {
         if (action.id === "build") {
           return {
             title: action.title,
-            output: "Delegated to worker.\nChild session: child_1\nThe parent session will resume automatically when the child result is available.",
+            output:
+              "Delegated to worker.\nChild session: child_1\nThe parent session will resume automatically when the child result is available.",
             metadata: { delegated: true, childSessionID: "child_1" },
           }
         }
@@ -393,6 +394,36 @@ describe("agent protocol executor", () => {
     expect(result.actions[0]?.error).toContain("No delegable agent")
   })
 
+  test("keeps downstream work blocked until the documentation verifier succeeds", async () => {
+    const graph = docs()
+    const agents = [
+      { id: "docs-maintainer", entry: { delegable: true, hidden: false } },
+      { id: "docs-maintainer-verifier", entry: { delegable: true, hidden: false } },
+      { id: "backend", entry: { delegable: true, hidden: false } },
+    ]
+    const passed = await AgentProtocolExecutor.run({ declaration: graph, agents })
+    expect(passed.actions.map((item) => [item.id, item.status])).toEqual([
+      ["write_docs", "completed"],
+      ["verify_docs", "completed"],
+      ["implement", "completed"],
+    ])
+
+    const failed = await AgentProtocolExecutor.run({
+      declaration: graph,
+      agents,
+      execute: async (action) => ({
+        title: action.title,
+        output: action.id === "verify_docs" ? "Manifest is incomplete." : `ran ${action.id}`,
+        metadata: { failed: action.id === "verify_docs" },
+      }),
+    })
+    expect(failed.actions.map((item) => [item.id, item.status])).toEqual([
+      ["write_docs", "completed"],
+      ["verify_docs", "failed"],
+      ["implement", "blocked"],
+    ])
+  })
+
   test("executes human confirmation actions through the injected handler", async () => {
     const result = await AgentProtocolExecutor.run({
       declaration: {
@@ -434,3 +465,33 @@ describe("agent protocol executor", () => {
     })
   })
 })
+
+function docs(): AgentProtocol.Declaration {
+  const action = (id: string, target: string, depends_on: string[]) => ({
+    type: "action" as const,
+    id,
+    title: id,
+    operation: target,
+    executor: { type: "agent" as const, target, capabilities: [] },
+    input: { prompt: id },
+    depends_on,
+    context_refs: [],
+    result_policy: "summary" as const,
+  })
+  return {
+    type: "agent.protocol",
+    version: "1",
+    intent: "execute",
+    persist: false,
+    title: "Durable planning documents",
+    execution: { strategy: "sequential" },
+    payload: {
+      type: "action_graph",
+      actions: [
+        action("write_docs", "docs-maintainer", []),
+        action("verify_docs", "docs-maintainer-verifier", ["write_docs"]),
+        action("implement", "backend", ["verify_docs"]),
+      ],
+    },
+  }
+}

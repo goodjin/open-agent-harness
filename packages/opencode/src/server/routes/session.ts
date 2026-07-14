@@ -13,6 +13,7 @@ import { SessionStatus } from "@/session/status"
 import { SessionSummary } from "@/session/summary"
 import { SessionDelegation } from "@/session/delegation"
 import { SessionTimeline } from "../../session/timeline"
+import { SessionRuns } from "../../session/runs"
 import { Todo } from "../../session/todo"
 import { Agent } from "../../agent/agent"
 import { Snapshot } from "@/snapshot"
@@ -1981,6 +1982,99 @@ export const SessionRoutes = lazy(() =>
           })
         }
         return c.json(true)
+      },
+    )
+    .get(
+      "/:sessionID/runs",
+      describeRoute({
+        summary: "List session protocol runs",
+        description: "List persisted Agent Protocol runs and planning documents for one session.",
+        operationId: "session.runs",
+        responses: {
+          200: {
+            description: "Session protocol runs",
+            content: { "application/json": { schema: resolver(SessionRuns.Run.array()) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        return c.json(await SessionRuns.list(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/runs/:runID",
+      describeRoute({
+        summary: "Get session protocol run",
+        description: "Get one persisted Agent Protocol run with its task content and planning documents.",
+        operationId: "session.run",
+        responses: {
+          200: {
+            description: "Session protocol run",
+            content: { "application/json": { schema: resolver(SessionRuns.Run) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod, runID: SessionRuns.ID })),
+      async (c) => {
+        const input = c.req.valid("param")
+        await Session.get(input.sessionID)
+        const run = await SessionRuns.get(input.sessionID, input.runID)
+        if (!run) return c.json({ message: `Run not found: ${input.runID}` }, 404)
+        return c.json(run)
+      },
+    )
+    .get(
+      "/:sessionID/runs/:runID/documents",
+      describeRoute({
+        summary: "List session run documents",
+        description: "List Markdown planning documents stored for one session protocol run.",
+        operationId: "session.run.documents",
+        responses: {
+          200: {
+            description: "Session run documents",
+            content: { "application/json": { schema: resolver(SessionRuns.Document.array()) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod, runID: SessionRuns.ID })),
+      async (c) => {
+        const input = c.req.valid("param")
+        await Session.get(input.sessionID)
+        const run = await SessionRuns.get(input.sessionID, input.runID)
+        if (!run) return c.json({ message: `Run not found: ${input.runID}` }, 404)
+        return c.json(run.documents)
+      },
+    )
+    .get(
+      "/:sessionID/runs/:runID/document",
+      describeRoute({
+        summary: "Read session run document",
+        description: "Read one Markdown planning document within the current session and run boundary.",
+        operationId: "session.run.document",
+        responses: {
+          200: {
+            description: "Session run document",
+            content: { "application/json": { schema: resolver(SessionRuns.Content) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod, runID: SessionRuns.ID })),
+      validator("query", z.object({ path: z.string().min(1) })),
+      async (c) => {
+        const input = c.req.valid("param")
+        await Session.get(input.sessionID)
+        if (!(await SessionRuns.get(input.sessionID, input.runID)))
+          return c.json({ message: `Run not found: ${input.runID}` }, 404)
+        const document = await SessionRuns.read(input.sessionID, input.runID, c.req.valid("query").path)
+        if (!document) return c.json({ message: "Document not found" }, 404)
+        return c.json(document)
       },
     )
     .get(

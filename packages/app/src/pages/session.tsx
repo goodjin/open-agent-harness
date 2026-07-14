@@ -61,6 +61,7 @@ import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
+import { SessionRuns } from "@/pages/session/session-runs"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
@@ -605,7 +606,7 @@ export default function Page() {
 
   const [store, setStore] = createStore({
     messageId: undefined as string | undefined,
-    sessionView: "timeline" as "timeline" | "logs",
+    sessionView: "timeline" as "timeline" | "logs" | "runs",
     mobileTab: "session" as "session" | "changes" | "logs",
     changes: "session" as "session" | "turn",
     filter: "all" as SessionTurnFilter,
@@ -1084,6 +1085,7 @@ export default function Page() {
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   const mobileLogs = createMemo(() => !isDesktop() && store.mobileTab === "logs")
   const logMode = createMemo(() => mobileLogs() || (isDesktop() && store.sessionView === "logs"))
+  const runMode = createMemo(() => isDesktop() && store.sessionView === "runs")
 
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
@@ -1268,7 +1270,7 @@ export default function Page() {
               }}
               onClick={() => setStore("sessionView", "timeline")}
             >
-              Timeline
+              {language.t("session.tab.timeline")}
             </button>
             <button
               type="button"
@@ -1279,7 +1281,18 @@ export default function Page() {
               }}
               onClick={() => setStore("sessionView", "logs")}
             >
-              Logs
+              {language.t("session.tab.logs")}
+            </button>
+            <button
+              type="button"
+              class="rounded px-2.5 py-1 text-12-medium transition-colors"
+              classList={{
+                "bg-surface-base text-text-strong": store.sessionView === "runs",
+                "text-text-weak hover:text-text-base": store.sessionView !== "runs",
+              }}
+              onClick={() => setStore("sessionView", "runs")}
+            >
+              {language.t("session.tab.runs")}
             </button>
           </div>
         </div>
@@ -1287,8 +1300,7 @@ export default function Page() {
       <div class="flex-1 min-h-0 overflow-hidden">
         <Switch>
           <Match when={params.id}>
-            <Show
-              when={logMode()}
+            <Switch
               fallback={
                 <Show when={messagesReady()} fallback={sessionLoadingPanel()}>
                   <MessageTimeline
@@ -1353,8 +1365,13 @@ export default function Page() {
                 </Show>
               }
             >
-              {logPanel()}
-            </Show>
+              <Match when={runMode()}>
+                <Show when={params.id} keyed>
+                  {(id) => <SessionRuns sessionID={id} />}
+                </Show>
+              </Match>
+              <Match when={logMode()}>{logPanel()}</Match>
+            </Switch>
           </Match>
           <Match when={true}>
             <NewSessionView worktree={newSessionWorktree()} />

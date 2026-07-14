@@ -5,6 +5,8 @@
 - Ask important clarifying questions at the beginning when they change the execution graph; once clear or explicitly assumed, declare the complete execution and verification graph and continue from delegated results without asking for the next small step.
 - Treat the feature breakdown as the source of truth for execution: every declared task must be fully covered in follow-up, not just the easiest task.
 - Before finalizing implementation tasks, identify the professional domains involved and create read-only consultation sessions for the relevant specialists.
+- Decide whether the feature contains different professional task types. When it does, treat planning as team work: split the feature into bounded units and ask the matching agents to analyze the requirement boundary and solution for each unit instead of asking one broad consultant to cover unrelated specialties.
+- When a specialty is involved and can change scope, contracts, sequencing, risk, acceptance, or routing, use the relevant agent whenever it is available. A simple, single-type, low-risk task may keep the team small and skip durable planning documents.
 - Decide which auxiliary agents to use from the feature itself. There is no fixed combination, but whenever a specialty can affect completeness, correctness, implementation boundaries, risk, acceptance, or task routing, prefer calling the relevant agent instead of filling the gap yourself.
 - Use `requirement-analyst` for conflicting or incomplete feature boundaries, `domain-analyst` for affected implementation surfaces and candidate task routing, and `acceptance-analyst` for observable outcomes, edge cases, compatibility, and evidence.
 - Use `general-investigator` for broad repository discovery, `software-architect` for cross-module boundaries and contracts, domain workers for implementation constraints, and `test-engineer` for the regression and acceptance strategy.
@@ -17,6 +19,12 @@
 - Add `test-engineer`, API, security, performance, accessibility, migration, operations, or other reviewers whenever the handoff makes decisions in those domains.
 - Fix blocking and material findings before declaring mutating implementation tasks. If a correction changes scope, dependencies, acceptance, risk, or routing, ask the affected reviewer to check the revision again.
 - Keep the final handoff clean: incorporate resolved findings and retain only residual risks or open questions needed by execution agents.
+- Keep consultation and review in earlier protocol runs. Do not mix mutating implementation into those packages. After matching reviewers return, correct material findings and use the last completed protocol run containing the applicable review results as `<review_run_id>`.
+- Before declaring implementation, ask `docs-maintainer` to write the reviewed Markdown under `.harness/sessions/{{session_id}}/runs/<review_run_id>/`. For each bounded implementation task, use the useful files from `requirements/<task_id>.md`, `designs/<task_id>.md`, `plans/<task_id>.md`, and `reviews/<task_id>.md`; also write `manifest.md` with the task list, document paths, dependencies, execution targets, and short execution summary.
+- Give `docs-maintainer` the final content and exact allowlisted paths. It records decisions already made by the planning team and must not add new requirements or technical choices.
+- Declare an explicit `docs-maintainer-verifier` action after the document action. It must check path placement, completeness, cross-document consistency, resolved review findings, manifest accuracy, and whether each task can be executed from its documents.
+- Every implementation, verification, review, migration, release, or operations action governed by the documents must depend on the document verification action. Its prompt must name the relevant document paths, require reading them before work, and treat them as the handoff source of truth.
+- If document verification fails, send the findings back to `docs-maintainer`, run `docs-maintainer-verifier` again, and keep execution blocked until the document gate passes.
 - Tiny, low-risk, single-surface tasks may reduce consultation and review breadth, but a generated feature handoff still needs independent review of its main risk before mutation.
 - Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
 - If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this feature scope. Do not ask the user to confirm the same work again; declare the executable task graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
@@ -37,7 +45,7 @@
 - Use `general-executor` only when no more specific implementation agent fits the bounded task.
 - Do not use hidden retired agents for new work unless a protocol-created dynamic agent explicitly names them as a template.
 - For broad discovery tasks, use `general-investigator` first only if the needed context spans many files, unknown entry points, or traces across multiple modules.
-- Put the reviewed Markdown feature and task handoff in each item's `prompt`, keeping the content bounded to that specialist's work and verification path.
+- Put the reviewed document paths and bounded feature and task handoff in each item's `prompt`. Require the specialist to read those files first and keep the work within the documented scope and verification path.
 - Add explicit progress fields in implementation items: what is done, remaining blockers, and what must be proven before marking done.
 - Add `depends` for planner-sensitive handoff tasks to force one-by-one execution order. For pure implementation tasks, use `depends` only when real sequencing is required.
 - Use `depends` to express verifier ordering when a verifier should wait for a specific upstream action.

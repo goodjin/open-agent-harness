@@ -121,8 +121,12 @@ describe("AgentTemplateLoader", () => {
 
     test("built-in coordinator planners keep strict graph routing footers", async () => {
       const agent = BUILTIN_AGENTS.find((item) => item.id === "default")
-      expect(agent?.rules).toContain("always split work by the project/PRD -> milestone -> feature/capability -> implementation task -> verification/review hierarchy")
-      expect(agent?.rules).toContain("Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan")
+      expect(agent?.rules).toContain(
+        "always split work by the project/PRD -> milestone -> feature/capability -> implementation task -> verification/review hierarchy",
+      )
+      expect(agent?.rules).toContain(
+        "Do not emit a single worker item whose prompt asks that worker to discover and execute the whole remaining plan",
+      )
       expect(agent?.meta.request_footer?.prompt).toContain("Requirement First / Assisted Review")
       expect(agent?.meta.request_footer?.prompt).toContain("call the native AgentProtocolOutput tool exactly once")
       expect(agent?.meta.concurrency).toBe(-1)
@@ -130,7 +134,12 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.rules).toContain("Use `requirement-reviewer` for completeness")
       expect(agent?.rules).toContain("Do not emit a fixed requirement JSON schema")
       expect(agent?.rules).toContain("Use `general-executor` only for bounded cross-domain implementation")
-
+      expect(agent?.rules).toContain("## Team Planning And Durable Documents")
+      expect(agent?.rules).toContain("different professional task types")
+      expect(agent?.rules).toContain("`.harness/sessions/{{session_id}}/runs/<review_run_id>/`")
+      expect(agent?.rules).toContain("`docs-maintainer-verifier`")
+      expect(agent?.meta.request_footer?.prompt).toContain("Team Planning / Durable Documents")
+      expect(agent?.meta.request_footer?.prompt).toContain("requirements/<task_id>.md")
       ;["milestone-planner", "feature-planner"].forEach((id) => {
         const planner = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(planner?.meta.request_footer?.prompt).toContain("Assisted Design / Independent Review")
@@ -138,6 +147,13 @@ describe("AgentTemplateLoader", () => {
         expect(planner?.rules).toContain("without asking for the next small step")
         expect(planner?.rules).toContain("There is no fixed combination")
         expect(planner?.rules).toContain("call independent reviewers matched to its content")
+        expect(planner?.rules).toContain("different professional task types")
+        expect(planner?.rules).toContain("`.harness/sessions/{{session_id}}/runs/<review_run_id>/`")
+        expect(planner?.rules).toContain("`docs-maintainer`")
+        expect(planner?.rules).toContain("`docs-maintainer-verifier`")
+        expect(planner?.rules).toContain("depend on the document verification action")
+        expect(planner?.meta.request_footer?.prompt).toContain("Team Planning / Durable Documents")
+        expect(planner?.meta.request_footer?.prompt).toContain("manifest.md")
       })
       const milestone = BUILTIN_AGENTS.find((item) => item.id === "milestone-planner")
       expect(milestone?.rules).toContain("one concise Markdown milestone handoff")
@@ -159,6 +175,7 @@ describe("AgentTemplateLoader", () => {
         "acceptance-analyst": ["helper", "acceptance_analysis", false],
         "requirement-reviewer": ["verifier", "requirement_review", false],
         "routing-reviewer": ["verifier", "routing_review", false],
+        "docs-maintainer-verifier": ["verifier", "docs-maintainer_verification", false],
         debugger: ["helper", "debugging", false],
         frontend: ["worker", "frontend_implementation", true],
         backend: ["worker", "backend_implementation", true],
@@ -190,7 +207,6 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.protocol?.prompt).toContain("This is the planner/coordinator protocol")
         expect(agent?.protocol?.prompt).not.toContain("Worker result fields")
       })
-
       ;["backend", "frontend", "general-executor", "test-engineer"].forEach((id) => {
         const agent = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(agent?.requestFooter?.file).toBe("action-worker.md")
@@ -199,8 +215,14 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.requestFooter?.prompt).not.toContain("target_action_id")
         expect(agent?.protocol).toBeUndefined()
       })
-
-      ;["verifier", "code-reviewer", "design-reviewer", "requirement-reviewer", "routing-reviewer", "backend-verifier"].forEach((id) => {
+      ;[
+        "verifier",
+        "code-reviewer",
+        "design-reviewer",
+        "requirement-reviewer",
+        "routing-reviewer",
+        "backend-verifier",
+      ].forEach((id) => {
         const agent = BUILTIN_AGENTS.find((item) => item.id === id)
         expect(agent?.requestFooter?.file).toBe("action-verifier.md")
         expect(agent?.requestFooter?.prompt).toContain("verifier action agent")

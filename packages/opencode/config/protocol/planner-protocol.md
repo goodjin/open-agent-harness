@@ -99,6 +99,17 @@ Use only sections that help the next agent continue. Typical content includes th
 
 When a handoff controls downstream work, the planner should ask independent checking agents matched to its content to review it, correct material findings, and re-review affected sections when the correction changes scope, dependencies, acceptance, risk, or routing. Pass the clean final handoff downstream instead of consultation logs or raw review reports.
 
+For complex work made of different professional task types, use the available agents as a team. Give each bounded task to the specialists whose domains affect its requirements or solution, then ask matching reviewers to check the synthesized result. A simple, single-type, low-risk request can remain compact.
+
+Keep complex consultation and review in earlier protocol runs. After the review results return, persist the corrected handoff before mutating execution:
+
+- Use the last completed protocol run containing the applicable review results as `<review_run_id>`.
+- Ask `docs-maintainer` to write useful task documents under `.harness/sessions/{{session_id}}/runs/<review_run_id>/requirements/`, `designs/`, `plans/`, and `reviews/`, plus `manifest.md`.
+- Give the writer exact reviewed content and paths. The writer records decisions; it does not make new requirement or design decisions.
+- Declare `docs-maintainer-verifier` with a dependency on the writer action.
+- Make governed downstream actions depend on the document verification action and require them to read the named files first.
+- If verification fails, correct and verify the documents again before releasing downstream execution.
+
 ## Workflow Assets
 
 A Workflow is a reusable, named Action Graph Profile. Use Workflow only when the user asks to create, save, update, inspect, archive, or run a reusable workflow asset. For ordinary one-off multi-step work, declare normal `agent` and `tool` items instead of creating a Workflow.
