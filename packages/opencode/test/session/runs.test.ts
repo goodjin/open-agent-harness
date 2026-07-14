@@ -114,6 +114,44 @@ describe("session runs", () => {
     })
   })
 
+  test("recovers a canonical delegated result when the child projection is missing", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_delegation_result_recovery"),
+          fn: async () => {
+            const item = await delegation("run_delegation_recovery", "Recover backend result")
+            await SessionResult.put({
+              carrier: "action_result",
+              status: "completed",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: item.action.id,
+              raw: {
+                input: {
+                  kind: "action_result",
+                  role: "worker",
+                  action_id: item.action.id,
+                  status: "success",
+                  result: "Recovered canonical result.",
+                },
+              },
+            })
+
+            const saved = await SessionRuns.get(item.child.id, item.run)
+            expect(saved?.status).toBe("completed")
+            expect(saved?.summary).toBe("Recovered canonical result.")
+            expect(saved?.summary_source).toBe("action_result")
+          },
+        }),
+    })
+  })
+
   test("uses only the trusted summary field for each canonical carrier", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -853,6 +891,13 @@ describe("session runs", () => {
           fn: async () => {
             const session = await Session.create({})
             const run = result("run_projected", "blocked")
+            run.actions[0] = AgentProtocol.ResultAction.parse({
+              ...run.actions[0],
+              input: { prompt: "Keep the complete stored prompt" },
+              depends_on: ["requirements"],
+              verification: { role: "review", required: true },
+              sessionID: session.id,
+            })
             await Storage.write(["session_protocol_run", session.id, run.run_id], run)
             await SessionRuns.finish({
               sessionID: session.id,
@@ -869,7 +914,19 @@ describe("session runs", () => {
                       runID: run.run_id,
                       title: "Projected planning",
                       status: "completed",
-                      actions: [{ ...run.actions[0], title: "Projected backend", status: "completed" }],
+                      actions: [
+                        {
+                          id: "backend",
+                          title: "Projected backend",
+                          operation: "agent",
+                          executor: { type: "agent", target: "backend" },
+                          status: "completed",
+                          summary: "Projected completion",
+                          tool_call_ids: [],
+                          duration_ms: 2,
+                          time: { started: run.time.started, completed: run.time.started + 2 },
+                        },
+                      ],
                       time: { started: run.time.started, completed: run.time.started + 2 },
                       metrics: { ...run.metrics, duration_ms: 999 },
                     },
@@ -883,10 +940,49 @@ describe("session runs", () => {
             for (const item of [listed, saved]) {
               expect(item?.status).toBe("completed")
               expect(item?.actions[0]?.title).toBe("Projected backend")
+              expect(item?.actions[0]?.input).toEqual({ prompt: "Keep the complete stored prompt" })
+              expect(item?.actions[0]?.depends_on).toEqual(["requirements"])
+              expect(item?.actions[0]?.verification).toEqual({ role: "review", required: true })
+              expect(item?.actions[0]?.sessionID).toBe(session.id)
               expect(item?.metrics.duration_ms).toBe(1)
               expect(item?.execution_summary).toBe("Completed")
               expect(item?.summary).toBe("Confirmed result")
             }
+          },
+        }),
+    })
+  })
+
+  test("keeps a stored terminal status when a running projection is stale", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_stale_running_projection"),
+          fn: async () => {
+            const session = await Session.create({})
+            const run = result("run_stale_projection", "failed")
+            await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+            await Session.setDslContext({
+              sessionID: session.id,
+              dsl_context: {
+                protocol: {
+                  runs: [
+                    {
+                      runID: run.run_id,
+                      status: "running",
+                      actions: run.actions,
+                      time: { started: run.time.started },
+                      metrics: { ...run.metrics, duration_ms: 0 },
+                    },
+                  ],
+                },
+              },
+            })
+
+            expect((await SessionRuns.get(session.id, run.run_id))?.status).toBe("failed")
+            expect((await SessionRuns.list(session.id))[0]?.status).toBe("failed")
           },
         }),
     })

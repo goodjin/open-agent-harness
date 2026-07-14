@@ -108,7 +108,7 @@ export namespace SessionRuns {
       : new Map<string, { summary: string; source: "protocol" }>()
     const by = new Map(projected.map((run) => [run.runID, run]))
     const saved = await Promise.all(
-      runs.map((run) => map(sessionID, run, outcomes.get(run.run_id), by.get(run.run_id), old.get(run.run_id))),
+      runs.map((run) => map(sessionID, run, outcomes.get(run.run_id), by.get(run.run_id), old.get(run.run_id), true)),
     )
     const out = new Map(saved.map((run) => [run.run_id, run]))
     for (const run of projected) {
@@ -131,7 +131,7 @@ export namespace SessionRuns {
     if (!stored && !projected) return
     const outcome = await readoutcome(sessionID, runID)
     const old = outcome ? undefined : (await history(sessionID, runID)).get(runID)
-    if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, old)
+    if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, old, true)
     if (projected) return map(sessionID, projection(projected), outcome, projected, old)
   }
 
@@ -301,14 +301,28 @@ export namespace SessionRuns {
     const content = valid ? record(await SessionAssignment.content(assignment.id)) : {}
     const plan = typeof content.plan === "string" ? content.plan : item.action_title
     const ref = record(session.dsl_context?.result).result_id
-    const result = typeof ref === "string" ? await SessionResult.parse(ref) : undefined
+    const direct = typeof ref === "string" ? await SessionResult.parse(ref) : undefined
+    const match =
+      direct?.parent_session_id === session.parentID &&
+      direct.child_session_id === session.id &&
+      direct.session_id === session.id &&
+      direct.run_id === item.run_id &&
+      direct.action_id === item.action_id
+    const found = match
+      ? direct
+      : await SessionResult.find({
+          parentSessionID: session.parentID,
+          childSessionID: session.id,
+          runID: item.run_id,
+          actionID: item.action_id,
+        }).then((result) => (result ? SessionResult.parse(result.id) : undefined))
     const trusted =
-      result?.parent_session_id === session.parentID &&
-      result.child_session_id === session.id &&
-      result.session_id === session.id &&
-      result.run_id === item.run_id &&
-      result.action_id === item.action_id
-        ? result
+      found?.parent_session_id === session.parentID &&
+      found.child_session_id === session.id &&
+      found.session_id === session.id &&
+      found.run_id === item.run_id &&
+      found.action_id === item.action_id
+        ? found
         : undefined
     const summary = trusted ? text(summaryof(trusted)) : undefined
     const status = trusted ? runstatus(trusted.status) : "running"
@@ -378,13 +392,27 @@ export namespace SessionRuns {
     outcome: z.infer<typeof Outcome> | undefined,
     projected?: z.infer<typeof Projection>,
     old?: { summary: string; source: z.infer<typeof Source> },
+    saved = false,
   ) {
+    const actions = projected
+      ? projected.actions.map((item) => {
+          const base = run.actions.find((action) => action.id === item.id)
+          if (!base) return item
+          return {
+            ...item,
+            input: base.input,
+            depends_on: base.depends_on,
+            verification: base.verification,
+            sessionID: base.sessionID,
+          }
+        })
+      : run.actions
     return Run.parse({
       ...run,
       kind: "protocol",
-      status: projected?.status ?? run.status,
-      actions: projected?.actions ?? run.actions,
-      task: task({ ...run, actions: projected?.actions ?? run.actions }),
+      status: saved && projected?.status === "running" ? run.status : (projected?.status ?? run.status),
+      actions,
+      task: task({ ...run, actions }),
       summary: outcome?.summary ?? old?.summary,
       summary_source: outcome ? "protocol" : old?.source,
       execution_summary: run.summary || undefined,
