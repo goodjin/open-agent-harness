@@ -15,6 +15,22 @@ The detection function is shared by the composer affordance and submit path, so 
 
 ## Session Workspace Layout
 
+### Session Runs
+
+Runs 页面按可执行任务包组织信息。父会话只在 Runtime 接受并开始执行至少一个 `agent`、`tool` 或 runtime action 的 DSL 包时创建 Run；普通对话、补充信息、`input`-only 和 `confirm`-only 包不创建。`confirm` 与可执行 action 同包时，要等确认通过、任务实际开始后才创建。父会话委派子会话时，子会话同步获得对应的委派 Run。
+
+父 protocol Run 的 `summary` 来自 actions fan-in 后的模型综合结果。子会话委派 Run 的 `summary` 来自 canonical `ActionResult.result`，无法生成合法 ActionResult 时才展示 fallback。executor 生成的 action 状态摘要保留在 `execution_summary`；两者分别回答“交付了什么”和“执行过程如何收敛”，UI 不混用。
+
+详情固定按任务内容、运行结果、子任务、文档、执行信息的顺序展示。运行结果和执行信息分区渲染，Markdown summary 不会覆盖 action 局部输出或指标。运行中的 Run 不显示空结果卡片；终态无正文时显示 missing，fallback 则显示来源提示，并说明它不代表验证通过。
+
+Run 标题区和左侧列表同时展示 Runtime 状态徽标与结果徽标。Runtime 徽标使用 `running`、`completed`、`blocked`、`failed`；结果徽标只在非运行态显示 recorded、fallback 或 missing。左侧条目还包含 Run ID、开始与完成时间、已完成 action/总 action 进度和文档数量，方便在不打开详情时判断任务范围与结果可用性。
+
+文档区只列出当前 session、Run 目录中的 requirements、designs、plans、reviews 和 manifest Markdown。服务端校验 session/run/path 片段，拒绝绝对路径、路径穿越、非 Markdown 文件、符号链接和不属于已存在 Run 的目录；读取时还会核对 realpath、文件描述符对应的 inode 及项目边界，避免检查后替换文件。UI 只渲染接口返回的安全内容。
+
+协议 Run 的最终结果使用独立 outcome 记录。相同 message 或相同 summary 的重复写入返回既有记录，便于 replay 幂等；不同 summary 的后续写入报冲突，不覆盖首个结果。历史 `protocol_response` fallback 只参与读取，不写回 outcome。
+
+公开 prompt 与 enqueue 接口会保留普通业务 metadata，但清除 `internal`、`source`、`run_id` 和 `turn` 等 Runtime 保留字段。Run 归属只由 Runtime 写入的内部 metadata 和持久化关联决定，客户端不能借公开 metadata 伪造上一 Run 的结果归属。
+
 Desktop session pages keep global workspace controls in the app titlebar right slot. Status, session tree, terminal, review, file-tree, and side-panel toggle controls should not live in the sticky session title row.
 
 The sticky session title row remains scoped to the active conversation: parent navigation, title editing, context usage, and the session menu.
