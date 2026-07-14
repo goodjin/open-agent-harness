@@ -3655,6 +3655,7 @@ describe("SessionDelegation", () => {
               expect(cctx.delegation?.status).toBe("completed")
               expect(typeof cctx.delegation?.notified_at).toBe("number")
               expect(SessionStatus.get(parent.id).type).toBe("waiting_child")
+              await Instance.dispose()
             },
           }),
       })
