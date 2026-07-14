@@ -6,7 +6,9 @@ import { Instance } from "@/project/instance"
 import { AgentProtocol } from "@/protocol/schema"
 import { Storage } from "@/storage/storage"
 import { Session } from "."
+import { MessageV2 } from "./message-v2"
 import { SessionID } from "./schema"
+import { SessionTurn } from "./turn"
 
 export namespace SessionRuns {
   const kinds = ["requirements", "designs", "plans", "reviews"] as const
@@ -34,18 +36,36 @@ export namespace SessionRuns {
     .strict()
   export type Content = z.infer<typeof Content>
 
-  export const Run = AgentProtocol.Result.omit({ status: true })
+  const Source = z.enum(["protocol", "action_result", "fallback_summary"])
+
+  const Outcome = z
+    .object({
+      run_id: z.string(),
+      summary: z.string().trim().min(1),
+      message_id: z.string(),
+      completed_at: z.number().nonnegative(),
+    })
+    .strict()
+
+  export const Run = AgentProtocol.Result.omit({ status: true, summary: true })
     .extend({
+      kind: z.enum(["protocol", "delegation"]),
       status: z.enum(["running", "completed", "blocked", "failed"]),
+      task: z.string(),
+      summary: z.string().optional(),
+      summary_source: Source.optional(),
+      execution_summary: z.string().optional(),
+      action_id: z.string().optional(),
+      fallback: z.boolean().default(false),
       documents: z.array(Document).default([]),
     })
     .strict()
   export type Run = z.infer<typeof Run>
 
-  const Active = z
+  const Projection = z
     .object({
       runID: z.string().min(1),
-      status: z.literal("running"),
+      status: z.enum(["running", "completed", "blocked", "failed"]),
       title: z.string().optional(),
       actions: z.array(AgentProtocol.ResultAction.strip()),
       time: AgentProtocol.Result.shape.time,
@@ -58,21 +78,64 @@ export namespace SessionRuns {
     const runs = await Promise.all(
       keys.map((key) => Storage.read<AgentProtocol.Result>(key).then(AgentProtocol.Result.parse)),
     )
+    const projected = await projections(sessionID)
+    if (!runs.length && !projected.length) return []
+    const ids = new Set([...runs.map((run) => run.run_id), ...projected.map((run) => run.runID)])
+    const outcomes = new Map(
+      (
+        await Promise.all(
+          [...ids].map(async (id) => [id, await readoutcome(sessionID, id)] as const),
+        )
+      ).flatMap(([id, outcome]) => (outcome ? ([[id, outcome]] as const) : [])),
+    )
+    const old = [...ids].some((id) => !outcomes.has(id))
+      ? await history(sessionID)
+      : new Map<string, { summary: string; source: "protocol" }>()
+    const by = new Map(projected.map((run) => [run.runID, run]))
     const saved = await Promise.all(
-      runs.map(async (run) => Run.parse({ ...run, documents: await documents(sessionID, run.run_id) })),
+      runs.map((run) => map(sessionID, run, outcomes.get(run.run_id), by.get(run.run_id), old.get(run.run_id))),
     )
     const out = new Map(saved.map((run) => [run.run_id, run]))
-    for (const run of await active(sessionID)) out.set(run.run_id, run)
+    for (const run of projected) {
+      if (out.has(run.runID)) continue
+      out.set(run.runID, await map(sessionID, projection(run), outcomes.get(run.runID), run, old.get(run.runID)))
+    }
     return [...out.values()].sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id))
   }
 
   export async function get(sessionID: SessionID, runID: string) {
     if (!ID.safeParse(runID).success) return
-    const run = await Storage.read<AgentProtocol.Result>(["session_protocol_run", sessionID, runID]).catch(
+    const stored = await Storage.read<AgentProtocol.Result>(["session_protocol_run", sessionID, runID]).catch(
       () => undefined,
     )
-    if (run) return Run.parse({ ...AgentProtocol.Result.parse(run), documents: await documents(sessionID, runID) })
-    return (await active(sessionID)).find((item) => item.run_id === runID)
+    const projected = (await projections(sessionID)).find((item) => item.runID === runID)
+    if (!stored && !projected) return
+    const outcome = await readoutcome(sessionID, runID)
+    const old = outcome ? undefined : (await history(sessionID, runID)).get(runID)
+    if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, old)
+    if (projected) return map(sessionID, projection(projected), outcome, projected, old)
+  }
+
+  export async function finish(input: { sessionID: SessionID; runID: string; summary: string; messageID: string }) {
+    const summary = Outcome.shape.summary.parse(input.summary)
+    const stored = await Storage.read<AgentProtocol.Result>([
+      "session_protocol_run",
+      input.sessionID,
+      input.runID,
+    ]).catch(() => undefined)
+    const projected = (await projections(input.sessionID)).some((item) => item.runID === input.runID)
+    if (!stored && !projected) throw new Error(`Protocol run not found: ${input.runID}`)
+    const key = ["session_protocol_run_outcome", input.sessionID, input.runID]
+    const outcome = Outcome.parse({
+      run_id: input.runID,
+      summary,
+      message_id: input.messageID,
+      completed_at: Date.now(),
+    })
+    if (await Storage.create(key, outcome)) return outcome
+    const prev = await readoutcome(input.sessionID, input.runID)
+    if (prev?.message_id === input.messageID) return prev
+    throw new Error(`Run outcome already exists: ${input.runID}`)
   }
 
   export async function documents(sessionID: SessionID, runID: string) {
@@ -190,36 +253,106 @@ export namespace SessionRuns {
     return body
   }
 
-  async function active(sessionID: SessionID) {
+  async function projections(sessionID: SessionID) {
     const session = await Session.get(sessionID)
     const protocol = record(session.dsl_context?.protocol)
     const runs = Array.isArray(protocol.runs) ? protocol.runs : []
-    return Promise.all(
-      runs.flatMap((item) => {
-        const parsed = Active.safeParse(item)
-        if (!parsed.success) return []
-        return [
-          documents(sessionID, parsed.data.runID).then((documents) =>
-            Run.parse({
-              type: "agent.protocol.result",
-              version: "1",
-              run_id: parsed.data.runID,
-              status: parsed.data.status,
-              title: parsed.data.title,
-              actions: parsed.data.actions,
-              summary: "",
-              time: parsed.data.time,
-              metrics: parsed.data.metrics,
-              documents,
-            }),
-          ),
-        ]
-      }),
-    )
+    return runs.flatMap((item) => {
+      const parsed = Projection.safeParse(item)
+      return parsed.success ? [parsed.data] : []
+    })
   }
 
   function record(input: unknown): Record<string, unknown> {
     if (!input || typeof input !== "object" || Array.isArray(input)) return {}
     return input as Record<string, unknown>
+  }
+
+  async function map(
+    sessionID: SessionID,
+    run: AgentProtocol.Result,
+    outcome: z.infer<typeof Outcome> | undefined,
+    projected?: z.infer<typeof Projection>,
+    old?: { summary: string; source: z.infer<typeof Source> },
+  ) {
+    return Run.parse({
+      ...run,
+      kind: "protocol",
+      status: projected?.status ?? run.status,
+      actions: projected?.actions ?? run.actions,
+      task: task({ ...run, actions: projected?.actions ?? run.actions }),
+      summary: outcome?.summary ?? old?.summary,
+      summary_source: outcome ? "protocol" : old?.source,
+      execution_summary: run.summary || undefined,
+      fallback: !outcome && old?.source === "fallback_summary",
+      documents: await documents(sessionID, run.run_id),
+    })
+  }
+
+  async function history(sessionID: SessionID, target?: string) {
+    const messages = await Array.fromAsync(MessageV2.stream(sessionID))
+    const assistants = new Map<string, MessageV2.WithParts>()
+    messages.forEach((item) => {
+      if (item.info.role !== "assistant") return
+      assistants.set(item.info.id, item)
+    })
+    const out = new Map<string, { summary: string; source: "protocol" }>()
+    messages.forEach((item) => {
+      if (item.info.role !== "user") return
+      const turn = SessionTurn.get(item.info)
+      if (!turn) return
+      const meta = item.info.metadata
+      const delegated = meta?.internal === true && meta.source === "delegation" && typeof meta.run_id === "string"
+      const run = turn.run_id ?? (delegated ? meta.run_id : undefined)
+      if (!run || (target && run !== target) || out.has(run)) return
+      const assistant = turn.assistant_id ? assistants.get(turn.assistant_id) : undefined
+      if (!assistant || assistant.info.role !== "assistant" || assistant.info.parentID !== item.info.id) return
+      const part = assistant.parts.find(
+        (part) => part.type === "text" && part.metadata?.kind === "protocol_response" && part.text.trim(),
+      )
+      if (!part || part.type !== "text") return
+      out.set(run, { summary: part.text.trim(), source: "protocol" })
+    })
+    return out
+  }
+
+  async function readoutcome(sessionID: SessionID, runID: string) {
+    const value = await Storage.read<unknown>(["session_protocol_run_outcome", sessionID, runID]).catch(
+      (err: unknown) => {
+        if (Storage.NotFoundError.isInstance(err)) return
+        throw err
+      },
+    )
+    if (value === undefined) return
+    const outcome = Outcome.parse(value)
+    if (outcome.run_id !== runID) throw new Error(`Run outcome mismatch: ${outcome.run_id} !== ${runID}`)
+    return outcome
+  }
+
+  function projection(run: z.infer<typeof Projection>): AgentProtocol.Result {
+    return {
+      type: "agent.protocol.result",
+      version: "1",
+      run_id: run.runID,
+      status: run.status === "running" ? "completed" : run.status,
+      title: run.title,
+      actions: run.actions,
+      summary: "",
+      time: run.time,
+      metrics: run.metrics,
+    }
+  }
+
+  function task(run: AgentProtocol.Result) {
+    return [
+      run.title,
+      ...run.actions.map((item) => {
+        const input = item.input?.prompt ?? item.input?.task ?? item.input?.request
+        const body = typeof input === "string" ? input : item.input ? JSON.stringify(item.input, null, 2) : ""
+        return [`## ${item.title}`, body].filter(Boolean).join("\n\n")
+      }),
+    ]
+      .filter((item): item is string => Boolean(item))
+      .join("\n\n")
   }
 }

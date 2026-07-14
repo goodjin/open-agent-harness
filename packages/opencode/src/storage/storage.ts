@@ -190,6 +190,30 @@ export namespace Storage {
     })
   }
 
+  export async function create<T>(key: string[], content: T) {
+    const dir = await state().then((x) => x.dir)
+    const target = path.join(dir, ...key) + ".json"
+    const tmp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    try {
+      await Filesystem.writeJson(tmp, content)
+      return await fs.link(tmp, target).then(
+        () => true,
+        (err: unknown) => {
+          if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EEXIST") return false
+          throw err
+        },
+      )
+    } finally {
+      await fs.unlink(tmp).catch((err: unknown) => {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return
+        log.warn("storage create cleanup failed", {
+          error: err instanceof Error ? err.message : String(err),
+        })
+      })
+    }
+  }
+
   async function withErrorHandling<T>(body: () => Promise<T>) {
     return body().catch((e) => {
       if (!(e instanceof Error)) throw e
@@ -204,7 +228,7 @@ export namespace Storage {
   export async function list(prefix: string[]) {
     const dir = await state().then((x) => x.dir)
     try {
-      const result = await Glob.scan("**/*", {
+      const result = await Glob.scan("**/*.json", {
         cwd: path.join(dir, ...prefix),
         include: "file",
       }).then((results) => results.map((x) => [...prefix, ...x.slice(0, -5).split(path.sep)]))
