@@ -153,7 +153,7 @@ export namespace SessionRuns {
     })
     if (await Storage.create(key, outcome)) return outcome
     const prev = await readoutcome(input.sessionID, input.runID)
-    if (prev?.message_id === input.messageID) return prev
+    if (prev?.message_id === input.messageID || prev?.summary === summary) return prev
     throw new Error(`Run outcome already exists: ${input.runID}`)
   }
 

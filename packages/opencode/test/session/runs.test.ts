@@ -566,6 +566,14 @@ describe("session runs", () => {
               messageID: "msg_first",
             })
             expect(same.summary).toBe("First result")
+            const equivalent = await SessionRuns.finish({
+              sessionID: session.id,
+              runID: run.run_id,
+              summary: "  First result  ",
+              messageID: "msg_equivalent",
+            })
+            expect(equivalent.message_id).toBe("msg_first")
+            expect(equivalent.completed_at).toBe(same.completed_at)
             expect(
               SessionRuns.finish({
                 sessionID: session.id,
@@ -610,6 +618,42 @@ describe("session runs", () => {
             expect(writes.filter((item) => item.status === "rejected")).toHaveLength(1)
             const winner = done[0]?.status === "fulfilled" ? done[0].value.summary : undefined
             expect((await SessionRuns.get(session.id, run.run_id))?.summary).toBe(winner)
+          },
+        }),
+    })
+  })
+
+  test("allows concurrent equivalent outcome writers without overwriting the winner", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_concurrent_equivalent"),
+          fn: async () => {
+            const session = await Session.create({})
+            const run = result("run_concurrent_equivalent")
+            await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+            const writes = await Promise.allSettled([
+              SessionRuns.finish({
+                sessionID: session.id,
+                runID: run.run_id,
+                summary: "Equivalent result",
+                messageID: "msg_equivalent_first",
+              }),
+              SessionRuns.finish({
+                sessionID: session.id,
+                runID: run.run_id,
+                summary: " Equivalent result ",
+                messageID: "msg_equivalent_second",
+              }),
+            ])
+            expect(writes.every((item) => item.status === "fulfilled")).toBe(true)
+            const stored = await SessionRuns.get(session.id, run.run_id)
+            expect(stored?.summary).toBe("Equivalent result")
+            const outcomes = writes.flatMap((item) => (item.status === "fulfilled" ? [item.value] : []))
+            expect(new Set(outcomes.map((item) => item.message_id)).size).toBe(1)
+            expect(new Set(outcomes.map((item) => item.completed_at)).size).toBe(1)
           },
         }),
     })

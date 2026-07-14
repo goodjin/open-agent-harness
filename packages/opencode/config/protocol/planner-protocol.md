@@ -59,6 +59,8 @@ The runtime also enforces verification policy for worker agents:
 - Explicit verifier items can set `verification: { "role": "test" | "review", "worker": "<worker_id>" }` to declare which gate they satisfy.
 
 `answer`, `done`, `success`, `failure`, `error`, and `reply` are terminal items. Put them last when they appear after runtime work. `reply` is terminal but non-satisfying: it ends the current package without marking the assigned goal complete.
+When a previous Run is awaiting its final result, the next package must provide that terminal result before any new executable items; later executable items form a new Run.
+An empty `done` item is valid only when no previous Run is awaiting its final result.
 
 ## Input Modes
 

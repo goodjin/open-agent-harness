@@ -32,6 +32,7 @@ import { SessionTurn } from "./turn"
 import { ActionResult } from "./action-result"
 import { SessionAssignment } from "./assignment"
 import { SessionResult } from "./result"
+import { SessionRuns } from "./runs"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -63,6 +64,129 @@ export namespace SessionRunner {
   }
 
   const resumes = Instance.state(() => new Set<SessionID>())
+
+  function prior(user: MessageV2.User) {
+    const meta = user.metadata
+    if (meta?.internal !== true || meta.source !== "delegation" || typeof meta.run_id !== "string") return
+    return meta.run_id
+  }
+
+  function closureIssue(parsed: AgentProtocolParser.Parsed) {
+    const raw = (() => {
+      try {
+        return JSON.parse(parsed.raw) as unknown
+      } catch {
+        return
+      }
+    })()
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "invalid_prior_run_package"
+    const items = (raw as { version?: unknown; items?: unknown }).items
+    if ((raw as { version?: unknown }).version !== "2" || !Array.isArray(items)) return "invalid_prior_run_package"
+    const rows = items.filter((item): item is { kind: string } => {
+      return !!item && typeof item === "object" && !Array.isArray(item) && typeof (item as { kind?: unknown }).kind === "string"
+    })
+    if (rows.length !== items.length) return "invalid_prior_run_package"
+    const terminal = new Set(["answer", "done", "success", "failure", "error", "reply"])
+    const result = new Set(["success", "failure", "error", "reply"])
+    const ends = rows.flatMap((item, index) => (terminal.has(item.kind) ? [{ index, kind: item.kind }] : []))
+    if (ends.length !== 1 || !result.has(ends[0]?.kind ?? "")) return "invalid_prior_run_result"
+    const exec = rows.findIndex((item) => !terminal.has(item.kind))
+    if (exec >= 0 && (ends[0]?.index ?? -1) > exec) return "prior_run_result_after_actions"
+    if (!parsed.declaration.message?.trim()) return "missing_prior_run_result"
+  }
+
+  function v2(parsed: AgentProtocolParser.Parsed) {
+    try {
+      const raw = JSON.parse(parsed.raw) as unknown
+      return !!raw && typeof raw === "object" && !Array.isArray(raw) && (raw as { version?: unknown }).version === "2"
+    } catch {
+      return false
+    }
+  }
+
+  async function stored(sessionID: SessionID, runID: string) {
+    return Storage.read<unknown>(["session_protocol_run", sessionID, runID])
+      .then((run) => {
+        AgentProtocol.Result.parse(run)
+        return true
+      })
+      .catch((err) => {
+        if (Storage.NotFoundError.isInstance(err)) return false
+        throw err
+      })
+  }
+
+  async function finish(input: {
+    messageID: MessageID
+    parsed?: AgentProtocolParser.Parsed
+    runID: string
+    sessionID: SessionID
+    summary?: string
+  }) {
+    const summary = (input.summary ?? input.parsed?.declaration.message)?.trim()
+    if (!summary) return false
+    return SessionRuns.finish({
+      sessionID: input.sessionID,
+      runID: input.runID,
+      summary,
+      messageID: input.messageID,
+    })
+      .then(() => true)
+      .catch(async (err) => {
+        const error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)
+        await SessionLog.emit({
+          sessionID: input.sessionID,
+          messageID: input.messageID,
+          level: "warn",
+          type: "protocol.run.outcome.failed",
+          data: { runID: input.runID, messageID: input.messageID, error },
+        }).catch((cause) => {
+          log.warn("protocol run outcome diagnostic failed", {
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            runID: input.runID,
+            error,
+            cause: cause instanceof Error ? cause.message : String(cause),
+          })
+        })
+        return false
+      })
+  }
+
+  async function fail(input: {
+    chat: SessionProcessor.Info
+    sessionID: SessionID
+    text: string
+    type?: string
+    data?: Record<string, unknown>
+    runID?: string
+  }): Promise<SessionProcessor.Result> {
+    await malformed(input.chat.message.id)
+    await Session.updatePart({
+      id: PartID.ascending(),
+      messageID: input.chat.message.id,
+      sessionID: input.sessionID,
+      type: "text",
+      text: input.text,
+      metadata: {
+        kind: "protocol_malformed",
+        action: "failed",
+        ...(input.runID ? { protocol: { runID: input.runID } } : {}),
+      },
+      time: { start: Date.now(), end: Date.now() },
+    })
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.chat.message.id,
+      level: "warn",
+      type: input.type ?? "protocol.malformed",
+      data: input.data ?? { recovered: false },
+    })
+    input.chat.message.finish = "error"
+    input.chat.message.time.completed = Date.now()
+    await Session.updateMessage(input.chat.message)
+    return "stop"
+  }
 
   export async function recover(input: { sessionID: SessionID }) {
     const set = resumes()
@@ -156,7 +280,6 @@ export namespace SessionRunner {
         ? await invalidOutput(chat.message.id)
         : { error: parsed.error.message, output: "" }
     const partial = chat.message.finish === "length"
-    const fixed = undefined
     const valid = parsed.ok && !partial
     const problem = partial
       ? { code: "partial_output", message: "Model output stopped because it reached the output length limit." }
@@ -171,6 +294,8 @@ export namespace SessionRunner {
       !invalid &&
       (await answer({ sessionID, messageID: chat.message.id, text, problem, finish: chat.message.finish }))
     ) {
+      const run = prior(stream.user)
+      if (run) await finish({ sessionID, runID: run, summary: text, messageID: chat.message.id })
       await completeAssigned({
         messageID: chat.message.id,
         output: await textOf(chat.message.id),
@@ -180,7 +305,7 @@ export namespace SessionRunner {
       })
       return "stop"
     }
-    if (!valid && !fixed && retry < 1) {
+    if (!valid && retry < 1) {
       await Promise.all(
         parts.flatMap((part) => {
           if (part.type !== "text") return []
@@ -281,22 +406,19 @@ export namespace SessionRunner {
         retry + 1,
       )
     }
-    if (!valid && !fixed) {
-      await malformed(chat.message.id)
-      await SessionLog.emit({
-        sessionID: SessionID.make(stream.sessionID),
-        messageID: chat.message.id,
-        level: "warn",
-        type: "protocol.malformed",
+    if (!valid) {
+      return fail({
+        chat,
+        sessionID,
+        text: "Protocol response was empty or malformed.",
         data: { recovered: false, error: problem, text },
       })
-      return result
     }
 
     await Promise.all(
       parts.flatMap((part) => {
         if (part.type === "text" && part.text.includes("agent-protocol")) {
-          const show = visible(part.text, valid ? parsed.value : undefined)
+          const show = visible(part.text, parsed.ok ? parsed.value : undefined)
           if (show.trim().length > 0) {
             return [
               Session.updatePart({
@@ -305,7 +427,7 @@ export namespace SessionRunner {
                 metadata: {
                   ...part.metadata,
                   kind: "protocol_intro",
-                  recovered: !!fixed,
+                  recovered: false,
                 },
               }),
             ]
@@ -316,21 +438,8 @@ export namespace SessionRunner {
               ignored: true,
               metadata: {
                 ...part.metadata,
-                kind: fixed ? "protocol_malformed" : "protocol_dsl",
-                recovered: !!fixed,
-              },
-            }),
-          ]
-        }
-        if (part.type === "text" && fixed) {
-          return [
-            Session.updatePart({
-              ...part,
-              ignored: true,
-              metadata: {
-                ...part.metadata,
-                kind: "protocol_malformed",
-                recovered: true,
+                kind: "protocol_dsl",
+                recovered: false,
               },
             }),
           ]
@@ -384,16 +493,20 @@ export namespace SessionRunner {
       type: "protocol.detected",
       data: { agent: stream.agent.name },
     })
-    if (fixed) {
-      await SessionLog.emit({
+    if (!parsed.ok) return result
+    const parsedValue = parsed.value
+    const old = prior(stream.user)
+    const issue = old ? closureIssue(parsedValue) : undefined
+    if (old && issue) {
+      if (retry < 1) return closure(chat, stream, retry)
+      return fail({
+        chat,
         sessionID,
-        messageID: chat.message.id,
-        level: "warn",
-        type: "protocol.malformed",
-        data: { recovered: true, error: problem, text },
+        text: "Protocol package omitted or misplaced the terminal result for the previous Run.",
+        data: { recovered: false, error: { code: issue, runID: old } },
+        runID: old,
       })
     }
-    const parsedValue = valid ? parsed.value : fixed!
     const issues =
       parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
         ? await packageIssues(parsedValue.declaration.payload.actions, sessionID)
@@ -484,30 +597,29 @@ export namespace SessionRunner {
     }
     if (issues.length > 0) {
       const kind = issueKind()
-      await malformed(chat.message.id)
-      await Session.updatePart({
-        id: PartID.ascending(),
-        messageID: chat.message.id,
+      return fail({
+        chat,
         sessionID,
-        type: "text",
         text: [`${kind.title} failed.`, "", ...issues.map((item) => `- ${item.id}: ${item.reason}`)].join("\n"),
-        metadata: {
-          kind: "protocol_malformed",
-          action: "failed",
-        },
-        time: { start: Date.now(), end: Date.now() },
-      })
-      await SessionLog.emit({
-        sessionID,
-        messageID: chat.message.id,
-        level: "warn",
-        type: "protocol.malformed",
         data: { recovered: false, error: { code: kind.code, issues } },
       })
-      chat.message.finish = "error"
-      chat.message.time.completed = Date.now()
-      await Session.updateMessage(chat.message)
-      return "stop"
+    }
+    if (old) {
+      const saved = await finish({
+        messageID: chat.message.id,
+        parsed: parsedValue,
+        runID: old,
+        sessionID,
+      })
+      if (!saved && parsedValue.declaration.intent === "execute") {
+        return fail({
+          chat,
+          sessionID,
+          text: "The previous Run result could not be persisted; new actions were not executed.",
+          data: { recovered: false, error: { code: "prior_run_outcome_failed", runID: old } },
+          runID: old,
+        })
+      }
     }
     const msg = native?.ok ? parsedValue.declaration.message?.trim() : ""
     if (msg && parsedValue.declaration.intent === "execute") {
@@ -548,7 +660,7 @@ export namespace SessionRunner {
       })
       return "stop"
     }
-    const exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: !!fixed })
+    const exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: false })
     const run = exec.run
     await settle({ chat, stream, sessionID, ...exec })
     await mark({
@@ -560,6 +672,68 @@ export namespace SessionRunner {
       user: stream.user,
     })
     return "stop"
+  }
+
+  async function closure(chat: SessionProcessor.Info, stream: LLM.StreamInput, retry: number) {
+    const sessionID = SessionID.make(stream.sessionID)
+    const parts = await MessageV2.parts(chat.message.id)
+    await Promise.all(
+      parts.flatMap((part) => {
+        if (part.type !== "text") return []
+        return [
+          Session.updatePart({
+            ...part,
+            ignored: true,
+            metadata: { ...part.metadata, kind: "protocol_malformed", recovered: false, retry: true },
+          }),
+        ]
+      }),
+    )
+    await SessionLog.emit({
+      sessionID,
+      messageID: chat.message.id,
+      level: "warn",
+      type: "protocol.retry",
+      data: { reason: "missing_prior_run_result", runID: prior(stream.user) },
+    })
+    const msg = await Session.updateMessage({
+      id: MessageID.ascending(),
+      parentID: stream.user.id,
+      role: "assistant",
+      mode: stream.agent.name,
+      agent: stream.agent.name,
+      variant: stream.user.variant,
+      path: { cwd: Instance.directory, root: Instance.worktree },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: stream.model.id,
+      providerID: stream.model.providerID,
+      time: { created: Date.now() },
+      sessionID,
+    } as MessageV2.Assistant)
+    return protocol(
+      SessionProcessor.create({
+        assistantMessage: msg as MessageV2.Assistant,
+        sessionID,
+        model: stream.model,
+        abort: stream.abort,
+      }),
+      {
+        ...stream,
+        system: [
+          ...stream.system,
+          [
+            "Your previous Agent Protocol package omitted the result for the previous Run.",
+            "First provide a success/failure/error/reply item with a non-empty message or summary for the previous Run.",
+            "Place any new executable items after that terminal result so they form a new Run.",
+            "The runtime did not execute the new executable items from the malformed package.",
+            `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
+          ].join("\n"),
+        ],
+        toolChoice: { type: "tool", toolName: LLM.PROTOCOL_OUTPUT_TOOL },
+      },
+      retry + 1,
+    )
   }
 
   async function resumable(sessionID: SessionID): Promise<Resume | undefined> {
@@ -1831,7 +2005,13 @@ export namespace SessionRunner {
     retry: number,
     missing = 0,
     repair = false,
+    closure = 0,
+    problem = "",
   ) {
+    const sessionID = SessionID.make(input.stream.sessionID)
+    const state = await stored(sessionID, input.run.run_id)
+      .then((tracked) => ({ tracked, err: undefined }))
+      .catch((err: unknown) => ({ tracked: undefined, err }))
     const msg = (await Session.updateMessage({
       id: MessageID.ascending(),
       parentID: input.stream.user.id,
@@ -1855,11 +2035,11 @@ export namespace SessionRunner {
       time: {
         created: Date.now(),
       },
-      sessionID: SessionID.make(input.stream.sessionID),
+      sessionID,
     } as MessageV2.Assistant)) as MessageV2.Assistant
     const processor = SessionProcessor.create({
       assistantMessage: msg as MessageV2.Assistant,
-      sessionID: SessionID.make(input.stream.sessionID),
+      sessionID,
       model: input.stream.model,
       abort: input.stream.abort,
     })
@@ -1869,8 +2049,10 @@ export namespace SessionRunner {
       "If the run captured user input, use that input to declare the next package or final answer.",
       `Use only the conversation turns below, then decide the next protocol response.`,
       `You must call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-      "Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.",
-      "Use a `done` item when there is nothing else useful to add.",
+      state.tracked
+        ? "First provide exactly one success/failure/error/reply item for the previous Run, before any new executable items."
+        : "Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.",
+      state.tracked ? "Do not use answer or done for the previous Run result." : "Use a `done` item when there is nothing else useful to add.",
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
       "Only use tool, agent, input, or confirm items if another runtime call is truly required.",
       "If the previous run stopped on an input item, use the captured user input to decide the next package; do not re-ask the same question unless the answer is unusable.",
@@ -1879,12 +2061,23 @@ export namespace SessionRunner {
       "Never write, request, or simulate business tool calls. Never output provider-specific textual tool calls.",
       'The full conversation history is preserved. Resolve references like "these errors", "continue", or "fix them" from the earlier turns.',
       'Strictly follow the current protocol shape: `{ version: "2", items }`.',
+      closure > 0
+        ? [
+            "",
+            "Previous Run result repair:",
+            "First provide a success/failure/error/reply item with a non-empty message or summary for the previous Run.",
+            "Place any new executable items after that terminal result so they form a new Run.",
+          ].join("\n")
+        : "",
+      problem,
       missing > 0
         ? [
             "",
             "Protocol retry warning:",
             `Your previous final response did not call the native ${LLM.PROTOCOL_OUTPUT_TOOL} tool.`,
-            `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with an \`answer\` item, a \`done\` item, or strictly necessary runtime items.`,
+            state.tracked
+              ? `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with one success/failure/error/reply item before any new executable items.`
+              : `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with an \`answer\` item, a \`done\` item, or strictly necessary runtime items.`,
           ].join("\n")
         : "",
       retry > 0
@@ -1905,6 +2098,22 @@ export namespace SessionRunner {
           ].join("\n")
         : "",
     ].join("\n")
+    if (state.err !== undefined) {
+      await fail({
+        chat: processor,
+        sessionID,
+        text: "The previous Run state could not be read; new actions were not executed.",
+        type: "protocol.final.malformed",
+        data: {
+          runID: input.run.run_id,
+          reason: "prior_run_persistence_failed",
+          error: state.err instanceof Error ? state.err.message.slice(0, 500) : String(state.err).slice(0, 500),
+        },
+        runID: input.run.run_id,
+      })
+      return
+    }
+    const tracked = state.tracked ?? false
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
       messageID: msg.id,
@@ -1925,14 +2134,93 @@ export namespace SessionRunner {
     const parsed = await protocolOutput(msg.id)
     let plainResult = false
     if (parsed?.ok) {
-      const sessionID = SessionID.make(input.stream.sessionID)
-      if (parsed.value.declaration.intent === "execute") {
-        await intro({
-          messageID: msg.id,
+      const issue = tracked && v2(parsed.value) ? closureIssue(parsed.value) : undefined
+      if (issue) {
+        if (closure < 1) {
+          msg.finish = "stop"
+          msg.time.completed = Date.now()
+          await Session.updateMessage(msg)
+          await final(input, retry, missing, repair, closure + 1)
+          return
+        }
+        await fail({
+          chat: processor,
           sessionID,
-          parsed: parsed.value,
-          recovered: false,
+          text: "Protocol package omitted or misplaced the terminal result for the previous Run.",
+          type: "protocol.final.malformed",
+          data: { runID: input.run.run_id, reason: issue },
+          runID: input.run.run_id,
         })
+        return
+      }
+      if (parsed.value.declaration.intent === "execute") {
+        if (!parsed.value.declaration.message?.trim()) {
+          if (closure < 1) {
+            msg.finish = "stop"
+            msg.time.completed = Date.now()
+            await Session.updateMessage(msg)
+            await final(input, retry, missing, repair, closure + 1)
+            return
+          }
+          await malformed(msg.id)
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: msg.id,
+            sessionID,
+            type: "text",
+            text: "Protocol package omitted the terminal result for the previous Run.",
+            metadata: { kind: "protocol_malformed", action: "failed", protocol: { runID: input.run.run_id } },
+            time: { start: Date.now(), end: Date.now() },
+          })
+          await SessionLog.emit({
+            sessionID,
+            messageID: msg.id,
+            level: "warn",
+            type: "protocol.final.malformed",
+            data: { runID: input.run.run_id, reason: "missing_prior_run_result" },
+          })
+          msg.finish = "error"
+          msg.time.completed = Date.now()
+          await Session.updateMessage(msg)
+          return
+        }
+        const issues =
+          parsed.value.declaration.payload.type === "action_graph"
+            ? await packageIssues(parsed.value.declaration.payload.actions, sessionID)
+            : []
+        if (issues.length > 0 && closure < 1) {
+          const kind = issueKind()
+          msg.finish = "stop"
+          msg.time.completed = Date.now()
+          await Session.updateMessage(msg)
+          await final(
+            input,
+            retry,
+            missing,
+            repair,
+            closure + 1,
+            [
+              `Your previous package had ${kind.label}.`,
+              ...issueHints(),
+              "Protocol package errors:",
+              ...issues.map((item) => `- ${item.id}: ${item.reason}`),
+              `Retry with a regenerated package after correcting every dependency.`,
+            ].join("\n"),
+          )
+          return
+        }
+        if (issues.length > 0) {
+          const kind = issueKind()
+          await fail({
+            chat: processor,
+            sessionID,
+            text: [`${kind.title} failed.`, "", ...issues.map((item) => `- ${item.id}: ${item.reason}`)].join("\n"),
+            type: "protocol.final.malformed",
+            data: { runID: input.run.run_id, reason: kind.code, issues },
+            runID: input.run.run_id,
+          })
+          return
+        }
         const reason = cycle(input.run, parsed.value.declaration, retry)
         if (reason) {
           await loop({
@@ -1943,6 +2231,25 @@ export namespace SessionRunner {
           })
           return
         }
+        const saved =
+          !tracked || (await finish({ messageID: msg.id, parsed: parsed.value, runID: input.run.run_id, sessionID }))
+        if (!saved) {
+          await fail({
+            chat: processor,
+            sessionID,
+            text: "The previous Run result could not be persisted; new actions were not executed.",
+            type: "protocol.final.malformed",
+            data: { runID: input.run.run_id, reason: "prior_run_outcome_failed" },
+            runID: input.run.run_id,
+          })
+          return
+        }
+        await intro({
+          messageID: msg.id,
+          sessionID,
+          parsed: parsed.value,
+          recovered: false,
+        })
         const exec = await execute({
           chat: processor,
           stream: input.stream,
@@ -2030,6 +2337,7 @@ export namespace SessionRunner {
           }
         }
       } else {
+        if (tracked) await finish({ messageID: msg.id, parsed: parsed.value, runID: input.run.run_id, sessionID })
         await response({
           chat: processor,
           sessionID,
@@ -2041,6 +2349,9 @@ export namespace SessionRunner {
       const text = await textOf(msg.id)
       const plain = AgentProtocolParser.parse(text)
       if (plain.ok && plain.value.declaration.intent !== "execute") {
+        if (tracked) {
+          await finish({ messageID: msg.id, parsed: plain.value, runID: input.run.run_id, sessionID })
+        }
         await hide(msg.id, "protocol_final_plain_json")
         await response({
           chat: processor,
@@ -2066,7 +2377,7 @@ export namespace SessionRunner {
         msg.finish = "stop"
         msg.time.completed = Date.now()
         await Session.updateMessage(msg)
-        await final(input, retry, missing + 1)
+        await final(input, retry, missing + 1, repair, closure)
         return
       } else if (text.trim().length > 0 && missing < 1) {
         const parts = await MessageV2.parts(msg.id)
@@ -2096,7 +2407,7 @@ export namespace SessionRunner {
         msg.finish = "stop"
         msg.time.completed = Date.now()
         await Session.updateMessage(msg)
-        await final(input, retry, missing + 1)
+        await final(input, retry, missing + 1, repair, closure)
         return
       } else if (text.trim().length === 0) {
         if (missing < 1) {
@@ -2110,37 +2421,23 @@ export namespace SessionRunner {
           msg.finish = "stop"
           msg.time.completed = Date.now()
           await Session.updateMessage(msg)
-          await final(input, retry, missing + 1)
+          await final(input, retry, missing + 1, repair, closure)
           return
         }
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID: msg.id,
+        await fail({
+          chat: processor,
           sessionID: SessionID.make(input.stream.sessionID),
-          type: "text",
           text: "Protocol final response was empty or malformed.",
-          metadata: {
-            kind: "protocol_malformed",
-            action: "failed",
-            protocol: {
-              runID: input.run.run_id,
-            },
-          },
-          time: { start: Date.now(), end: Date.now() },
-        })
-        await SessionLog.emit({
-          sessionID: SessionID.make(input.stream.sessionID),
-          messageID: msg.id,
-          level: "warn",
           type: "protocol.final.malformed",
           data: { runID: input.run.run_id, reason: "empty_final_output" },
+          runID: input.run.run_id,
         })
-        msg.finish = "error"
-        msg.time.completed = Date.now()
-        await Session.updateMessage(msg)
         return
       } else {
         plainResult = true
+        if (tracked) {
+          await finish({ messageID: msg.id, runID: input.run.run_id, sessionID, summary: text })
+        }
         await SessionLog.emit({
           sessionID: SessionID.make(input.stream.sessionID),
           messageID: msg.id,

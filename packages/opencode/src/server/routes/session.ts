@@ -40,6 +40,16 @@ function trim(value: string, limit: number) {
   return `${value.slice(0, limit)}\n\n[truncated ${value.length - limit} chars]`
 }
 
+function external(input: SessionPrompt.PromptInput["metadata"]) {
+  if (!input) return
+  const metadata = { ...input }
+  delete metadata.internal
+  delete metadata.source
+  delete metadata.run_id
+  delete metadata.turn
+  return metadata
+}
+
 async function restorable(sessionID: SessionID, status: SessionStatus.Info) {
   if (
     (status.type === "error" || status.type === "timeout" || status.type === "failed") &&
@@ -1785,7 +1795,7 @@ export const SessionRoutes = lazy(() =>
         return stream(c, async (stream) => {
           const sessionID = c.req.valid("param").sessionID
           const body = c.req.valid("json")
-          const msg = await SessionPrompt.prompt({ ...body, sessionID })
+          const msg = await SessionPrompt.prompt({ ...body, metadata: external(body.metadata), sessionID })
           stream.write(JSON.stringify(msg))
         })
       },
@@ -1822,7 +1832,7 @@ export const SessionRoutes = lazy(() =>
         ) {
           await Session.setModel({ sessionID, model: body.model, confirm: body.confirm })
         }
-        const msg = await SessionPrompt.enqueue({ ...body, sessionID })
+        const msg = await SessionPrompt.enqueue({ ...body, metadata: external(body.metadata), sessionID })
         if (body.noReply !== true) {
           void SessionPrompt.loop({ sessionID, messageID: msg.info.id }).catch((err) => {
             log.warn("async session prompt failed", { sessionID, err })
