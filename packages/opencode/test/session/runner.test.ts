@@ -4498,7 +4498,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("compensates delegated child state when task binding fails", async () => {
+  test("compensates delegated child state when assignment binding fails", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -4528,9 +4528,11 @@ describe("SessionRunner", () => {
     } as const
     const agent = spyOn(Agent, "get").mockImplementation(async (name) => (name === worker.name ? worker : undefined) as never)
     const list = spyOn(Agent, "list").mockImplementation(async () => [worker] as never)
-    const bind = spyOn(SessionTask, "beginDelegated").mockRejectedValue(
-      new SessionTask.Conflict("session_task_delegation_assignment_conflict"),
-    )
+    const delegate = SessionAssignment.delegate
+    const bind = spyOn(SessionAssignment, "delegate").mockImplementation(async (input) => {
+      await delegate(input)
+      throw new Error("SQLITE_BUSY")
+    })
     try {
       await Instance.provide({
         directory: tmp.path,
@@ -4588,13 +4590,13 @@ describe("SessionRunner", () => {
                 | { pending_delegations?: Record<string, unknown>; runs?: { run_id?: string }[] }
                 | undefined
               const info = await Session.get(child.id)
-              const delegation = info.dsl_context?.protocol as { delegation?: { run_id?: string } } | undefined
+              const delegation = info.dsl_context?.protocol as { failed_delegation?: { run_id?: string } } | undefined
               expect(await SessionAssignment.active(child.id)).toBeUndefined()
               expect(
                 (
                   await SessionAssignment.bySource({
                     sessionID: session.id,
-                    runID: delegation?.delegation?.run_id,
+                    runID: delegation?.failed_delegation?.run_id,
                     actionID: "delegate_bind_fail",
                   })
                 )?.status,

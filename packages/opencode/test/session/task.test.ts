@@ -37,6 +37,33 @@ async function setup(fn: () => Promise<void>) {
   })
 }
 
+async function legacy(input: {
+  assignment: SessionAssignment.Info
+  plan: string
+  source: Record<string, unknown>
+  stored?: string
+}) {
+  const ref = ["session_assignment_content", input.assignment.id, `rev-${input.assignment.content_version}`]
+  await Storage.write(ref, {
+    type: "assignment.content",
+    version: 1,
+    assignment_id: input.assignment.id,
+    revision: input.assignment.content_version,
+    plan: input.stored ?? input.plan,
+    source: input.source,
+  })
+  Database.use((tx) =>
+    tx
+      .update(AssignmentTable)
+      .set({
+        content_ref: ref.join("/"),
+        content_hash: new Bun.CryptoHasher("sha256").update(input.plan).digest("hex"),
+      })
+      .where(eq(AssignmentTable.id, input.assignment.id))
+      .run(),
+  )
+}
+
 async function until<T>(fn: () => T | Promise<T>, timeout = 5_000) {
   const end = Date.now() + timeout
   while (Date.now() < end) {
@@ -773,6 +800,182 @@ describe("session task", () => {
           actionIDs: [action.id],
           actions: [],
           legacy: { title: "Legacy", body: "Legacy" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_content_invalid")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+    }))
+
+  test("binds a legacy rev assignment as create only for a session without a task", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = {
+        type: "action",
+        id: "legacy_confirm",
+        title: "Legacy canonical title",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Legacy canonical plan",
+        runID: "run_legacy_confirm",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      await legacy({
+        assignment,
+        plan: "Legacy canonical plan",
+        source: { type: "confirm", session_id: session.id, run_id: "run_legacy_confirm", action_id: action.id },
+      })
+
+      await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_legacy_execute",
+        actionIDs: [],
+        actions: [{ id: "legacy_execute" }],
+        legacy: { title: "Unsafe fallback", body: "Unsafe fallback" },
+      })
+      expect(await SessionTask.current(session.id)).toMatchObject({
+        title: "Legacy canonical title",
+        body: "Legacy canonical plan",
+      })
+    }))
+
+  test("rejects a legacy rev confirm assignment when the session already has a task", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_existing",
+        legacy: { title: "Existing", body: "Existing plan" },
+        actions: [],
+      })
+      const action = {
+        type: "action",
+        id: "legacy_existing",
+        title: "Legacy replacement",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Legacy replacement plan",
+        runID: "run_legacy_existing",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      await legacy({
+        assignment,
+        plan: "Legacy replacement plan",
+        source: { type: "confirm", session_id: session.id, run_id: "run_legacy_existing", action_id: action.id },
+      })
+
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_legacy_existing",
+          actionIDs: [action.id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_content_invalid")
+      expect(await SessionTask.current(session.id)).toMatchObject({ title: "Existing", body: "Existing plan" })
+    }))
+
+  test("binds a legacy rev delegated assignment by its source locator", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const action = {
+        type: "action",
+        id: "legacy_delegate",
+        title: "Legacy delegated task",
+        operation: "backend",
+        executor: { type: "agent", target: "backend", capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: "structured",
+      } as AgentProtocol.Action
+      const messageID = MessageID.ascending()
+      const assignment = await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID,
+        plan: "Legacy delegated plan",
+        runID: "run_legacy_delegate",
+        sessionID: parent.id,
+      })
+      await legacy({
+        assignment,
+        plan: "Legacy delegated plan",
+        source: { type: "delegation", session_id: parent.id, run_id: "run_legacy_delegate", action_id: action.id },
+      })
+
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_legacy_delegate",
+        parentActionID: action.id,
+        messageID,
+      })
+      expect(await SessionTask.get(child.id)).toMatchObject({
+        task: {
+          source_type: "delegation",
+          source_ref: { sessionID: parent.id, runID: "run_legacy_delegate", actionID: action.id },
+        },
+        revision: { title: "Legacy delegated task", body: "Legacy delegated plan" },
+      })
+    }))
+
+  test("rejects a tampered legacy rev assignment plan", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = {
+        type: "action",
+        id: "legacy_tampered",
+        title: "Legacy tampered",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Trusted legacy plan",
+        runID: "run_legacy_tampered",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      await legacy({
+        assignment,
+        plan: "Trusted legacy plan",
+        stored: "Tampered legacy plan",
+        source: { type: "confirm", session_id: session.id, run_id: "run_legacy_tampered", action_id: action.id },
+      })
+
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_legacy_tampered",
+          actionIDs: [action.id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
           requiresAssignment: true,
         }),
       ).rejects.toThrow("session_task_assignment_content_invalid")

@@ -15,10 +15,20 @@ import { RuntimeTools } from "../../src/session/runtime-tools"
 import { ActionResult } from "../../src/session/action-result"
 import { SessionResult } from "../../src/session/result"
 import { SessionAssignment } from "../../src/session/assignment"
+import { SessionTask } from "../../src/session/task"
 import { and, Database, eq } from "../../src/storage/db"
 import { SessionResultTable } from "../../src/session/session.sql"
 
 describe("SessionDelegation", () => {
+  const poll = async (fn: () => boolean | Promise<boolean>, timeout = 5_000) => {
+    const end = Date.now() + timeout
+    while (Date.now() < end) {
+      if (await fn()) return
+      await Bun.sleep(10)
+    }
+    throw new Error("condition timeout")
+  }
+
   test("cancels pending delegated children and submits an aggregate handoff", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
@@ -1161,9 +1171,11 @@ describe("SessionDelegation", () => {
   test("satisfied child result starts dependent agent action without parent fan-in", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const tasks: Awaited<ReturnType<typeof SessionTask.get>>[] = []
     const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
       input: Parameters<typeof SessionPrompt.prompt>[0],
     ) => {
+      tasks.push(await SessionTask.get(input.sessionID))
       prompts.push(input)
       return await new Promise<MessageV2.WithParts>(() => {})
     }) as never)
@@ -1291,6 +1303,7 @@ describe("SessionDelegation", () => {
               } as MessageV2.ToolPart)
 
               expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+              await poll(() => prompts.length > 0)
               const pctx = (await Session.get(parent.id)).dsl_context?.protocol as {
                 pending_delegations?: Record<string, { action_id?: string; child_session_id?: string }>
               }
@@ -1304,6 +1317,17 @@ describe("SessionDelegation", () => {
                 : undefined
               expect(active?.source_type).toBe("delegation")
               expect(active?.source_action_id).toBe("review")
+              expect(tasks[0]?.task).toMatchObject({
+                source_type: "delegation",
+                source_ref: {
+                  sessionID: parent.id,
+                  runID: "apr_dep_resume",
+                  actionID: "review",
+                },
+              })
+              expect(tasks[0]?.revision).toMatchObject({ title: "Review", body: "Review" })
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(false)
+              expect(review?.child_session_id ? await SessionTask.history(SessionID.make(review.child_session_id)) : []).toHaveLength(0)
               expect(SessionStatus.get(parent.id).type).toBe("waiting_child")
               expect(prompts.some((entry) => entry.sessionID === parent.id)).toBe(false)
             },
@@ -1311,6 +1335,167 @@ describe("SessionDelegation", () => {
       })
     } finally {
       prompt.mockRestore()
+    }
+  })
+
+  test("compensates same-run dependent child when assignment binding fails", async () => {
+    await using tmp = await tmpdir()
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
+      return await new Promise<MessageV2.WithParts>(() => {})
+    }) as never)
+    const delegate = SessionAssignment.delegate
+    const bind = spyOn(SessionAssignment, "delegate").mockImplementation(async (input) => {
+      const saved = await delegate(input)
+      throw new Error(`SQLITE_BUSY:${saved.id}`)
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const messageID = MessageID.ascending()
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "apr_dep_bind_fail",
+                action_id: "impl",
+                action_title: "Implement",
+                parent_session_id: parent.id,
+                parent_message_id: messageID,
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: {
+                  protocol: {
+                    current: "apr_dep_bind_fail",
+                    runs: [
+                      {
+                        runID: "apr_dep_bind_fail",
+                        title: "Resume bind failure",
+                        status: "running",
+                        actions: [
+                          {
+                            id: "impl",
+                            title: "Implement",
+                            operation: "backend",
+                            executor: { type: "agent", target: "backend", capabilities: [] },
+                            depends_on: [],
+                            result_policy: "structured",
+                            status: "pending",
+                            summary: "",
+                            tool_call_ids: [],
+                            duration_ms: 0,
+                            time: { started: Date.now() },
+                          },
+                          {
+                            id: "review",
+                            title: "Review",
+                            operation: "backend",
+                            executor: { type: "agent", target: "general-executor", capabilities: [] },
+                            depends_on: ["impl"],
+                            result_policy: "structured",
+                            status: "pending",
+                            summary: "",
+                            tool_call_ids: [],
+                            duration_ms: 0,
+                            time: { started: Date.now() },
+                          },
+                        ],
+                      },
+                    ],
+                    pending_delegations: { [child.id]: item },
+                  },
+                },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const done = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "tool-calls",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: done.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_impl_fail",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "impl",
+                    status: "success",
+                    result: "implemented",
+                    changed_files: "",
+                    verification: "done",
+                    blockers: "",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+
+              expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(true)
+              const failed = await SessionAssignment.bySource({
+                sessionID: parent.id,
+                runID: "apr_dep_bind_fail",
+                actionID: "review",
+              })
+              if (!failed) throw new Error("failed assignment missing")
+              const ctx = (await Session.get(parent.id)).dsl_context?.protocol as {
+                pending_delegations?: Record<string, { action_id?: string }>
+              }
+              expect(failed.status).toBe("failed")
+              expect(Object.values(ctx.pending_delegations ?? {}).some((entry) => entry.action_id === "review")).toBe(false)
+              expect(await SessionAssignment.active(failed.session_id)).toBeUndefined()
+              expect(await SessionTask.get(failed.session_id)).toBeUndefined()
+              expect(["failed", "error", "aborted"]).toContain(SessionStatus.get(failed.session_id).type)
+              expect(prompts.some((entry) => entry.sessionID === failed.session_id)).toBe(false)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+      bind.mockRestore()
     }
   })
 

@@ -295,8 +295,10 @@ export namespace SessionTask {
     const content = await SessionAssignment.content(assignment.id)
     const body = content && typeof content === "object" && !Array.isArray(content) ? content : {}
     const meta = "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
-    const op = "op" in meta ? meta.op : undefined
-    const target = "target" in meta ? meta.target : assignment.target
+    const legacy = assignment.content_ref.split("/").at(-1)?.startsWith("rev-") === true
+    const fallback = legacy && !(await get(input.sessionID)) ? { op: "create", target: "self" } : undefined
+    const op = "op" in meta ? meta.op : fallback?.op
+    const target = "target" in meta ? meta.target : (fallback?.target ?? assignment.target)
     if (op !== "create" && op !== "update" && op !== "handoff")
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")

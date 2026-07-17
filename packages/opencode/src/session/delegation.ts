@@ -20,6 +20,7 @@ import { SessionAssignment } from "./assignment"
 import { Identifier } from "@/id/id"
 import { Database, eq, sql } from "@/storage/db"
 import { SessionEventOutboxTable } from "./session.sql"
+import { DelegatedTask } from "./delegated-task"
 
 export namespace SessionDelegation {
   const log = Log.create({ service: "session.delegation" })
@@ -260,6 +261,7 @@ export namespace SessionDelegation {
   export async function fail(input: {
     action: AgentProtocol.Action
     agent: string
+    binding?: boolean
     childID: SessionID
     error: unknown
     messageID: MessageID
@@ -270,6 +272,58 @@ export namespace SessionDelegation {
     const raw = input.error instanceof Error ? input.error.message : String(input.error)
     const session = await Session.get(input.childID).catch(() => undefined)
     const item = session ? assignment(session) : undefined
+    if (input.binding) {
+      const parent = await Session.get(input.parentID)
+      const pctx = object(parent.dsl_context)
+      const previous = object(pctx.protocol)
+      const pending = { ...object(previous.pending_delegations) }
+      delete pending[input.childID]
+      await Session.setDslContext({
+        sessionID: input.parentID,
+        dsl_context: { ...pctx, protocol: { ...previous, pending_delegations: pending } },
+      })
+      if (session) {
+        const ctx = object(session.dsl_context)
+        const protocol = object(ctx.protocol)
+        await Session.setDslContext({
+          sessionID: input.childID,
+          dsl_context: {
+            ...ctx,
+            protocol: {
+              ...protocol,
+              delegation: undefined,
+              failed_delegation: {
+                ...(item ?? {
+                  type: "agent.delegation.assignment",
+                  version: "1",
+                  run_id: input.runID,
+                  action_id: input.action.id,
+                  action_title: input.action.title,
+                  parent_session_id: input.parentID,
+                  parent_message_id: input.messageID,
+                  parent_agent: input.parentAgent,
+                  child_session_id: input.childID,
+                  agent: input.agent,
+                  result_policy: input.action.result_policy,
+                  created_at: Date.now(),
+                }),
+                status: "failed",
+                completed_at: Date.now(),
+                output: raw,
+              },
+            },
+          },
+        })
+      }
+      await SessionLog.emit({
+        sessionID: input.parentID,
+        messageID: input.messageID,
+        level: "warn",
+        type: "protocol.agent.binding.failed",
+        data: { actionID: input.action.id, childSessionID: input.childID, error: raw },
+      })
+      return false
+    }
     const diag = item?.result_tool === ActionResult.TOOL ? await diagnose(input.childID, raw) : undefined
     const sum =
       item && diag && actionfail(diag.message)
@@ -1493,7 +1547,7 @@ export namespace SessionDelegation {
         resumed: true,
       },
     })
-    await assign({
+    await DelegatedTask.bind({
       action: input.action,
       agent: selected.name,
       childID: child.id,
@@ -1501,15 +1555,8 @@ export namespace SessionDelegation {
       messageID: input.messageID,
       parentAgent: input.parentAgent,
       runID: input.runID,
-      sessionID: input.parent.id,
-    })
-    await SessionAssignment.delegate({
-      action: input.action,
-      childID: child.id,
-      messageID: input.messageID,
+      parentID: input.parent.id,
       plan: text(input.action.input) ?? input.action.title,
-      runID: input.runID,
-      sessionID: input.parent.id,
     })
     const { SessionPrompt } = await import("./prompt")
     setTimeout(() => {
