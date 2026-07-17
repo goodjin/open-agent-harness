@@ -22,6 +22,8 @@ Planner confirmation depends on the current session Task. Ordinary explanation, 
 
 The v2 assignment parser accepts only `create/self`, `update/self`, and `handoff/peer`. Omitted targets default to `self` for create and update; handoff requires an explicit peer target. The canonical v1 action schema remains unchanged, while normalized confirm action input keeps the v2 assignment metadata for later runtime handling.
 
+`TaskAdmission.Prompt` is intentionally a short final-turn reminder. Planner protocol documents and request footers retain the longer role-specific admission rules and legal examples; the short reminder does not duplicate those examples or their detailed explanation.
+
 For a parent-delegated planner task, the parent handoff already binds and confirms the delegated scope, so the child does not ask the user to approve that initial task again. Later child requests still follow the same continue, update, and handoff rules.
 
 Planner graphs should be complete for their layer. When multiple child units are knowable, the planner emits all of them in one package and uses `depends` to encode ordering, blockers, verification waits, or required sequential handoff. A broad task should not be collapsed into one worker just to avoid declaring dependencies.

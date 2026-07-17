@@ -198,7 +198,8 @@ export namespace AgentProtocol {
     .strict()
     .superRefine((value, ctx) => {
       if ((value.op === "handoff") === (value.target === "peer")) return
-      ctx.addIssue({ code: "custom", path: ["target"], message: "handoff requires target=peer" })
+      const message = value.op === "handoff" ? "handoff requires target=peer" : "target=peer is only valid for handoff"
+      ctx.addIssue({ code: "custom", path: ["target"], message })
     })
   const V2Confirm = z.object({
     id: Text,

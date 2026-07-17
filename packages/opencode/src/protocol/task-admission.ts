@@ -1,3 +1,4 @@
+// Keep this as the short final-turn reminder. Planner protocol and footer prompts own role-specific rules and examples.
 export namespace TaskAdmission {
   export const Prompt = [
     "Task admission:",

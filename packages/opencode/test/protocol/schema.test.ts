@@ -22,10 +22,8 @@ describe("agent protocol schema", () => {
       path.join(import.meta.dir, "../../../../docs/harness-module/protocol-runtime.md"),
     ).text()
 
-    expect(doc).toContain("accepts only `create/self`, `update/self`, and `handoff/peer`")
-    expect(doc).toContain("`target` no longer accepts a child session id")
-    expect(doc).toContain("A later Runtime implementation creates the peer session after confirmation")
-    expect(doc).not.toContain("target=self|<child-session-id>")
+    expect(doc).toMatch(/create\/self.*update\/self.*handoff\/peer/s)
+    expect(doc).not.toMatch(/target\s*=\s*self\|<child-session-id>/)
   })
 
   test("accepts v2 items shape and normalizes tool agent and answer items", () => {
@@ -401,6 +399,32 @@ describe("agent protocol schema", () => {
           ],
         }),
       ).toThrow()
+    })
+  })
+
+  test("explains which assignment target combination is invalid", () => {
+    const parse = (assignment: Record<string, string | undefined>) =>
+      AgentProtocol.parse({
+        version: "2",
+        items: [
+          {
+            id: "confirm_assignment",
+            kind: "confirm",
+            prompt: "Confirm the task proposal.",
+            plan: "# Task proposal\n",
+            assignment,
+          },
+        ],
+      })
+
+    ;[{ op: "handoff", target: "self" }, { op: "handoff" }].forEach((assignment) => {
+      expect(() => parse(assignment)).toThrow("handoff requires target=peer")
+    })
+    ;[
+      { op: "create", target: "peer" },
+      { op: "update", target: "peer" },
+    ].forEach((assignment) => {
+      expect(() => parse(assignment)).toThrow("target=peer is only valid for handoff")
     })
   })
 

@@ -184,7 +184,8 @@ describe("AgentTemplateLoader", () => {
         })
 
         expect(footer).toContain('assignment={"op":"create","target":"self"}')
-        expect(footer).toContain('"assignment": { "op": "handoff", "target": "peer" }')
+        expect(footer.match(/```json assignment-example/g)).toHaveLength(3)
+        expect(footer).toContain('"assignment":{"op":"handoff","target":"peer"}')
         expect(footer).not.toContain('assignment={"op":"create","target":"peer"}')
       })
     })

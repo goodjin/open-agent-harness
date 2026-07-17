@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
+import z from "zod"
 import { Agent } from "../../src/agent/agent"
 import { AgentRegistry, resetRegistry } from "../../src/agent/registry"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
@@ -11,6 +12,7 @@ import type { Provider } from "../../src/provider/provider"
 import { LLM } from "../../src/session/llm"
 import { MessageID, SessionID } from "../../src/session/schema"
 import type { MessageV2 } from "../../src/session/message-v2"
+import { AgentProtocol } from "../../src/protocol/schema"
 import { tmpdir } from "../fixture/fixture"
 
 const ent = {
@@ -52,6 +54,69 @@ async function write(dir: string, id: string) {
 }
 
 describe("agent prompt integration", () => {
+  test("entry planner final prompts contain valid assignment JSON examples", async () => {
+    await using tmp = await tmpdir({ git: true })
+
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("agent-prompt-assignment-examples"),
+          fn: async () => {
+            resetRegistry()
+            const Example = z
+              .object({
+                assignment: z.object({ op: z.string(), target: z.string() }),
+                plan: z.string(),
+              })
+              .passthrough()
+            const schema = AgentProtocol.OutputSchema.properties.items.items.properties.assignment
+            const pairs = schema.oneOf.map((item) => `${item.properties.op.const}/${item.properties.target.const}`)
+
+            for (const id of ["default", "milestone-planner", "feature-planner"]) {
+              const agent = await Agent.get(id)
+              if (!agent) throw new Error(`missing builtin planner: ${id}`)
+              const user = {
+                id: MessageID.make(`user-${id}-assignment-examples`),
+                sessionID: SessionID.make(`session-${id}-assignment-examples`),
+                role: "user",
+                time: { created: Date.now() },
+                agent: id,
+                model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+              } satisfies MessageV2.User
+              const final = [
+                LLM.compose({
+                  agent,
+                  model: { providerID: ProviderID.make("test"), api: { id: "test" } } as Provider.Model,
+                  system: [],
+                  user,
+                  runtimeTools: { prompt: "# Available Protocol Tools" } as never,
+                  isCodex: false,
+                })[0],
+                agent.requestFooter?.prompt,
+              ].join("\n\n")
+              const items = [...final.matchAll(/```json assignment-example\n([\s\S]*?)\n```/g)].map((match) =>
+                Example.parse(JSON.parse(match[1]) as unknown),
+              )
+
+              expect(items).toHaveLength(3)
+              items.forEach((item) => {
+                expect(() => AgentProtocol.parse({ version: "2", items: [item] })).not.toThrow()
+                expect(pairs).toContain(`${item.assignment.op}/${item.assignment.target}`)
+              })
+              expect(items.map((item) => `${item.assignment.op}/${item.assignment.target}`)).toEqual([
+                "create/self",
+                "update/self",
+                "handoff/peer",
+              ])
+              expect(items[2].plan).toContain("## Goal")
+              expect(items[2].plan).toContain("## Acceptance")
+            }
+          },
+        }),
+    })
+  })
+
   test("default agent prompt injects identity before rules", async () => {
     await using tmp = await tmpdir({ git: true })
 
