@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, renameSync, symlinkSync, utimesSync } from "fs"
+import { mkdirSync, readdirSync, renameSync, symlinkSync, utimesSync, writeFileSync } from "fs"
 import { symlink, unlink } from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -12,10 +12,13 @@ import { MessageID } from "../../src/session/schema"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
+import { TaskFS } from "../../src/session/task-fs"
 import { Database, eq, sql } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
+
+const posix = process.platform === "darwin" || process.platform === "linux" ? test : test.skip
 
 afterEach(async () => {
   await resetDatabase()
@@ -599,7 +602,7 @@ describe("session task", () => {
       expect((await SessionTask.revision(session.id, 2))?.workflow.actions).toEqual([])
     }))
 
-  test("publishes markdown projections and reports drift without changing the database", () =>
+  posix("publishes markdown projections and reports drift without changing the database", () =>
     setup(async () => {
       const session = await Session.create({})
       const saved = await SessionTask.create({
@@ -652,7 +655,8 @@ describe("session task", () => {
       await symlink(outside, file)
       expect(await TaskDocuments.read(session.id, saved.task.id, 1)).toBeUndefined()
       expect(await TaskDocuments.read(session.id, saved.task.id, "../1")).toBeUndefined()
-    }))
+    }),
+  )
 
   test("keeps the database commit when a projection path is unsafe", () =>
     setup(async () => {
@@ -673,35 +677,103 @@ describe("session task", () => {
       expect(await Bun.file(path.join(outside, "sessions", session.id)).exists()).toBe(false)
     }))
 
-  test("rejects a task document publish when an ancestor is swapped for a symlink", () =>
+  test("keeps the database commit when the projection backend is unavailable", () =>
+    setup(async () => {
+      using hook = TaskFS.testing({ backend: null })
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Database-only task",
+        body: "# Database-only task\n",
+        source: { type: "user" },
+      })
+
+      expect((await SessionTask.get(session.id))?.task.id).toBe(saved.task.id)
+      expect(await Bun.file(path.join(Instance.directory, ".harness")).exists()).toBe(false)
+    }))
+
+  posix("keeps the final rename relative to the opened directory after a parent swap", () =>
     setup(async () => {
       const session = await Session.create({})
       const saved = await SessionTask.create({
         sessionID: session.id,
-        title: "Swap-safe task",
-        body: "# Swap-safe task\n",
+        title: "Final rename task",
+        body: "# Final rename task\n",
         source: { type: "user" },
       })
       const root = path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", saved.task.id)
-      const revisions = path.join(root, "revisions")
-      const outside = path.join(Instance.directory, "outside-swap")
-      mkdirSync(path.join(outside, "v2"), { recursive: true })
-
-      const published = Markdown.publish(
-        [".harness", "sessions", session.id, "tasks", saved.task.id],
-        ["revisions", "v2", "task.md"],
-        "# Must stay inside\n",
-        () => {
-          renameSync(revisions, `${revisions}-original`)
-          symlinkSync(outside, revisions)
+      const target = path.join(root, "revisions", "v2")
+      const outside = path.join(Instance.directory, "outside-final")
+      mkdirSync(outside)
+      let tmp = ""
+      using hook = TaskFS.testing({
+        publish() {
+          tmp = readdirSync(target).find((file) => file.endsWith(".tmp")) ?? ""
+          renameSync(target, `${target}-safe`)
+          writeFileSync(path.join(outside, tmp), "attacker temporary file")
+          symlinkSync(outside, target)
         },
+      })
+
+      expect(
+        Markdown.publish(
+          [".harness", "sessions", session.id, "tasks", saved.task.id],
+          ["revisions", "v2", "task.md"],
+          "# Trusted body\n",
+        ),
+      ).toBe(true)
+      expect(tmp).not.toBe("")
+      expect(await Bun.file(path.join(outside, "task.md")).exists()).toBe(false)
+      expect(await Bun.file(path.join(outside, tmp)).text()).toBe("attacker temporary file")
+      expect(await Bun.file(path.join(`${target}-safe`, "task.md")).text()).toBe("# Trusted body\n")
+    }),
+  )
+
+  posix("keeps manifest lock and publish operations relative to the opened tasks directory", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Relative lock task",
+        body: "# Relative lock task\n",
+        source: { type: "user" },
+      })
+      const base = path.join(Instance.directory, ".harness", "sessions", session.id)
+      const tasks = path.join(base, "tasks")
+      const outside = path.join(Instance.directory, "outside-lock")
+      const lock = path.join(outside, `${saved.task.id}.manifest.lock`)
+      mkdirSync(path.join(outside, saved.task.id), { recursive: true })
+      mkdirSync(lock)
+      writeFileSync(path.join(lock, "sentinel"), "keep")
+      writeFileSync(path.join(outside, saved.task.id, "manifest.md"), "attacker manifest")
+      const stale = new Date(Date.now() - 31_000)
+      utimesSync(lock, stale, stale)
+      using hook = TaskFS.testing({
+        lock() {
+          renameSync(tasks, `${tasks}-safe`)
+          symlinkSync(outside, tasks)
+        },
+      })
+
+      expect(
+        TaskDocuments.publish({
+          sessionID: session.id,
+          taskID: saved.task.id,
+          version: 1,
+          title: saved.revision.title,
+          body: saved.revision.body,
+          current: true,
+        }),
+      ).toBe(true)
+      expect(await Bun.file(path.join(lock, "sentinel")).text()).toBe("keep")
+      expect(await Bun.file(path.join(outside, saved.task.id, "manifest.md")).text()).toBe("attacker manifest")
+      expect(await Bun.file(path.join(`${tasks}-safe`, saved.task.id, "manifest.md")).text()).toContain(
+        "Current revision: v1",
       )
+    }),
+  )
 
-      expect(published).toBe(false)
-      expect(await Bun.file(path.join(outside, "v2", "task.md")).exists()).toBe(false)
-    }))
-
-  test("rebuilds the manifest from the current database revision across processes", () =>
+  posix("rebuilds the manifest from the current database revision across processes", () =>
     setup(async () => {
       const session = await Session.create({})
       const first = await SessionTask.create({
@@ -753,9 +825,10 @@ describe("session task", () => {
           path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", `${first.task.id}.manifest.lock`),
         ).exists(),
       ).toBe(false)
-    }))
+    }),
+  )
 
-  test("bounds manifest lock waits and safely recovers a stale lock", () =>
+  posix("bounds manifest lock waits and safely recovers a stale lock", () =>
     setup(async () => {
       const session = await Session.create({})
       const saved = await SessionTask.create({
@@ -800,7 +873,8 @@ describe("session task", () => {
         }),
       ).toBe(true)
       expect(await Bun.file(lock).exists()).toBe(false)
-    }))
+    }),
+  )
 
   test("projects zero, one, and multiple legacy runs without merging", () =>
     setup(async () => {
