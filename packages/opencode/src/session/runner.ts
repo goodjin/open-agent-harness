@@ -134,6 +134,7 @@ export namespace SessionRunner {
     })
       .then(async () => {
         if (input.parsed?.declaration.intent === "execute") return true
+        if ((await SessionTask.get(input.sessionID))?.task.source_type === "delegation") return true
         await SessionTask.finish({
           sessionID: input.sessionID,
           runID: input.runID,
@@ -1237,6 +1238,7 @@ export namespace SessionRunner {
     }
     const issues = await packageIssues(actions, input.sessionID)
     if (issues.length > 0) return { run: rejected(runID, declaration, issues), tracked: false }
+    await SessionTask.preflight(input.sessionID, actions)
     const plan = actions
     const runtime =
       input.stream.runtimeTools ??
@@ -1511,54 +1513,17 @@ export namespace SessionRunner {
     sessionID: SessionID
   }) {
     const confirms = input.actions.filter((item) => item.operation === "confirm" && item.executor.type === "human")
-    const assigned = await Promise.all(
-      confirms.map(async (item) => ({
-        item,
-        assignment: await SessionAssignment.bySource({
-          sessionID: input.sessionID,
-          runID: input.runID,
-          actionID: item.id,
-        }),
-      })),
-    )
-    const saved = await Promise.all(
-      confirms.map((item) =>
-        Storage.read<unknown>(["session_protocol_confirmation", input.sessionID, input.runID, item.id]).catch(
-          () => undefined,
-        ),
-      ),
-    )
-    const session = await Session.get(input.sessionID)
-    const records = object(object(session.dsl_context).protocol).confirmations
-    const projected = Array.isArray(records)
-      ? records.filter((item) => {
-          const row = object(item)
-          return row.run_id === input.runID && row.status === "confirmed"
-        })
-      : []
-    const confirmed = [...saved, ...projected].findLast((item) => object(item).status === "confirmed")
-    const canonical = assigned.findLast((item) => item.assignment)
-    const intent = object(canonical ? object(canonical.item.input).assignment : object(confirmed).assignment_intent)
-    const op = intent.op === "create" || intent.op === "update" || intent.op === "handoff" ? intent.op : undefined
-    const target = intent.target === "peer" ? "peer" : "self"
-    const savedTitle = object(confirmed).action_title
-    const savedPlan = canonical ? object(canonical.item.input).plan : object(confirmed).plan
-    const title =
-      canonical?.item.title ??
-      (typeof savedTitle === "string" && savedTitle.trim() ? savedTitle : undefined) ??
-      input.declaration.title ??
-      "Session task"
-    const body =
-      (typeof savedPlan === "string" && savedPlan.trim() ? savedPlan : undefined) ??
-      input.declaration.message ??
-      input.declaration.title ??
-      title
-    return SessionTask.route({
+    const title = input.declaration.title ?? "Session task"
+    return SessionTask.confirmed({
       sessionID: input.sessionID,
       runID: input.runID,
       messageID: input.messageID,
-      ...(op ? { assignment: { op, target, title, body } } : {}),
-      ...(!op ? { legacy: { title, body } } : {}),
+      actionIDs: confirms.map((item) => item.id),
+      requiresAssignment: confirms.some((item) => {
+        const assignment = object(item.input).assignment
+        return !!assignment && typeof assignment === "object" && !Array.isArray(assignment)
+      }),
+      legacy: { title, body: input.declaration.message ?? title },
       actions: input.actions,
     })
   }
@@ -4411,6 +4376,11 @@ export namespace SessionRunner {
 
   async function project(sessionID: SessionID, run: AgentProtocol.Result) {
     await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
+    await SessionTask.sync({ sessionID, runID: run.run_id, actions: run.actions }).catch((err) => {
+      if (err instanceof SessionTask.Conflict && ["session_task_missing", "session_task_stale_run"].includes(err.message))
+        return
+      throw err
+    })
     const session = await Session.get(sessionID)
     const ctx =
       session.dsl_context && typeof session.dsl_context === "object" && !Array.isArray(session.dsl_context)

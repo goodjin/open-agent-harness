@@ -1029,6 +1029,109 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner rejects task conflict before confirm or executable callbacks", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const stream = spyOn(LLM, "stream").mockImplementation(async () =>
+      packet(
+        {
+          version: "2",
+          items: [
+            {
+              id: "confirm_conflict",
+              kind: "confirm",
+              title: "Conflicting task",
+              prompt: "Confirm another task.",
+              plan: "This plan must never be shown.",
+              assignment: { op: "create", target: "self" },
+            },
+            { id: "execute_conflict", kind: "tool", target: "read", args: { filePath: "package.json" } },
+          ],
+        },
+        "call_task_conflict",
+      ),
+    )
+    let tools = 0
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_existing_task",
+                assignment: { op: "create", target: "self", title: "Existing task", body: "Existing plan" },
+                actions: [{ id: "existing" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              await expect(
+                runner.process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: { name: "protocol-runner", runner: "protocol" } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [{ role: "user", content: "create conflicting task" }],
+                  tools: {},
+                  runtimeTools: {
+                    catalog: [],
+                    prompt: "",
+                    execute: async () => {
+                      tools++
+                      return { title: "read", output: "unexpected", metadata: {} }
+                    },
+                  } as never,
+                }),
+              ).rejects.toThrow("session_task_conflict")
+              expect(await Question.list()).toHaveLength(0)
+              expect(tools).toBe(0)
+              expect(await SessionAssignment.active(session.id)).toBeUndefined()
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+    }
+  })
+
   test("protocol runner executes native AgentProtocolOutput tool calls", async () => {
     await using tmp = await tmpdir()
     const model = {
@@ -3471,6 +3574,7 @@ describe("SessionRunner", () => {
               expect(item?.status).toBe("running")
               const content = (await SessionAssignment.content(item!.id)) as { plan?: string }
               expect(content.plan).toBe(plan)
+              expect(content).toMatchObject({ assignment: { op: "create", target: "self" } })
 
               const msgs = await MessageV2.filterCompacted(MessageV2.stream(session.id))
               const record = msgs.find(

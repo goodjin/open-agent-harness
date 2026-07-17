@@ -8,6 +8,7 @@ import { Instance } from "../../src/project/instance"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { Session } from "../../src/session"
 import { SessionRuns } from "../../src/session/runs"
+import { SessionAssignment } from "../../src/session/assignment"
 import { MessageID } from "../../src/session/schema"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
@@ -184,6 +185,7 @@ describe("session task", () => {
       expect(first.type).toBe("execute")
       expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
         run_id: "run_task_v1",
+        run_ids: ["run_task_v1"],
         actions: [{ id: "write", title: "Write code" }],
       })
 
@@ -199,6 +201,7 @@ describe("session task", () => {
       expect(next.type).toBe("execute")
       expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
         run_id: "run_task_v2",
+        run_ids: ["run_task_v1", "run_task_v2"],
         actions: [
           { id: "write", title: "Write code" },
           { id: "verify", title: "Verify code" },
@@ -312,6 +315,17 @@ describe("session task", () => {
   test("routes update to a draft and handoff away from source execution", () =>
     setup(async () => {
       const empty = await Session.create({})
+      for (const op of ["update", "handoff"] as const) {
+        await expect(
+          SessionTask.preflight(empty.id, [
+            {
+              operation: "confirm",
+              executor: { type: "human" },
+              input: { assignment: { op, target: op === "handoff" ? "peer" : "self" } },
+            },
+          ]),
+        ).rejects.toThrow(op === "handoff" ? "task_handoff_requires_bound_source" : "session_task_update_requires_bound_source")
+      }
       await expect(
         SessionTask.route({
           sessionID: empty.id,
@@ -346,7 +360,138 @@ describe("session task", () => {
       expect(handoff.type).toBe("handoff")
       expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
         run_id: "run_active",
+        run_ids: ["run_active"],
         actions: [{ id: "active" }],
+      })
+    }))
+
+  test("aggregates real actions across registered runs without losing prior progress", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_multi_one",
+        assignment: { op: "create", target: "self", title: "Multi run", body: "Approved task" },
+        actions: [{ id: "first", title: "First action" }],
+      })
+      await Storage.write(
+        ["session_protocol_run", session.id, "run_multi_one"],
+        result("run_multi_one", [{ id: "first", title: "First action", status: "completed" }]),
+      )
+      await SessionTask.sync({ sessionID: session.id, runID: "run_multi_one" })
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_multi_two",
+        actions: [
+          { id: "first", title: "Tampered planned duplicate" },
+          { id: "second", title: "Second action" },
+        ],
+      })
+      await Storage.write(
+        ["session_protocol_run", session.id, "run_multi_two"],
+        result("run_multi_two", [{ id: "second", title: "Second action", status: "completed" }]),
+      )
+      await SessionTask.sync({ sessionID: session.id, runID: "run_multi_two" })
+
+      const current = await SessionTask.current(session.id)
+      expect(current?.actions.map((item) => [item.id, item.title, item.status])).toEqual([
+        ["first", "First action", "completed"],
+        ["second", "Second action", "completed"],
+      ])
+      expect(current?.progress).toEqual({ completed: 2, total: 2 })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: "run_multi_two",
+        run_ids: ["run_multi_one", "run_multi_two"],
+      })
+    }))
+
+  test("binds only canonical confirmed assignment content after parsed action tampering", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = {
+        type: "action",
+        id: "confirm_canonical",
+        title: "Canonical title",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: {
+          prompt: "Confirm canonical plan",
+          plan: "Canonical approved plan",
+          assignment: { op: "create", target: "self" },
+        },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Canonical approved plan",
+        runID: "run_canonical",
+        sessionID: session.id,
+      })
+      action.title = "Tampered title"
+      action.input = { ...action.input, plan: "Tampered plan", assignment: { op: "handoff", target: "peer" } }
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_wrong_source",
+          actionIDs: [action.id],
+          actions: [action],
+          legacy: { title: action.title, body: "Tampered legacy body" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_source_conflict")
+      await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_canonical",
+        actionIDs: [action.id],
+        actions: [action],
+        legacy: { title: action.title, body: "Tampered legacy body" },
+        requiresAssignment: true,
+      })
+
+      expect(await SessionTask.current(session.id)).toMatchObject({
+        title: "Canonical title",
+        body: "Canonical approved plan",
+      })
+    }))
+
+  test("delegated task rejects local protocol completion as its canonical result", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_parent_source",
+        parentActionID: "delegate_source",
+        title: "Delegated task",
+        body: "Delegation plan",
+        actions: [{ id: "delegate_source" }],
+      })
+      await SessionTask.route({
+        sessionID: child.id,
+        runID: "run_child_local",
+        actions: [{ id: "local", title: "Local action" }],
+      })
+      await Storage.write(
+        ["session_protocol_run", child.id, "run_child_local"],
+        result("run_child_local", [{ id: "local", title: "Local action", status: "completed" }]),
+      )
+      await SessionTask.sync({ sessionID: child.id, runID: "run_child_local" })
+      await expect(
+        SessionTask.finish({
+          sessionID: child.id,
+          runID: "run_child_local",
+          summary: "Untrusted local protocol summary",
+          source: "protocol",
+        }),
+      ).rejects.toThrow("session_task_delegated_protocol_result")
+      expect(await SessionTask.current(child.id)).not.toHaveProperty("result")
+      expect((await SessionTask.get(child.id))?.task.source_ref).toMatchObject({
+        runID: "run_parent_source",
+        actionID: "delegate_source",
       })
     }))
 
@@ -731,6 +876,12 @@ describe("session task", () => {
           .run(),
       )
       await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: run.run_id,
+        summary: "Final model synthesis",
+        source: "protocol",
+      })
 
       const current = await SessionTask.current(session.id)
       expect(current?.body).toContain("Current task")
@@ -1127,6 +1278,44 @@ function protocol(id: string, title: string) {
       model_visible_bytes: 0,
       raw_output_bytes: 0,
       duration_ms: 0,
+    },
+  })
+}
+
+function result(
+  id: string,
+  actions: { id: string; title: string; status: "completed" | "failed" | "blocked" }[],
+) {
+  const now = Date.now()
+  return AgentProtocol.Result.parse({
+    type: "agent.protocol.result",
+    version: "1",
+    run_id: id,
+    status: actions.some((item) => item.status === "failed") ? "failed" : "completed",
+    title: id,
+    actions: actions.map((item) => ({
+      id: item.id,
+      title: item.title,
+      operation: "test",
+      executor: { type: "tool", target: "read", capabilities: [] },
+      input: {},
+      depends_on: [],
+      status: item.status,
+      summary: `${item.title} summary`,
+      output: `${item.title} output`,
+      tool_call_ids: [],
+      duration_ms: 1,
+      time: { started: now, completed: now + 1 },
+    })),
+    summary: `${id} summary`,
+    time: { started: now, completed: now + 1 },
+    metrics: {
+      actions: actions.length,
+      internal_tool_calls: actions.length,
+      direct_model_tool_calls: 0,
+      model_visible_bytes: 0,
+      raw_output_bytes: 0,
+      duration_ms: 1,
     },
   })
 }

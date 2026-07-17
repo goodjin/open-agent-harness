@@ -59,14 +59,13 @@ export namespace SessionAssignment {
     title: string
   }) {
     const meta = object(input.assignment)
-    const op = meta.op === "create" || meta.op === "update" ? meta.op : undefined
+    const op = meta.op === "create" || meta.op === "update" || meta.op === "handoff" ? meta.op : undefined
     if (!op) return
     const target = text(meta.target) ?? "self"
-    const session = await targetSession({
-      op,
-      parentID: input.sessionID,
-      target,
-    })
+    const session =
+      op === "handoff"
+        ? await targetSession({ op: "create", parentID: input.sessionID, target: "self" })
+        : await targetSession({ op, parentID: input.sessionID, target })
     const prev = await bySource({
       sessionID: input.sessionID,
       runID: input.runID,
@@ -87,6 +86,7 @@ export namespace SessionAssignment {
       title: input.title,
       status: current?.status ?? "running",
       plan: input.plan,
+      assignment: { op, target },
     })
   }
 
@@ -178,6 +178,7 @@ export namespace SessionAssignment {
     title: string
     status: Status
     plan: string
+    assignment?: { op: "create" | "update" | "handoff"; target: string }
   }) {
     const now = Date.now()
     const current = input.id ? await get(input.id) : undefined
@@ -202,6 +203,7 @@ export namespace SessionAssignment {
       assignment_id: id,
       revision: version,
       plan: input.plan,
+      assignment: input.assignment,
       source: {
         type: input.source,
         session_id: input.sourceSessionID,

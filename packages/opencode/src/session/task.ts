@@ -7,6 +7,7 @@ import { MessageID, SessionID } from "./schema"
 import { SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
 import type { SessionRuns } from "./runs"
 import { TaskDocuments } from "./task-documents"
+import { SessionAssignment } from "./assignment"
 
 export namespace SessionTask {
   export const Status = z.enum(["running", "waiting_user", "revising", "blocked", "completed", "failed"])
@@ -35,6 +36,7 @@ export namespace SessionTask {
     .object({
       actions: z.array(z.unknown()),
       run_id: RunID.optional(),
+      run_ids: z.array(RunID).optional(),
     })
     .strict()
   export type Workflow = z.infer<typeof Workflow>
@@ -177,7 +179,7 @@ export namespace SessionTask {
   const Route = z
     .object({
       sessionID: SessionID.zod,
-      runID: RunID,
+      runID: RunID.optional(),
       messageID: MessageID.zod.optional(),
       assignment: z
         .object({
@@ -212,6 +214,75 @@ export namespace SessionTask {
     }
   }
 
+  export async function preflight(sessionID: SessionID, actions: unknown[]) {
+    const assignment = actions.flatMap((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return []
+      const action = item as { executor?: { type?: unknown }; operation?: unknown; input?: unknown }
+      if (action.executor?.type !== "human" || action.operation !== "confirm") return []
+      const input = action.input && typeof action.input === "object" && !Array.isArray(action.input) ? action.input : {}
+      const value = "assignment" in input ? input.assignment : undefined
+      if (!value || typeof value !== "object" || Array.isArray(value)) return []
+      const meta = value as { op?: unknown; target?: unknown }
+      if (meta.op !== "create" && meta.op !== "update" && meta.op !== "handoff") return []
+      return [{ op: meta.op, target: meta.target }]
+    })[0]
+    if (!assignment) return
+    const current = await get(sessionID)
+    if (current && assignment.op === "create") throw new Conflict()
+    if (!current && assignment.op === "update") throw new Conflict("session_task_update_requires_bound_source")
+    if (!current && assignment.op === "handoff") throw new Conflict("task_handoff_requires_bound_source")
+  }
+
+  export async function confirmed(input: {
+    sessionID: SessionID
+    runID: string
+    actionIDs: string[]
+    messageID?: MessageID
+    actions: unknown[]
+    legacy: { title: string; body: string }
+    requiresAssignment?: boolean
+  }) {
+    const rows = await Promise.all(
+      input.actionIDs.map((actionID) =>
+        SessionAssignment.bySource({ sessionID: input.sessionID, runID: input.runID, actionID }),
+      ),
+    )
+    const assignment = rows.findLast((item) => item !== undefined)
+    if (!assignment && input.requiresAssignment) throw new Conflict("session_task_assignment_source_conflict")
+    if (!assignment)
+      return route({
+        sessionID: input.sessionID,
+        runID: input.runID,
+        messageID: input.messageID,
+        legacy: input.legacy,
+        actions: input.actions,
+      })
+    if (
+      assignment.session_id !== input.sessionID ||
+      assignment.source_session_id !== input.sessionID ||
+      assignment.source_run_id !== input.runID ||
+      !input.actionIDs.includes(assignment.source_action_id ?? "")
+    )
+      throw new Conflict("session_task_assignment_source_conflict")
+    const content = await SessionAssignment.content(assignment.id)
+    const body = content && typeof content === "object" && !Array.isArray(content) ? content : {}
+    const meta = "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
+    const op = "op" in meta ? meta.op : undefined
+    const target = "target" in meta ? meta.target : assignment.target
+    if (op !== "create" && op !== "update" && op !== "handoff")
+      throw new Conflict("session_task_assignment_content_invalid")
+    if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
+    if (!("plan" in body) || typeof body.plan !== "string")
+      throw new Conflict("session_task_assignment_content_invalid")
+    return route({
+      sessionID: input.sessionID,
+      runID: input.runID,
+      messageID: input.messageID,
+      assignment: { op, target, title: assignment.title, body: body.plan },
+      actions: input.actions,
+    })
+  }
+
   export async function route(raw: z.input<typeof Route>) {
     const input = Route.parse(raw)
     const now = Date.now()
@@ -227,6 +298,7 @@ export namespace SessionTask {
             const id = `task_${randomUUID()}`
             const revision = `revision_${randomUUID()}`
             const source = input.source ?? { type: "user" as const, messageID: input.messageID }
+            if (!input.runID && source.type !== "delegation") throw new Conflict("session_task_run_required")
             const ref = { ...source } as Record<string, unknown>
             delete ref.type
             tx.insert(SessionTaskTable)
@@ -254,7 +326,7 @@ export namespace SessionTask {
                 body_hash: hash(seed.body),
                 source_message_id: input.messageID ?? null,
                 reason: null,
-                workflow: { actions: input.actions, run_id: input.runID },
+                workflow: flow(input.actions, input.runID),
                 result: null,
                 result_source: null,
                 time_created: now,
@@ -291,6 +363,7 @@ export namespace SessionTask {
           if (input.assignment?.op === "create") throw new Conflict()
           if (input.assignment?.op === "handoff") return { type: "handoff" as const, task: Task.parse(task) }
           if (input.assignment?.op === "update") {
+            if (!input.runID) throw new Conflict("session_task_run_required")
             const version =
               (tx
                 .select({ value: max(TaskRevisionTable.version) })
@@ -310,7 +383,7 @@ export namespace SessionTask {
                 body_hash: hash(input.assignment.body),
                 source_message_id: input.messageID ?? null,
                 reason: "Confirmed task update proposal",
-                workflow: { actions: input.actions, run_id: input.runID },
+                workflow: flow(input.actions, input.runID),
                 result: null,
                 result_source: null,
                 time_created: now,
@@ -324,10 +397,14 @@ export namespace SessionTask {
             return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
           }
           if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
+          if (!input.runID)
+            return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
           const actions = merge(Array.isArray(current.workflow.actions) ? current.workflow.actions : [], input.actions)
+          const ids = runids(Workflow.parse(current.workflow))
+          const run_ids = ids.includes(input.runID) ? ids : [...ids, input.runID]
           const revision = tx
             .update(TaskRevisionTable)
-            .set({ workflow: { actions, run_id: input.runID } })
+            .set({ workflow: { actions, run_id: input.runID, run_ids } })
             .where(
               and(
                 eq(TaskRevisionTable.id, current.id),
@@ -378,14 +455,12 @@ export namespace SessionTask {
         throw new Conflict("session_task_delegation_source_conflict")
       return route({
         sessionID: input.sessionID,
-        runID: input.parentRunID,
         messageID: input.messageID,
         actions: input.actions,
       })
     }
     return route({
       sessionID: input.sessionID,
-      runID: input.parentRunID,
       messageID: input.messageID,
       assignment: { op: "create", target: "self", title: input.title, body: input.body },
       actions: input.actions,
@@ -399,6 +474,35 @@ export namespace SessionTask {
     })
   }
 
+  export async function sync(input: { sessionID: SessionID; runID: string; actions?: AgentProtocol.ResultAction[] }) {
+    const run = input.actions
+      ? { actions: input.actions }
+      : await import("./runs").then((item) => item.SessionRuns.persisted(input.sessionID, input.runID))
+    if (!run) throw new Conflict("session_task_run_missing")
+    return Database.transaction(
+      (tx) => {
+        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
+        if (!task?.current_revision_id) throw new Conflict("session_task_missing")
+        const revision = tx
+          .select()
+          .from(TaskRevisionTable)
+          .where(eq(TaskRevisionTable.id, task.current_revision_id))
+          .get()
+        if (!revision || !runids(Workflow.parse(revision.workflow)).includes(input.runID))
+          throw new Conflict("session_task_stale_run")
+        const saved = tx
+          .update(TaskRevisionTable)
+          .set({ workflow: { ...revision.workflow, actions: merge(workflow(Workflow.parse(revision.workflow)), run.actions) } })
+          .where(and(eq(TaskRevisionTable.id, revision.id), eq(TaskRevisionTable.task_id, task.id)))
+          .returning()
+          .get()
+        if (!saved) throw new Conflict("session_task_stale_run")
+        return Revision.parse(saved)
+      },
+      { behavior: "immediate" },
+    )
+  }
+
   export async function finish(raw: z.input<typeof Finish>) {
     const input = Finish.parse(raw)
     const now = Date.now()
@@ -406,6 +510,8 @@ export namespace SessionTask {
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
+        if (task.source_type === "delegation" && input.source === "protocol")
+          throw new Conflict("session_task_delegated_protocol_result")
         const revision = tx
           .select()
           .from(TaskRevisionTable)
@@ -739,13 +845,22 @@ export namespace SessionTask {
     const stored = await get(sessionID)
     if (!stored) return
     const { SessionRuns } = await import("./runs")
-    const run = stored.revision.workflow.run_id
-      ? await SessionRuns.persisted(sessionID, stored.revision.workflow.run_id)
-      : undefined
-    const trusted = valid(stored.task, run)
-    const actions = trusted?.actions ?? workflow(stored.revision.workflow)
-    const output = trusted?.summary
-      ? result(trusted.summary, trusted.summary_source)
+    const source = stored.task.source_ref
+    const parent = stored.task.source_type === "delegation" && typeof source.runID === "string" ? source.runID : undefined
+    const ids = parent ? [parent] : runids(stored.revision.workflow)
+    const runs = await Promise.all(
+      ids.slice(-50).map((runID) => SessionRuns.persisted(sessionID, runID).catch(() => undefined)),
+    )
+    const trusted = parent ? valid(stored.task, runs[0]) : undefined
+    const merged = runs.reduce<unknown[]>(
+      (all, run) => (run ? merge(all, run.actions) : all),
+      workflow(stored.revision.workflow),
+    )
+    const actions = parent ? workflow(stored.revision.workflow) : workflow({ actions: merged })
+    const output = parent
+      ? trusted?.summary
+        ? result(trusted.summary, trusted.summary_source)
+        : {}
       : result(stored.revision.result, stored.revision.result_source)
     return View.parse({
       id: stored.task.id,
@@ -866,6 +981,16 @@ export namespace SessionTask {
     })
   }
 
+  function flow(actions: unknown[], runID?: string): Workflow {
+    if (!runID) return { actions }
+    return { actions, run_id: runID, run_ids: [runID] }
+  }
+
+  function runids(value: Workflow) {
+    if (value.run_ids?.length) return [...new Set(value.run_ids)]
+    return value.run_id ? [value.run_id] : []
+  }
+
   function merge(prev: unknown[], next: unknown[]) {
     const items = new Map<string, unknown>()
     const rest: unknown[] = []
@@ -878,6 +1003,9 @@ export namespace SessionTask {
       if (typeof id !== "string" || !id) {
         rest.push(item)
         continue
+      }
+      if (items.has(id) && AgentProtocol.ResultAction.safeParse(items.get(id)).success) {
+        if (!AgentProtocol.ResultAction.safeParse(item).success) continue
       }
       items.set(id, item)
     }
