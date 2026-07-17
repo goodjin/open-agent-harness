@@ -20,6 +20,7 @@ import { Truncate } from "@/tool/truncation"
 import { PermissionNext } from "@/permission/next"
 import { ProtocolToolCatalog } from "@/protocol/tool-catalog"
 import { SessionResult } from "@/session/result"
+import { TaskAdmission } from "@/protocol/task-admission"
 
 type McpResult = {
   content: (
@@ -513,7 +514,7 @@ export namespace RuntimeTools {
         "- Use `depends` only for real dependencies and omit it for independent calls that can run in parallel.",
         "- Use `result` for result policy.",
         '- Use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }` when a planner needs user approval before execution.',
-        '- Assignment confirmation is not required for clarification or exploratory delegation. After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`; the confirm `plan` is the full assignment content for final user approval.',
+        TaskAdmission.Prompt,
         "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
         "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
         "- Do not call repository tools directly from this agent. Delegate file reading, search, edits, commands, validation, and review to specialist agents.",
@@ -564,7 +565,7 @@ export namespace RuntimeTools {
       '- For delegation, do not use a tool item. Use `items[].kind: "agent"` with `target: "auto"` or a concrete agent id.',
       '- For user choices or additional information, use `items[].kind: "input"` with `{ id, kind, prompt, mode, options, fields }`; the runtime returns the answer to the model before more work is declared.',
       '- For plan approval, use `items[].kind: "confirm"` with `{ id, kind, prompt, plan }`; executable items should depend on that confirmation.',
-      '- Assignment confirmation is not required for clarification or exploratory delegation. After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`; the confirm `plan` is the full assignment content for final user approval.',
+      TaskAdmission.Prompt,
       "- For every mutating worker task, also declare a matching verifier or reviewer task that depends on the worker result.",
       "- Verifier prompts must include acceptance criteria, expected worker output, and concrete commands or evidence to check when known.",
       "",

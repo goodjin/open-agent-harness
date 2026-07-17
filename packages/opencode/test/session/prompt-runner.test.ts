@@ -640,6 +640,15 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).toContain("## read")
                 expect(seen[0]?.prompt).toContain("## bash")
                 expect(seen[0]?.prompt).toContain("input_schema:")
+                expect(seen[0]?.prompt).toContain("Ordinary conversation does not create or modify a Task")
+                expect(seen[0]?.prompt).toContain("Before preparing executable actions, read and follow Current Session Task")
+                expect(seen[0]?.prompt).toContain('assignment={"op":"create","target":"self"}')
+                expect(seen[0]?.prompt).toContain('assignment={"op":"update","target":"self"}')
+                expect(seen[0]?.prompt).toContain('assignment={"op":"handoff","target":"peer"}')
+                expect(seen[0]?.prompt).toContain("continue the current Revision without creating a second Task")
+                expect(seen[0]?.prompt).not.toContain(
+                  'After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`',
+                )
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()
@@ -719,6 +728,15 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).toContain('items[].kind: "agent"')
                 expect(seen[0]?.prompt).toContain('"kind": "tool"')
                 expect(seen[0]?.prompt).toContain("## frontend")
+                expect(seen[0]?.prompt).toContain("Ordinary conversation does not create or modify a Task")
+                expect(seen[0]?.prompt).toContain("Before preparing executable actions, read and follow Current Session Task")
+                expect(seen[0]?.prompt).toContain('assignment={"op":"create","target":"self"}')
+                expect(seen[0]?.prompt).toContain('assignment={"op":"update","target":"self"}')
+                expect(seen[0]?.prompt).toContain('assignment={"op":"handoff","target":"peer"}')
+                expect(seen[0]?.prompt).toContain("continue the current Revision without creating a second Task")
+                expect(seen[0]?.prompt).not.toContain(
+                  'After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`',
+                )
                 await Session.remove(session.id)
               } finally {
                 hook.mockRestore()

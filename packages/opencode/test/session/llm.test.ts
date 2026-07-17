@@ -11,9 +11,11 @@ import { ModelsDev } from "../../src/provider/models"
 import { ProviderID, ModelID } from "../../src/provider/schema"
 import { Filesystem } from "../../src/util/filesystem"
 import { tmpdir } from "../fixture/fixture"
-import type { Agent } from "../../src/agent/agent"
+import { Agent } from "../../src/agent/agent"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { SessionID, MessageID } from "../../src/session/schema"
+import { BUILTIN_AGENTS } from "../../src/agent/builtin.generated"
+import { TaskAdmission } from "../../src/protocol/task-admission"
 
 const ent = {
   primary: true,
@@ -30,6 +32,62 @@ const cap = {
 } satisfies Agent.Info["capability"]
 
 describe("session.llm.hasToolCalls", () => {
+  test("composes conditional task admission for every entry planner", () => {
+    ;["default", "milestone-planner", "feature-planner"].forEach((id) => {
+      const src = BUILTIN_AGENTS.find((item) => item.id === id)
+      if (!src) throw new Error(`missing builtin planner: ${id}`)
+      const agent = Agent.Info.parse({
+        name: src.id,
+        mode: id === "default" ? "primary" : "subagent",
+        entry: src.meta.entry,
+        capability: src.meta.capability,
+        runner: src.meta.runner,
+        permission: [],
+        autoAppendPrompt: src.meta.auto_append_prompt,
+        requestFooter: src.requestFooter,
+        protocol: src.protocol,
+        options: {},
+        prompt: Agent.prompt(src),
+      })
+      const system = LLM.compose({
+        agent,
+        model: {} as never,
+        system: [],
+        user: {
+          id: MessageID.make(`user-${id}-task-admission`),
+          sessionID: SessionID.make(`session-${id}-task-admission`),
+          role: "user",
+          time: { created: Date.now() },
+          agent: id,
+          model: { providerID: ProviderID.make("test"), modelID: ModelID.make("test") },
+        } satisfies MessageV2.User,
+        runtimeTools: {
+          prompt: "# Available Protocol Tools\n\nRuntime catalog task admission.",
+        } as never,
+        isCodex: false,
+      })[0]
+      const final = [system, agent.requestFooter?.prompt].join("\n\n")
+
+      expect(system.indexOf("# Rules")).toBeLessThan(system.indexOf("# Planner Protocol"))
+      expect(system.indexOf("# Planner Protocol")).toBeLessThan(system.indexOf("# Available Protocol Tools"))
+      expect(system.indexOf("# Available Protocol Tools")).toBeLessThan(system.indexOf("Final protocol reminder:"))
+      expect(final.indexOf("Final protocol reminder:")).toBeLessThan(final.indexOf("Session Task Admission:"))
+      expect(final).toContain("Ordinary conversation does not create or modify a Task")
+      expect(final).toContain("Before preparing executable actions, read and follow Current Session Task")
+      expect(final).toContain('assignment={"op":"create","target":"self"}')
+      expect(final).toContain('assignment={"op":"update","target":"self"}')
+      expect(final).toContain('assignment={"op":"handoff","target":"peer"}')
+      expect(final).toContain("continue the current Revision without creating a second Task")
+      expect(final).not.toContain(
+        'After intent is clear and before starting execution work, use `{ id, kind: "confirm", prompt, plan, assignment: { op: "create", target: "self" } }`',
+      )
+      expect(final).not.toContain(
+        'For direct user-originated execution graphs, clarify the request, complete applicable analysis, synthesize and review the structured handoff and route, then emit a final `kind: "confirm"` item whose `plan` contains the reviewed Markdown handoff and whose `assignment` metadata is `{ "op": "create", "target": "self" }`.',
+      )
+      expect(final).not.toContain('For direct user-originated graphs, emit a `kind: "confirm"` item')
+    })
+  })
+
   test("adds protocol instructions for default when configured as protocol runner", () => {
     const system = LLM.compose({
       agent: {
@@ -109,15 +167,9 @@ describe("session.llm.hasToolCalls", () => {
     expect(system).toContain("native `AgentProtocolOutput` tool schema")
     expect(system).toContain("Final protocol reminder:")
     expect(system).toContain("Never wrap the protocol package in an `input` field")
-    expect(
-      system
-        .trim()
-        .endsWith(
-          'Assignment confirmation is optional while clarifying or exploring. After intent is clear and before starting execution work, use `{ id, kind: "confirm", prompt, plan, assignment: { op: "create", target: "self" } }`; `plan` is the full assignment content for final user approval.',
-        ),
-    ).toBe(true)
+    expect(system.trim().endsWith(TaskAdmission.Prompt)).toBe(true)
     expect(system).not.toContain("AgentProtocolOutput.input.type")
-    expect(system).not.toContain("actions")
+    expect(system).not.toContain('"actions":')
     expect(system).not.toContain("executor")
     expect(system).not.toContain("tool/args")
     expect(system).not.toContain("say")

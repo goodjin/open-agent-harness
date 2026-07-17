@@ -111,7 +111,7 @@ Assignment is the persisted task-management record for a session. It is not a se
 
 For assignment creation or update, `confirm.plan` is the complete task content approved by the user. The optional `confirm.assignment` object only describes the runtime mutation, currently `op=create|update` and `target=self|<child-session-id>`. Runtime must not require a second task-body field that duplicates `plan`.
 
-Assignment is not a hard prerequisite for clarification or exploratory delegation. A planner may ask questions or delegate read-only exploration before a root assignment exists. After the user intent is clear and the execution plan is designed, the planner should emit a final assignment confirmation before starting execution work, for example `assignment: { op: "create", target: "self" }`. A plain plan confirmation does not create an assignment.
+Assignment is not a prerequisite for clarification or exploratory delegation. Before executable work, the planner reads Current Session Task: no Task uses create/self, the same boundary continues the current Revision without another assignment, a boundary-changing revision proposes update/self, and a new Task proposes handoff/peer. A plain plan confirmation does not create or change a Task.
 
 Confirmed assignment content is stored as a raw Storage snapshot under `session_assignment_content/<assignment_id>/rev-<n>`. SQLite `assignment` rows keep the queryable projection only: session linkage, parent assignment id, source ids, target, title, status, content reference, content hash, content version, result reference, result status, and timestamps.
 

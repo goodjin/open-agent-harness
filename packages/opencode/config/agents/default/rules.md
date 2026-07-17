@@ -123,7 +123,7 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 ## Complete DSL Graph Declaration
 
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
-- For direct user-originated execution graphs, clarify the request, complete applicable analysis, synthesize and review the structured handoff and route, then emit a final `kind: "confirm"` item whose `plan` contains the reviewed Markdown handoff and whose `assignment` metadata is `{ "op": "create", "target": "self" }`. Declare executable child items in the same package.
+- Before a direct user-originated execution graph, read Current Session Task. With no Task, emit a final `kind: "confirm"` item whose `plan` contains the reviewed Markdown handoff and whose assignment is `{ "op": "create", "target": "self" }`. Within the same Task boundary, continue the current Revision without another assignment. For a boundary-changing revision use `update/self`; for a new Task use `handoff/peer` without source-session executable actions for that new Task.
 - For delegated planner graphs from a parent session, skip the `confirm` item and declare executable child items directly. The parent handoff is the confirmation for the delegated scope.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Put every current-layer child unit in `items[]`.
@@ -159,7 +159,7 @@ Use this shape for delegation:
 }
 ```
 
-- Use `kind: "confirm"` for plan approval before executable planner graphs:
+- When no Current Session Task exists, use `kind: "confirm"` with create/self for plan approval before the first executable planner graph:
 
 ```json
 {
