@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import path from "path"
 import { AgentProtocol } from "../../src/protocol/schema"
 
 const action = {
@@ -16,6 +17,17 @@ const action = {
 }
 
 describe("agent protocol schema", () => {
+  test("keeps assignment module documentation aligned with the v2 schema", async () => {
+    const doc = await Bun.file(
+      path.join(import.meta.dir, "../../../../docs/harness-module/protocol-runtime.md"),
+    ).text()
+
+    expect(doc).toContain("accepts only `create/self`, `update/self`, and `handoff/peer`")
+    expect(doc).toContain("`target` no longer accepts a child session id")
+    expect(doc).toContain("A later Runtime implementation creates the peer session after confirmation")
+    expect(doc).not.toContain("target=self|<child-session-id>")
+  })
+
   test("accepts v2 items shape and normalizes tool agent and answer items", () => {
     const out = AgentProtocol.parse({
       version: "2",

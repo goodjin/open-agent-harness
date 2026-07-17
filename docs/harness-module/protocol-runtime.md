@@ -109,7 +109,7 @@ The session UI surfaces pending questions both in the timeline context and in th
 
 Assignment is the persisted task-management record for a session. It is not a separate Agent Protocol item kind. Model output still uses ordinary protocol items, and assignment creation or content updates are expressed as metadata on `kind: "confirm"`.
 
-For assignment creation or update, `confirm.plan` is the complete task content approved by the user. The optional `confirm.assignment` object only describes the runtime mutation, currently `op=create|update` and `target=self|<child-session-id>`. Runtime must not require a second task-body field that duplicates `plan`.
+For Task assignment intent, `confirm.plan` is the complete task content approved by the user. The optional `confirm.assignment` object accepts only `create/self`, `update/self`, and `handoff/peer`; `target` no longer accepts a child session id. Runtime must not require a second task-body field that duplicates `plan`. Handoff is declarative at this layer. A later Runtime implementation creates the peer session after confirmation.
 
 Assignment is not a prerequisite for clarification or exploratory delegation. Before executable work, the planner reads Current Session Task: no Task uses create/self, the same boundary continues the current Revision without another assignment, a boundary-changing revision proposes update/self, and a new Task proposes handoff/peer. A plain plan confirmation does not create or change a Task.
 
