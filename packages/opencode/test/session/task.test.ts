@@ -171,6 +171,185 @@ async function ready(file: string) {
 }
 
 describe("session task", () => {
+  test("routes executable packages into one current task revision", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_task_v1",
+        messageID: MessageID.ascending(),
+        assignment: { op: "create", target: "self", title: "Implement task binding", body: "Approved plan" },
+        actions: [{ id: "write", title: "Write code" }],
+      })
+      expect(first.type).toBe("execute")
+      expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
+        run_id: "run_task_v1",
+        actions: [{ id: "write", title: "Write code" }],
+      })
+
+      const next = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_task_v2",
+        messageID: MessageID.ascending(),
+        actions: [
+          { id: "write", title: "Write code" },
+          { id: "verify", title: "Verify code" },
+        ],
+      })
+      expect(next.type).toBe("execute")
+      expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
+        run_id: "run_task_v2",
+        actions: [
+          { id: "write", title: "Write code" },
+          { id: "verify", title: "Verify code" },
+        ],
+      })
+      expect(await SessionTask.history(session.id)).toHaveLength(0)
+    }))
+
+  test("routes conflicting assignments before executable work", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_task_create",
+        assignment: { op: "create", target: "self", title: "First task", body: "First plan" },
+        actions: [{ id: "first" }],
+      })
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_task_conflict",
+          assignment: { op: "create", target: "self", title: "Second task", body: "Second plan" },
+          actions: [{ id: "second" }],
+        }),
+      ).rejects.toThrow("session_task_conflict")
+      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toEqual([{ id: "first" }])
+    }))
+
+  test("keeps current task context compact and finishes the expected run idempotently", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_task_finish",
+        assignment: { op: "create", target: "self", title: "Finish task", body: "Sensitive full body" },
+        actions: [{ id: "finish" }],
+      })
+      const context = await SessionTask.context(session.id)
+      expect(context).toContain("Finish task")
+      expect(context).not.toContain("Sensitive full body")
+      expect(context).not.toContain('"finish"')
+
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_task_finish",
+        summary: "Terminal protocol result",
+        source: "protocol",
+      })
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_task_finish",
+        summary: "Terminal protocol result",
+        source: "protocol",
+      })
+      expect(await SessionTask.current(session.id)).toMatchObject({
+        status: "completed",
+        result: "Terminal protocol result",
+        result_source: "protocol",
+      })
+      await expect(
+        SessionTask.finish({
+          sessionID: session.id,
+          runID: "run_task_finish",
+          summary: "Different terminal result",
+          source: "protocol",
+        }),
+      ).rejects.toThrow("session_task_result_conflict")
+    }))
+
+  test("binds delegated child source once and rejects mismatched recovery", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_parent",
+        parentActionID: "delegate_child",
+        title: "Delegated child",
+        body: "Canonical delegation plan",
+        actions: [{ id: "delegate_child" }],
+      })
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_parent",
+        parentActionID: "delegate_child",
+        title: "Delegated child",
+        body: "Canonical delegation plan",
+        actions: [{ id: "delegate_child" }],
+      })
+      expect((await SessionTask.get(child.id))?.task.source_ref).toMatchObject({
+        sessionID: parent.id,
+        runID: "run_parent",
+        actionID: "delegate_child",
+      })
+      expect(await SessionTask.history(child.id)).toHaveLength(0)
+      await expect(
+        SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: "run_wrong",
+          parentActionID: "delegate_child",
+          title: "Delegated child",
+          body: "Wrong source",
+          actions: [{ id: "delegate_child" }],
+        }),
+      ).rejects.toThrow("session_task_delegation_source_conflict")
+    }))
+
+  test("routes update to a draft and handoff away from source execution", () =>
+    setup(async () => {
+      const empty = await Session.create({})
+      await expect(
+        SessionTask.route({
+          sessionID: empty.id,
+          runID: "run_handoff_empty",
+          assignment: { op: "handoff", target: "peer", title: "Peer task", body: "Peer plan" },
+          actions: [{ id: "peer" }],
+        }),
+      ).rejects.toThrow("task_handoff_requires_bound_source")
+
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_active",
+        assignment: { op: "create", target: "self", title: "Active task", body: "Active plan" },
+        actions: [{ id: "active" }],
+      })
+      const update = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_update",
+        assignment: { op: "update", target: "self", title: "Updated task", body: "Updated plan" },
+        actions: [{ id: "updated" }],
+      })
+      expect(update).toMatchObject({ type: "update", revision: { version: 2, status: "draft" } })
+      expect(await SessionTask.current(session.id)).toMatchObject({ title: "Active task", version: 1 })
+
+      const handoff = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_handoff",
+        assignment: { op: "handoff", target: "peer", title: "Peer task", body: "Peer plan" },
+        actions: [{ id: "peer" }],
+      })
+      expect(handoff.type).toBe("handoff")
+      expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
+        run_id: "run_active",
+        actions: [{ id: "active" }],
+      })
+    }))
+
   test("creates one task per session", () =>
     setup(async () => {
       const session = await Session.create({})

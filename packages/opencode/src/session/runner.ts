@@ -33,6 +33,7 @@ import { ActionResult } from "./action-result"
 import { SessionAssignment } from "./assignment"
 import { SessionResult } from "./result"
 import { SessionRuns } from "./runs"
+import { SessionTask } from "./task"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -131,7 +132,23 @@ export namespace SessionRunner {
       summary,
       messageID: input.messageID,
     })
-      .then(() => true)
+      .then(async () => {
+        if (input.parsed?.declaration.intent === "execute") return true
+        await SessionTask.finish({
+          sessionID: input.sessionID,
+          runID: input.runID,
+          summary,
+          source: "protocol",
+        }).catch((err) => {
+          if (
+            err instanceof SessionTask.Conflict &&
+            ["session_task_missing", "session_task_stale_run"].includes(err.message)
+          )
+            return
+          throw err
+        })
+        return true
+      })
       .catch(async (err) => {
         const error = err instanceof Error ? err.message.slice(0, 500) : String(err).slice(0, 500)
         await SessionLog.emit({
@@ -1233,6 +1250,7 @@ export namespace SessionRunner {
         messages: [],
       }))
     let started = false
+    let bound: Awaited<ReturnType<typeof SessionTask.route>> | undefined
     let active: AgentProtocol.Action | undefined
     let began: number | undefined
     const evidence = new Map<string, AgentProtocol.ResultAction>()
@@ -1257,6 +1275,25 @@ export namespace SessionRunner {
           starts.set(action.id, start)
           active = action
           try {
+            if (work && action.executor.type !== "human" && !bound) {
+              bound = await bind({
+                actions,
+                declaration,
+                messageID: input.chat.message.id,
+                runID,
+                sessionID: input.sessionID,
+              })
+            }
+            if (bound && bound.type !== "execute") {
+              return finish({
+                title: action.title,
+                output:
+                  bound.type === "update"
+                    ? "Task update proposal saved as a draft; source actions were not executed."
+                    : "Task handoff is pending; source actions were not executed.",
+                metadata: { blocked: true, reason: bound.type },
+              })
+            }
             if (work && action.executor.type !== "human" && !started) {
               began = start
               await pending(input.sessionID, runID, declaration)
@@ -1464,6 +1501,66 @@ export namespace SessionRunner {
       },
     })
     return { run, tracked: started }
+  }
+
+  async function bind(input: {
+    actions: AgentProtocol.Action[]
+    declaration: AgentProtocol.Declaration
+    messageID: MessageID
+    runID: string
+    sessionID: SessionID
+  }) {
+    const confirms = input.actions.filter((item) => item.operation === "confirm" && item.executor.type === "human")
+    const assigned = await Promise.all(
+      confirms.map(async (item) => ({
+        item,
+        assignment: await SessionAssignment.bySource({
+          sessionID: input.sessionID,
+          runID: input.runID,
+          actionID: item.id,
+        }),
+      })),
+    )
+    const saved = await Promise.all(
+      confirms.map((item) =>
+        Storage.read<unknown>(["session_protocol_confirmation", input.sessionID, input.runID, item.id]).catch(
+          () => undefined,
+        ),
+      ),
+    )
+    const session = await Session.get(input.sessionID)
+    const records = object(object(session.dsl_context).protocol).confirmations
+    const projected = Array.isArray(records)
+      ? records.filter((item) => {
+          const row = object(item)
+          return row.run_id === input.runID && row.status === "confirmed"
+        })
+      : []
+    const confirmed = [...saved, ...projected].findLast((item) => object(item).status === "confirmed")
+    const canonical = assigned.findLast((item) => item.assignment)
+    const intent = object(canonical ? object(canonical.item.input).assignment : object(confirmed).assignment_intent)
+    const op = intent.op === "create" || intent.op === "update" || intent.op === "handoff" ? intent.op : undefined
+    const target = intent.target === "peer" ? "peer" : "self"
+    const savedTitle = object(confirmed).action_title
+    const savedPlan = canonical ? object(canonical.item.input).plan : object(confirmed).plan
+    const title =
+      canonical?.item.title ??
+      (typeof savedTitle === "string" && savedTitle.trim() ? savedTitle : undefined) ??
+      input.declaration.title ??
+      "Session task"
+    const body =
+      (typeof savedPlan === "string" && savedPlan.trim() ? savedPlan : undefined) ??
+      input.declaration.message ??
+      input.declaration.title ??
+      title
+    return SessionTask.route({
+      sessionID: input.sessionID,
+      runID: input.runID,
+      messageID: input.messageID,
+      ...(op ? { assignment: { op, target, title, body } } : {}),
+      ...(!op ? { legacy: { title, body } } : {}),
+      actions: input.actions,
+    })
   }
 
   function cancelled(
@@ -3433,6 +3530,7 @@ export namespace SessionRunner {
             content_version: input.assignment.content_version,
           }
         : object(input.action.input).assignment,
+      assignment_intent: object(input.action.input).assignment,
       note: input.note,
       response: input.response,
       status: input.status,
@@ -3606,6 +3704,16 @@ export namespace SessionRunner {
       plan: input.prompt,
       runID: input.runID,
       sessionID: input.sessionID,
+    })
+    await SessionTask.beginDelegated({
+      sessionID: child.id,
+      parentSessionID: input.sessionID,
+      parentRunID: input.runID,
+      parentActionID: input.action.id,
+      messageID: input.messageID,
+      title: input.action.title,
+      body: input.prompt ?? input.action.title,
+      actions: [input.action],
     })
     setTimeout(() => {
       SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent))

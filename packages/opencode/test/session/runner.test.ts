@@ -27,6 +27,7 @@ import { Agent } from "../../src/agent/agent"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { Storage } from "../../src/storage/storage"
 import { SessionRuns } from "../../src/session/runs"
+import { SessionTask } from "../../src/session/task"
 
 describe("SessionRunner", () => {
   const finalTools = {
@@ -764,7 +765,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner executes protocol blocks and projects run state", async () => {
+  test("protocol runner binds a legacy session task before executable actions", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1012,6 +1013,13 @@ describe("SessionRunner", () => {
               ).toBe(false)
               expect(parts.some((part) => part.type === "tool" && part.metadata?.protocol === true)).toBe(true)
               expect(protocol?.runs?.[0]?.total).toBe(3)
+              expect(await SessionTask.current(session.id)).toMatchObject({ title: "Inspect", version: 1 })
+              const children = await Session.children(session.id)
+              expect(children).toHaveLength(1)
+              expect(await SessionTask.current(children[0]!.id)).toMatchObject({
+                title: "Delegate summary",
+                version: 1,
+              })
             },
           }),
       })
@@ -3076,7 +3084,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner runs package-level confirmation before other actions", async () => {
+  test("protocol runner binds confirmed task assignment before other actions", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -3257,6 +3265,11 @@ describe("SessionRunner", () => {
               })
               await entered
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await SessionTask.current(session.id)).toMatchObject({
+                title: "confirm_plan",
+                body: "Run backend work.",
+                version: 1,
+              })
               const pending = await Session.get(session.id)
               const pendingProtocol = pending.dsl_context?.protocol as { runs?: { status?: string }[] } | undefined
               const active = await SessionLog.list({ sessionID: session.id })
@@ -3448,8 +3461,10 @@ describe("SessionRunner", () => {
                 response: "confirm",
               })
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await SessionTask.get(session.id)).toBeUndefined()
               await run
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await SessionTask.get(session.id)).toBeUndefined()
 
               const item = await SessionAssignment.active(session.id)
               expect(item?.title).toBe("Confirm assignment")

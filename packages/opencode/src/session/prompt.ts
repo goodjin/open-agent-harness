@@ -835,6 +835,7 @@ export namespace SessionPrompt {
       // Build system prompt, adding structured output instruction if needed
       const system = [
         ...(await SystemPrompt.environment(model)),
+        ...(await SystemPrompt.task(sessionID)),
         ...(await InstructionPrompt.system()),
         ...instructions,
       ]

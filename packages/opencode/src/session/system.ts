@@ -11,6 +11,8 @@ import PROMPT_CODEX from "./prompt/codex_header.txt"
 import PROMPT_TRINITY from "./prompt/trinity.txt"
 import type { Provider } from "@/provider/provider"
 import type { Agent } from "@/agent/agent"
+import { SessionID } from "./schema"
+import { SessionTask } from "./task"
 
 export namespace SystemPrompt {
   export function instructions() {
@@ -52,5 +54,10 @@ export namespace SystemPrompt {
         `</directories>`,
       ].join("\n"),
     ]
+  }
+
+  export async function task(sessionID: SessionID) {
+    const context = await SessionTask.context(sessionID)
+    return context ? [context] : []
   }
 }

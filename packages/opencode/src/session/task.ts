@@ -174,12 +174,285 @@ export namespace SessionTask {
     })
     .strict()
   const Activate = z.object({ taskID: z.string().min(1), revisionID: z.string().min(1) }).strict()
+  const Route = z
+    .object({
+      sessionID: SessionID.zod,
+      runID: RunID,
+      messageID: MessageID.zod.optional(),
+      assignment: z
+        .object({
+          op: z.enum(["create", "update", "handoff"]),
+          target: z.enum(["self", "peer"]),
+          title: z.string().trim().min(1),
+          body: z.string(),
+        })
+        .strict()
+        .optional(),
+      actions: z.array(z.unknown()),
+      legacy: z
+        .object({ title: z.string().trim().min(1), body: z.string() })
+        .strict()
+        .optional(),
+      source: Source.optional(),
+    })
+    .strict()
+  const Finish = z
+    .object({
+      sessionID: SessionID.zod,
+      runID: RunID,
+      summary: z.string().trim().min(1),
+      source: ResultSource,
+    })
+    .strict()
 
   export class Conflict extends Error {
     constructor(message = "session_task_conflict") {
       super(message)
       this.name = "SessionTaskConflict"
     }
+  }
+
+  export async function route(raw: z.input<typeof Route>) {
+    const input = Route.parse(raw)
+    const now = Date.now()
+    try {
+      return Database.transaction(
+        (tx) => {
+          const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
+          if (!task) {
+            if (input.assignment?.op === "handoff") throw new Conflict("task_handoff_requires_bound_source")
+            if (input.assignment?.op === "update") throw new Conflict("session_task_update_requires_bound_source")
+            const seed = input.assignment ?? input.legacy
+            if (!seed) throw new Conflict("session_task_assignment_required")
+            const id = `task_${randomUUID()}`
+            const revision = `revision_${randomUUID()}`
+            const source = input.source ?? { type: "user" as const, messageID: input.messageID }
+            const ref = { ...source } as Record<string, unknown>
+            delete ref.type
+            tx.insert(SessionTaskTable)
+              .values({
+                id,
+                session_id: input.sessionID,
+                title: seed.title,
+                status: "running",
+                current_revision_id: null,
+                source_type: source.type,
+                source_ref: ref,
+                time_created: now,
+                time_updated: now,
+              })
+              .run()
+            tx.insert(TaskRevisionTable)
+              .values({
+                id: revision,
+                task_id: id,
+                version: 1,
+                previous_id: null,
+                status: "active",
+                title: seed.title,
+                body: seed.body,
+                body_hash: hash(seed.body),
+                source_message_id: input.messageID ?? null,
+                reason: null,
+                workflow: { actions: input.actions, run_id: input.runID },
+                result: null,
+                result_source: null,
+                time_created: now,
+                time_activated: now,
+                time_completed: null,
+                time_archived: null,
+                archive_reason: null,
+              })
+              .run()
+            tx.update(SessionTaskTable).set({ current_revision_id: revision }).where(eq(SessionTaskTable.id, id)).run()
+            const stored = Stored.parse({
+              task: tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, id)).get(),
+              revision: tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, revision)).get(),
+            })
+            Database.effect(() =>
+              TaskDocuments.publish({
+                sessionID: input.sessionID,
+                taskID: id,
+                version: 1,
+                title: seed.title,
+                body: seed.body,
+                current: true,
+              }),
+            )
+            return { type: "execute" as const, ...stored }
+          }
+          if (!task.current_revision_id) throw new Conflict("session_task_revision_missing")
+          const current = tx
+            .select()
+            .from(TaskRevisionTable)
+            .where(eq(TaskRevisionTable.id, task.current_revision_id))
+            .get()
+          if (!current || current.task_id !== task.id) throw new Conflict("session_task_revision_missing")
+          if (input.assignment?.op === "create") throw new Conflict()
+          if (input.assignment?.op === "handoff") return { type: "handoff" as const, task: Task.parse(task) }
+          if (input.assignment?.op === "update") {
+            const version =
+              (tx
+                .select({ value: max(TaskRevisionTable.version) })
+                .from(TaskRevisionTable)
+                .where(eq(TaskRevisionTable.task_id, task.id))
+                .get()?.value ?? current.version) + 1
+            const revision = tx
+              .insert(TaskRevisionTable)
+              .values({
+                id: `revision_${randomUUID()}`,
+                task_id: task.id,
+                version,
+                previous_id: current.id,
+                status: "draft",
+                title: input.assignment.title,
+                body: input.assignment.body,
+                body_hash: hash(input.assignment.body),
+                source_message_id: input.messageID ?? null,
+                reason: "Confirmed task update proposal",
+                workflow: { actions: input.actions, run_id: input.runID },
+                result: null,
+                result_source: null,
+                time_created: now,
+                time_activated: null,
+                time_completed: null,
+                time_archived: null,
+                archive_reason: null,
+              })
+              .returning()
+              .get()
+            return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
+          }
+          if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
+          const actions = merge(Array.isArray(current.workflow.actions) ? current.workflow.actions : [], input.actions)
+          const revision = tx
+            .update(TaskRevisionTable)
+            .set({ workflow: { actions, run_id: input.runID } })
+            .where(
+              and(
+                eq(TaskRevisionTable.id, current.id),
+                eq(TaskRevisionTable.task_id, task.id),
+                eq(TaskRevisionTable.status, "active"),
+              ),
+            )
+            .returning()
+            .get()
+          if (!revision) throw new Conflict()
+          const saved = tx
+            .update(SessionTaskTable)
+            .set({ time_updated: now })
+            .where(and(eq(SessionTaskTable.id, task.id), eq(SessionTaskTable.current_revision_id, current.id)))
+            .returning()
+            .get()
+          if (!saved) throw new Conflict()
+          return { type: "execute" as const, task: Task.parse(saved), revision: Revision.parse(revision) }
+        },
+        { behavior: "immediate" },
+      )
+    } catch (err) {
+      if (err instanceof Conflict) throw err
+      if (constraint(err) || locked(err)) throw new Conflict()
+      throw err
+    }
+  }
+
+  export async function beginDelegated(input: {
+    sessionID: SessionID
+    parentSessionID: SessionID
+    parentRunID: string
+    parentActionID: string
+    messageID?: MessageID
+    title: string
+    body: string
+    actions: unknown[]
+  }) {
+    const current = await get(input.sessionID)
+    if (current) {
+      const source = current.task.source_ref
+      if (
+        current.task.source_type !== "delegation" ||
+        source.sessionID !== input.parentSessionID ||
+        source.runID !== input.parentRunID ||
+        source.actionID !== input.parentActionID
+      )
+        throw new Conflict("session_task_delegation_source_conflict")
+      return route({
+        sessionID: input.sessionID,
+        runID: input.parentRunID,
+        messageID: input.messageID,
+        actions: input.actions,
+      })
+    }
+    return route({
+      sessionID: input.sessionID,
+      runID: input.parentRunID,
+      messageID: input.messageID,
+      assignment: { op: "create", target: "self", title: input.title, body: input.body },
+      actions: input.actions,
+      source: {
+        type: "delegation",
+        sessionID: input.parentSessionID,
+        messageID: input.messageID,
+        runID: input.parentRunID,
+        actionID: input.parentActionID,
+      },
+    })
+  }
+
+  export async function finish(raw: z.input<typeof Finish>) {
+    const input = Finish.parse(raw)
+    const now = Date.now()
+    return Database.transaction(
+      (tx) => {
+        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
+        if (!task?.current_revision_id) throw new Conflict("session_task_missing")
+        const revision = tx
+          .select()
+          .from(TaskRevisionTable)
+          .where(eq(TaskRevisionTable.id, task.current_revision_id))
+          .get()
+        if (!revision || revision.workflow.run_id !== input.runID) throw new Conflict("session_task_stale_run")
+        if (revision.result !== null || revision.result_source !== null) {
+          if (revision.result === input.summary && revision.result_source === input.source)
+            return Revision.parse(revision)
+          throw new Conflict("session_task_result_conflict")
+        }
+        const saved = tx
+          .update(TaskRevisionTable)
+          .set({
+            status: input.source === "protocol" ? "completed" : revision.status,
+            result: input.summary,
+            result_source: input.source,
+            time_completed: now,
+          })
+          .where(and(eq(TaskRevisionTable.id, revision.id), eq(TaskRevisionTable.status, "active")))
+          .returning()
+          .get()
+        if (!saved) throw new Conflict("session_task_result_conflict")
+        tx.update(SessionTaskTable)
+          .set({ status: input.source === "protocol" ? "completed" : task.status, time_updated: now })
+          .where(and(eq(SessionTaskTable.id, task.id), eq(SessionTaskTable.current_revision_id, revision.id)))
+          .run()
+        return Revision.parse(saved)
+      },
+      { behavior: "immediate" },
+    )
+  }
+
+  export async function context(sessionID: SessionID) {
+    const stored = await get(sessionID)
+    if (!stored) return
+    return [
+      "<current-session-task>",
+      `Task: ${stored.task.id}`,
+      `Revision: v${stored.revision.version}`,
+      `Status: ${stored.task.status}`,
+      `Title: ${stored.revision.title}`,
+      "Ordinary conversation does not create or revise a Task.",
+      "Use create only when no Task is bound; use update for a draft proposal; use handoff for peer work.",
+      "Inspect full task body, history, actions, and results through task_inspect when available.",
+      "</current-session-task>",
+    ].join("\n")
   }
 
   export async function create(raw: z.input<typeof Create>) {
@@ -471,7 +744,9 @@ export namespace SessionTask {
       : undefined
     const trusted = valid(stored.task, run)
     const actions = trusted?.actions ?? workflow(stored.revision.workflow)
-    const output = trusted?.summary ? result(trusted.summary, trusted.summary_source) : {}
+    const output = trusted?.summary
+      ? result(trusted.summary, trusted.summary_source)
+      : result(stored.revision.result, stored.revision.result_source)
     return View.parse({
       id: stored.task.id,
       session_id: stored.task.session_id,
@@ -589,6 +864,24 @@ export namespace SessionTask {
       const parsed = AgentProtocol.ResultAction.safeParse(item)
       return parsed.success ? [parsed.data] : []
     })
+  }
+
+  function merge(prev: unknown[], next: unknown[]) {
+    const items = new Map<string, unknown>()
+    const rest: unknown[] = []
+    for (const item of [...prev, ...next]) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        rest.push(item)
+        continue
+      }
+      const id = (item as { id?: unknown }).id
+      if (typeof id !== "string" || !id) {
+        rest.push(item)
+        continue
+      }
+      items.set(id, item)
+    }
+    return [...items.values(), ...rest]
   }
 
   function hash(input: string) {
