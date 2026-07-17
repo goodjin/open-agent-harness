@@ -1221,7 +1221,9 @@ describe("session runs", () => {
             expect((await SessionRuns.get(session.id, run.run_id))?.summary).toBe("Transcript-only result")
             expect(await SessionTask.current(session.id)).not.toHaveProperty("result")
             expect(await SessionTask.current(session.id)).not.toHaveProperty("result_source")
-            expect(await SessionTask.legacy(session.id)).not.toHaveProperty("result")
+            const legacy = await SessionTask.legacy(session.id)
+            expect(legacy).not.toHaveProperty("result")
+            expect(legacy).toMatchObject({ actions: [{ run_id: run.run_id }] })
           },
         }),
     })

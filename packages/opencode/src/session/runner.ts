@@ -3677,7 +3677,7 @@ export namespace SessionRunner {
       parentActionID: input.action.id,
       messageID: input.messageID,
       title: input.action.title,
-      body: input.prompt ?? input.action.title,
+      body: input.prompt ?? text(input.action.input) ?? input.action.title,
       actions: [input.action],
     })
     setTimeout(() => {

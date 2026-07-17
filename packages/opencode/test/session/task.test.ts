@@ -180,13 +180,13 @@ describe("session task", () => {
         runID: "run_task_v1",
         messageID: MessageID.ascending(),
         assignment: { op: "create", target: "self", title: "Implement task binding", body: "Approved plan" },
-        actions: [{ id: "write", title: "Write code" }],
+        actions: [{ id: "write", title: "Write code", run_id: "run_task_v1" }],
       })
       expect(first.type).toBe("execute")
       expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
         run_id: "run_task_v1",
         run_ids: ["run_task_v1"],
-        actions: [{ id: "write", title: "Write code" }],
+        actions: [{ id: "write", title: "Write code", run_id: "run_task_v1" }],
       })
 
       const next = await SessionTask.route({
@@ -194,8 +194,9 @@ describe("session task", () => {
         runID: "run_task_v2",
         messageID: MessageID.ascending(),
         actions: [
-          { id: "write", title: "Write code" },
-          { id: "verify", title: "Verify code" },
+          { id: "write", title: "Write code", run_id: "run_task_v1" },
+          { id: "write", title: "Write code", run_id: "run_task_v2" },
+          { id: "verify", title: "Verify code", run_id: "run_task_v2" },
         ],
       })
       expect(next.type).toBe("execute")
@@ -203,8 +204,9 @@ describe("session task", () => {
         run_id: "run_task_v2",
         run_ids: ["run_task_v1", "run_task_v2"],
         actions: [
-          { id: "write", title: "Write code" },
-          { id: "verify", title: "Verify code" },
+          { id: "write", title: "Write code", run_id: "run_task_v1" },
+          { id: "write", title: "Write code", run_id: "run_task_v2" },
+          { id: "verify", title: "Verify code", run_id: "run_task_v2" },
         ],
       })
       expect(await SessionTask.history(session.id)).toHaveLength(0)
@@ -227,7 +229,9 @@ describe("session task", () => {
           actions: [{ id: "second" }],
         }),
       ).rejects.toThrow("session_task_conflict")
-      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toEqual([{ id: "first" }])
+      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toEqual([
+        { id: "first", run_id: "run_task_create" },
+      ])
     }))
 
   test("keeps current task context compact and finishes the expected run idempotently", () =>
@@ -275,7 +279,18 @@ describe("session task", () => {
     setup(async () => {
       const parent = await Session.create({})
       const child = await Session.create({ parentID: parent.id })
-      await SessionTask.beginDelegated({
+      const action = {
+        type: "action",
+        id: "delegate_child",
+        title: "Delegated child",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "Canonical delegation plan" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const input = {
         sessionID: child.id,
         parentSessionID: parent.id,
         parentRunID: "run_parent",
@@ -283,16 +298,18 @@ describe("session task", () => {
         title: "Delegated child",
         body: "Canonical delegation plan",
         actions: [{ id: "delegate_child" }],
+      }
+      await expect(SessionTask.beginDelegated(input)).rejects.toThrow("session_task_delegation_assignment_missing")
+      await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Canonical delegation plan",
+        runID: "run_parent",
+        sessionID: parent.id,
       })
-      await SessionTask.beginDelegated({
-        sessionID: child.id,
-        parentSessionID: parent.id,
-        parentRunID: "run_parent",
-        parentActionID: "delegate_child",
-        title: "Delegated child",
-        body: "Canonical delegation plan",
-        actions: [{ id: "delegate_child" }],
-      })
+      await SessionTask.beginDelegated(input)
+      await SessionTask.beginDelegated(input)
       expect((await SessionTask.get(child.id))?.task.source_ref).toMatchObject({
         sessionID: parent.id,
         runID: "run_parent",
@@ -309,7 +326,7 @@ describe("session task", () => {
           body: "Wrong source",
           actions: [{ id: "delegate_child" }],
         }),
-      ).rejects.toThrow("session_task_delegation_source_conflict")
+      ).rejects.toThrow("session_task_delegation_assignment_missing")
     }))
 
   test("routes update to a draft and handoff away from source execution", () =>
@@ -327,6 +344,12 @@ describe("session task", () => {
         ).rejects.toThrow(op === "handoff" ? "task_handoff_requires_bound_source" : "session_task_update_requires_bound_source")
       }
       await expect(
+        SessionTask.preflight(empty.id, [
+          { operation: "confirm", executor: { type: "human" }, input: { assignment: { op: "create" } } },
+          { operation: "confirm", executor: { type: "human" }, input: { assignment: { op: "handoff" } } },
+        ]),
+      ).rejects.toThrow("session_task_assignment_ambiguous")
+      await expect(
         SessionTask.route({
           sessionID: empty.id,
           runID: "run_handoff_empty",
@@ -340,7 +363,7 @@ describe("session task", () => {
         sessionID: session.id,
         runID: "run_active",
         assignment: { op: "create", target: "self", title: "Active task", body: "Active plan" },
-        actions: [{ id: "active" }],
+        actions: [{ id: "active", run_id: "run_active" }],
       })
       const update = await SessionTask.route({
         sessionID: session.id,
@@ -361,7 +384,7 @@ describe("session task", () => {
       expect((await SessionTask.get(session.id))?.revision.workflow).toEqual({
         run_id: "run_active",
         run_ids: ["run_active"],
-        actions: [{ id: "active" }],
+        actions: [{ id: "active", run_id: "run_active" }],
       })
     }))
 
@@ -389,20 +412,45 @@ describe("session task", () => {
       })
       await Storage.write(
         ["session_protocol_run", session.id, "run_multi_two"],
-        result("run_multi_two", [{ id: "second", title: "Second action", status: "completed" }]),
+        result("run_multi_two", [
+          { id: "first", title: "Second run first action", status: "completed" },
+          { id: "second", title: "Second action", status: "completed" },
+        ]),
       )
       await SessionTask.sync({ sessionID: session.id, runID: "run_multi_two" })
+      await SessionTask.sync({ sessionID: session.id, runID: "run_multi_one" })
 
       const current = await SessionTask.current(session.id)
-      expect(current?.actions.map((item) => [item.id, item.title, item.status])).toEqual([
-        ["first", "First action", "completed"],
-        ["second", "Second action", "completed"],
+      expect(current?.actions.map((item) => [item.run_id, item.id, item.title, item.status])).toEqual([
+        ["run_multi_one", "first", "First action", "completed"],
+        ["run_multi_two", "first", "Second run first action", "completed"],
+        ["run_multi_two", "second", "Second action", "completed"],
       ])
-      expect(current?.progress).toEqual({ completed: 2, total: 2 })
+      expect(current?.progress).toEqual({ completed: 3, total: 3 })
       expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
         run_id: "run_multi_two",
         run_ids: ["run_multi_one", "run_multi_two"],
       })
+    }))
+
+  test("strictly parses workflow run ids and task action identities", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_schema",
+        assignment: { op: "create", target: "self", title: "Schema task", body: "Schema body" },
+        actions: [{ id: "schema", title: "Schema action" }],
+      })
+      await Storage.write(
+        ["session_protocol_run", session.id, "run_schema"],
+        result("run_schema", [{ id: "schema", title: "Schema action", status: "completed" }]),
+      )
+      await SessionTask.sync({ sessionID: session.id, runID: "run_schema" })
+      const revision = await SessionTask.revision(session.id, 1)
+      expect(SessionTask.RevisionView.safeParse(revision).success).toBe(true)
+      expect(revision?.workflow.run_ids).toEqual(["run_schema"])
+      expect(revision?.actions[0]).toMatchObject({ run_id: "run_schema", id: "schema" })
     }))
 
   test("binds only canonical confirmed assignment content after parsed action tampering", () =>
@@ -457,10 +505,69 @@ describe("session task", () => {
       })
     }))
 
+  test("rejects a superseded confirmed assignment identity", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = (id: string) =>
+        ({
+          type: "action",
+          id,
+          title: id,
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { plan: id, assignment: { op: "create", target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      await SessionAssignment.confirm({
+        action: action("old_confirm"),
+        messageID: MessageID.ascending(),
+        plan: "Old plan",
+        runID: "run_old_confirm",
+        sessionID: session.id,
+      })
+      await SessionAssignment.confirm({
+        action: action("new_confirm"),
+        messageID: MessageID.ascending(),
+        plan: "New plan",
+        runID: "run_new_confirm",
+        sessionID: session.id,
+      })
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_old_confirm",
+          actionIDs: ["old_confirm"],
+          actions: [],
+          legacy: { title: "Old", body: "Old" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_not_current")
+    }))
+
   test("delegated task rejects local protocol completion as its canonical result", () =>
     setup(async () => {
       const parent = await Session.create({})
       const child = await Session.create({ parentID: parent.id })
+      await SessionAssignment.delegate({
+        action: {
+          type: "action",
+          id: "delegate_source",
+          title: "Delegated task",
+          operation: "agent",
+          executor: { type: "agent", target: "worker", capabilities: [] },
+          input: { prompt: "Delegation plan" },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        } as AgentProtocol.Action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Delegation plan",
+        runID: "run_parent_source",
+        sessionID: parent.id,
+      })
       await SessionTask.beginDelegated({
         sessionID: child.id,
         parentSessionID: parent.id,
