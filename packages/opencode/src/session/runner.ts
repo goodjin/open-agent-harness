@@ -34,6 +34,7 @@ import { SessionAssignment } from "./assignment"
 import { SessionResult } from "./result"
 import { SessionRuns } from "./runs"
 import { SessionTask } from "./task"
+import { SessionTaskRecovery } from "./task-recovery"
 import { DelegatedTask } from "./delegated-task"
 
 export namespace SessionRunner {
@@ -1369,6 +1370,7 @@ export namespace SessionRunner {
                 : action.executor.type === "human"
                   ? human({
                       action,
+                      actions,
                       runID,
                       sessionID: input.sessionID,
                       messageID: input.chat.message.id,
@@ -1531,6 +1533,21 @@ export namespace SessionRunner {
     })
     if (result.type === "update") {
       const scope = await SessionTask.scope(input.sessionID)
+      const summary = await difference(input.sessionID, {
+        title: result.revision.title,
+        body: result.revision.body,
+        actions: result.revision.workflow.actions.flatMap((item) =>
+          item &&
+          typeof item === "object" &&
+          !Array.isArray(item) &&
+          "id" in item &&
+          "run_id" in item &&
+          typeof item.id === "string" &&
+          typeof item.run_id === "string"
+            ? [`${item.run_id}:${item.id}`]
+            : [],
+        ),
+      })
       await Session.updatePart({
         id: PartID.ascending(),
         messageID: input.messageID,
@@ -1545,14 +1562,55 @@ export namespace SessionRunner {
           assignment_id: result.revision.workflow.assignment_id,
           draft_revision_id: result.revision.id,
           old_revision_id: result.revision.previous_id,
+          difference_summary: summary,
           affected_child_ids: scope.map((item) => item.session_id),
-          reusable_result_refs: scope.filter((item) => item.reusable).map((item) => item.session_id),
+          reusable_result_refs: scope.flatMap((item) => item.result_refs),
           status: "revising",
         },
         time: { start: Date.now(), end: Date.now() },
       })
+      await SessionTaskRecovery.resume(input.sessionID).catch(async (err) => {
+        SessionTaskRecovery.block(input.sessionID)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: input.messageID,
+          sessionID: input.sessionID,
+          type: "text",
+          text: "Task revision shutdown is blocked.",
+          synthetic: true,
+          ignored: true,
+          metadata: {
+            kind: "task_update_progress",
+            proposal_id: `${input.runID}:${confirms[0]?.id ?? "update"}`,
+            draft_revision_id: result.revision.id,
+            old_revision_id: result.revision.previous_id,
+            status: "blocked",
+            error: err instanceof Error ? err.message : String(err),
+          },
+          time: { start: Date.now(), end: Date.now() },
+        })
+        throw err
+      })
     }
     return result
+  }
+
+  async function difference(
+    sessionID: SessionID,
+    next: { title: string; body: string; actions: string[] },
+  ) {
+    const current = await SessionTask.current(sessionID)
+    if (!current) return "title: added; body: added; actions: added"
+    const old = new Set(current.actions.map((item) => `${item.run_id}:${item.id}`))
+    const fresh = new Set(next.actions)
+    const added = [...fresh].filter((item) => !old.has(item))
+    const removed = [...old].filter((item) => !fresh.has(item))
+    const digest = (input: string) => new Bun.CryptoHasher("sha256").update(input).digest("hex").slice(0, 12)
+    return [
+      `title: ${current.title === next.title ? "unchanged" : `${current.title} -> ${next.title}`}`,
+      `body: ${digest(current.body) === digest(next.body) ? "unchanged" : `${digest(current.body)} -> ${digest(next.body)}`}`,
+      `actions: +[${added.join(", ") || "none"}] -[${removed.join(", ") || "none"}]`,
+    ].join("; ")
   }
 
   function cancelled(
@@ -3114,6 +3172,7 @@ export namespace SessionRunner {
 
   async function human(input: {
     action: AgentProtocol.Action
+    actions: AgentProtocol.Action[]
     runID: string
     sessionID: SessionID
     messageID: MessageID
@@ -3335,6 +3394,7 @@ export namespace SessionRunner {
 
   async function confirm(input: {
     action: AgentProtocol.Action
+    actions: AgentProtocol.Action[]
     runID: string
     sessionID: SessionID
     messageID: MessageID
@@ -3346,6 +3406,11 @@ export namespace SessionRunner {
     if (intent.op === "update") {
       const task = await SessionTask.get(input.sessionID)
       const scope = await SessionTask.scope(input.sessionID)
+      const summary = await difference(input.sessionID, {
+        title: input.action.title,
+        body: plan,
+        actions: input.actions.map((item) => `${input.runID}:${item.id}`),
+      })
       if (task)
         await Session.updatePart({
           id: PartID.ascending(),
@@ -3360,9 +3425,9 @@ export namespace SessionRunner {
             proposal_id: `${input.runID}:${input.action.id}`,
             draft_revision_id: null,
             old_revision_id: task.revision.id,
-            difference_summary: input.action.title,
+            difference_summary: summary,
             affected_child_ids: scope.map((item) => item.session_id),
-            reusable_result_refs: scope.filter((item) => item.reusable).map((item) => item.session_id),
+            reusable_result_refs: scope.flatMap((item) => item.result_refs),
             status: "pending",
           },
           time: { start: Date.now(), end: Date.now() },

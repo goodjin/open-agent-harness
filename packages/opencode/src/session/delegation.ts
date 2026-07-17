@@ -18,8 +18,8 @@ import { Provider } from "@/provider/provider"
 import { SessionResult } from "./result"
 import { SessionAssignment } from "./assignment"
 import { Identifier } from "@/id/id"
-import { Database, eq, sql } from "@/storage/db"
-import { SessionEventOutboxTable } from "./session.sql"
+import { and, Database, eq, sql } from "@/storage/db"
+import { AssignmentTable, SessionEventOutboxTable } from "./session.sql"
 import { DelegatedTask } from "./delegated-task"
 
 export namespace SessionDelegation {
@@ -1731,10 +1731,60 @@ export namespace SessionDelegation {
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const mode = opts?.mode
-    const rows = Object.entries(object(protocol.pending_delegations))
-      .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
-      .filter((entry) => entry.item.run_id === runID)
-      .filter((entry) => !opts?.childIDs || opts.childIDs.includes(entry.id))
+    const pending = Object.entries(object(protocol.pending_delegations))
+      .map(([id, item]) => ({ id: SessionID.make(id), item: parse(item) }))
+      .filter((entry): entry is { id: SessionID; item: Item } => !!entry.item && entry.item.run_id === runID)
+    const rows = opts?.childIDs
+      ? (
+          await Promise.all(
+            opts.childIDs.map(async (id) => {
+              const hit = pending.find((entry) => entry.id === id)
+              if (hit) return hit
+              const child = await Session.get(id)
+              const saved = assignment(child)
+              if (saved?.run_id === runID && saved.parent_session_id === parentID) return { id, item: saved }
+              const row = Database.use((tx) =>
+                tx
+                  .select()
+                  .from(AssignmentTable)
+                  .where(
+                    and(
+                      eq(AssignmentTable.session_id, id),
+                      eq(AssignmentTable.source_type, "delegation"),
+                      eq(AssignmentTable.source_session_id, parentID),
+                      eq(AssignmentTable.source_run_id, runID),
+                    ),
+                  )
+                  .get(),
+              )
+              if (
+                !row ||
+                !row.source_action_id ||
+                !row.source_message_id
+              )
+                return
+              return {
+                id,
+                item: {
+                  type: "agent.delegation.assignment" as const,
+                  version: "1" as const,
+                  run_id: runID,
+                  action_id: row.source_action_id,
+                  action_title: row.title,
+                  parent_session_id: parentID,
+                  parent_message_id: row.source_message_id,
+                  parent_agent: parent.agent,
+                  child_session_id: id,
+                  agent: child.agent ?? row.target,
+                  result_policy: "summary",
+                  result_tool: ActionResult.TOOL,
+                  created_at: row.time_created,
+                },
+              }
+            }),
+          )
+        ).filter((entry): entry is { id: SessionID; item: Item } => !!entry)
+      : pending
     const list = await Promise.all(rows.map(async (row) => ({ ...row, done: await delivered(row.item) })))
     const entries = list.filter(
       (entry) => entry.done || mode !== undefined || closable(SessionStatus.get(entry.id)),
@@ -1779,14 +1829,14 @@ export namespace SessionDelegation {
         .filter((line) => line.length > 0)
         .join("\n")
       if (mode === "terminate_with_result") {
-        const found = status.type === "completed" ? await existing(entry.id, entry.item) : undefined
+        const found = stopdone(status) ? await existing(entry.id, entry.item) : undefined
         if (found) {
           await logdone(found)
           await store(entry.id, entry.item, found)
           await notified(entry.id, entry.item)
           continue
         }
-        if (status.type !== "completed") {
+        if (!stopdone(status)) {
           const { SessionPrompt } = await import("./prompt")
           SessionPrompt.cancel(entry.id)
           SessionStatus.set(
@@ -1802,7 +1852,7 @@ export namespace SessionDelegation {
               agent: text(entry.item.agent) ?? "default",
               item: entry.item,
               sessionID: entry.id,
-              status: "partial",
+              status: stopdone(status) ? stopped(status) : "partial",
             }).catch((err) => {
               log.warn("termination summary failed", { err, sessionID: entry.id })
               return undefined
@@ -1821,7 +1871,7 @@ export namespace SessionDelegation {
           : undefined
       const body = completed(
         entry.item,
-        sum?.status ?? (mode === "terminate_with_result" ? "partial" : map(status)),
+        sum?.status ?? (mode === "terminate_with_result" ? (stopdone(status) ? stopped(status) : "partial") : map(status)),
         sum?.output ?? out,
         sum?.metadata,
         undefined,
@@ -1934,6 +1984,15 @@ export namespace SessionDelegation {
       status.type === "error" ||
       status.type === "archived"
     )
+  }
+
+  function stopdone(status: SessionStatus.Info) {
+    return ended(status) && status.type !== "interrupted"
+  }
+
+  function stopped(status: SessionStatus.Info): Status {
+    if (status.type === "completed" || status.type === "user_completed" || status.type === "blocked") return "partial"
+    return map(status)
   }
 
   function closable(status: SessionStatus.Info) {

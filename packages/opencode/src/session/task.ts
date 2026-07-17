@@ -898,28 +898,15 @@ export namespace SessionTask {
   export async function scope(sessionID: SessionID) {
     const stored = await get(sessionID)
     if (!stored) return []
-    const revisions = Database.use((tx) =>
-      tx
-        .select()
-        .from(TaskRevisionTable)
-        .where(
-          and(eq(TaskRevisionTable.task_id, stored.task.id), inArray(TaskRevisionTable.status, ["active", "draft"])),
-        )
-        .all(),
-    ).map((item) => Revision.parse(item))
-    const parents = revisions.flatMap((item) => {
-      const id = Workflow.parse(item.workflow).assignment_id
-      return id ? [id] : []
-    })
+    const workflow = Workflow.parse(stored.revision.workflow)
+    const parents = workflow.assignment_id ? [workflow.assignment_id] : []
     const actions = new Map(
-      revisions.flatMap((item) =>
-        Workflow.parse(item.workflow).actions.flatMap((raw) => {
-          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
-          const action = raw as { id?: unknown; run_id?: unknown }
-          if (typeof action.id !== "string" || typeof action.run_id !== "string") return []
-          return [[`${action.run_id}:${action.id}`, true] as const]
-        }),
-      ),
+      workflow.actions.flatMap((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+        const action = raw as { id?: unknown; run_id?: unknown }
+        if (typeof action.id !== "string" || typeof action.run_id !== "string") return []
+        return [[`${action.run_id}:${action.id}`, true] as const]
+      }),
     )
     const rows = Database.use((tx) =>
       tx.select().from(AssignmentTable).where(eq(AssignmentTable.source_session_id, sessionID)).all(),
@@ -939,8 +926,21 @@ export namespace SessionTask {
         action_id: item.source_action_id!,
         status: SessionStatus.get(item.session_id),
         reusable: results.some(
-          (result) => result.child_session_id === item.session_id && result.satisfying,
+          (result) =>
+            result.child_session_id === item.session_id &&
+            result.run_id === item.source_run_id &&
+            result.action_id === item.source_action_id &&
+            result.satisfying,
         ),
+        result_refs: results
+          .filter(
+            (result) =>
+              result.child_session_id === item.session_id &&
+              result.run_id === item.source_run_id &&
+              result.action_id === item.source_action_id &&
+              result.satisfying,
+          )
+          .map((result) => result.id),
       }))
   }
 

@@ -79,6 +79,97 @@ describe("session recovery", () => {
     }
   })
 
+  test("claims one bootstrap prompt across concurrent recovery resumes", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let calls = 0
+    let release = () => {}
+    const wait = new Promise<void>((resolve) => (release = resolve))
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls++
+      await wait
+      await Session.updateMessage({
+        id: input.messageID!, sessionID: input.sessionID, role: "user", time: { created: Date.now() }, agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "",
+      } as MessageV2.User)
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_claim"),
+        fn: async () => {
+          const session = await Session.create({ agent: "default" })
+          const first = await SessionTask.route({ sessionID: session.id, runID: "run_claim_old", legacy: { title: "Old", body: "Old" }, actions: [] })
+          if (first.type !== "execute") throw new Error("task missing")
+          const draft = await SessionTask.route({ sessionID: session.id, runID: "run_claim_new", assignment: { op: "update", target: "self", title: "New", body: "New" }, actions: [] })
+          if (draft.type !== "update") throw new Error("draft missing")
+          await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
+
+          const resumes = Promise.all([SessionTaskRecovery.resume(session.id), SessionTaskRecovery.resume(session.id)])
+          await Bun.sleep(20)
+          expect(calls).toBe(1)
+          release()
+          await resumes
+          const row = Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get())
+          expect(row?.status).toBe("delivered")
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("recovers bootstrap delivery leases without duplicate prompts", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let calls = 0
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls++
+      await Session.updateMessage({ id: input.messageID!, sessionID: input.sessionID, role: "user", time: { created: Date.now() }, agent: input.agent ?? "default", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_lease"),
+        fn: async () => {
+          const seed = async (label: string) => {
+            const session = await Session.create({ agent: "default" })
+            const first = await SessionTask.route({ sessionID: session.id, runID: `${label}_old`, legacy: { title: "Old", body: "Old" }, actions: [] })
+            if (first.type !== "execute") throw new Error("task missing")
+            const draft = await SessionTask.route({ sessionID: session.id, runID: `${label}_new`, assignment: { op: "update", target: "self", title: "New", body: "New" }, actions: [] })
+            if (draft.type !== "update") throw new Error("draft missing")
+            await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
+            return { session, row: Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get())! }
+          }
+
+          const fresh = await seed("fresh")
+          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, fresh.row.id)).run())
+          await SessionTaskRecovery.resume(fresh.session.id)
+          expect(calls).toBe(0)
+          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, fresh.row.id)).get())?.status).toBe("delivering")
+
+          const stale = await seed("stale")
+          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() - 31_000 }).where(eq(SessionEventOutboxTable.id, stale.row.id)).run())
+          await SessionTaskRecovery.resume(stale.session.id)
+          expect(calls).toBe(1)
+          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, stale.row.id)).get())?.status).toBe("delivered")
+
+          const saved = await seed("saved")
+          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, saved.row.id)).run())
+          await Session.updateMessage({ id: MessageID.make(String(saved.row.payload.message_id)), sessionID: saved.session.id, role: "user", time: { created: Date.now() }, agent: "default", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)
+          await SessionTaskRecovery.resume(saved.session.id)
+          expect(calls).toBe(1)
+          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, saved.row.id)).get())?.status).toBe("delivered")
+
+          const delivered = await seed("delivered")
+          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivered", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, delivered.row.id)).run())
+          await SessionTaskRecovery.resume(delivered.session.id)
+          expect(calls).toBe(1)
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("collects every scoped child before activation and ignores unrelated tree sessions", async () => {
     await using tmp = await tmpdir({ git: true })
     const calls: Parameters<typeof SessionPrompt.prompt>[0][] = []
@@ -137,6 +228,7 @@ describe("session recovery", () => {
                 action("completed", "delegate", "backend"),
                 action("missing", "delegate", "backend"),
                 action("stuck", "delegate", "backend"),
+                action("tool", "delegate", "backend"),
               ]
               const assignment = await SessionAssignment.confirm({
                 action: confirm,
@@ -184,6 +276,7 @@ describe("session recovery", () => {
               SessionStatus.set(children[1]!.id, { type: "completed" })
               SessionStatus.set(children[2]!.id, { type: "completed" })
               SessionStatus.set(children[3]!.id, { type: "running" })
+              SessionStatus.set(children[4]!.id, { type: "running" })
               await SessionResult.put({
                 carrier: "action_result",
                 status: "completed",
@@ -216,24 +309,18 @@ describe("session recovery", () => {
               }[]
               expect(listed.map((item) => item.session_id).sort()).toEqual(children.map((item) => item.id).sort())
               expect(listed.map((item) => item.session_id)).not.toContain(unrelated.id)
+              await tool.execute({ action: "stop", session_ids: [children[4]!.id] }, context)
+              expect(SessionStatus.get(children[4]!.id).type).toBe("user_completed")
 
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
-              expect((await SessionTask.get(parent.id))?.task.status).toBe("revising")
-              expect((await SessionTask.get(parent.id))?.revision.id).toBe(original.revision.id)
+              expect((await SessionTask.get(parent.id))?.task.status).toBe("running")
+              expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
               expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
               expect(SessionStatus.get(children[1]!.id).type).toBe("completed")
               expect(SessionStatus.get(children[2]!.id).type).toBe("completed")
-              expect(SessionStatus.get(children[3]!.id).type).toBe("running")
+              expect(SessionStatus.get(children[3]!.id).type).toBe("user_completed")
+              expect(SessionStatus.get(children[4]!.id).type).toBe("user_completed")
               expect(SessionStatus.get(unrelated.id).type).toBe("running")
-              expect(
-                Database.use((db) =>
-                  db
-                    .select()
-                    .from(SessionEventOutboxTable)
-                    .where(eq(SessionEventOutboxTable.session_id, parent.id))
-                    .all(),
-                ),
-              ).toHaveLength(0)
               const first = await SessionResult.listForParent(parent.id)
               const running = first.find((item) => item.child_session_id === children[0]!.id)
               const completed = first.find((item) => item.child_session_id === children[1]!.id)
@@ -244,29 +331,13 @@ describe("session recovery", () => {
               expect((await SessionResult.parse(completed?.id ?? ""))?.output).toBe("Completed native result")
               expect(missing?.status).toBe("partial")
               expect((await SessionResult.parse(missing?.id ?? ""))?.output).toContain("task revision stop reason")
-              expect(first.some((item) => item.child_session_id === children[3]!.id)).toBe(false)
-
-              const stopped = JSON.parse((await tool.execute({ action: "stop_all" }, context)).output) as {
-                session_id: string
-              }[]
-              expect(stopped.map((item) => item.session_id).sort()).toEqual(children.map((item) => item.id).sort())
-              await SessionDelegation.assign({
-                action: actions[3]!,
-                agent: "backend",
-                childID: children[3]!.id,
-                messageID: MessageID.ascending(),
-                parentAgent: "default",
-                runID: "run_task_children",
-                sessionID: parent.id,
-              })
-
-              expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
-              expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
-              const results = await SessionResult.listForParent(parent.id)
+              expect(first.find((item) => item.child_session_id === children[3]!.id)?.status).toBe("partial")
+              expect(first.find((item) => item.child_session_id === children[4]!.id)?.status).toBe("partial")
+              const results = first
               const ids = results.map((item) => item.id).sort()
               const summaries = calls.filter((item) => item.agent === "summary").length
               const bootstraps = calls.filter((item) => item.metadata?.source === "task_revision_bootstrap").length
-              expect(results.filter((item) => children.some((child) => child.id === item.child_session_id))).toHaveLength(4)
+              expect(results.filter((item) => children.some((child) => child.id === item.child_session_id))).toHaveLength(5)
               expect(bootstraps).toBe(1)
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
               expect(await SessionTaskRecovery.scan()).toContain(true)

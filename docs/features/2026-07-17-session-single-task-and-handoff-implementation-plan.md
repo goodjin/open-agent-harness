@@ -882,6 +882,19 @@ Expected: 远端 `dev` 包含全部提交，本地 `dev...origin/dev` 为 `0 0`�
 
 ---
 
+## Task 5 规格审查修订（2026-07-17）
+
+本轮修订只覆盖已确认 Task update 的收口与恢复边界，不调整 prompt-runner 的既有 BASE 失败。
+
+1. Runner 在 update assignment 持久化并完成当前提交副作用后，自动调度 `SessionTaskRecovery.resume(sessionID)`；取消确认不调度。恢复错误要把 Task 置为 `blocked` 并写入 progress metadata，不能依赖进程启动扫描。
+2. `SessionDelegation.stop()` 以 `SessionTask.scope()` 返回的 canonical child session ID 为选择权威，逐个直接停止并收口；`pending_delegations` 只用于补充上下文和同步清理。重启后即使 pending DSL 为空，running child 仍生成 fallback/result 并允许激活。
+3. stop 对终态 child 保留原状态与 reason：已有结果直接复用，缺结果只补 fallback；仅非终态 child 执行 cancel 并转为 `user_completed`。重复 stop 不新增结果或 summary。
+4. bootstrap outbox 采用 `pending -> delivering -> delivered` 原子 claim。并发恢复只有 claim 者发 prompt；固定 message 已存在时恢复为 delivered；无 message 仅在 lease 过期后重领；delivered 不可再次 claim。
+5. revising scope 只读取 `current_revision_id` 指向的旧 active workflow。draft workflow/assignment 不得扩大 list/stop 边界；激活后历史 revision 不再进入 scope。
+6. proposal/progress metadata 的 `difference_summary` 从旧/草稿 title、body hash 与 action identity 变化计算；`reusable_result_refs` 使用持久化 `SessionResult.id`，`affected_child_ids` 单独保留。
+
+验证采用真实 Runner、Task、Assignment、Delegation、SessionResult 与持久化 outbox；按 RED/GREEN 顺序覆盖在线触发、重启 direct stop、终态参数化、并发/崩溃恢复、旧 active scope 与 metadata 稳定引用。最终从 `packages/opencode` 运行 task、recovery、delegation、runner、tool 全量多轮、`bun typecheck` 与 build，并在仓库根运行 `git diff --check`。
+
 ## 实施顺序和并行边界
 
 - Task 1-2 必须串行，先锁定数据库和 read model。

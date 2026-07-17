@@ -454,6 +454,31 @@ describe("session task", () => {
       ).rejects.toThrow("session_task_revision_frozen")
     }))
 
+  test("keeps revision shutdown scope limited to the frozen active workflow", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const old = { type: "action", id: "old_child", title: "Old child", operation: "delegate", executor: { type: "agent", target: "backend", capabilities: [] }, input: {}, depends_on: [], context_refs: [], result_policy: "summary" } as AgentProtocol.Action
+      const next = { ...old, id: "draft_child", title: "Draft child" }
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_scope_old",
+        legacy: { title: "Original", body: "Original plan" },
+        actions: [old],
+      })
+      const oldSession = await Session.create({ parentID: session.id })
+      const draftSession = await Session.create({ parentID: session.id })
+      await SessionAssignment.delegate({ action: old, childID: oldSession.id, messageID: MessageID.ascending(), runID: "run_scope_old", sessionID: session.id })
+      await SessionAssignment.delegate({ action: next, childID: draftSession.id, messageID: MessageID.ascending(), runID: "run_scope_new", sessionID: session.id })
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_scope_new",
+        assignment: { op: "update", target: "self", title: "Revised", body: "Revised plan" },
+        actions: [next],
+      })
+
+      expect((await SessionTask.scope(session.id)).map((item) => item.session_id)).toEqual([oldSession.id])
+    }))
+
   test("allows only controlled revision tools while revising without mutating the old workflow", () =>
     setup(async () => {
       const session = await Session.create({})

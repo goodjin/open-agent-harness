@@ -1257,6 +1257,77 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner starts confirmed task revision recovery online", async () => {
+    await using tmp = await tmpdir()
+    const model = { id: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), api: { id: "openai", npm: "" }, limit: { context: 200_000 } } as never
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => packet(calls++ === 0 ? {
+      version: "2",
+      items: [
+        { id: "read_before_update", kind: "tool", target: "read", args: { filePath: "package.json" } },
+        { id: "confirm_update", kind: "confirm", title: "Revised task", prompt: "Approve revision?", plan: "Revised body", assignment: { op: "update", target: "self" } },
+        { id: "read_after_update", kind: "tool", target: "read", args: { filePath: "src/index.ts" } },
+      ],
+    } : { version: "2", items: [{ id: "answer", kind: "answer", message: "Revision accepted." }] }, `call_update_${calls}`))
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    const bootstraps: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      bootstraps.push(input)
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.ascending(),
+        fn: async () => {
+          const session = await Session.create({ agent: "protocol-runner" })
+          const oldAction = { type: "action", id: "old_child", title: "Old child", operation: "delegate", executor: { type: "agent", target: "backend", capabilities: [] }, input: {}, depends_on: [], context_refs: [], result_policy: "summary" } as AgentProtocol.Action
+          await SessionTask.route({ sessionID: session.id, runID: "run_online_old", legacy: { title: "Old task", body: "Old body" }, actions: [oldAction] })
+          const child = await Session.create({ parentID: session.id, agent: "backend" })
+          await SessionAssignment.delegate({ action: oldAction, childID: child.id, messageID: MessageID.ascending(), runID: "run_online_old", sessionID: session.id })
+          SessionStatus.set(child.id, { type: "completed" })
+          const reusable = await SessionResult.put({ carrier: "action_result", status: "completed", satisfying: true, sessionID: child.id, parentSessionID: session.id, childSessionID: child.id, runID: "run_online_old", actionID: oldAction.id, summary: "Reusable old result", raw: { output: "Reusable old result" } })
+          const user = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: session.id, role: "user", time: { created: Date.now() }, agent: "protocol-runner", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)) as MessageV2.User
+          const assistant = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: session.id, parentID: user.id, role: "assistant", mode: "protocol-runner", agent: "protocol-runner", path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now() } } as MessageV2.Assistant)) as MessageV2.Assistant
+          const runner = SessionRunner.create({ assistantMessage: assistant, sessionID: session.id, model, abort: new AbortController().signal })
+          const result = runner.process({ user, sessionID: session.id, model, agent: { name: "protocol-runner", runner: "protocol" } as never, system: [], abort: new AbortController().signal, messages: [{ role: "user", content: "revise task" }], tools: {}, runtimeTools: { catalog: [{ id: "read", description: "Read", schema: { type: "object" } }], prompt: "", execute: async () => ({ title: "Read", output: "ok", metadata: {} }) } as never })
+          await poll(async () => (await Question.list()).length > 0)
+          const question = (await Question.list())[0]!
+          await Question.reply({ requestID: question.id, answers: [["Confirm"]], response: "confirm" })
+          await result
+
+          expect((await SessionTask.current(session.id))?.title).toBe("Revised task")
+          expect(bootstraps.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
+          const messages = await MessageV2.filterCompacted(MessageV2.stream(session.id))
+          const metadata = messages.flatMap((item) => item.parts).flatMap((part) => part.type === "text" && part.metadata ? [part.metadata] : [])
+          const proposal = metadata.find((item) => item.kind === "task_update_proposal")
+          const progress = metadata.find((item) => item.kind === "task_update_progress")
+          expect(String(proposal?.difference_summary)).toContain("title")
+          expect(String(progress?.difference_summary)).toContain("actions")
+          expect(progress?.affected_child_ids).toEqual([child.id])
+          expect(progress?.reusable_result_refs).toEqual([reusable.id])
+
+          calls = 0
+          const cancelled = await Session.create({ agent: "protocol-runner" })
+          await SessionTask.route({ sessionID: cancelled.id, runID: "run_cancel_old", legacy: { title: "Cancel old", body: "Cancel old" }, actions: [] })
+          const cancelUser = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: cancelled.id, role: "user", time: { created: Date.now() }, agent: "protocol-runner", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)) as MessageV2.User
+          const cancelAssistant = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: cancelled.id, parentID: cancelUser.id, role: "assistant", mode: "protocol-runner", agent: "protocol-runner", path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now() } } as MessageV2.Assistant)) as MessageV2.Assistant
+          const cancelRunner = SessionRunner.create({ assistantMessage: cancelAssistant, sessionID: cancelled.id, model, abort: new AbortController().signal })
+          const cancelResult = cancelRunner.process({ user: cancelUser, sessionID: cancelled.id, model, agent: { name: "protocol-runner", runner: "protocol" } as never, system: [], abort: new AbortController().signal, messages: [{ role: "user", content: "cancel revision" }], tools: {}, runtimeTools: { catalog: [{ id: "read", description: "Read", schema: { type: "object" } }], prompt: "", execute: async () => ({ title: "Read", output: "ok", metadata: {} }) } as never })
+          await poll(async () => (await Question.list()).length > 0)
+          const cancelQuestion = (await Question.list())[0]!
+          await Question.reply({ requestID: cancelQuestion.id, answers: [["Cancel"]], response: "cancel" })
+          await cancelResult
+          expect((await SessionTask.current(cancelled.id))?.title).toBe("Cancel old")
+          expect(bootstraps.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+      provider.mockRestore()
+      stream.mockRestore()
+    }
+  })
+
   test("protocol runner executes native AgentProtocolOutput tool calls", async () => {
     await using tmp = await tmpdir()
     const model = {

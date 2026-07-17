@@ -16,6 +16,7 @@ import { ActionResult } from "../../src/session/action-result"
 import { SessionResult } from "../../src/session/result"
 import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTask } from "../../src/session/task"
+import type { AgentProtocol } from "../../src/protocol/schema"
 import { and, Database, eq } from "../../src/storage/db"
 import { SessionResultTable } from "../../src/session/session.sql"
 
@@ -2854,6 +2855,61 @@ describe("SessionDelegation", () => {
               expect(pctx.completed_delegations?.[0]?.summary).toContain("completed from transcript")
             },
           }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("terminate-with-result preserves terminal child status and fallback identity", async () => {
+    await using tmp = await tmpdir()
+    let summaries = 0
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      if (input.agent === "summary") summaries++
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(), sessionID: input.sessionID, role: "user", time: { created: Date.now() },
+        agent: input.agent ?? "summary", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const msg = (await Session.updateMessage({
+        id: MessageID.ascending(), sessionID: input.sessionID, parentID: user.id, role: "assistant", mode: input.agent ?? "summary", agent: input.agent ?? "summary",
+        path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now(), completed: Date.now() }, finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({ id: PartID.ascending(), messageID: msg.id, sessionID: input.sessionID, type: "text", text: "terminal fallback", time: { start: Date.now(), end: Date.now() } } as MessageV2.TextPart)
+      return { info: msg, parts: [part] } as MessageV2.WithParts
+    }) as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () => WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const states = [
+              { type: "failed", message: "native failure" },
+              { type: "aborted", message: "native abort" },
+              { type: "terminal_reply", message: "native reply" },
+              { type: "completed" },
+              { type: "archived" },
+            ] as const
+            for (const [index, state] of states.entries()) {
+              const parent = await Session.create({ agent: "default" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const action = { type: "action", id: `terminal_${index}`, title: `Terminal ${index}`, operation: "delegate", executor: { type: "agent", target: "backend", capabilities: [] }, input: {}, depends_on: [], context_refs: [], result_policy: "summary" } as AgentProtocol.Action
+              await SessionDelegation.assign({ action, agent: "backend", childID: child.id, messageID: MessageID.ascending(), parentAgent: "default", runID: `run_terminal_${index}`, sessionID: parent.id })
+              if (state.type !== "archived") SessionStatus.set(child.id, { type: "running" })
+              SessionStatus.set(child.id, state)
+
+              await SessionDelegation.stop({ childIDs: [child.id], runID: `run_terminal_${index}`, sessionID: parent.id })
+              const first = await SessionResult.listForParent(parent.id)
+              const count = summaries
+              await SessionDelegation.stop({ childIDs: [child.id], runID: `run_terminal_${index}`, sessionID: parent.id })
+
+              expect(SessionStatus.get(child.id)).toEqual(state)
+              expect((await SessionResult.listForParent(parent.id)).map((item) => item.id)).toEqual(first.map((item) => item.id))
+              expect(summaries).toBe(count)
+            }
+          },
+        }),
       })
     } finally {
       prompt.mockRestore()
