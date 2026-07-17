@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm"
 import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { ProjectTable } from "../project/project.sql"
 import type { MessageV2 } from "./message-v2"
@@ -20,6 +21,10 @@ type StatusClass = "active" | "blocked" | "interrupted" | "terminal" | "archived
 type StatusSource = "runtime" | "recovery" | "user" | "system"
 type OutboxStatus = "pending" | "delivered" | "acked" | "failed"
 type OutboxKind = "parent_handoff"
+type TaskStatus = "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
+type TaskSource = "user" | "delegation" | "handoff" | "legacy"
+type RevisionStatus = "draft" | "active" | "completed" | "failed" | "archived"
+type HandoffStatus = "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
 
 export const SessionTable = sqliteTable(
   "session",
@@ -205,6 +210,83 @@ export const AssignmentTable = sqliteTable(
     index("assignment_parent_idx").on(table.parent_id),
     index("assignment_source_idx").on(table.source_session_id, table.source_run_id, table.source_action_id),
   ],
+)
+
+export const SessionTaskTable = sqliteTable(
+  "session_task",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    title: text().notNull(),
+    status: text().$type<TaskStatus>().notNull(),
+    current_revision_id: text(),
+    source_type: text().$type<TaskSource>().notNull(),
+    source_ref: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    time_created: integer().notNull(),
+    time_updated: integer().notNull(),
+  },
+  (table) => [uniqueIndex("session_task_session_unique_idx").on(table.session_id)],
+)
+
+export const TaskRevisionTable = sqliteTable(
+  "task_revision",
+  {
+    id: text().primaryKey(),
+    task_id: text()
+      .notNull()
+      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    version: integer().notNull(),
+    previous_id: text(),
+    status: text().$type<RevisionStatus>().notNull(),
+    title: text().notNull(),
+    body: text().notNull(),
+    body_hash: text().notNull(),
+    source_message_id: text().$type<MessageID>(),
+    reason: text(),
+    workflow: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    result: text(),
+    result_source: text(),
+    time_created: integer().notNull(),
+    time_activated: integer(),
+    time_completed: integer(),
+    time_archived: integer(),
+    archive_reason: text(),
+  },
+  (table) => [
+    uniqueIndex("task_revision_task_version_unique_idx").on(table.task_id, table.version),
+    uniqueIndex("task_revision_one_active_idx")
+      .on(table.task_id)
+      .where(sql`${table.status} = 'active'`),
+  ],
+)
+
+export const TaskHandoffTable = sqliteTable(
+  "task_handoff",
+  {
+    id: text().primaryKey(),
+    source_session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    source_task_id: text().references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    source_message_id: text().$type<MessageID>(),
+    target_session_id: text().$type<SessionID>(),
+    target_task_id: text(),
+    title: text().notNull(),
+    body: text().notNull(),
+    body_hash: text().notNull(),
+    context_refs: text({ mode: "json" }).$type<string[]>().notNull(),
+    status: text().$type<HandoffStatus>().notNull(),
+    dedupe_key: text().notNull(),
+    error: text(),
+    time_created: integer().notNull(),
+    time_confirmed: integer(),
+    time_completed: integer(),
+  },
+  (table) => [uniqueIndex("task_handoff_dedupe_unique_idx").on(table.dedupe_key)],
 )
 
 export const TodoTable = sqliteTable(
