@@ -1074,6 +1074,7 @@ describe("session task", () => {
       })
       expect((await SessionAssignment.get(assignment.id))?.status).toBe("completed")
       const bound = await SessionTask.get(session.id)
+      expect(bound?.revision.workflow.assignment_id).toBe(assignment.id)
       const replay = await SessionTask.confirmed({
         sessionID: session.id,
         runID: "run_confirm_only",
@@ -1144,6 +1145,13 @@ describe("session task", () => {
       })
       expect(result.type).toBe("update")
       expect((await SessionAssignment.get(assignment.id))?.status).toBe("completed")
+      if (result.type !== "update") throw new Error("update missing")
+      expect(result.revision.workflow.assignment_id).toBe(assignment.id)
+      const flow = { ...result.revision.workflow }
+      delete flow.assignment_id
+      Database.use((tx) =>
+        tx.update(TaskRevisionTable).set({ workflow: flow }).where(eq(TaskRevisionTable.id, result.revision.id)).run(),
+      )
       const replay = await SessionTask.confirmed({
         sessionID: session.id,
         runID: "run_confirm_update_consumed",
@@ -1155,6 +1163,85 @@ describe("session task", () => {
       expect(replay.type).toBe("update")
       expect(replay.type === "update" ? replay.revision.id : undefined).toBe(
         result.type === "update" ? result.revision.id : undefined,
+      )
+    }))
+
+  test("replays identical update drafts by their exact assignment identity", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_seed_identity",
+        legacy: { title: "Seed", body: "Seed plan" },
+        actions: [],
+      })
+      const action = (id: string) =>
+        ({
+          type: "action",
+          id,
+          title: "Identical update",
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { assignment: { op: "update", target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      const confirm = async (id: string, run: string) => {
+        const item = action(id)
+        const assignment = await SessionAssignment.confirm({
+          action: item,
+          messageID: MessageID.ascending(),
+          plan: "Identical plan",
+          runID: run,
+          sessionID: session.id,
+        })
+        if (!assignment) throw new Error("assignment missing")
+        const result = await SessionTask.confirmed({
+          sessionID: session.id,
+          runID: run,
+          actionIDs: [id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        })
+        if (result.type !== "update") throw new Error("update missing")
+        return { assignment, result }
+      }
+      const first = await confirm("confirm_identity_first", "run_identity_first")
+      const second = await confirm("confirm_identity_second", "run_identity_second")
+
+      const replay = async (id: string, run: string) =>
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: run,
+          actionIDs: [id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        })
+      const old = await replay("confirm_identity_first", "run_identity_first")
+      const latest = await replay("confirm_identity_second", "run_identity_second")
+      const again = await replay("confirm_identity_first", "run_identity_first")
+
+      expect(first.result.revision.workflow.assignment_id).toBe(first.assignment.id)
+      expect(second.result.revision.workflow.assignment_id).toBe(second.assignment.id)
+      expect(old.type === "update" ? old.revision.id : undefined).toBe(first.result.revision.id)
+      expect(latest.type === "update" ? latest.revision.id : undefined).toBe(second.result.revision.id)
+      expect(again.type === "update" ? again.revision.id : undefined).toBe(first.result.revision.id)
+      expect((await SessionTask.revision(session.id, 4))).toBeUndefined()
+
+      Database.use((tx) =>
+        [first.result.revision, second.result.revision].forEach((revision) => {
+          const flow = { ...revision.workflow }
+          delete flow.assignment_id
+          flow.run_id = "run_identity_first"
+          flow.run_ids = ["run_identity_first"]
+          tx.update(TaskRevisionTable).set({ workflow: flow }).where(eq(TaskRevisionTable.id, revision.id)).run()
+        }),
+      )
+      await expect(replay("confirm_identity_first", "run_identity_first")).rejects.toThrow(
+        "session_task_assignment_not_current",
       )
     }))
 

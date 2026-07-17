@@ -26,6 +26,7 @@
 14. 旧 `rev-<n>` 内容一律忽略 blob 内 assignment metadata，仅从可信 row/source 和当前 Task 上下文恢复有限路由。
 15. 将 `SessionTurn.finish` 的最新状态读取、终态优先判断与消息写入收进同一 immediate 事务，阻止 waiting 后写覆盖 terminal。
 16. 清理 Runner 测试的共享 spy/loop 计数依赖，并用多轮全文件与组合运行验证稳定性。
+17. 将 confirmed create/update Assignment 的 canonical id 写入 Revision workflow，避免相同标题和正文的历史 Assignment replay 串到最新 draft。
 
 ## 实际修复
 
@@ -36,6 +37,8 @@
 - create/update Task 路由成功后在同一 immediate 事务内 CAS 消费 Assignment；同 locator replay 返回既有 Revision，后续普通 Run 直接继续当前 Task。handoff 在持久 proposal 落地前保持 running，并阻止普通 execute 越过 pending handoff。
 - `SessionTurn.finish` 直接在 MessageTable immediate 事务内读取最新 turn、应用 terminal outcome 优先级并更新消息；Bus effect 仅在提交后发布。
 - Runner soft-limit 测试改为等待明确事件与 deadline，并在每个测试后统一恢复 mocks。
+- 新建 create/update Revision 的 workflow 持久化可选 `assignment_id`；completed Assignment replay 先校验精确 source locator 与完整 row fingerprint，再按该 id 返回对应 Revision。同一 Assignment 重放幂等，不会新增 Revision。
+- 历史 workflow 不含 `assignment_id` 时，仅在 `source_message_id` 或 `workflow.run_id` 与 Assignment source locator 精确一致且候选唯一时兼容；歧义场景直接冲突，不按标题或正文猜测。
 
 ## 验证补充
 
@@ -43,6 +46,7 @@
 - 覆盖 same-run prompt 前 Task 已绑定、重复 complete 不重复启动，以及 legacy confirm/delegation/篡改兼容矩阵。
 - Runner 与 same-run failure 额外验证 owner turn child Timeline 由 current/pending 收敛为 failed terminal，重复 fail 不回到 pending。
 - 覆盖 Assignment consume/replay、legacy 路由 metadata 注入、handoff pending 拦截和 concurrent finish terminal 优先级。
+- 覆盖两个标题和正文完全相同的 update Assignment 各自创建 draft，并验证 first/second locator 精确返回 first/second Revision、重复 first 不产生第三个 draft，以及 legacy locator 歧义拒绝。
 
 ## 影响模块
 
@@ -91,12 +95,13 @@
 
 ## 验证结果
 
-- Session Task：48 passed
+- Session Task：49 passed
 - Session Runner：63 passed
 - Session Runs：29 passed
 - Session Delegation：37 passed
 - Session Turn：5 passed
-- 合计：182 passed，0 failed
+- 合计：183 passed，0 failed
 - `bun typecheck`：通过
 - Runner 全文件连续 5 轮均为 63 passed；五文件组合连续 3 轮均为 182 passed。
 - 稳定性对照曾复现既有跨进程 draft conflict；单跑及最终三轮组合均通过。另定位并移除 self-delegation 测试对并发 prompt 数组顺序的依赖。
+- 最终组合门额外暴露 textual tool-call retry 测试对固定 `inputs[1]` 的顺序依赖；改为按 retry system marker 定位后，focused 连续 5 轮及五文件组合通过。

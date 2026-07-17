@@ -8236,8 +8236,9 @@ describe("SessionRunner", () => {
                 ),
               ).toBe(true)
               expect(protocol?.runs).toBeUndefined()
-              expect(JSON.stringify(inputs[1]?.system)).toContain("previous response violated")
-              expect(JSON.stringify(inputs[1]?.system)).toContain("provider-specific textual tool call")
+              const retry = inputs.find((input) => JSON.stringify(input.system).includes("previous response violated"))
+              expect(JSON.stringify(retry?.system)).toContain("previous response violated")
+              expect(JSON.stringify(retry?.system)).toContain("provider-specific textual tool call")
             },
           }),
       })

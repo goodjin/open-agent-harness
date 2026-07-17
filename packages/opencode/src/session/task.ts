@@ -35,6 +35,7 @@ export namespace SessionTask {
   export const Workflow = z
     .object({
       actions: z.array(z.unknown()),
+      assignment_id: z.string().min(1).optional(),
       run_id: RunID.optional(),
       run_ids: z.array(RunID).optional(),
       compact: z
@@ -53,6 +54,7 @@ export namespace SessionTask {
   export const WorkflowView = z
     .object({
       actions: z.array(TaskAction),
+      assignment_id: Workflow.shape.assignment_id,
       run_id: RunID.optional(),
       run_ids: z.array(RunID).optional(),
       compact: Workflow.shape.compact,
@@ -320,13 +322,16 @@ export namespace SessionTask {
         }
         if (!SessionAssignment.withCurrent(tx, locator))
           throw new Conflict("session_task_assignment_not_current")
-        const saved = write({
-          sessionID: input.sessionID,
-          runID: input.runID,
-          messageID: input.messageID,
-          assignment: { op, target, title: assignment.title, body: plan },
-          actions: input.actions,
-        })
+        const saved = write(
+          {
+            sessionID: input.sessionID,
+            runID: input.runID,
+            messageID: input.messageID,
+            assignment: { op, target, title: assignment.title, body: plan },
+            actions: input.actions,
+          },
+          assignment.id,
+        )
         if (!SessionAssignment.withCurrent(tx, locator))
           throw new Conflict("session_task_assignment_not_current")
         if (op !== "handoff" && !SessionAssignment.consume(tx, locator))
@@ -350,7 +355,7 @@ export namespace SessionTask {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task) throw new Conflict("session_task_assignment_not_current")
         if (input.op === "update") {
-          const revision = tx
+          const revisions = tx
             .select()
             .from(TaskRevisionTable)
             .where(
@@ -362,7 +367,8 @@ export namespace SessionTask {
               ),
             )
             .orderBy(desc(TaskRevisionTable.version))
-            .get()
+            .all()
+          const revision = bound(revisions, input.assignment)
           if (!revision) throw new Conflict("session_task_assignment_not_current")
           return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
         }
@@ -375,7 +381,8 @@ export namespace SessionTask {
         if (
           !revision ||
           revision.title !== input.assignment.title ||
-          revision.body_hash !== hash(input.plan)
+          revision.body_hash !== hash(input.plan) ||
+          !bound([revision], input.assignment)
         )
           throw new Conflict("session_task_assignment_not_current")
         return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(revision) }
@@ -388,7 +395,7 @@ export namespace SessionTask {
     return write(raw)
   }
 
-  function write(raw: z.input<typeof Route>) {
+  function write(raw: z.input<typeof Route>, assignmentID?: string) {
     const input = Route.parse(raw)
     const now = Date.now()
     try {
@@ -431,7 +438,7 @@ export namespace SessionTask {
                 body_hash: hash(seed.body),
                 source_message_id: input.messageID ?? null,
                 reason: null,
-                workflow: flow(input.actions, input.runID),
+                workflow: flow(input.actions, input.runID, assignmentID),
                 result: null,
                 result_source: null,
                 time_created: now,
@@ -488,7 +495,7 @@ export namespace SessionTask {
                 body_hash: hash(input.assignment.body),
                 source_message_id: input.messageID ?? null,
                 reason: "Confirmed task update proposal",
-                workflow: flow(input.actions, input.runID),
+                workflow: flow(input.actions, input.runID, assignmentID),
                 result: null,
                 result_source: null,
                 time_created: now,
@@ -1161,9 +1168,23 @@ export namespace SessionTask {
     })
   }
 
-  function flow(actions: unknown[], runID?: string): Workflow {
-    if (!runID) return { actions }
-    return { actions: tagged(actions, runID), run_id: runID, run_ids: [runID] }
+  function flow(actions: unknown[], runID?: string, assignmentID?: string): Workflow {
+    const assignment = assignmentID ? { assignment_id: assignmentID } : {}
+    if (!runID) return { actions, ...assignment }
+    return { actions: tagged(actions, runID), ...assignment, run_id: runID, run_ids: [runID] }
+  }
+
+  function bound(revisions: (typeof TaskRevisionTable.$inferSelect)[], assignment: SessionAssignment.Info) {
+    const exact = revisions.find((item) => Workflow.parse(item.workflow).assignment_id === assignment.id)
+    if (exact) return exact
+    const legacy = revisions.filter((item) => {
+      const flow = Workflow.parse(item.workflow)
+      const message = assignment.source_message_id && item.source_message_id === assignment.source_message_id
+      const run = assignment.source_run_id && flow.run_id === assignment.source_run_id
+      return flow.assignment_id === undefined && (message || run)
+    })
+    if (legacy.length !== 1) return
+    return legacy[0]
   }
 
   function runids(value: Workflow) {
@@ -1194,6 +1215,7 @@ export namespace SessionTask {
           typeof (item as Record<string, unknown>).run_id !== "string" ||
           !dropped.has((item as Record<string, string>).run_id),
       ),
+      ...(value.assignment_id ? { assignment_id: value.assignment_id } : {}),
       run_id: keep.at(-1),
       run_ids: keep,
       compact: {
