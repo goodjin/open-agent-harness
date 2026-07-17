@@ -307,6 +307,40 @@ describe("session task", () => {
       expect(await SessionTask.get(a.id)).toBeUndefined()
     }))
 
+  test("keeps revision ids immutable", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const task = await SessionTask.create({
+        sessionID: session.id,
+        title: "Stable revision ids",
+        body: "# Stable revision ids\n",
+        source: { type: "user" },
+      })
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRevisionTable)
+            .set({ id: "revision_renamed_current" })
+            .where(eq(TaskRevisionTable.id, task.revision.id))
+            .run(),
+        ),
+      ).toThrow()
+      const draft = await SessionTask.draft({
+        taskID: task.task.id,
+        title: "Draft",
+        body: "# Draft\n",
+      })
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRevisionTable)
+            .set({ id: "revision_renamed_draft" })
+            .where(eq(TaskRevisionTable.id, draft.id))
+            .run(),
+        ),
+      ).toThrow()
+    }))
+
   test("serializes duplicate create calls on the process singleton", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -376,5 +410,32 @@ describe("session task", () => {
         }),
       ).rejects.toBeInstanceOf(SessionTask.Conflict)
       expect(await proc.exited).toBe(0)
+    }))
+
+  test("does not normalize ordinary errors that resemble SQLite failures", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const transaction = Database.transaction
+      try {
+        for (const message of ["UNIQUE constraint failed", "database is locked"]) {
+          const err = new Error(message)
+          Object.defineProperty(Database, "transaction", {
+            configurable: true,
+            value: () => {
+              throw err
+            },
+          })
+          await expect(
+            SessionTask.create({
+              sessionID: session.id,
+              title: "Preserve ordinary error",
+              body: "# Preserve ordinary error\n",
+              source: { type: "user" },
+            }),
+          ).rejects.toBe(err)
+        }
+      } finally {
+        Object.defineProperty(Database, "transaction", { configurable: true, value: transaction })
+      }
     }))
 })

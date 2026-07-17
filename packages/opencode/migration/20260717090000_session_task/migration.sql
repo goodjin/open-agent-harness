@@ -114,3 +114,10 @@ WHEN NEW.`task_id` != OLD.`task_id`
 BEGIN
   SELECT RAISE(ABORT, 'task revision is current');
 END;
+--> statement-breakpoint
+CREATE TRIGGER `task_revision_id_immutable`
+BEFORE UPDATE OF `id` ON `task_revision`
+WHEN NEW.`id` != OLD.`id`
+BEGIN
+  SELECT RAISE(ABORT, 'task revision id is immutable');
+END;

@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto"
+import { SQLiteError } from "bun:sqlite"
 import z from "zod"
 import { and, Database, desc, eq, max } from "@/storage/db"
 import { MessageID, SessionID } from "./schema"
@@ -160,7 +161,7 @@ export namespace SessionTask {
       )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err) || locked(err)) throw new Conflict()
+      if (constraint(err) || locked(err)) throw new Conflict()
       throw err
     }
   }
@@ -225,7 +226,7 @@ export namespace SessionTask {
       )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err) || locked(err)) throw new Conflict("task_revision_conflict")
+      if (constraint(err) || locked(err)) throw new Conflict("task_revision_conflict")
       throw err
     }
   }
@@ -290,7 +291,7 @@ export namespace SessionTask {
       )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err) || locked(err)) throw new Conflict("task_revision_active_conflict")
+      if (constraint(err) || locked(err)) throw new Conflict("task_revision_active_conflict")
       throw err
     }
   }
@@ -319,13 +320,13 @@ export namespace SessionTask {
     return new Bun.CryptoHasher("sha256").update(input).digest("hex")
   }
 
-  function unique(err: unknown) {
-    return err instanceof Error && err.message.includes("UNIQUE constraint failed")
+  function constraint(err: unknown) {
+    return err instanceof SQLiteError && typeof err.code === "string" && err.code.startsWith("SQLITE_CONSTRAINT")
   }
 
   function locked(err: unknown) {
-    if (!(err instanceof Error)) return false
-    const code = "code" in err && typeof err.code === "string" ? err.code : ""
-    return code === "SQLITE_BUSY" || code === "SQLITE_BUSY_SNAPSHOT" || err.message.includes("database is locked")
+    if (!(err instanceof SQLiteError)) return false
+    if (typeof err.code !== "string") return false
+    return err.code.startsWith("SQLITE_BUSY") || err.code.startsWith("SQLITE_LOCKED")
   }
 }
