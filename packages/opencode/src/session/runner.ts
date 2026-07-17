@@ -3662,7 +3662,7 @@ export namespace SessionRunner {
       runID: input.runID,
       sessionID: input.sessionID,
     })
-    await SessionAssignment.delegate({
+    const assignment = await SessionAssignment.delegate({
       action: input.action,
       childID: child.id,
       messageID: input.messageID,
@@ -3670,13 +3670,48 @@ export namespace SessionRunner {
       runID: input.runID,
       sessionID: input.sessionID,
     })
-    await SessionTask.beginDelegated({
-      sessionID: child.id,
-      parentSessionID: input.sessionID,
-      parentRunID: input.runID,
-      parentActionID: input.action.id,
-      messageID: input.messageID,
-    })
+    try {
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: input.sessionID,
+        parentRunID: input.runID,
+        parentActionID: input.action.id,
+        messageID: input.messageID,
+      })
+    } catch (err) {
+      if (assignment) {
+        try {
+          SessionAssignment.fail(assignment.id)
+        } catch (failure) {
+          await SessionLog.emit({
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            level: "warn",
+            type: "protocol.agent.binding.compensation_failed",
+            data: { actionID: input.action.id, childSessionID: child.id, error: String(failure) },
+          })
+        }
+      }
+      await SessionDelegation.fail({
+        action: input.action,
+        agent: selected.agent.name,
+        childID: child.id,
+        error: err,
+        messageID: input.messageID,
+        parentAgent: input.parentAgent,
+        parentID: input.sessionID,
+        runID: input.runID,
+      }).catch((failure) =>
+        SessionLog.emit({
+          sessionID: input.sessionID,
+          messageID: input.messageID,
+          level: "warn",
+          type: "protocol.agent.binding.compensation_failed",
+          data: { actionID: input.action.id, childSessionID: child.id, error: String(failure) },
+        }),
+      )
+      throw err
+    }
     setTimeout(() => {
       SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent))
         .then((parts) =>

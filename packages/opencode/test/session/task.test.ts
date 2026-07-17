@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, readdirSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "fs"
 import { symlink, unlink } from "fs/promises"
 import path from "path"
@@ -10,7 +10,7 @@ import { Session } from "../../src/session"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionAssignment } from "../../src/session/assignment"
 import { MessageID } from "../../src/session/schema"
-import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
+import { AssignmentTable, SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { TaskFS } from "../../src/session/task-fs"
@@ -35,6 +35,16 @@ async function setup(fn: () => Promise<void>) {
         fn,
       }),
   })
+}
+
+async function until<T>(fn: () => T | Promise<T>, timeout = 5_000) {
+  const end = Date.now() + timeout
+  while (Date.now() < end) {
+    const value = await fn()
+    if (value) return value
+    await Bun.sleep(10)
+  }
+  throw new Error("condition timeout")
 }
 
 async function lock(time = 250) {
@@ -456,8 +466,52 @@ describe("session task", () => {
           return [`run_window_${suffix}`, `action_${suffix}`]
         }),
       )
-      expect(current?.progress).toEqual({ completed: 50, total: 50 })
-      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toHaveLength(55)
+      expect(current?.progress).toEqual({ completed: 50, total: 55 })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        compact: { runs: 5, completed: 0, total: 5 },
+      })
+      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toHaveLength(50)
+    }))
+
+  test("bounds the persisted workflow while preserving compacted total progress", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      let size = 0
+      for (const index of Array.from({ length: 200 }, (_, index) => index)) {
+        const suffix = index.toString().padStart(3, "0")
+        const run = `run_bound_${suffix}`
+        const action = `action_bound_${suffix}`
+        await SessionTask.route({
+          sessionID: session.id,
+          runID: run,
+          ...(index === 0
+            ? { assignment: { op: "create" as const, target: "self" as const, title: "Bound", body: "Bound" } }
+            : {}),
+          actions: [{ id: action, title: action }],
+        })
+        await SessionTask.sync({
+          sessionID: session.id,
+          runID: run,
+          actions: result(run, [{ id: action, title: action, status: "completed" }]).actions,
+        })
+        if (index === 149) size = JSON.stringify((await SessionTask.get(session.id))?.revision.workflow).length
+      }
+
+      const stored = (await SessionTask.get(session.id))?.revision.workflow
+      expect(stored?.run_ids).toHaveLength(50)
+      expect(stored?.actions).toHaveLength(50)
+      expect(stored).toMatchObject({ compact: { runs: 150, completed: 150, total: 150 } })
+      expect(JSON.stringify(stored).length - size).toBeLessThan(100)
+      expect((await SessionTask.current(session.id))?.progress).toEqual({ completed: 200, total: 200 })
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_bound_000",
+          actions: result("run_bound_000", [
+            { id: "action_bound_000", title: "action_bound_000", status: "completed" },
+          ]).actions,
+        }),
+      ).rejects.toThrow("session_task_stale_run")
     }))
 
   test("strictly parses workflow run ids and task action identities", () =>
@@ -614,6 +668,117 @@ describe("session task", () => {
       })
     }))
 
+  test("keeps concurrent assignment row and canonical blob content consistent", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = (id: string, title: string) =>
+        ({
+          type: "action",
+          id,
+          title,
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { assignment: { op: "update", target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      const initial = await SessionAssignment.confirm({
+        action: { ...action("initial", "Initial"), input: { assignment: { op: "create", target: "self" } } },
+        messageID: MessageID.ascending(),
+        plan: "Initial plan",
+        runID: "run_initial",
+        sessionID: session.id,
+      })
+      if (!initial) throw new Error("initial assignment missing")
+      let release = () => {}
+      let written = () => {}
+      const hold = new Promise<void>((resolve) => (release = resolve))
+      const ready = new Promise<void>((resolve) => (written = resolve))
+      const write = Storage.write
+      const hook = spyOn(Storage, "write").mockImplementation(async (key, value) => {
+        const body = value as { plan?: string }
+        if (body.plan === "Plan A") {
+          const saved = await write(key, value)
+          written()
+          await hold
+          return saved
+        }
+        if (body.plan === "Plan B") await ready
+        return write(key, value)
+      })
+      try {
+        const first = SessionAssignment.confirm({
+          action: action("update_a", "Plan A"),
+          messageID: MessageID.ascending(),
+          plan: "Plan A",
+          runID: "run_update_a",
+          sessionID: session.id,
+        })
+        await ready
+        const second = SessionAssignment.confirm({
+          action: action("update_b", "Plan B"),
+          messageID: MessageID.ascending(),
+          plan: "Plan B",
+          runID: "run_update_b",
+          sessionID: session.id,
+        })
+        await until(async () => (await SessionAssignment.get(initial.id))?.title === "Plan B")
+        release()
+        await Promise.allSettled([first, second])
+      } finally {
+        hook.mockRestore()
+        release()
+      }
+
+      const saved = await SessionAssignment.get(initial.id)
+      if (!saved) throw new Error("saved assignment missing")
+      const content = (await SessionAssignment.content(saved.id)) as { plan?: string }
+      expect(content.plan).toBe(saved.title)
+    }))
+
+  test("rejects confirmed binding when canonical assignment content is tampered", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = {
+        type: "action",
+        id: "confirm_tampered_blob",
+        title: "Canonical title",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Canonical plan",
+        runID: "run_tampered_blob",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      const content = (await SessionAssignment.content(assignment.id)) as Record<string, unknown>
+      await Storage.write(assignment.content_ref.split("/"), {
+        ...content,
+        plan: "Tampered plan",
+        assignment: { op: "handoff", target: "peer" },
+      })
+
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_tampered_blob",
+          actionIDs: [action.id],
+          actions: [],
+          legacy: { title: "Legacy", body: "Legacy" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_content_invalid")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+    }))
+
   test("rejects a superseded confirmed assignment identity", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -653,6 +818,99 @@ describe("session task", () => {
           requiresAssignment: true,
         }),
       ).rejects.toThrow("session_task_assignment_not_current")
+    }))
+
+  test("binds a later executable run from the current confirm-only assignment", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = (id: string, title: string) =>
+        ({
+          type: "action",
+          id,
+          title,
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { assignment: { op: "create", target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      await SessionAssignment.confirm({
+        action: action("old_confirm_only", "Old assignment"),
+        messageID: MessageID.ascending(),
+        plan: "Old plan",
+        runID: "run_old_confirm_only",
+        sessionID: session.id,
+      })
+      await SessionAssignment.confirm({
+        action: action("current_confirm_only", "Approved assignment"),
+        messageID: MessageID.ascending(),
+        plan: "Approved canonical plan",
+        runID: "run_confirm_only",
+        sessionID: session.id,
+      })
+
+      await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_execute_later",
+        actionIDs: [],
+        actions: [{ id: "execute_later", title: "Execute later" }],
+        legacy: { title: "Legacy fallback", body: "Legacy fallback" },
+      })
+      expect(await SessionTask.current(session.id)).toMatchObject({
+        title: "Approved assignment",
+        body: "Approved canonical plan",
+      })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: "run_execute_later",
+        run_ids: ["run_execute_later"],
+      })
+    }))
+
+  test("rejects confirm-only inheritance when more than one assignment is active", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = (id: string) =>
+        ({
+          type: "action",
+          id,
+          title: id,
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { assignment: { op: "create", target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      const first = await SessionAssignment.confirm({
+        action: action("ambiguous_one"),
+        messageID: MessageID.ascending(),
+        plan: "One",
+        runID: "run_ambiguous_one",
+        sessionID: session.id,
+      })
+      await SessionAssignment.confirm({
+        action: action("ambiguous_two"),
+        messageID: MessageID.ascending(),
+        plan: "Two",
+        runID: "run_ambiguous_two",
+        sessionID: session.id,
+      })
+      if (!first) throw new Error("assignment missing")
+      Database.use((tx) =>
+        tx.update(AssignmentTable).set({ status: "running" }).where(eq(AssignmentTable.id, first.id)).run(),
+      )
+
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_ambiguous_execute",
+          actionIDs: [],
+          actions: [{ id: "execute" }],
+          legacy: { title: "Legacy", body: "Legacy" },
+        }),
+      ).rejects.toThrow("session_task_assignment_source_conflict")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
     }))
 
   test("rolls back confirmed binding when its assignment is superseded during task insert", () =>
@@ -1158,6 +1416,97 @@ describe("session task", () => {
         }),
       ).rejects.toBeInstanceOf(SessionTask.Conflict)
       expect(await proc.exited).toBe(0)
+    }))
+
+  test("normalizes outer transaction lock failures for binding sync and finish", () =>
+    setup(async () => {
+      Database.Client().run(sql`PRAGMA busy_timeout = 50`)
+      const confirm = await Session.create({})
+      const action = {
+        type: "action",
+        id: "confirm_lock",
+        title: "Confirm lock",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Confirm lock",
+        runID: "run_confirm_lock",
+        sessionID: confirm.id,
+      })
+      const first = await lock()
+      await expect(
+        SessionTask.confirmed({
+          sessionID: confirm.id,
+          runID: "run_confirm_lock",
+          actionIDs: [action.id],
+          actions: [],
+          legacy: { title: "Legacy", body: "Legacy" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toBeInstanceOf(SessionTask.Conflict)
+      await first.exited
+
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const delegated = {
+        ...action,
+        id: "delegate_lock",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+      } as AgentProtocol.Action
+      await SessionAssignment.delegate({
+        action: delegated,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        runID: "run_delegate_lock",
+        sessionID: parent.id,
+      })
+      const second = await lock()
+      await expect(
+        SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: "run_delegate_lock",
+          parentActionID: delegated.id,
+        }),
+      ).rejects.toBeInstanceOf(SessionTask.Conflict)
+      await second.exited
+
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_sync_lock",
+        assignment: { op: "create", target: "self", title: "Sync lock", body: "Sync lock" },
+        actions: [{ id: "sync_lock", title: "Sync lock" }],
+      })
+      const third = await lock()
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_sync_lock",
+          actions: result("run_sync_lock", [{ id: "sync_lock", title: "Sync lock", status: "completed" }]).actions,
+        }),
+      ).rejects.toBeInstanceOf(SessionTask.Conflict)
+      await third.exited
+
+      const fourth = await lock()
+      await expect(
+        SessionTask.finish({
+          sessionID: session.id,
+          runID: "run_sync_lock",
+          summary: "Done",
+          source: "protocol",
+        }),
+      ).rejects.toBeInstanceOf(SessionTask.Conflict)
+      await fourth.exited
+      Database.Client().run(sql`PRAGMA busy_timeout = 5000`)
     }))
 
   test("does not normalize ordinary errors that resemble SQLite failures", () =>

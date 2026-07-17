@@ -37,6 +37,14 @@ export namespace SessionTask {
       actions: z.array(z.unknown()),
       run_id: RunID.optional(),
       run_ids: z.array(RunID).optional(),
+      compact: z
+        .object({
+          runs: z.number().int().nonnegative(),
+          completed: z.number().int().nonnegative(),
+          total: z.number().int().nonnegative(),
+        })
+        .strict()
+        .optional(),
     })
     .strict()
   export type Workflow = z.infer<typeof Workflow>
@@ -47,6 +55,7 @@ export namespace SessionTask {
       actions: z.array(TaskAction),
       run_id: RunID.optional(),
       run_ids: z.array(RunID).optional(),
+      compact: Workflow.shape.compact,
     })
     .strict()
   export const Task = z
@@ -252,7 +261,10 @@ export namespace SessionTask {
         SessionAssignment.bySource({ sessionID: input.sessionID, runID: input.runID, actionID }),
       ),
     )
-    const assignment = rows.findLast((item) => item !== undefined)
+    const sourced = rows.findLast((item) => item !== undefined)
+    const inherited = sourced || input.requiresAssignment ? undefined : await SessionAssignment.unique(input.sessionID, "confirm")
+    if (inherited === null) throw new Conflict("session_task_assignment_source_conflict")
+    const assignment = sourced ?? inherited
     if (!assignment && input.requiresAssignment) throw new Conflict("session_task_assignment_source_conflict")
     if (!assignment)
       return route({
@@ -269,12 +281,16 @@ export namespace SessionTask {
       assignment.source_type !== "confirm"
     )
       throw new Conflict("session_task_assignment_not_current")
+    if (assignment.session_id !== input.sessionID || assignment.source_session_id !== input.sessionID)
+      throw new Conflict("session_task_assignment_source_conflict")
     if (
-      assignment.session_id !== input.sessionID ||
-      assignment.source_session_id !== input.sessionID ||
-      assignment.source_run_id !== input.runID ||
-      !input.actionIDs.includes(assignment.source_action_id ?? "")
+      sourced &&
+      (assignment.source_run_id !== input.runID || !input.actionIDs.includes(assignment.source_action_id ?? ""))
     )
+      throw new Conflict("session_task_assignment_source_conflict")
+    const sourceRun = assignment.source_run_id
+    const sourceAction = assignment.source_action_id
+    if (!sourceRun || !sourceAction)
       throw new Conflict("session_task_assignment_source_conflict")
     const content = await SessionAssignment.content(assignment.id)
     const body = content && typeof content === "object" && !Array.isArray(content) ? content : {}
@@ -287,14 +303,14 @@ export namespace SessionTask {
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string")
       throw new Conflict("session_task_assignment_content_invalid")
-    return Database.transaction(
+    return transact(
       (tx) => {
         const locator = {
           assignment,
           sessionID: input.sessionID,
           sourceSessionID: input.sessionID,
-          runID: input.runID,
-          actionIDs: input.actionIDs,
+          runID: sourceRun,
+          actionIDs: [sourceAction],
           source: "confirm" as const,
         }
         if (!SessionAssignment.withCurrent(tx, locator))
@@ -322,7 +338,7 @@ export namespace SessionTask {
     const input = Route.parse(raw)
     const now = Date.now()
     try {
-      return Database.transaction(
+      return transact(
         (tx) => {
           const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
           if (!task) {
@@ -442,7 +458,7 @@ export namespace SessionTask {
           const run_ids = ids.includes(input.runID) ? ids : [...ids, input.runID]
           const revision = tx
             .update(TaskRevisionTable)
-            .set({ workflow: { actions, run_id: input.runID, run_ids } })
+            .set({ workflow: bounded({ ...Workflow.parse(current.workflow), actions, run_id: input.runID, run_ids }) })
             .where(
               and(
                 eq(TaskRevisionTable.id, current.id),
@@ -488,7 +504,7 @@ export namespace SessionTask {
     const plan =
       content && typeof content === "object" && !Array.isArray(content) && "plan" in content ? content.plan : undefined
     if (typeof plan !== "string") throw new Conflict("session_task_delegation_assignment_conflict")
-    return Database.transaction(
+    return transact(
       (tx) => {
         const child = tx
           .select({ parent_id: SessionTable.parent_id })
@@ -550,7 +566,7 @@ export namespace SessionTask {
       ? { actions: input.actions }
       : await import("./runs").then((item) => item.SessionRuns.persisted(input.sessionID, input.runID))
     if (!run) throw new Conflict("session_task_run_missing")
-    return Database.transaction(
+    return transact(
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
@@ -561,7 +577,7 @@ export namespace SessionTask {
           .from(TaskRevisionTable)
           .where(eq(TaskRevisionTable.id, task.current_revision_id))
           .get()
-        const flow = revision ? Workflow.parse(revision.workflow) : undefined
+        const flow = revision ? bounded(Workflow.parse(revision.workflow)) : undefined
         if (
           !revision ||
           revision.task_id !== task.id ||
@@ -570,14 +586,13 @@ export namespace SessionTask {
           !runids(flow).includes(input.runID)
         )
           throw new Conflict("session_task_stale_run")
-        const actions = reconcile(flow.actions, run.actions, input.runID)
-        if (JSON.stringify(actions) === JSON.stringify(flow.actions)) return Revision.parse(revision)
+        const actions = bounded({ ...flow, actions: reconcile(flow.actions, run.actions, input.runID) })
+        if (JSON.stringify(actions) === JSON.stringify(revision.workflow)) return Revision.parse(revision)
         const saved = tx
           .update(TaskRevisionTable)
           .set({
             workflow: {
-              ...revision.workflow,
-              actions,
+              ...actions,
             },
           })
           .where(
@@ -612,7 +627,7 @@ export namespace SessionTask {
   export async function finish(raw: z.input<typeof Finish>) {
     const input = Finish.parse(raw)
     const now = Date.now()
-    return Database.transaction(
+    return transact(
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
@@ -676,7 +691,7 @@ export namespace SessionTask {
     delete source.type
 
     try {
-      return Database.transaction(
+      return transact(
         (tx) => {
           const found = tx
             .select({ id: SessionTaskTable.id })
@@ -769,7 +784,7 @@ export namespace SessionTask {
     const now = Date.now()
     for (const attempt of [0, 1, 2, 3, 4]) {
       try {
-        return Database.transaction(
+        return transact(
           (tx) => {
             const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
             if (!task) throw new Conflict("session_task_missing")
@@ -833,7 +848,7 @@ export namespace SessionTask {
     const input = Activate.parse(raw)
     const now = Date.now()
     try {
-      return Database.transaction(
+      return transact(
         (tx) => {
           const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
           const next = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, input.revisionID)).get()
@@ -975,8 +990,10 @@ export namespace SessionTask {
       status: stored.task.status,
       body: stored.revision.body,
       progress: {
-        completed: actions.filter((item) => item.status === "completed" || item.status === "skipped").length,
-        total: actions.length,
+        completed:
+          (stored.revision.workflow.compact?.completed ?? 0) +
+          actions.filter((item) => item.status === "completed" || item.status === "skipped").length,
+        total: (stored.revision.workflow.compact?.total ?? 0) + actions.length,
       },
       actions,
       ...output,
@@ -1100,6 +1117,48 @@ export namespace SessionTask {
     return value.run_id ? [value.run_id] : []
   }
 
+  function bounded(value: Workflow) {
+    const ids = runids(value)
+    if (ids.length <= 50) return value
+    const keep = ids.slice(-50)
+    const dropped = new Set(ids.slice(0, -50))
+    const removed = value.actions.filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof (item as Record<string, unknown>).run_id === "string" &&
+        dropped.has((item as Record<string, string>).run_id),
+    )
+    const compact = value.compact ?? { runs: 0, completed: 0, total: 0 }
+    return {
+      actions: value.actions.filter(
+        (item) =>
+          !item ||
+          typeof item !== "object" ||
+          Array.isArray(item) ||
+          typeof (item as Record<string, unknown>).run_id !== "string" ||
+          !dropped.has((item as Record<string, string>).run_id),
+      ),
+      run_id: keep.at(-1),
+      run_ids: keep,
+      compact: {
+        runs: compact.runs + dropped.size,
+        completed:
+          compact.completed +
+          removed.filter(
+            (item) =>
+              item &&
+              typeof item === "object" &&
+              !Array.isArray(item) &&
+              ((item as Record<string, unknown>).status === "completed" ||
+                (item as Record<string, unknown>).status === "skipped"),
+          ).length,
+        total: compact.total + removed.length,
+      },
+    }
+  }
+
   function merge(prev: unknown[], next: unknown[]) {
     const items = new Map<string, unknown>()
     const rest: unknown[] = []
@@ -1159,6 +1218,16 @@ export namespace SessionTask {
 
   function real(item: unknown) {
     return TaskAction.safeParse(item).success || AgentProtocol.ResultAction.safeParse(item).success
+  }
+
+  function transact<T>(fn: (tx: Database.TxOrDb) => T, config?: { behavior?: "deferred" | "immediate" | "exclusive" }) {
+    try {
+      return Database.transaction(fn, config)
+    } catch (err) {
+      if (err instanceof Conflict) throw err
+      if (constraint(err) || locked(err)) throw new Conflict()
+      throw err
+    }
   }
 
   function hash(input: string) {

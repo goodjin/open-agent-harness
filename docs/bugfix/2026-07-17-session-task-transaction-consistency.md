@@ -3,10 +3,10 @@
 ## 问题描述
 
 - 日期：2026-07-17
-- 严重程度：High
+- 严重程度：Critical
 - 影响范围：Session Task 的多 Run 动作投影、迟到同步、确认绑定与委托绑定
 
-当前实现存在四类一致性缺口：超过 50 个 Run 时动作与 `run_id` 的窗口索引可能错配；终态 Task/Revision 仍可能接收迟到同步；确认 assignment 的校验与 Task 写入分属两个事务；委托 assignment 的校验与子 Task 创建也分属两个事务。
+当前实现存在多类一致性缺口：Run 窗口身份和持久化边界不一致；终态 Task/Revision 仍可能接收迟到同步；Assignment blob 与 DB row 可在并发更新中脱节；确认、跨 Run 继承及委托绑定缺少完整事务或补偿边界。
 
 ## 修复范围
 
@@ -14,6 +14,12 @@
 2. 为 `sync` 增加 Task/Revision 生命周期 CAS 和动作单向状态迁移规则。
 3. 在 Task 持有的 immediate 事务内读取当前 confirmed assignment 并完成路由写入。
 4. 在 Task 持有的 immediate 事务内验证 child parent、当前 delegated assignment 并创建或复用 Task。
+5. 让 Assignment blob 使用完整 canonical content digest 与不可碰撞路径，并以 DB CAS 发布新版本。
+6. 支持 confirm-only package 后由后续 executable package 绑定当前 canonical Assignment。
+7. 为 delegated Task 绑定失败提供可审计、幂等且不可恢复重启的补偿终态。
+8. 统一所有 SessionTask public transaction 的 SQLite 错误归一化。
+9. 将 workflow 的持久化 working set 限制为最近 50 Runs，同时累计 compact progress。
+10. 用明确 pending 状态轮询替换 Runner 测试中的固定 200ms 等待。
 
 ## 影响模块
 
@@ -35,6 +41,10 @@
 - `current()` 对 Runs 做了 `slice(-50)`，但归并时仍按原始 Run 数组索引标记动作，窗口超过 50 后身份发生偏移。
 - `sync()` 只校验 Run 是否登记，没有校验 Task/Revision 生命周期，也允许同一真实动作被后续不同结果覆盖。
 - confirmed 与 delegated 绑定先在事务外读取 assignment，再另开 Task 事务，旧 assignment 可在两步之间被 supersede。
+- Assignment 更新先写共享 `rev-N` blob 再无条件覆盖 DB 行，并发写可让 row fingerprint 与 blob 正文来自不同写者。
+- confirm-only package 与后续 executable package 之间没有 persisted Assignment 继承路径。
+- delegated child 在 Task 绑定失败后缺少补偿，pending、running Assignment 与可恢复 child 会残留。
+- workflow 读取虽有限制，持久化 JSON 仍随 Runs 无界增长。
 
 ## 实际修复
 
@@ -42,10 +52,15 @@
 - `sync()` 要求 Task 为 `running`、`waiting_user` 或 `revising`，Revision 为当前 `active`；动作只允许 planned 到 real 的一次升级，相同 real 幂等，其他重放冲突。
 - `SessionAssignment.withCurrent()` 接受 Task 持有的事务句柄，比较完整 assignment fingerprint、active identity 与 source locator。confirmed/delegated 在 Task 写入前后各校验一次，竞争变化会回滚整个 immediate 事务。
 - delegated 调用方只传 parent/session/Run/action locator，标题和正文来自 canonical assignment snapshot。
+- Assignment 使用完整 canonical content digest 命名 blob，并通过 expected version/ref/hash 的 immediate DB CAS 发布；新读取校验完整 digest，旧 `rev-N` 记录按历史 plan hash 只读。
+- 无当前 package locator 时，后续 executable Run 从唯一 active confirmed Assignment 绑定 canonical Task 内容。
+- delegated 绑定失败会把 Assignment、delegation 和 child 推进可审计终态，清除 parent pending fan-in 状态。
+- workflow 新写仅保留最近 50 Runs；被裁剪进度累计到 compact summary，Session Runs 继续保存详细历史。
+- 所有 SessionTask 事务通过同一窄 wrapper 归一化 SQLite busy、locked 和 constraint 错误；普通 Error 原样传播。
 
 ## 验证计划
 
-- 55+ Run 窗口内每个动作的 `run_id` 与实际 Run 一致，窗口外动作不计入当前 progress。
+- 55+ Run 窗口内每个动作的 `run_id` 与实际 Run 一致，窗口外动作只通过 compact summary 计入总体 progress。
 - completed/failed Task 或非 active Revision 的迟到同步不改变数据库。
 - planned 到 real 仅允许一次升级；相同 real 重放幂等，不同 real 或 real 到 planned 被拒绝。
 - confirmed 与 delegated assignment 在竞争替换时无法绑定旧身份。
@@ -53,9 +68,9 @@
 
 ## 验证结果
 
-- Session Task：36 passed
-- Session Runner：62 passed
+- Session Task：42 passed
+- Session Runner：63 passed
 - Session Runs：29 passed
 - Session Delegation：36 passed
-- 合计：163 passed，0 failed
+- 合计：170 passed，0 failed
 - `bun typecheck`：通过

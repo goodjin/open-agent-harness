@@ -73,6 +73,15 @@ describe("SessionRunner", () => {
     })(),
   }) as never
 
+  const poll = async (fn: () => boolean | Promise<boolean>, timeout = 5_000) => {
+    const end = Date.now() + timeout
+    while (Date.now() < end) {
+      if (await fn()) return
+      await Bun.sleep(10)
+    }
+    throw new Error("condition timeout")
+  }
+
   const run = (id: string): AgentProtocol.Result => ({
     type: "agent.protocol.result",
     version: "1",
@@ -1650,11 +1659,8 @@ describe("SessionRunner", () => {
                   },
                 } as never,
               })
-              let questions = await Question.list()
-              for (let i = 0; i < 20 && questions.length === 0; i++) {
-                await Bun.sleep(10)
-                questions = await Question.list()
-              }
+              await poll(async () => (await Question.list()).length > 0)
+              const questions = await Question.list()
               expect(questions).toHaveLength(1)
               const released = Date.now()
               await Question.reply({
@@ -1809,7 +1815,7 @@ describe("SessionRunner", () => {
               } satisfies MessageV2.ToolPart)
 
               expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
-              for (let i = 0; i < 20 && (await Question.list()).length === 0; i++) await Bun.sleep(10)
+              await poll(async () => (await Question.list()).length > 0)
               const questions = await Question.list()
               const logs = await SessionLog.list({ sessionID: session.id })
 
@@ -1895,7 +1901,7 @@ describe("SessionRunner", () => {
               } satisfies MessageV2.ToolPart)
 
               expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
-              for (let i = 0; i < 20 && SessionStatus.get(session.id).type !== "blocked"; i++) await Bun.sleep(10)
+              await poll(() => SessionStatus.get(session.id).type === "blocked")
               const parts = await MessageV2.parts(assistant.id)
 
               expect(
@@ -1999,11 +2005,11 @@ describe("SessionRunner", () => {
               })
 
               expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
-              for (let i = 0; i < 20; i++) {
-                const parts = await MessageV2.parts(assistant.id)
-                if (parts.some((part) => part.type === "text" && part.text.includes("no duplicate child"))) break
-                await Bun.sleep(10)
-              }
+              await poll(async () =>
+                (await MessageV2.parts(assistant.id)).some(
+                  (part) => part.type === "text" && part.text.includes("no duplicate child"),
+                ),
+              )
               const children = await Session.children(session.id)
               const parts = await MessageV2.parts(assistant.id)
 
@@ -3345,11 +3351,8 @@ describe("SessionRunner", () => {
                 } as never,
               })
 
-              let questions = await Question.list()
-              for (let i = 0; i < 20 && questions.length === 0; i++) {
-                await Bun.sleep(10)
-                questions = await Question.list()
-              }
+              await poll(async () => (await Question.list()).length > 0)
+              const questions = await Question.list()
 
               const children = await Session.children(session.id)
               const after = await Session.get(session.id)
@@ -3551,11 +3554,8 @@ describe("SessionRunner", () => {
                 tools: {},
               })
 
-              let questions = await Question.list()
-              for (let i = 0; i < 20 && questions.length === 0; i++) {
-                await Bun.sleep(10)
-                questions = await Question.list()
-              }
+              await poll(async () => (await Question.list()).length > 0)
+              const questions = await Question.list()
 
               expect(questions).toHaveLength(1)
               await Question.reply({
@@ -3731,11 +3731,8 @@ describe("SessionRunner", () => {
                 tools: {},
               })
 
-              let questions = await Question.list()
-              for (let i = 0; i < 20 && questions.length === 0; i++) {
-                await Bun.sleep(10)
-                questions = await Question.list()
-              }
+              await poll(async () => (await Question.list()).length > 0)
+              const questions = await Question.list()
               const logs = await SessionLog.list({ sessionID: session.id })
               const retry = logs.find((item) => item.type === "protocol.retry")
 
@@ -3908,11 +3905,8 @@ describe("SessionRunner", () => {
                 tools: {},
               })
 
-              let questions = await Question.list()
-              for (let i = 0; i < 20 && questions.length === 0; i++) {
-                await Bun.sleep(10)
-                questions = await Question.list()
-              }
+              await poll(async () => (await Question.list()).length > 0)
+              const questions = await Question.list()
 
               expect(questions).toHaveLength(1)
               expect(questions[0]?.questions).toHaveLength(2)
@@ -4466,7 +4460,7 @@ describe("SessionRunner", () => {
               expect(JSON.stringify(protocol?.runs?.[0]?.actions[0])).toContain(
                 "The parent session will resume automatically",
               )
-              for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
+              await poll(() => done >= 2)
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("backend")
               expect(inputs[0]?.model).toEqual({
@@ -4501,6 +4495,121 @@ describe("SessionRunner", () => {
       prompt.mockRestore()
       agent.mockRestore()
       list.mockRestore()
+    }
+  })
+
+  test("compensates delegated child state when task binding fails", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [{ id: "delegate_bind_fail", kind: "agent", target: "backend", prompt: "Delegate work" }],
+    }
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () =>
+      packet(
+        calls++ === 0 ? body : { version: "2", items: [{ id: "answer", kind: "answer", message: "Stopped." }] },
+        `call_bind_fail_${calls}`,
+      ),
+    )
+    const worker = {
+      name: "backend",
+      kind: "worker",
+      capability: { purpose: "implement", tags: [], writes: true },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as const
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) => (name === worker.name ? worker : undefined) as never)
+    const list = spyOn(Agent, "list").mockImplementation(async () => [worker] as never)
+    const bind = spyOn(SessionTask, "beginDelegated").mockRejectedValue(
+      new SessionTask.Conflict("session_task_delegation_assignment_conflict"),
+    )
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "delegate work" }],
+                tools: {},
+              })
+
+              const children = await Session.children(session.id)
+              expect(children).toHaveLength(1)
+              const child = children[0]!
+              const parent = await Session.get(session.id)
+              const protocol = parent.dsl_context?.protocol as
+                | { pending_delegations?: Record<string, unknown>; runs?: { run_id?: string }[] }
+                | undefined
+              const info = await Session.get(child.id)
+              const delegation = info.dsl_context?.protocol as { delegation?: { run_id?: string } } | undefined
+              expect(await SessionAssignment.active(child.id)).toBeUndefined()
+              expect(
+                (
+                  await SessionAssignment.bySource({
+                    sessionID: session.id,
+                    runID: delegation?.delegation?.run_id,
+                    actionID: "delegate_bind_fail",
+                  })
+                )?.status,
+              ).toBe("failed")
+              expect(Object.keys(protocol?.pending_delegations ?? {})).toHaveLength(0)
+              expect(["failed", "error", "aborted"]).toContain(SessionStatus.get(child.id).type)
+              expect(await SessionTask.get(child.id)).toBeUndefined()
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
+      bind.mockRestore()
     }
   })
 
@@ -4692,7 +4801,7 @@ describe("SessionRunner", () => {
                 providerID: ProviderID.make("openai"),
                 modelID: ModelID.make("gpt-5.2"),
               })
-              for (let i = 0; i < 20 && done < 1; i++) await Bun.sleep(10)
+              await poll(() => done >= 1)
               expect(done).toBeGreaterThanOrEqual(1)
             },
           }),
@@ -4941,10 +5050,7 @@ describe("SessionRunner", () => {
                 messages: [{ role: "user", content: "inspect then decide next work" }],
                 tools: {},
               })
-              for (let i = 0; i < 20; i++) {
-                if ((await Session.children(session.id)).length > 0) break
-                await Bun.sleep(10)
-              }
+              await poll(async () => (await Session.children(session.id)).length > 0)
               const children = await Session.children(session.id)
               const messages = await Session.messages({ sessionID: session.id, limit: 10 })
               const text = messages
@@ -5154,7 +5260,7 @@ describe("SessionRunner", () => {
               expect(result).toBe("stop")
               expect(children).toHaveLength(1)
               expect(children[0]?.title).toContain("@general-investigator")
-              for (let i = 0; i < 20 && done < 2; i++) await Bun.sleep(10)
+              await poll(() => done >= 2)
               expect(done).toBeGreaterThanOrEqual(2)
               expect(inputs[0]?.agent).toBe("general-investigator")
               expect(inputs[1]?.agent).toBe("default")
@@ -8283,7 +8389,6 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(protocol?.runs).toBeUndefined()
-              for (let i = 0; i < 20 && done > 0; i++) await Bun.sleep(10)
               expect(done).toBe(0)
             },
           }),

@@ -1,5 +1,5 @@
 import { Identifier } from "@/id/id"
-import { and, Database, desc, eq, ne } from "@/storage/db"
+import { and, Database, desc, eq, inArray } from "@/storage/db"
 import { Storage } from "@/storage/storage"
 import { AssignmentTable, SessionTable } from "./session.sql"
 import type { AgentProtocol } from "@/protocol/schema"
@@ -9,6 +9,13 @@ export namespace SessionAssignment {
   export type Status = "pending" | "running" | "completed" | "failed" | "cancelled" | "superseded"
   export type Source = "confirm" | "delegation"
   export type Result = "completed" | "partial" | "blocked" | "failed" | "waiting_user"
+
+  export class Conflict extends Error {
+    constructor(message = "session_assignment_conflict") {
+      super(message)
+      this.name = "SessionAssignmentConflict"
+    }
+  }
 
   export type Info = {
     id: string
@@ -126,11 +133,33 @@ export namespace SessionAssignment {
       tx
         .select()
         .from(AssignmentTable)
-        .where(and(eq(AssignmentTable.session_id, sessionID), ne(AssignmentTable.status, "superseded")))
+        .where(and(eq(AssignmentTable.session_id, sessionID), inArray(AssignmentTable.status, ["pending", "running"])))
         .orderBy(desc(AssignmentTable.time_updated))
         .get(),
     )
     return row ? from(row) : undefined
+  }
+
+  export async function unique(sessionID: SessionID, source?: Source) {
+    const rows = Database.use((tx) =>
+      tx
+        .select()
+        .from(AssignmentTable)
+        .where(
+          source
+            ? and(
+                eq(AssignmentTable.session_id, sessionID),
+                eq(AssignmentTable.source_type, source),
+                inArray(AssignmentTable.status, ["pending", "running"]),
+              )
+            : and(eq(AssignmentTable.session_id, sessionID), inArray(AssignmentTable.status, ["pending", "running"])),
+        )
+        .orderBy(desc(AssignmentTable.time_updated))
+        .limit(2)
+        .all(),
+    )
+    if (rows.length > 1) return null
+    return rows.length === 1 ? from(rows[0]!) : undefined
   }
 
   export async function bySource(input: { sessionID: SessionID; runID?: string; actionID?: string }) {
@@ -157,7 +186,34 @@ export namespace SessionAssignment {
   export async function content(id: string) {
     const item = await get(id)
     if (!item) return
-    return Storage.read<unknown>(item.content_ref.split("/")).catch(() => undefined)
+    const body = await Storage.read<unknown>(item.content_ref.split("/")).catch(() => undefined)
+    if (!body || typeof body !== "object" || Array.isArray(body)) return
+    const legacy = item.content_ref.split("/").at(-1)?.startsWith("rev-")
+    const plan = "plan" in body && typeof body.plan === "string" ? body.plan : undefined
+    const digest = legacy && plan !== undefined ? hash(plan) : hash(canonical(body))
+    if (digest !== item.content_hash) return
+    return body
+  }
+
+  export function fail(id: string) {
+    return Database.transaction(
+      (tx) => {
+        const current = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, id)).get()
+        if (!current) return
+        if (current.status === "failed") return from(current)
+        const row = tx
+          .update(AssignmentTable)
+          .set({ status: "failed", time_updated: Date.now() })
+          .where(
+            and(eq(AssignmentTable.id, id), inArray(AssignmentTable.status, ["pending", "running"])),
+          )
+          .returning()
+          .get()
+        if (!row) throw new Conflict()
+        return from(row)
+      },
+      { behavior: "immediate" },
+    )
   }
 
   export function withCurrent(
@@ -175,7 +231,7 @@ export namespace SessionAssignment {
     const active = tx
       .select()
       .from(AssignmentTable)
-      .where(and(eq(AssignmentTable.session_id, input.sessionID), ne(AssignmentTable.status, "superseded")))
+      .where(and(eq(AssignmentTable.session_id, input.sessionID), inArray(AssignmentTable.status, ["pending", "running"])))
       .orderBy(desc(AssignmentTable.time_updated))
       .get()
     if (!row || active?.id !== row.id) return
@@ -216,21 +272,8 @@ export namespace SessionAssignment {
   }) {
     const now = Date.now()
     const current = input.id ? await get(input.id) : undefined
-    if (!input.id) {
-      const active = await SessionAssignment.active(input.sessionID)
-      if (active) {
-        Database.use((tx) =>
-          tx
-            .update(AssignmentTable)
-            .set({ status: "superseded", time_updated: now })
-            .where(eq(AssignmentTable.id, active.id))
-            .run(),
-        )
-      }
-    }
     const id = input.id ?? Identifier.ascending("payload").replace(/^payload_/, "assignment_")
     const version = (current?.content_version ?? 0) + 1
-    const ref = ["session_assignment_content", id, `rev-${version}`].join("/")
     const body = {
       type: "assignment.content",
       version: 1,
@@ -247,6 +290,8 @@ export namespace SessionAssignment {
       },
       created_at: now,
     }
+    const digest = hash(canonical(body))
+    const ref = ["session_assignment_content", id, `sha256-${digest}`].join("/")
     await Storage.write(ref.split("/"), body)
     const row = {
       id,
@@ -261,19 +306,47 @@ export namespace SessionAssignment {
       title: input.title,
       status: input.status,
       content_ref: ref,
-      content_hash: hash(input.plan),
+      content_hash: digest,
       content_version: version,
       result_ref: current?.result_ref ?? null,
       result_status: current?.result_status ?? null,
       time_created: current?.time_created ?? now,
       time_updated: now,
     }
-    return from(
-      Database.use((tx) => {
-        const found = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, id)).get()
-        if (found) return tx.update(AssignmentTable).set(row).where(eq(AssignmentTable.id, id)).returning().get()
-        return tx.insert(AssignmentTable).values(row).returning().get()
-      }),
+    return Database.transaction(
+      (tx) => {
+        if (current) {
+          const saved = tx
+            .update(AssignmentTable)
+            .set(row)
+            .where(
+              and(
+                eq(AssignmentTable.id, current.id),
+                eq(AssignmentTable.content_version, current.content_version),
+                eq(AssignmentTable.content_ref, current.content_ref),
+                eq(AssignmentTable.content_hash, current.content_hash),
+              ),
+            )
+            .returning()
+            .get()
+          if (!saved) throw new Conflict()
+          return from(saved)
+        }
+        const active = tx
+          .select({ id: AssignmentTable.id })
+          .from(AssignmentTable)
+          .where(and(eq(AssignmentTable.session_id, input.sessionID), inArray(AssignmentTable.status, ["pending", "running"])))
+          .orderBy(desc(AssignmentTable.time_updated))
+          .get()
+        if (active)
+          tx
+            .update(AssignmentTable)
+            .set({ status: "superseded", time_updated: now })
+            .where(eq(AssignmentTable.id, active.id))
+            .run()
+        return from(tx.insert(AssignmentTable).values(row).returning().get())
+      },
+      { behavior: "immediate" },
     )
   }
 
@@ -316,6 +389,19 @@ export namespace SessionAssignment {
 
   function hash(input: string) {
     return new Bun.CryptoHasher("sha256").update(input).digest("hex")
+  }
+
+  function canonical(input: unknown): string {
+    if (Array.isArray(input)) return `[${input.map(canonical).join(",")}]`
+    if (input && typeof input === "object") {
+      const body = input as Record<string, unknown>
+      return `{${Object.keys(body)
+        .filter((key) => body[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(body[key])}`)
+        .join(",")}}`
+    }
+    return JSON.stringify(input)
   }
 
   function object(input: unknown) {
