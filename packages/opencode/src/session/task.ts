@@ -282,61 +282,66 @@ export namespace SessionTask {
   export async function draft(raw: z.input<typeof Draft>) {
     const input = Draft.parse(raw)
     const now = Date.now()
-    try {
-      return Database.transaction(
-        (tx) => {
-          const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
-          if (!task) throw new Conflict("session_task_missing")
-          const version =
-            (tx
-              .select({ value: max(TaskRevisionTable.version) })
-              .from(TaskRevisionTable)
-              .where(eq(TaskRevisionTable.task_id, input.taskID))
-              .get()?.value ?? 0) + 1
-          const row = tx
-            .insert(TaskRevisionTable)
-            .values({
-              id: `revision_${randomUUID()}`,
-              task_id: input.taskID,
-              version,
-              previous_id: task.current_revision_id,
-              status: "draft",
-              title: input.title,
-              body: input.body,
-              body_hash: hash(input.body),
-              source_message_id: input.messageID ?? null,
-              reason: input.reason ?? null,
-              workflow: { actions: [] },
-              result: null,
-              result_source: null,
-              time_created: now,
-              time_activated: null,
-              time_completed: null,
-              time_archived: null,
-              archive_reason: null,
-            })
-            .returning()
-            .get()
-          const result = Revision.parse(row)
-          Database.effect(() =>
-            TaskDocuments.publish({
-              sessionID: task.session_id,
-              taskID: task.id,
-              version: result.version,
-              title: result.title,
-              body: result.body,
-              current: false,
-            }),
-          )
-          return result
-        },
-        { behavior: "immediate" },
-      )
-    } catch (err) {
-      if (err instanceof Conflict) throw err
-      if (constraint(err) || locked(err)) throw new Conflict("task_revision_conflict")
-      throw err
+    for (const attempt of [0, 1, 2, 3, 4]) {
+      try {
+        return Database.transaction(
+          (tx) => {
+            const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
+            if (!task) throw new Conflict("session_task_missing")
+            const version =
+              (tx
+                .select({ value: max(TaskRevisionTable.version) })
+                .from(TaskRevisionTable)
+                .where(eq(TaskRevisionTable.task_id, input.taskID))
+                .get()?.value ?? 0) + 1
+            const row = tx
+              .insert(TaskRevisionTable)
+              .values({
+                id: `revision_${randomUUID()}`,
+                task_id: input.taskID,
+                version,
+                previous_id: task.current_revision_id,
+                status: "draft",
+                title: input.title,
+                body: input.body,
+                body_hash: hash(input.body),
+                source_message_id: input.messageID ?? null,
+                reason: input.reason ?? null,
+                workflow: { actions: [] },
+                result: null,
+                result_source: null,
+                time_created: now,
+                time_activated: null,
+                time_completed: null,
+                time_archived: null,
+                archive_reason: null,
+              })
+              .returning()
+              .get()
+            const result = Revision.parse(row)
+            Database.effect(() =>
+              TaskDocuments.publish({
+                sessionID: task.session_id,
+                taskID: task.id,
+                version: result.version,
+                title: result.title,
+                body: result.body,
+                current: false,
+              }),
+            )
+            return result
+          },
+          { behavior: "immediate" },
+        )
+      } catch (err) {
+        if (err instanceof Conflict) throw err
+        if (constraint(err)) throw new Conflict("task_revision_constraint")
+        if (!locked(err)) throw err
+        if (attempt === 4) throw new Conflict("task_revision_locked")
+        await Bun.sleep(10 * 2 ** attempt)
+      }
     }
+    throw new Conflict("task_revision_locked")
   }
 
   export async function activate(raw: z.input<typeof Activate>) {

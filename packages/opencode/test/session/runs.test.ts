@@ -167,6 +167,34 @@ describe("session runs", () => {
               result: "Canonical action result",
               result_source: "action_result",
             })
+            const action = {
+              kind: "action_result",
+              role: "worker",
+              action_id: item.action.id,
+              status: "success",
+              result: "Must not leak",
+            }
+            for (const input of [
+              { ...action, kind: undefined },
+              { ...action, role: undefined },
+              { ...action, status: undefined },
+              { ...action, action_id: undefined },
+              { ...action, action_id: "other" },
+            ]) {
+              await SessionResult.put({
+                carrier: "action_result",
+                status: "completed",
+                satisfying: true,
+                sessionID: item.child.id,
+                parentSessionID: item.parent.id,
+                childSessionID: item.child.id,
+                runID: item.run,
+                actionID: item.action.id,
+                raw: { carrier: "action_result", input },
+              })
+              expect(await SessionTask.current(item.child.id)).not.toHaveProperty("result")
+              expect(await SessionTask.current(item.child.id)).not.toHaveProperty("result_source")
+            }
             await SessionResult.put({
               carrier: "fallback_summary",
               status: "partial",
@@ -176,12 +204,35 @@ describe("session runs", () => {
               childSessionID: item.child.id,
               runID: item.run,
               actionID: item.action.id,
-              raw: { output: "Canonical fallback" },
+              raw: {
+                carrier: "fallback_summary",
+                output: "Canonical fallback",
+                metadata: { source: "fallback_summary" },
+              },
             })
             expect(await SessionTask.current(item.child.id)).toMatchObject({
               result: "Canonical fallback",
               result_source: "fallback_summary",
             })
+            for (const raw of [
+              { output: "Must not leak" },
+              { carrier: "fallback_summary", output: "Must not leak", metadata: {} },
+              { carrier: "fallback_summary", output: "", metadata: { source: "fallback_summary" } },
+            ]) {
+              await SessionResult.put({
+                carrier: "fallback_summary",
+                status: "partial",
+                satisfying: true,
+                sessionID: item.child.id,
+                parentSessionID: item.parent.id,
+                childSessionID: item.child.id,
+                runID: item.run,
+                actionID: item.action.id,
+                raw,
+              })
+              expect(await SessionTask.current(item.child.id)).not.toHaveProperty("result")
+              expect(await SessionTask.current(item.child.id)).not.toHaveProperty("result_source")
+            }
             Database.use((db) =>
               db
                 .update(SessionTaskTable)
@@ -260,7 +311,11 @@ describe("session runs", () => {
               {
                 run: "run_fallback_output",
                 carrier: "fallback_summary" as const,
-                raw: { output: "Fallback output" },
+                raw: {
+                  carrier: "fallback_summary",
+                  output: "Fallback output",
+                  metadata: { source: "fallback_summary" },
+                },
                 summary: "Stored fallback summary",
                 expected: "Fallback output",
                 source: "fallback_summary",
@@ -271,8 +326,8 @@ describe("session runs", () => {
                 carrier: "fallback_summary" as const,
                 raw: {},
                 summary: "Stored fallback summary",
-                expected: "Stored fallback summary",
-                source: "fallback_summary",
+                expected: undefined,
+                source: undefined,
                 fallback: true,
               },
               {
@@ -406,7 +461,11 @@ describe("session runs", () => {
               childSessionID: item.child.id,
               runID: item.run,
               actionID: "backend",
-              raw: { output: "Overall delegated result" },
+              raw: {
+                carrier: "fallback_summary",
+                output: "Overall delegated result",
+                metadata: { source: "fallback_summary" },
+              },
             })
             await resultref(item.child.id, item.packet, rec.id)
             const internal = result("run_internal")

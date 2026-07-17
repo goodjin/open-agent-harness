@@ -4,6 +4,7 @@ import z from "zod"
 import { AgentProtocol } from "@/protocol/schema"
 import { Storage } from "@/storage/storage"
 import { Session } from "."
+import { ActionResult } from "./action-result"
 import { SessionAssignment } from "./assignment"
 import { MessageV2 } from "./message-v2"
 import { SessionResult } from "./result"
@@ -56,6 +57,20 @@ export namespace SessionRuns {
       completed_at: z.number().nonnegative(),
     })
     .strict()
+
+  const Action = z
+    .object({
+      input: z.object({ kind: z.literal("action_result") }).passthrough(),
+    })
+    .passthrough()
+
+  const Fallback = z
+    .object({
+      carrier: z.literal("fallback_summary"),
+      output: z.string().trim().min(1),
+      metadata: z.object({ source: z.literal("fallback_summary") }).passthrough(),
+    })
+    .passthrough()
 
   export const Run = AgentProtocol.Result.omit({ status: true, summary: true })
     .extend({
@@ -302,7 +317,7 @@ export namespace SessionRuns {
       found.action_id === item.action_id
         ? found
         : undefined
-    const summary = trusted ? text(summaryof(trusted)) : undefined
+    const summary = trusted ? text(await summaryof(trusted)) : undefined
     const status = trusted ? runstatus(trusted.status) : "running"
     const completed = trusted?.completed_at ?? trusted?.created_at
     return Run.parse({
@@ -334,9 +349,19 @@ export namespace SessionRuns {
     })
   }
 
-  function summaryof(result: SessionResult.Parsed) {
-    if (result.carrier === "action_result") return result.action_result?.result
-    if (result.carrier === "fallback_summary") return result.output ?? result.summary
+  async function summaryof(result: SessionResult.Parsed) {
+    if (result.carrier === "action_result") {
+      const raw = Action.safeParse(await SessionResult.raw(result.id))
+      if (!raw.success) return
+      const action = ActionResult.stored(raw.data.input)
+      if (!action.success || action.data.action_id !== result.action_id) return
+      return action.data.result
+    }
+    if (result.carrier === "fallback_summary") {
+      const raw = Fallback.safeParse(await SessionResult.raw(result.id))
+      if (!raw.success) return
+      return raw.data.output
+    }
     if (result.carrier === "agent_protocol_output")
       return result.protocol_result?.message ?? result.protocol_result?.summary ?? result.output ?? result.summary
     return result.output ?? result.summary

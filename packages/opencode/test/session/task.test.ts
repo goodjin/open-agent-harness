@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { mkdirSync, renameSync, symlinkSync, utimesSync } from "fs"
 import { symlink, unlink } from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -10,7 +11,7 @@ import { SessionRuns } from "../../src/session/runs"
 import { MessageID } from "../../src/session/schema"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
-import { TaskDocuments } from "../../src/session/task-documents"
+import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { Database, eq, sql } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { resetDatabase } from "../fixture/db"
@@ -62,9 +63,10 @@ async function lock(time = 250) {
 type Child = {
   status: "success" | "conflict"
   version?: number
+  error?: string
 }
 
-async function child(op: "create" | "draft", input: Record<string, unknown>) {
+async function child(op: "create" | "draft", input: Record<string, unknown>, gate?: { ready: string; start: string }) {
   const proc = Bun.spawn(
     [
       "bun",
@@ -72,6 +74,11 @@ async function child(op: "create" | "draft", input: Record<string, unknown>) {
       `
         import { SessionTask } from "./src/session/task.ts"
         import { Database } from "./src/storage/db.ts"
+        const gate = process.env.TASK_GATE ? JSON.parse(process.env.TASK_GATE) : undefined
+        if (gate) {
+          await Bun.write(gate.ready, "ready")
+          while (!(await Bun.file(gate.start).exists())) await Bun.sleep(5)
+        }
         const input = JSON.parse(process.env.TASK_INPUT)
         try {
           const result = await SessionTask[process.env.TASK_OP](input)
@@ -81,7 +88,7 @@ async function child(op: "create" | "draft", input: Record<string, unknown>) {
           }))
         } catch (err) {
           if (!(err instanceof SessionTask.Conflict)) throw err
-          console.log("TASK_RESULT:" + JSON.stringify({ status: "conflict" }))
+          console.log("TASK_RESULT:" + JSON.stringify({ status: "conflict", error: err.message }))
         } finally {
           Database.close()
         }
@@ -89,7 +96,12 @@ async function child(op: "create" | "draft", input: Record<string, unknown>) {
     ],
     {
       cwd: path.join(import.meta.dir, "../.."),
-      env: { ...process.env, TASK_OP: op, TASK_INPUT: JSON.stringify(input) },
+      env: {
+        ...process.env,
+        TASK_GATE: gate ? JSON.stringify(gate) : "",
+        TASK_OP: op,
+        TASK_INPUT: JSON.stringify(input),
+      },
       stdout: "pipe",
       stderr: "pipe",
     },
@@ -103,6 +115,56 @@ async function child(op: "create" | "draft", input: Record<string, unknown>) {
   const line = stdout.split("\n").find((item) => item.startsWith("TASK_RESULT:"))
   if (!line) throw new Error(`Missing child result: ${stdout}`)
   return JSON.parse(line.slice("TASK_RESULT:".length)) as Child
+}
+
+async function project(input: Record<string, unknown>, gate?: { ready: string; start: string }) {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { Instance } from "./src/project/instance.ts"
+        import { TaskDocuments } from "./src/session/task-documents.ts"
+        const gate = process.env.TASK_GATE ? JSON.parse(process.env.TASK_GATE) : undefined
+        if (gate) {
+          await Bun.write(gate.ready, "ready")
+          while (!(await Bun.file(gate.start).exists())) await Bun.sleep(5)
+        }
+        const input = JSON.parse(process.env.TASK_INPUT)
+        const result = await Instance.provide({
+          directory: process.env.TASK_PROJECT,
+          fn: () => TaskDocuments.publish(input),
+        })
+        console.log("PROJECT_RESULT:" + JSON.stringify(result))
+      `,
+    ],
+    {
+      cwd: path.join(import.meta.dir, "../.."),
+      env: {
+        ...process.env,
+        TASK_GATE: gate ? JSON.stringify(gate) : "",
+        TASK_INPUT: JSON.stringify(input),
+        TASK_PROJECT: Instance.directory,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (code !== 0) throw new Error(stderr || stdout)
+  return stdout
+}
+
+async function ready(file: string) {
+  for (let count = 0; count < 200; count++) {
+    if (await Bun.file(file).exists()) return
+    await Bun.sleep(5)
+  }
+  throw new Error(`Timed out waiting for ${file}`)
 }
 
 describe("session task", () => {
@@ -370,32 +432,45 @@ describe("session task", () => {
     setup(async () => {
       const session = await Session.create({})
       Database.close()
-      const created = await Promise.all(
-        ["First", "Second"].map((title) =>
-          child("create", {
+      const create = path.join(Instance.directory, "create-start")
+      const creates = ["First", "Second"].map((title, index) =>
+        child(
+          "create",
+          {
             sessionID: session.id,
             title,
             body: `# ${title}\n`,
             source: { type: "user" },
-          }),
+          },
+          { ready: path.join(Instance.directory, `create-ready-${index}`), start: create },
         ),
       )
+      await Promise.all([0, 1].map((index) => ready(path.join(Instance.directory, `create-ready-${index}`))))
+      await Bun.write(create, "go")
+      const created = await Promise.all(creates)
 
       expect(created.map((item) => item.status).sort()).toEqual(["conflict", "success"])
       const task = await SessionTask.get(session.id)
       expect(task?.revision.version).toBe(1)
       Database.close()
 
-      const drafted = await Promise.all(
-        ["Second revision", "Third revision"].map((title) =>
-          child("draft", {
+      const start = path.join(Instance.directory, "draft-start")
+      const drafts = ["Second revision", "Third revision"].map((title, index) =>
+        child(
+          "draft",
+          {
             taskID: task?.task.id,
             title,
             body: `# ${title}\n`,
-          }),
+          },
+          { ready: path.join(Instance.directory, `draft-ready-${index}`), start },
         ),
       )
+      await Promise.all([0, 1].map((index) => ready(path.join(Instance.directory, `draft-ready-${index}`))))
+      await Bun.write(start, "go")
+      const drafted = await Promise.all(drafts)
 
+      expect(drafted.filter((item) => item.status === "conflict")).toEqual([])
       expect(drafted.map((item) => item.status)).toEqual(["success", "success"])
       expect(drafted.map((item) => item.version).sort()).toEqual([2, 3])
     }))
@@ -596,6 +671,135 @@ describe("session task", () => {
       expect((await SessionTask.get(session.id))?.task.id).toBe(saved.task.id)
       expect(await Bun.file(path.join(outside, "keep")).text()).toBe("safe")
       expect(await Bun.file(path.join(outside, "sessions", session.id)).exists()).toBe(false)
+    }))
+
+  test("rejects a task document publish when an ancestor is swapped for a symlink", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Swap-safe task",
+        body: "# Swap-safe task\n",
+        source: { type: "user" },
+      })
+      const root = path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", saved.task.id)
+      const revisions = path.join(root, "revisions")
+      const outside = path.join(Instance.directory, "outside-swap")
+      mkdirSync(path.join(outside, "v2"), { recursive: true })
+
+      const published = Markdown.publish(
+        [".harness", "sessions", session.id, "tasks", saved.task.id],
+        ["revisions", "v2", "task.md"],
+        "# Must stay inside\n",
+        () => {
+          renameSync(revisions, `${revisions}-original`)
+          symlinkSync(outside, revisions)
+        },
+      )
+
+      expect(published).toBe(false)
+      expect(await Bun.file(path.join(outside, "v2", "task.md")).exists()).toBe(false)
+    }))
+
+  test("rebuilds the manifest from the current database revision across processes", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Original task",
+        body: "# Original task\n",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Current task",
+        body: "# Current task\n",
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      const gate = {
+        ready: path.join(Instance.directory, "old-ready"),
+        start: path.join(Instance.directory, "old-start"),
+      }
+      const old = project(
+        {
+          sessionID: session.id,
+          taskID: first.task.id,
+          version: 1,
+          title: first.revision.title,
+          body: first.revision.body,
+          current: true,
+        },
+        gate,
+      )
+      await ready(gate.ready)
+      await project({
+        sessionID: session.id,
+        taskID: first.task.id,
+        version: 2,
+        title: draft.title,
+        body: draft.body,
+        current: true,
+      })
+      await Bun.write(gate.start, "go")
+      await old
+
+      const manifest = await Bun.file(
+        path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", first.task.id, "manifest.md"),
+      ).text()
+      expect(manifest).toContain("Current revision: v2")
+      expect(manifest).not.toContain("Current revision: v1")
+      expect(
+        await Bun.file(
+          path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", `${first.task.id}.manifest.lock`),
+        ).exists(),
+      ).toBe(false)
+    }))
+
+  test("bounds manifest lock waits and safely recovers a stale lock", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Locked manifest",
+        body: "# Locked manifest\n",
+        source: { type: "user" },
+      })
+      const lock = path.join(
+        Instance.directory,
+        ".harness",
+        "sessions",
+        session.id,
+        "tasks",
+        `${saved.task.id}.manifest.lock`,
+      )
+      mkdirSync(lock)
+      const start = Date.now()
+      expect(
+        TaskDocuments.publish({
+          sessionID: session.id,
+          taskID: saved.task.id,
+          version: 1,
+          title: saved.revision.title,
+          body: saved.revision.body,
+          current: true,
+        }),
+      ).toBe(false)
+      expect(Date.now() - start).toBeGreaterThanOrEqual(1_800)
+      expect(Date.now() - start).toBeLessThan(3_000)
+
+      const stale = new Date(Date.now() - 31_000)
+      utimesSync(lock, stale, stale)
+      expect(
+        TaskDocuments.publish({
+          sessionID: session.id,
+          taskID: saved.task.id,
+          version: 1,
+          title: saved.revision.title,
+          body: saved.revision.body,
+          current: true,
+        }),
+      ).toBe(true)
+      expect(await Bun.file(lock).exists()).toBe(false)
     }))
 
   test("projects zero, one, and multiple legacy runs without merging", () =>

@@ -1,5 +1,17 @@
 import path from "path"
-import { constants, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs"
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "fs"
 import { lstat, open, realpath } from "fs/promises"
 import z from "zod"
 import { Instance } from "@/project/instance"
@@ -65,29 +77,61 @@ export namespace Markdown {
     })().finally(() => handle.close())
   }
 
-  export function publish(root: string[], parts: string[], body: string) {
+  export function publish(root: string[], parts: string[], body: string, probe?: () => void) {
     if ([...root, ...parts].some((part) => !segment(part))) return false
     try {
       const dirs = [...root, ...parts.slice(0, -1)]
-      dirs.reduce((base, part) => {
+      const paths = dirs.reduce<string[]>((out, part) => {
+        const base = out.at(-1) ?? Instance.directory
         const dir = path.join(base, part)
         if (!lstatSync(dir, { throwIfNoEntry: false })) mkdirSync(dir, { recursive: true })
-        const stat = lstatSync(dir)
-        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error("unsafe_markdown_directory")
-        return dir
-      }, Instance.directory)
+        return [...out, dir]
+      }, [])
+      const saved = snapshot(paths)
+      probe?.()
+      if (!stable(saved)) return false
       const file = [...root, ...parts].reduce((base, part) => path.join(base, part), Instance.directory)
       const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`
+      const fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+      const opened = fstatSync(fd)
       try {
-        writeFileSync(tmp, body, { encoding: "utf8", flag: "wx" })
+        writeFileSync(fd, body, { encoding: "utf8" })
+        fsyncSync(fd)
+        if (!stable(saved) || !same(tmp, opened)) return false
         renameSync(tmp, file)
       } finally {
-        rmSync(tmp, { force: true })
+        closeSync(fd)
+        if (same(tmp, opened)) rmSync(tmp, { force: true })
       }
       return true
     } catch {
       return false
     }
+  }
+
+  function snapshot(paths: string[]) {
+    const root = realpathSync(Instance.directory)
+    return paths.map((dir) => {
+      const stat = lstatSync(dir)
+      const real = realpathSync(dir)
+      const rel = path.relative(Instance.directory, dir)
+      if (!stat.isDirectory() || stat.isSymbolicLink() || real !== path.join(root, rel))
+        throw new Error("unsafe_markdown_directory")
+      return { dir, dev: stat.dev, ino: stat.ino, real }
+    })
+  }
+
+  function stable(saved: ReturnType<typeof snapshot>) {
+    return saved.every((item) => {
+      const stat = lstatSync(item.dir, { throwIfNoEntry: false })
+      if (!stat?.isDirectory() || stat.isSymbolicLink()) return false
+      return stat.dev === item.dev && stat.ino === item.ino && realpathSync(item.dir) === item.real
+    })
+  }
+
+  function same(file: string, opened: ReturnType<typeof fstatSync>) {
+    const stat = lstatSync(file, { throwIfNoEntry: false })
+    return !!stat?.isFile() && !stat.isSymbolicLink() && stat.dev === opened.dev && stat.ino === opened.ino
   }
 }
 
@@ -117,15 +161,7 @@ export namespace TaskDocuments {
     const root = [".harness", "sessions", input.sessionID, "tasks", input.taskID]
     const saved = Markdown.publish(root, ["revisions", `v${input.version}`, "task.md"], input.body)
     if (!saved || !input.current) return saved
-    const manifest = [
-      `# ${input.title}`,
-      "",
-      `Current revision: v${input.version}`,
-      "",
-      `Revision document: revisions/v${input.version}/task.md`,
-      "",
-    ].join("\n")
-    return Markdown.publish(root, ["manifest.md"], manifest) && saved
+    return manifest(input.sessionID, input.taskID, root) && saved
   }
 
   export async function read(sessionID: SessionID, taskID: string, version: unknown) {
@@ -158,5 +194,64 @@ export namespace TaskDocuments {
 
   function hash(input: string) {
     return new Bun.CryptoHasher("sha256").update(input).digest("hex")
+  }
+
+  function manifest(sessionID: SessionID, taskID: string, root: string[]) {
+    const lock = root.reduce((base, part) => path.join(base, part), Instance.directory) + ".manifest.lock"
+    const owner = acquire(lock)
+    if (!owner) return false
+    try {
+      const row = Database.use((db) =>
+        db
+          .select({ title: TaskRevisionTable.title, version: TaskRevisionTable.version })
+          .from(SessionTaskTable)
+          .innerJoin(TaskRevisionTable, eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id))
+          .where(and(eq(SessionTaskTable.session_id, sessionID), eq(SessionTaskTable.id, taskID)))
+          .get(),
+      )
+      if (!row) return false
+      return Markdown.publish(
+        root,
+        ["manifest.md"],
+        [
+          `# ${row.title}`,
+          "",
+          `Current revision: v${row.version}`,
+          "",
+          `Revision document: revisions/v${row.version}/task.md`,
+          "",
+        ].join("\n"),
+      )
+    } finally {
+      const stat = lstatSync(lock, { throwIfNoEntry: false })
+      if (stat?.isDirectory() && !stat.isSymbolicLink() && stat.dev === owner.dev && stat.ino === owner.ino)
+        rmSync(lock, { recursive: true, force: true })
+    }
+  }
+
+  function acquire(lock: string) {
+    const deadline = Date.now() + 2_000
+    while (Date.now() < deadline) {
+      try {
+        mkdirSync(lock)
+        const stat = lstatSync(lock)
+        if (stat.isDirectory() && !stat.isSymbolicLink()) return stat
+        return
+      } catch (err) {
+        const parsed = z.object({ code: z.string() }).safeParse(err)
+        if (!parsed.success || parsed.data.code !== "EEXIST") return
+        const stat = lstatSync(lock, { throwIfNoEntry: false })
+        if (!stat?.isDirectory() || stat.isSymbolicLink()) return
+        if (Date.now() - stat.mtimeMs > 30_000) {
+          const stale = `${lock}.stale.${process.pid}.${crypto.randomUUID()}`
+          try {
+            renameSync(lock, stale)
+            rmSync(stale, { recursive: true, force: true })
+            continue
+          } catch {}
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
+      }
+    }
   }
 }
