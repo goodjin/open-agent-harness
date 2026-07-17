@@ -1,8 +1,6 @@
 import path from "path"
-import { constants } from "fs"
-import { lstat, open, realpath } from "fs/promises"
+import { lstat } from "fs/promises"
 import z from "zod"
-import { Instance } from "@/project/instance"
 import { AgentProtocol } from "@/protocol/schema"
 import { Storage } from "@/storage/storage"
 import { Session } from "."
@@ -11,11 +9,10 @@ import { MessageV2 } from "./message-v2"
 import { SessionResult } from "./result"
 import { SessionID } from "./schema"
 import { SessionTurn } from "./turn"
+import { Markdown } from "./task-documents"
 
 export namespace SessionRuns {
   const kinds = ["requirements", "designs", "plans", "reviews"] as const
-  const ids = /^[A-Za-z0-9._-]+$/
-
   export const ID = z.string().regex(/^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/)
 
   export const Document = z
@@ -97,11 +94,9 @@ export namespace SessionRuns {
     if (!runs.length && !projected.length && !delegated) return []
     const ids = new Set([...runs.map((run) => run.run_id), ...projected.map((run) => run.runID)])
     const outcomes = new Map(
-      (
-        await Promise.all(
-          [...ids].map(async (id) => [id, await readoutcome(sessionID, id)] as const),
-        )
-      ).flatMap(([id, outcome]) => (outcome ? ([[id, outcome]] as const) : [])),
+      (await Promise.all([...ids].map(async (id) => [id, await readoutcome(sessionID, id)] as const))).flatMap(
+        ([id, outcome]) => (outcome ? ([[id, outcome]] as const) : []),
+      ),
     )
     const old = [...ids].some((id) => !outcomes.has(id))
       ? await history(sessionID)
@@ -166,9 +161,9 @@ export namespace SessionRuns {
         const rel = path.relative(dir, file).split(path.sep).join("/")
         const type = kind(rel)
         if (!type) return
-        const safe = await secure(dir, rel.split("/"))
+        const safe = await Markdown.target(parts(sessionID, runID), rel.split("/"))
         if (!safe) return
-        const stat = await lstat(safe).catch(() => undefined)
+        const stat = await lstat(safe.file).catch(() => undefined)
         if (!stat?.isFile() || stat.isSymbolicLink()) return
         return Document.parse({
           path: rel,
@@ -186,14 +181,17 @@ export namespace SessionRuns {
   }
 
   export async function read(sessionID: SessionID, runID: string, rel: string) {
-    const file = await target(sessionID, runID, rel)
-    if (!file) return
-    const stat = await lstat(file).catch(() => undefined)
-    if (!stat?.isFile() || stat.isSymbolicLink()) return
+    if (!rel || path.posix.isAbsolute(rel) || rel.includes("\\")) return
+    const paths = rel.split("/")
+    if (paths.some((part) => !part || part === "." || part === "..")) return
     const type = kind(rel)
     if (!type) return
-    const body = await content(sessionID, runID, file)
+    const body = await Markdown.read(parts(sessionID, runID), paths)
     if (body === undefined) return
+    const dir = await root(sessionID, runID)
+    if (!dir) return
+    const stat = await lstat(path.join(dir, ...paths)).catch(() => undefined)
+    if (!stat?.isFile() || stat.isSymbolicLink()) return
     return Content.parse({
       document: {
         path: rel,
@@ -208,32 +206,8 @@ export namespace SessionRuns {
   }
 
   async function root(sessionID: SessionID, runID: string) {
-    if (!segment(sessionID) || !ID.safeParse(runID).success) return
-    const dir = await secure(Instance.directory, [".harness", "sessions", sessionID, "runs", runID])
-    const stat = dir ? await lstat(dir).catch(() => undefined) : undefined
-    if (!stat?.isDirectory()) return
-    return dir
-  }
-
-  async function target(sessionID: SessionID, runID: string, rel: string) {
-    const dir = await root(sessionID, runID)
-    if (!dir || !rel || path.posix.isAbsolute(rel) || rel.includes("\\")) return
-    const parts = rel.split("/")
-    if (parts.some((part) => !part || part === "." || part === "..")) return
-    if (!kind(rel)) return
-    return secure(dir, parts)
-  }
-
-  async function secure(dir: string, parts: string[]) {
-    if (parts.some((part) => !segment(part))) return
-    const out = parts.reduce((file, part) => path.join(file, part), dir)
-    const stats = await Promise.all(
-      parts.map((_, index) =>
-        lstat(parts.slice(0, index + 1).reduce((file, part) => path.join(file, part), dir)).catch(() => undefined),
-      ),
-    )
-    if (stats.some((stat) => !stat || stat.isSymbolicLink())) return
-    return out
+    if (!Markdown.segment(sessionID) || !ID.safeParse(runID).success) return
+    return Markdown.directory(parts(sessionID, runID))
   }
 
   function kind(rel: string): Document["type"] | undefined {
@@ -243,33 +217,8 @@ export namespace SessionRuns {
     return type as (typeof kinds)[number]
   }
 
-  function segment(value: string) {
-    return ids.test(value) && value !== "." && value !== ".."
-  }
-
-  async function content(sessionID: SessionID, runID: string, file: string) {
-    const dir = await root(sessionID, runID)
-    if (!dir) return
-    const project = await realpath(Instance.directory).catch(() => undefined)
-    const base = await realpath(dir).catch(() => undefined)
-    const target = await realpath(file).catch(() => undefined)
-    if (!project || !base || !target) return
-    if (base !== path.join(project, ".harness", "sessions", sessionID, "runs", runID)) return
-    if (!target.startsWith(base + path.sep)) return
-
-    const handle = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => undefined)
-    if (!handle) return
-    const body = await (async () => {
-      const opened = await handle.stat().catch(() => undefined)
-      const expected = await lstat(target).catch(() => undefined)
-      const current = await realpath(file).catch(() => undefined)
-      const currentBase = await realpath(dir).catch(() => undefined)
-      if (!opened?.isFile() || !expected?.isFile()) return
-      if (opened.dev !== expected.dev || opened.ino !== expected.ino) return
-      if (current !== target || currentBase !== base) return
-      return handle.readFile({ encoding: "utf8" })
-    })().finally(() => handle.close())
-    return body
+  function parts(sessionID: SessionID, runID: string) {
+    return [".harness", "sessions", sessionID, "runs", runID]
   }
 
   function projections(session: Session.Info) {

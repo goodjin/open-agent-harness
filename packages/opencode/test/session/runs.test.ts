@@ -12,7 +12,8 @@ import { MessageV2 } from "../../src/session/message-v2"
 import { SessionResult } from "../../src/session/result"
 import { SessionRuns } from "../../src/session/runs"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
-import { AssignmentTable, PartTable } from "../../src/session/session.sql"
+import { AssignmentTable, PartTable, SessionTaskTable, TaskRevisionTable } from "../../src/session/session.sql"
+import { SessionTask } from "../../src/session/task"
 import { Database, eq } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { tmpdir } from "../fixture/fixture"
@@ -109,6 +110,101 @@ describe("session runs", () => {
               documents: [],
             })
             expect((await SessionRuns.list(item.child.id))[0]).toEqual(saved!)
+          },
+        }),
+    })
+  })
+
+  test("maps only canonical action and fallback results from the current delegated task source", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_delegation_result"),
+          fn: async () => {
+            const item = await delegation("run_task_delegation", "Implement backend")
+            const task = await SessionTask.create({
+              sessionID: item.child.id,
+              title: "Backend task",
+              body: "# Backend task\n",
+              source: {
+                type: "delegation",
+                sessionID: item.parent.id,
+                actionID: item.action.id,
+                runID: item.run,
+              },
+            })
+            Database.use((db) =>
+              db
+                .update(TaskRevisionTable)
+                .set({ workflow: { actions: [], run_id: item.run } })
+                .where(eq(TaskRevisionTable.id, task.revision.id))
+                .run(),
+            )
+            const rec = await SessionResult.put({
+              carrier: "action_result",
+              status: "completed",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: item.action.id,
+              raw: {
+                input: {
+                  kind: "action_result",
+                  role: "worker",
+                  action_id: item.action.id,
+                  status: "success",
+                  result: "Canonical action result",
+                },
+              },
+            })
+            await resultref(item.child.id, item.packet, rec.id)
+
+            expect(await SessionTask.current(item.child.id)).toMatchObject({
+              result: "Canonical action result",
+              result_source: "action_result",
+            })
+            await SessionResult.put({
+              carrier: "fallback_summary",
+              status: "partial",
+              satisfying: true,
+              sessionID: item.child.id,
+              parentSessionID: item.parent.id,
+              childSessionID: item.child.id,
+              runID: item.run,
+              actionID: item.action.id,
+              raw: { output: "Canonical fallback" },
+            })
+            expect(await SessionTask.current(item.child.id)).toMatchObject({
+              result: "Canonical fallback",
+              result_source: "fallback_summary",
+            })
+            Database.use((db) =>
+              db
+                .update(SessionTaskTable)
+                .set({ source_ref: { sessionID: item.parent.id, actionID: item.action.id, runID: "run_other" } })
+                .where(eq(SessionTaskTable.id, task.task.id))
+                .run(),
+            )
+            expect((await SessionTask.current(item.child.id))?.result).toBeUndefined()
+            Database.use((db) =>
+              db
+                .update(SessionTaskTable)
+                .set({ source_ref: { sessionID: item.parent.id, actionID: item.action.id, runID: item.run } })
+                .where(eq(SessionTaskTable.id, task.task.id))
+                .run(),
+            )
+            Database.use((db) =>
+              db
+                .update(TaskRevisionTable)
+                .set({ workflow: { actions: [], run_id: "run_old" } })
+                .where(eq(TaskRevisionTable.id, task.revision.id))
+                .run(),
+            )
+            expect((await SessionTask.current(item.child.id))?.result).toBeUndefined()
           },
         }),
     })
@@ -388,7 +484,8 @@ describe("session runs", () => {
                 db
                   .update(AssignmentTable)
                   .set({
-                    [field]: field === "session_id" ? item.parent.id : field === "source_session_id" ? item.child.id : "other",
+                    [field]:
+                      field === "session_id" ? item.parent.id : field === "source_session_id" ? item.child.id : "other",
                   })
                   .where(eq(AssignmentTable.id, assignment!.id))
                   .run(),

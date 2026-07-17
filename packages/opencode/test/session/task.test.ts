@@ -1,13 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { symlink, unlink } from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
+import { AgentProtocol } from "../../src/protocol/schema"
 import { Session } from "../../src/session"
+import { SessionRuns } from "../../src/session/runs"
 import { MessageID } from "../../src/session/schema"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
+import { TaskDocuments } from "../../src/session/task-documents"
 import { Database, eq, sql } from "../../src/storage/db"
+import { Storage } from "../../src/storage/storage"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
@@ -438,4 +443,211 @@ describe("session task", () => {
         Object.defineProperty(Database, "transaction", { configurable: true, value: transaction })
       }
     }))
+
+  test("reads only the current revision and loads archived bodies on demand", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Original task",
+        body: "# Original task\n",
+        source: { type: "user" },
+      })
+      const run = protocol("run_current_task", "Current task")
+      await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+      await SessionRuns.finish({
+        sessionID: session.id,
+        runID: run.run_id,
+        summary: "Final model synthesis",
+        messageID: "msg_current_task",
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Current task",
+        body: "# Current task\n",
+      })
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ workflow: { actions: [], run_id: run.run_id } })
+          .where(eq(TaskRevisionTable.id, draft.id))
+          .run(),
+      )
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+
+      const current = await SessionTask.current(session.id)
+      expect(current?.body).toContain("Current task")
+      expect(current?.result).toBe("Final model synthesis")
+      expect(current?.result_source).toBe("protocol")
+      expect(current?.progress).toEqual({ completed: 0, total: 0 })
+      expect(current?.handoffs).toEqual([])
+      expect((await SessionTask.history(session.id))[0]).toMatchObject({ version: 1, status: "archived" })
+      expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("body")
+      expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("workflow")
+      expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("result")
+      expect((await SessionTask.revision(session.id, 1))?.body).toContain("Original task")
+    }))
+
+  test("does not reuse a result from an archived revision", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Original task",
+        body: "# Original task\n",
+        source: { type: "user" },
+      })
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ result: "Old result", result_source: "protocol" })
+          .where(eq(TaskRevisionTable.id, first.revision.id))
+          .run(),
+      )
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Current task",
+        body: "# Current task\n",
+      })
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ workflow: { actions: [{ id: "incomplete" }] } })
+          .where(eq(TaskRevisionTable.id, draft.id))
+          .run(),
+      )
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+
+      expect((await SessionTask.current(session.id))?.result).toBeUndefined()
+      expect((await SessionTask.current(session.id))?.actions).toEqual([])
+      expect((await SessionTask.revision(session.id, 1))?.result).toBe("Old result")
+      expect((await SessionTask.revision(session.id, 2))?.workflow.actions).toEqual([])
+    }))
+
+  test("publishes markdown projections and reports drift without changing the database", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Documented task",
+        body: "# Documented task\n\nTrusted body.\n",
+        source: { type: "user" },
+      })
+      const read = await TaskDocuments.read(session.id, saved.task.id, 1)
+      expect(read?.body).toContain("Trusted body")
+      expect(read?.drifted).toBe(false)
+      const file = path.join(
+        Instance.directory,
+        ".harness",
+        "sessions",
+        session.id,
+        "tasks",
+        saved.task.id,
+        "revisions",
+        "v1",
+        "task.md",
+      )
+      const root = path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", saved.task.id)
+      const manifest = path.join(root, "manifest.md")
+      const before = await Bun.file(manifest).text()
+      const blocked = path.join(Instance.directory, "blocked")
+      await Bun.write(path.join(blocked, "keep"), "safe")
+      await symlink(blocked, path.join(root, "revisions", "v2"))
+      expect(
+        TaskDocuments.publish({
+          sessionID: session.id,
+          taskID: saved.task.id,
+          version: 2,
+          title: "Unsafe projection",
+          body: "# Unsafe projection\n",
+          current: true,
+        }),
+      ).toBe(false)
+      expect(await Bun.file(manifest).text()).toBe(before)
+      await Bun.write(file, "# Drifted\n")
+      expect(await TaskDocuments.read(session.id, saved.task.id, 1)).toMatchObject({
+        body: "# Drifted\n",
+        drifted: true,
+      })
+      expect((await SessionTask.revision(session.id, 1))?.body).toContain("Trusted body")
+      expect(await Array.fromAsync(new Bun.Glob("*.tmp").scan({ cwd: path.dirname(file), absolute: true }))).toEqual([])
+      const outside = path.join(Instance.directory, "outside.md")
+      await Bun.write(outside, "# Secret\n")
+      await unlink(file)
+      await symlink(outside, file)
+      expect(await TaskDocuments.read(session.id, saved.task.id, 1)).toBeUndefined()
+      expect(await TaskDocuments.read(session.id, saved.task.id, "../1")).toBeUndefined()
+    }))
+
+  test("keeps the database commit when a projection path is unsafe", () =>
+    setup(async () => {
+      const outside = path.join(Instance.directory, "outside")
+      await Bun.write(path.join(outside, "keep"), "safe")
+      await symlink(outside, path.join(Instance.directory, ".harness"))
+      const session = await Session.create({})
+
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Authoritative task",
+        body: "# Authoritative task\n",
+        source: { type: "user" },
+      })
+
+      expect((await SessionTask.get(session.id))?.task.id).toBe(saved.task.id)
+      expect(await Bun.file(path.join(outside, "keep")).text()).toBe("safe")
+      expect(await Bun.file(path.join(outside, "sessions", session.id)).exists()).toBe(false)
+    }))
+
+  test("projects zero, one, and multiple legacy runs without merging", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      expect(await SessionTask.legacy(session.id)).toBeUndefined()
+      const run = protocol("run_legacy_one", "Legacy task")
+      await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+      await SessionRuns.finish({
+        sessionID: session.id,
+        runID: run.run_id,
+        summary: "Legacy result",
+        messageID: "msg_legacy",
+      })
+      expect(await SessionTask.legacy(session.id)).toMatchObject({
+        type: "legacy_task",
+        version: 1,
+        title: "Legacy task",
+        result: "Legacy result",
+        result_source: "protocol",
+        handoffs: [],
+        time: {
+          created: run.time.started,
+          updated: run.time.completed,
+          completed: run.time.completed,
+        },
+      })
+      await Storage.write(["session_protocol_run", session.id, "run_legacy_two"], {
+        ...run,
+        run_id: "run_legacy_two",
+      })
+      expect(await SessionTask.legacy(session.id)).toEqual({ type: "legacy_multi_run", count: 2 })
+    }))
 })
+
+function protocol(id: string, title: string) {
+  return AgentProtocol.Result.parse({
+    type: "agent.protocol.result",
+    version: "1",
+    run_id: id,
+    status: "completed",
+    title,
+    actions: [],
+    summary: "Execution summary",
+    time: { started: Date.now(), completed: Date.now() },
+    metrics: {
+      actions: 0,
+      internal_tool_calls: 0,
+      direct_model_tool_calls: 0,
+      model_visible_bytes: 0,
+      raw_output_bytes: 0,
+      duration_ms: 0,
+    },
+  })
+}
