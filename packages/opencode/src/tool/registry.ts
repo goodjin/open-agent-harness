@@ -9,6 +9,8 @@ import { ReadTool } from "./read"
 import { TaskTool } from "./task"
 import { TodoWriteTool, TodoReadTool } from "./todo"
 import { WorkflowCreateTool, WorkflowStartTool } from "./workflow"
+import { TaskInspectTool } from "./task-inspect"
+import { SessionControlTool } from "./session-control"
 import { AgentCreateTool, AgentGenerateTool, AgentQueryTool, AgentSaveTool } from "./agent"
 import { WebFetchTool } from "./webfetch"
 import { WriteTool } from "./write"
@@ -122,6 +124,8 @@ export namespace ToolRegistry {
       TodoWriteTool,
       WorkflowCreateTool,
       WorkflowStartTool,
+      TaskInspectTool,
+      SessionControlTool,
       // TodoReadTool,
       WebSearchTool,
       CodeSearchTool,

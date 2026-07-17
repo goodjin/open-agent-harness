@@ -6,6 +6,16 @@ import { Instance } from "../../src/project/instance"
 import { ToolRegistry } from "../../src/tool/registry"
 
 describe("tool.registry", () => {
+  test("registers controlled task revision tools", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        expect(await ToolRegistry.ids()).toEqual(expect.arrayContaining(["task_inspect", "session_control"]))
+      },
+    })
+  })
+
   test("loads tools from .opencode/tool (singular)", async () => {
     await using tmp = await tmpdir({
       init: async (dir) => {

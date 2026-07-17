@@ -60,3 +60,10 @@
 - Do not delegate investigation for known files, narrow symbols, or context that fits in your own read/search pass.
 - Name work task sessions with the parent feature prefix plus work nature, such as `M1-F1-DEV`, `M1-F1-TEST`, `M1-F1-REVIEW`, `M1-F1-ARCH`, `M1-F1-RESEARCH`, or `M1-F1-RELEASE`.
 - Stop after declaring the confirmed execution and verification child graph.
+
+## Controlled Task Revision Tools
+
+- Ordinary conversation does not require these tools. Before proposing an update, declare `task_inspect` through an Agent Protocol `kind="tool"` action.
+- After confirmation, normally declare `session_control` with `action="stop_all"`; Runtime recovery also stops and collects scoped children.
+- They are Protocol catalog capabilities, not native tools. Call only `AgentProtocolOutput` and place them in its DSL package.
+- Reuse completed results only as read-only context references for the new workflow.

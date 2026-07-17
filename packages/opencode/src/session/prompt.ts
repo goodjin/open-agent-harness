@@ -1648,6 +1648,15 @@ export namespace SessionPrompt {
 
     const parts = await Promise.all(
       input.parts.map(async (part): Promise<Draft<MessageV2.Part>[]> => {
+        if (
+          part.type === "text" &&
+          input.metadata?.internal !== true &&
+          (part.metadata?.kind === "task_update_proposal" || part.metadata?.kind === "task_update_progress")
+        ) {
+          const metadata = { ...part.metadata }
+          delete metadata.kind
+          return [{ ...part, metadata, messageID: info.id, sessionID: input.sessionID }]
+        }
         if (part.type === "file") {
           // before checking the protocol we check if this is an mcp resource because it needs special handling
           if (part.source?.type === "resource") {

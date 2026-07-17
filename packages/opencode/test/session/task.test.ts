@@ -421,6 +421,77 @@ describe("session task", () => {
       })
     }))
 
+  test("freezes the active revision when a confirmed update creates its draft", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_update_freeze_seed",
+        legacy: { title: "Original task", body: "Original plan" },
+        actions: [{ id: "original" }],
+      })
+      if (first.type !== "execute") throw new Error("task missing")
+
+      const update = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_update_freeze",
+        assignment: { op: "update", target: "self", title: "Updated task", body: "Updated plan" },
+        actions: [{ id: "replacement" }],
+      })
+
+      expect(update).toMatchObject({ type: "update", revision: { status: "draft", previous_id: first.revision.id } })
+      expect((await SessionTask.get(session.id))?.task.status).toBe("revising")
+      expect((await SessionTask.get(session.id))?.revision.id).toBe(first.revision.id)
+      await expect(
+        SessionTask.sync({ sessionID: session.id, runID: "run_update_freeze_seed", actions: [] }),
+      ).rejects.toThrow("session_task_stale_run")
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_late_old_revision",
+          actions: [{ id: "must_not_attach" }],
+        }),
+      ).rejects.toThrow("session_task_revision_frozen")
+    }))
+
+  test("allows only controlled revision tools while revising without mutating the old workflow", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_controlled_seed",
+        legacy: { title: "Original", body: "Original" },
+        actions: [{ id: "old" }],
+      })
+      if (first.type !== "execute") throw new Error("task missing")
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_controlled_update",
+        assignment: { op: "update", target: "self", title: "Revised", body: "Revised" },
+        actions: [{ id: "new" }],
+      })
+      const controlled = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_controlled_tool",
+        actions: [
+          {
+            id: "inspect",
+            executor: { type: "tool", target: "task_inspect" },
+            operation: "inspect",
+          },
+        ],
+      })
+      expect(controlled.type).toBe("execute")
+      expect((await SessionTask.get(session.id))?.revision.workflow).toEqual(first.revision.workflow)
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_forbidden_tool",
+          actions: [{ id: "read", executor: { type: "tool", target: "read" } }],
+        }),
+      ).rejects.toThrow("session_task_revision_frozen")
+    }))
+
   test("aggregates real actions across registered runs without losing prior progress", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -1152,18 +1223,16 @@ describe("session task", () => {
       Database.use((tx) =>
         tx.update(TaskRevisionTable).set({ workflow: flow }).where(eq(TaskRevisionTable.id, result.revision.id)).run(),
       )
-      const replay = await SessionTask.confirmed({
-        sessionID: session.id,
-        runID: "run_confirm_update_consumed",
-        actionIDs: [action.id],
-        actions: [],
-        legacy: { title: "Unsafe", body: "Unsafe" },
-        requiresAssignment: true,
-      })
-      expect(replay.type).toBe("replay")
-      expect(replay.type === "replay" ? replay.revision.id : undefined).toBe(
-        result.type === "update" ? result.revision.id : undefined,
-      )
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_confirm_update_consumed",
+          actionIDs: [action.id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_not_current")
     }))
 
   test("replays identical update drafts by their exact assignment identity", () =>
@@ -1209,7 +1278,9 @@ describe("session task", () => {
         return { assignment, result }
       }
       const first = await confirm("confirm_identity_first", "run_identity_first")
-      const second = await confirm("confirm_identity_second", "run_identity_second")
+      await expect(confirm("confirm_identity_second", "run_identity_second")).rejects.toThrow(
+        "session_task_update_in_progress",
+      )
 
       const replay = async (id: string, run: string) =>
         SessionTask.confirmed({
@@ -1221,18 +1292,15 @@ describe("session task", () => {
           requiresAssignment: true,
         })
       const old = await replay("confirm_identity_first", "run_identity_first")
-      const latest = await replay("confirm_identity_second", "run_identity_second")
       const again = await replay("confirm_identity_first", "run_identity_first")
 
       expect(first.result.revision.workflow.assignment_id).toBe(first.assignment.id)
-      expect(second.result.revision.workflow.assignment_id).toBe(second.assignment.id)
       expect(old.type === "replay" ? old.revision.id : undefined).toBe(first.result.revision.id)
-      expect(latest.type === "replay" ? latest.revision.id : undefined).toBe(second.result.revision.id)
       expect(again.type === "replay" ? again.revision.id : undefined).toBe(first.result.revision.id)
-      expect((await SessionTask.revision(session.id, 4))).toBeUndefined()
+      expect((await SessionTask.revision(session.id, 3))).toBeUndefined()
 
       Database.use((tx) =>
-        [first.result.revision, second.result.revision].forEach((revision) => {
+        [first.result.revision].forEach((revision) => {
           const flow = { ...revision.workflow }
           delete flow.assignment_id
           flow.run_id = "run_identity_first"

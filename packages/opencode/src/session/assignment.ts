@@ -1,7 +1,7 @@
 import { Identifier } from "@/id/id"
 import { and, Database, desc, eq, inArray } from "@/storage/db"
 import { Storage } from "@/storage/storage"
-import { AssignmentTable, SessionTable } from "./session.sql"
+import { AssignmentTable, SessionTable, SessionTaskTable } from "./session.sql"
 import type { AgentProtocol } from "@/protocol/schema"
 import type { MessageID, SessionID } from "./schema"
 
@@ -105,6 +105,11 @@ export namespace SessionAssignment {
     runID: string
     sessionID: SessionID
   }) {
+    const task = Database.use((tx) =>
+      tx.select({ status: SessionTaskTable.status }).from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get(),
+    )
+    if (task?.status === "revising" || task?.status === "blocked")
+      throw new Conflict("session_task_revision_frozen")
     const prev = await bySource({
       sessionID: input.sessionID,
       runID: input.runID,

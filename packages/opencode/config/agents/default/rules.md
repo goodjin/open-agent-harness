@@ -275,3 +275,10 @@ When a task is larger than this, delegate the next planning layer or split it in
 - Milestone sessions use `M` plus a number, such as `M1 Runtime Foundations`.
 - Feature sessions use the parent milestone prefix plus `F` and a number, such as `M1-F1 Agent catalog`.
 - Work task sessions use the parent feature prefix plus work nature, such as `M1-F1-DEV Schema update`, `M1-F1-TEST Regression coverage`, `M1-F1-REVIEW Technical review`, `M1-F1-ARCH Architecture decision`, `M1-F1-RESEARCH Context gathering`, or `M1-F1-RELEASE Release prep`.
+
+## Controlled Task Revision Tools
+
+- Ordinary conversation does not require these tools. Before proposing an update, declare `task_inspect` through an Agent Protocol `kind="tool"` action.
+- After confirmation, normally declare `session_control` with `action="stop_all"`; Runtime recovery also stops and collects scoped children.
+- They are Protocol catalog capabilities, not native tools. Call only `AgentProtocolOutput` and place them in its DSL package.
+- Reuse completed results only as read-only context references for the new workflow.

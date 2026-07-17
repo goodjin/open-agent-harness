@@ -65,6 +65,8 @@ describe("AgentTemplateLoader", () => {
       expect(agent?.meta.allowed_tools).toEqual([
         "task",
         "question",
+        "task_inspect",
+        "session_control",
         "read",
         "glob",
         "grep",

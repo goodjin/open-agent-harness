@@ -101,6 +101,8 @@
       "allow": [
         "task",
         "question",
+        "task_inspect",
+        "session_control",
         "filesystem.read",
         "code.search"
       ],
@@ -168,6 +170,8 @@
   "allowed_tools": [
     "task",
     "question",
+    "task_inspect",
+    "session_control",
     "read",
     "glob",
     "grep",

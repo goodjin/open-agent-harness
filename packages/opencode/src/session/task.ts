@@ -4,10 +4,12 @@ import z from "zod"
 import { AgentProtocol } from "@/protocol/schema"
 import { and, Database, desc, eq, inArray, max } from "@/storage/db"
 import { MessageID, SessionID } from "./schema"
-import { SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
+import { AssignmentTable, SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
 import type { SessionRuns } from "./runs"
 import { TaskDocuments } from "./task-documents"
 import { SessionAssignment } from "./assignment"
+import { SessionStatus } from "./status"
+import { SessionResult } from "./result"
 
 export namespace SessionTask {
   export const Status = z.enum(["running", "waiting_user", "revising", "blocked", "completed", "failed"])
@@ -189,7 +191,9 @@ export namespace SessionTask {
       messageID: MessageID.zod.optional(),
     })
     .strict()
-  const Activate = z.object({ taskID: z.string().min(1), revisionID: z.string().min(1) }).strict()
+  const Activate = z
+    .object({ taskID: z.string().min(1), revisionID: z.string().min(1), bootstrap: z.boolean().optional() })
+    .strict()
   const Route = z
     .object({
       sessionID: SessionID.zod,
@@ -366,7 +370,11 @@ export namespace SessionTask {
           )
           .orderBy(desc(TaskRevisionTable.version))
           .all()
-        const revision = bound(revisions, input.assignment)
+        const revision = bound(
+          revisions,
+          input.assignment,
+          input.assignment.content_ref.split("/").at(-1)?.startsWith("rev-") === true,
+        )
         if (
           !revision ||
           (input.op === "create" && revision.previous_id !== null) ||
@@ -463,6 +471,9 @@ export namespace SessionTask {
           if (input.assignment?.op === "create") throw new Conflict()
           if (input.assignment?.op === "handoff") return { type: "handoff" as const, task: Task.parse(task) }
           if (input.assignment?.op === "update") {
+            if (task.status === "revising" || task.status === "blocked")
+              throw new Conflict("session_task_update_in_progress")
+            if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
             if (!input.runID) throw new Conflict("session_task_run_required")
             const version =
               (tx
@@ -494,8 +505,25 @@ export namespace SessionTask {
               })
               .returning()
               .get()
-            return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
+            const frozen = tx
+              .update(SessionTaskTable)
+              .set({ status: "revising", time_updated: now })
+              .where(
+                and(
+                  eq(SessionTaskTable.id, task.id),
+                  eq(SessionTaskTable.current_revision_id, current.id),
+                  inArray(SessionTaskTable.status, ["running", "waiting_user"]),
+                ),
+              )
+              .returning()
+              .get()
+            if (!frozen) throw new Conflict("session_task_revision_frozen")
+            return { type: "update" as const, task: Task.parse(frozen), revision: Revision.parse(revision) }
           }
+          if ((task.status === "revising" || task.status === "blocked") && orchestration(input.actions))
+            return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
+          if (task.status === "revising" || task.status === "blocked")
+            throw new Conflict("session_task_revision_frozen")
           if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
           if (!input.runID)
             return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
@@ -619,7 +647,7 @@ export namespace SessionTask {
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
-        if (task.status !== "running" && task.status !== "waiting_user" && task.status !== "revising")
+        if (task.status !== "running" && task.status !== "waiting_user")
           throw new Conflict("session_task_stale_run")
         const revision = tx
           .select()
@@ -828,6 +856,94 @@ export namespace SessionTask {
     return Stored.parse({ task, revision })
   }
 
+  export async function inspect(sessionID: SessionID, include: "summary" | "workflow" | "results" = "summary") {
+    const stored = await get(sessionID)
+    if (!stored) return
+    const base = {
+      task: {
+        id: stored.task.id,
+        title: stored.task.title,
+        status: stored.task.status,
+        session_id: stored.task.session_id,
+      },
+      revision: {
+        id: stored.revision.id,
+        version: stored.revision.version,
+        status: stored.revision.status,
+        title: stored.revision.title,
+      },
+    }
+    if (include === "summary") return base
+    if (include === "workflow")
+      return { ...base, body: stored.revision.body, workflow: Workflow.parse(stored.revision.workflow) }
+    const children = await scope(sessionID)
+    const results = await SessionResult.listForParent(sessionID)
+    const ids = new Set(children.map((item) => item.session_id))
+    return {
+      ...base,
+      results: results
+        .filter((item) => item.child_session_id && ids.has(item.child_session_id))
+        .map((item) => ({
+          id: item.id,
+          child_session_id: item.child_session_id,
+          run_id: item.run_id,
+          action_id: item.action_id,
+          status: item.status,
+          reusable: item.satisfying,
+          summary: item.summary,
+        })),
+    }
+  }
+
+  export async function scope(sessionID: SessionID) {
+    const stored = await get(sessionID)
+    if (!stored) return []
+    const revisions = Database.use((tx) =>
+      tx
+        .select()
+        .from(TaskRevisionTable)
+        .where(
+          and(eq(TaskRevisionTable.task_id, stored.task.id), inArray(TaskRevisionTable.status, ["active", "draft"])),
+        )
+        .all(),
+    ).map((item) => Revision.parse(item))
+    const parents = revisions.flatMap((item) => {
+      const id = Workflow.parse(item.workflow).assignment_id
+      return id ? [id] : []
+    })
+    const actions = new Map(
+      revisions.flatMap((item) =>
+        Workflow.parse(item.workflow).actions.flatMap((raw) => {
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+          const action = raw as { id?: unknown; run_id?: unknown }
+          if (typeof action.id !== "string" || typeof action.run_id !== "string") return []
+          return [[`${action.run_id}:${action.id}`, true] as const]
+        }),
+      ),
+    )
+    const rows = Database.use((tx) =>
+      tx.select().from(AssignmentTable).where(eq(AssignmentTable.source_session_id, sessionID)).all(),
+    )
+    const results = await SessionResult.listForParent(sessionID)
+    return rows
+      .filter((item) => {
+        if (item.source_type !== "delegation") return false
+        if (item.parent_id && !parents.includes(item.parent_id)) return false
+        if (!item.source_run_id || !item.source_action_id) return false
+        return actions.has(`${item.source_run_id}:${item.source_action_id}`)
+      })
+      .map((item) => ({
+        session_id: item.session_id,
+        assignment_id: item.id,
+        run_id: item.source_run_id!,
+        action_id: item.source_action_id!,
+        status: SessionStatus.get(item.session_id),
+        reusable: results.some(
+          (result) => result.child_session_id === item.session_id && result.satisfying,
+        ),
+      }))
+  }
+
   export async function draft(raw: z.input<typeof Draft>) {
     const input = Draft.parse(raw)
     const now = Date.now()
@@ -947,6 +1063,35 @@ export namespace SessionTask {
             .returning({ id: SessionTaskTable.id })
             .get()
           if (!updated) throw new Conflict()
+          if (input.bootstrap) {
+            const key = `task_revision_bootstrap:${revision.id}`
+            const found = tx
+              .select({ id: SessionEventOutboxTable.id })
+              .from(SessionEventOutboxTable)
+              .where(eq(SessionEventOutboxTable.dedupe_key, key))
+              .get()
+            if (!found)
+              tx.insert(SessionEventOutboxTable)
+                .values({
+                  id: `outbox_${randomUUID()}`,
+                  session_id: task.session_id,
+                  target_session_id: task.session_id,
+                  kind: "task_revision_bootstrap",
+                  dedupe_key: key,
+                  status: "pending",
+                  payload: {
+                    task_id: updated.id,
+                    revision_id: revision.id,
+                    message_id: MessageID.ascending(),
+                  },
+                  created_at: now,
+                  updated_at: now,
+                  delivered_at: null,
+                  acked_at: null,
+                  error: null,
+                })
+                .run()
+          }
           const result = Revision.parse(revision)
           Database.effect(() =>
             TaskDocuments.publish({
@@ -1162,9 +1307,14 @@ export namespace SessionTask {
     return { actions: tagged(actions, runID), ...assignment, run_id: runID, run_ids: [runID] }
   }
 
-  function bound(revisions: (typeof TaskRevisionTable.$inferSelect)[], assignment: SessionAssignment.Info) {
+  function bound(
+    revisions: (typeof TaskRevisionTable.$inferSelect)[],
+    assignment: SessionAssignment.Info,
+    compatible: boolean,
+  ) {
     const exact = revisions.find((item) => Workflow.parse(item.workflow).assignment_id === assignment.id)
     if (exact) return exact
+    if (!compatible) return
     const legacy = revisions.filter((item) => {
       const flow = Workflow.parse(item.workflow)
       const message = assignment.source_message_id && item.source_message_id === assignment.source_message_id
@@ -1282,6 +1432,16 @@ export namespace SessionTask {
 
   function real(item: unknown) {
     return TaskAction.safeParse(item).success || AgentProtocol.ResultAction.safeParse(item).success
+  }
+
+  function orchestration(actions: unknown[]) {
+    if (actions.length === 0) return false
+    return actions.every((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false
+      const item = raw as { executor?: { type?: unknown; target?: unknown } }
+      if (item.executor?.type !== "tool") return false
+      return item.executor.target === "task_inspect" || item.executor.target === "session_control"
+    })
   }
 
   function transact<T>(fn: (tx: Database.TxOrDb) => T, config?: { behavior?: "deferred" | "immediate" | "exclusive" }) {

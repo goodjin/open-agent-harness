@@ -73,6 +73,16 @@ const MAP: Record<string, string[]> = {
     "Create a hidden protocol-delegable agent with a required kind and user-facing identity/persona names.",
     "Use for planner-created specialists when existing visible agents are not specific enough.",
   ],
+  task_inspect: [
+    "Inspect the Task bound to the current session.",
+    "Use summary for compact state, workflow for the current body and action graph, and results for reusable child results.",
+    "Use before proposing a Task update; ordinary conversation does not require inspection.",
+  ],
+  session_control: [
+    "List or stop delegated child sessions belonging to the current Task revision update scope.",
+    "Targets outside that scope are rejected by Runtime.",
+    "After a Task update is confirmed, stop_all is normally appropriate before the new revision is activated.",
+  ],
 }
 
 export namespace ProtocolToolCatalog {

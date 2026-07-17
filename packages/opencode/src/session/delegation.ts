@@ -41,6 +41,7 @@ export namespace SessionDelegation {
   export type QueryStatus = "pending" | Status
   type SubmitMode = "cancel_without_result" | "terminate_with_result"
   type CloseOpts = {
+    childIDs?: SessionID[]
     mode?: SubmitMode
     reason?: string
   }
@@ -458,6 +459,21 @@ export namespace SessionDelegation {
       mode: "cancel_without_result",
       reason: input.reason,
     })
+  }
+
+  export async function stop(input: {
+    childIDs: SessionID[]
+    reason?: string
+    runID: string
+    sessionID: SessionID
+  }) {
+    if (input.childIDs.length === 0) return []
+    await close(input.sessionID, input.runID, {
+      childIDs: input.childIDs,
+      mode: "terminate_with_result",
+      reason: input.reason,
+    })
+    return query({ sessionID: input.sessionID })
   }
 
   export async function fallbackPreview(input: { sessionID: SessionID }) {
@@ -1718,6 +1734,7 @@ export namespace SessionDelegation {
     const rows = Object.entries(object(protocol.pending_delegations))
       .map(([id, item]) => ({ id: SessionID.make(id), item: object(item) as Item }))
       .filter((entry) => entry.item.run_id === runID)
+      .filter((entry) => !opts?.childIDs || opts.childIDs.includes(entry.id))
     const list = await Promise.all(rows.map(async (row) => ({ ...row, done: await delivered(row.item) })))
     const entries = list.filter(
       (entry) => entry.done || mode !== undefined || closable(SessionStatus.get(entry.id)),

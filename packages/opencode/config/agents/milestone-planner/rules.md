@@ -52,3 +52,10 @@
 - Delegate to `general-investigator` only when the milestone needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
 - Do not delegate investigation for known files, narrow symbols, or context that fits in your own read/search pass.
 - Stop after declaring the confirmed feature child graph.
+
+## Controlled Task Revision Tools
+
+- Ordinary conversation does not require these tools. Before proposing an update, declare `task_inspect` through an Agent Protocol `kind="tool"` action.
+- After confirmation, normally declare `session_control` with `action="stop_all"`; Runtime recovery also stops and collects scoped children.
+- They are Protocol catalog capabilities, not native tools. Call only `AgentProtocolOutput` and place them in its DSL package.
+- Reuse completed results only as read-only context references for the new workflow.

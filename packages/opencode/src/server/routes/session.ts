@@ -47,6 +47,8 @@ function external(input: SessionPrompt.PromptInput["metadata"]) {
   delete metadata.source
   delete metadata.run_id
   delete metadata.turn
+  delete metadata.task_update_proposal
+  delete metadata.task_update_progress
   return metadata
 }
 

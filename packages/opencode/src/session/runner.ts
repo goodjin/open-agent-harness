@@ -1517,7 +1517,7 @@ export namespace SessionRunner {
   }) {
     const confirms = input.actions.filter((item) => item.operation === "confirm" && item.executor.type === "human")
     const title = input.declaration.title ?? "Session task"
-    return SessionTask.confirmed({
+    const result = await SessionTask.confirmed({
       sessionID: input.sessionID,
       runID: input.runID,
       messageID: input.messageID,
@@ -1529,6 +1529,30 @@ export namespace SessionRunner {
       legacy: { title, body: input.declaration.message ?? title },
       actions: input.actions,
     })
+    if (result.type === "update") {
+      const scope = await SessionTask.scope(input.sessionID)
+      await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: input.messageID,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "Task update entered revision shutdown and recovery.",
+        synthetic: true,
+        ignored: true,
+        metadata: {
+          kind: "task_update_progress",
+          proposal_id: `${input.runID}:${confirms[0]?.id ?? "update"}`,
+          assignment_id: result.revision.workflow.assignment_id,
+          draft_revision_id: result.revision.id,
+          old_revision_id: result.revision.previous_id,
+          affected_child_ids: scope.map((item) => item.session_id),
+          reusable_result_refs: scope.filter((item) => item.reusable).map((item) => item.session_id),
+          status: "revising",
+        },
+        time: { start: Date.now(), end: Date.now() },
+      })
+    }
+    return result
   }
 
   function cancelled(
@@ -3318,6 +3342,32 @@ export namespace SessionRunner {
     const data = object(input.action.input)
     const plan = typeof data.plan === "string" ? data.plan : ""
     const prompt = typeof data.prompt === "string" ? data.prompt : "Please confirm this plan before execution."
+    const intent = object(data.assignment)
+    if (intent.op === "update") {
+      const task = await SessionTask.get(input.sessionID)
+      const scope = await SessionTask.scope(input.sessionID)
+      if (task)
+        await Session.updatePart({
+          id: PartID.ascending(),
+          messageID: input.messageID,
+          sessionID: input.sessionID,
+          type: "text",
+          text: "Task update proposal",
+          synthetic: true,
+          ignored: true,
+          metadata: {
+            kind: "task_update_proposal",
+            proposal_id: `${input.runID}:${input.action.id}`,
+            draft_revision_id: null,
+            old_revision_id: task.revision.id,
+            difference_summary: input.action.title,
+            affected_child_ids: scope.map((item) => item.session_id),
+            reusable_result_refs: scope.filter((item) => item.reusable).map((item) => item.session_id),
+            status: "pending",
+          },
+          time: { start: Date.now(), end: Date.now() },
+        })
+    }
     await storeConfirm({
       action: input.action,
       messageID: input.messageID,

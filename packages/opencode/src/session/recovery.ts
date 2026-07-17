@@ -7,6 +7,7 @@ import { SessionLog } from "./log"
 import { MessageV2 } from "./message-v2"
 import { SessionStatus } from "./status"
 import type { MessageID, PartID, SessionID } from "./schema"
+import { SessionTaskRecovery } from "./task-recovery"
 
 export namespace SessionRecovery {
   const error = "Tool call interrupted by process restart before finish/error was recorded."
@@ -138,6 +139,7 @@ export namespace SessionRecovery {
   }
 
   export async function mark(input?: { directory?: string; limit?: number }) {
+    await SessionTaskRecovery.scan()
     const packets = await detect(input)
     const now = Date.now()
     for (const packet of packets) {

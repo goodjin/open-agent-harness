@@ -1143,6 +1143,120 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner executes only controlled tools while a task revision is frozen", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      return packet(
+        calls === 1
+          ? { version: "2", items: [{ id: "inspect", kind: "tool", target: "task_inspect", args: {} }] }
+          : {
+              version: "2",
+              items: [
+                {
+                  id: "done",
+                  kind: "success",
+                  answer: "Task inspected.",
+                  summary: "Controlled inspection completed.",
+                  changed_files: [],
+                },
+              ],
+            },
+        `call_revision_control_${calls}`,
+      )
+    })
+    let tools = 0
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_runner_revision_seed",
+                legacy: { title: "Original", body: "Original" },
+                actions: [{ id: "old" }],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_runner_revision_update",
+                assignment: { op: "update", target: "self", title: "Revised", body: "Revised" },
+                actions: [{ id: "new" }],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              expect(
+                await runner.process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: { name: "protocol-runner", runner: "protocol" } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [{ role: "user", content: "inspect the frozen revision" }],
+                  tools: {},
+                  runtimeTools: {
+                    catalog: [{ id: "task_inspect", description: "Inspect task", schema: { type: "object" } }],
+                    prompt: "# Available Protocol Tools\n\n## task_inspect",
+                    execute: async (id: string) => {
+                      tools++
+                      expect(id).toBe("task_inspect")
+                      return { title: "Task", output: "revision summary", metadata: {} }
+                    },
+                  } as never,
+                }),
+              ).toBe("stop")
+              expect(tools).toBe(1)
+              expect((await SessionTask.get(session.id))?.task.status).toBe("revising")
+              expect((await SessionTask.get(session.id))?.revision.workflow).toEqual(first.revision.workflow)
+              expect(await Session.children(session.id)).toHaveLength(0)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+    }
+  })
+
   test("protocol runner executes native AgentProtocolOutput tool calls", async () => {
     await using tmp = await tmpdir()
     const model = {

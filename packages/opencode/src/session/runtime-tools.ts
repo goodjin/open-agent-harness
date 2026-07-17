@@ -465,7 +465,14 @@ export namespace RuntimeTools {
   }
 
   function sessionTool(id: string) {
-    return id === "delegation_status" || id === "session_tree" || id === "session_result" || id === "session_continue"
+    return (
+      id === "delegation_status" ||
+      id === "session_tree" ||
+      id === "session_result" ||
+      id === "session_continue" ||
+      id === "task_inspect" ||
+      id === "session_control"
+    )
   }
 
   async function agents(agent: Agent.Info) {

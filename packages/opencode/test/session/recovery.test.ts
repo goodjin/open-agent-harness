@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -7,6 +7,9 @@ import { Session } from "../../src/session"
 import { SessionLog } from "../../src/session/log"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionRecovery } from "../../src/session/recovery"
+import { SessionTaskRecovery } from "../../src/session/task-recovery"
+import { SessionTask } from "../../src/session/task"
+import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
 import { Log } from "../../src/util/log"
@@ -20,6 +23,54 @@ afterEach(async () => {
 })
 
 describe("session recovery", () => {
+  test("activates a confirmed task update once and starts it from durable bootstrap", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const calls: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation(((input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls.push(input)
+      return Promise.resolve(undefined)
+    }) as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_recovery"),
+            fn: async () => {
+              const session = await Session.create({ agent: "default" })
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_revision_seed",
+                legacy: { title: "Original", body: "Original plan" },
+                actions: [],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              const update = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_revision_update",
+                assignment: { op: "update", target: "self", title: "Revised", body: "Revised plan" },
+                actions: [{ id: "new_work", title: "New work" }],
+              })
+              if (update.type !== "update") throw new Error("draft missing")
+
+              expect(await SessionTaskRecovery.resume(session.id)).toBe(true)
+              expect(await SessionTaskRecovery.resume(session.id)).toBe(true)
+              expect((await SessionTask.get(session.id))?.revision.id).toBe(update.revision.id)
+              expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+              expect(calls).toHaveLength(1)
+              expect(calls[0]?.metadata).toMatchObject({
+                internal: true,
+                source: "task_revision_bootstrap",
+                revision_id: update.revision.id,
+              })
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("marks stale running tools and records recovery packet", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
