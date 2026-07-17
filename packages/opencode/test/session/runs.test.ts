@@ -1133,6 +1133,41 @@ describe("session runs", () => {
     })
   })
 
+  test("does not expose transcript recovery as a current task result", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_no_transcript_result"),
+          fn: async () => {
+            const session = await Session.create({})
+            const run = result("run_task_no_transcript")
+            await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+            const task = await SessionTask.create({
+              sessionID: session.id,
+              title: "Trusted result only",
+              body: "# Trusted result only\n",
+              source: { type: "user" },
+            })
+            Database.use((db) =>
+              db
+                .update(TaskRevisionTable)
+                .set({ workflow: { actions: [], run_id: run.run_id } })
+                .where(eq(TaskRevisionTable.id, task.revision.id))
+                .run(),
+            )
+            await reply(session.id, run.run_id, "Transcript-only result", "turn")
+
+            expect((await SessionRuns.get(session.id, run.run_id))?.summary).toBe("Transcript-only result")
+            expect(await SessionTask.current(session.id)).not.toHaveProperty("result")
+            expect(await SessionTask.current(session.id)).not.toHaveProperty("result_source")
+            expect(await SessionTask.legacy(session.id)).not.toHaveProperty("result")
+          },
+        }),
+    })
+  })
+
   test("rejects traversal, absolute paths, non-markdown files, and symlinks", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

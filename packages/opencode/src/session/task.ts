@@ -462,7 +462,7 @@ export namespace SessionTask {
     if (!stored) return
     const { SessionRuns } = await import("./runs")
     const run = stored.revision.workflow.run_id
-      ? await SessionRuns.get(sessionID, stored.revision.workflow.run_id)
+      ? await SessionRuns.persisted(sessionID, stored.revision.workflow.run_id)
       : undefined
     const trusted = valid(stored.task, run)
     const actions = trusted?.actions ?? workflow(stored.revision.workflow)
@@ -524,7 +524,7 @@ export namespace SessionTask {
 
   export async function legacy(sessionID: SessionID) {
     const { SessionRuns } = await import("./runs")
-    const runs = await SessionRuns.list(sessionID)
+    const runs = await SessionRuns.persistedList(sessionID)
     if (!runs.length) return
     if (runs.length > 1) return { type: "legacy_multi_run" as const, count: runs.length }
     const run = runs[0]!

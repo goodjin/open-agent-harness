@@ -84,6 +84,14 @@ export namespace SessionRuns {
     .passthrough()
 
   export async function list(sessionID: SessionID) {
+    return all(sessionID, true, true)
+  }
+
+  export async function persistedList(sessionID: SessionID) {
+    return all(sessionID, false, false)
+  }
+
+  async function all(sessionID: SessionID, recover: boolean, docs: boolean) {
     const keys = await Storage.list(["session_protocol_run", sessionID])
     const runs = await Promise.all(
       keys.map((key) => Storage.read<AgentProtocol.Result>(key).then(AgentProtocol.Result.parse)),
@@ -98,17 +106,23 @@ export namespace SessionRuns {
         ([id, outcome]) => (outcome ? ([[id, outcome]] as const) : []),
       ),
     )
-    const old = [...ids].some((id) => !outcomes.has(id))
-      ? await history(sessionID)
-      : new Map<string, { summary: string; source: "protocol" }>()
+    const old =
+      recover && [...ids].some((id) => !outcomes.has(id))
+        ? await history(sessionID)
+        : new Map<string, { summary: string; source: "protocol" }>()
     const by = new Map(projected.map((run) => [run.runID, run]))
     const saved = await Promise.all(
-      runs.map((run) => map(sessionID, run, outcomes.get(run.run_id), by.get(run.run_id), old.get(run.run_id), true)),
+      runs.map((run) =>
+        map(sessionID, run, outcomes.get(run.run_id), by.get(run.run_id), old.get(run.run_id), true, docs),
+      ),
     )
     const out = new Map(saved.map((run) => [run.run_id, run]))
     for (const run of projected) {
       if (out.has(run.runID)) continue
-      out.set(run.runID, await map(sessionID, projection(run), outcomes.get(run.runID), run, old.get(run.runID)))
+      out.set(
+        run.runID,
+        await map(sessionID, projection(run), outcomes.get(run.runID), run, old.get(run.runID), false, docs),
+      )
     }
     if (delegated) out.set(delegated.run_id, delegated)
     return [...out.values()].sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id))
@@ -128,6 +142,21 @@ export namespace SessionRuns {
     const old = outcome ? undefined : (await history(sessionID, runID)).get(runID)
     if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, old, true)
     if (projected) return map(sessionID, projection(projected), outcome, projected, old)
+  }
+
+  export async function persisted(sessionID: SessionID, runID: string) {
+    if (!ID.safeParse(runID).success) return
+    const session = await Session.get(sessionID)
+    const delegated = await delegation(session, runID)
+    if (delegated?.run_id === runID) return delegated
+    const stored = await Storage.read<AgentProtocol.Result>(["session_protocol_run", sessionID, runID]).catch(
+      () => undefined,
+    )
+    const projected = projections(session).find((item) => item.runID === runID)
+    if (!stored && !projected) return
+    const outcome = await readoutcome(sessionID, runID)
+    if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, undefined, true, false)
+    if (projected) return map(sessionID, projection(projected), outcome, projected, undefined, false, false)
   }
 
   export async function finish(input: { sessionID: SessionID; runID: string; summary: string; messageID: string }) {
@@ -342,6 +371,7 @@ export namespace SessionRuns {
     projected?: z.infer<typeof Projection>,
     old?: { summary: string; source: z.infer<typeof Source> },
     saved = false,
+    docs = true,
   ) {
     const actions = projected
       ? projected.actions.map((item) => {
@@ -366,7 +396,7 @@ export namespace SessionRuns {
       summary_source: outcome ? "protocol" : old?.source,
       execution_summary: run.summary || undefined,
       fallback: false,
-      documents: await documents(sessionID, run.run_id),
+      documents: docs ? await documents(sessionID, run.run_id) : [],
     })
   }
 
