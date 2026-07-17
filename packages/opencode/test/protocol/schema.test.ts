@@ -257,6 +257,9 @@ describe("agent protocol schema", () => {
     expect("kind" in AgentProtocol.OutputSchema.properties).toBe(false)
     expect("calls" in AgentProtocol.OutputSchema.properties).toBe(false)
     expect(AgentProtocol.OutputSchema.required).toEqual(["version", "items"])
+    const assignment = AgentProtocol.OutputSchema.properties.items.items.properties.assignment
+    expect(assignment.properties.op.enum).toEqual(["create", "update", "handoff"])
+    expect(assignment.properties.target.enum).toEqual(["self", "peer"])
   })
 
   test("accepts v2 confirm item and maps it to a human confirmation action", () => {
@@ -318,6 +321,74 @@ describe("agent protocol schema", () => {
           target: "self",
         },
       },
+    })
+  })
+
+  test("accepts create and update assignments for the current session task", () => {
+    ;["create", "update"].forEach((op) => {
+      const out = AgentProtocol.parse({
+        version: "2",
+        items: [
+          {
+            id: `confirm_${op}`,
+            kind: "confirm",
+            prompt: `Confirm the ${op} proposal.`,
+            plan: `# ${op} task\n`,
+            assignment: { op },
+          },
+        ],
+      })
+
+      expect(out.payload.type).toBe("action_graph")
+      if (out.payload.type !== "action_graph") return
+      expect(out.payload.actions[0]?.input).toMatchObject({ assignment: { op, target: "self" } })
+    })
+  })
+
+  test("accepts handoff assignment for a peer session", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        {
+          id: "confirm_handoff",
+          kind: "confirm",
+          prompt: "Create a peer task session?",
+          plan: "# New task\n",
+          assignment: { op: "handoff", target: "peer" },
+        },
+      ],
+    })
+
+    expect(out.payload.type).toBe("action_graph")
+    if (out.payload.type !== "action_graph") return
+    expect(out.payload.actions[0]?.input).toMatchObject({
+      assignment: { op: "handoff", target: "peer" },
+    })
+  })
+
+  test("rejects assignment operation and target combinations outside the task contract", () => {
+    ;[
+      { op: "handoff", target: "self" },
+      { op: "handoff" },
+      { op: "create", target: "peer" },
+      { op: "update", target: "peer" },
+      { op: "replace", target: "self" },
+      { op: "create", target: "self", extra: true },
+    ].forEach((assignment) => {
+      expect(() =>
+        AgentProtocol.parse({
+          version: "2",
+          items: [
+            {
+              id: "confirm_assignment",
+              kind: "confirm",
+              prompt: "Confirm the task proposal.",
+              plan: "# Task proposal\n",
+              assignment,
+            },
+          ],
+        }),
+      ).toThrow()
     })
   })
 

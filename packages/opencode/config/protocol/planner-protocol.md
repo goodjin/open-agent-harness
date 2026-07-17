@@ -30,7 +30,7 @@ Do not wrap the package inside `input`. Do not stringify the package into one fi
 - `tool`: call a listed runtime tool with `{ id, kind, target, args, depends, result }`.
 - `agent`: delegate to a listed agent with `{ id, kind, target, prompt, capabilities, depends, verification, result }`.
 - `input`: ask the user to choose an option, provide text, or fill a form with `{ id, kind, prompt, mode, options, fields }`.
-- `confirm`: ask the user to approve a plan with `{ id, kind, prompt, plan, assignment, depends, result }`. Use `assignment` only when the approved plan should create or update the session assignment.
+- `confirm`: ask the user to approve a plan with `{ id, kind, prompt, plan, assignment, depends, result }`. Use `assignment` only when the approved plan should create, update, or hand off the session Task.
 - `answer`: provide user-visible Markdown with `{ id, kind, message }`.
 - `done`: stop without additional user-visible content with `{ id, kind, message }`.
 - `success`: declare a completed task result with `{ id, kind, message, summary, changed_files }`.
@@ -88,10 +88,27 @@ Planner agents must follow this order:
 1. Understand the initial task.
 2. Ask questions or delegate read-only exploration when the intent, context, constraints, risks, or task boundaries are not clear enough.
 3. After the intent is clear and the execution plan is designed, emit a `confirm` item whose `plan` is the full assignment content for final user approval.
-4. For direct user-originated execution work, include `assignment: { "op": "create", "target": "self" }` on that final confirmation. Do not use assignment confirmation merely to explore or clarify.
-5. In the same package, emit executable `agent` or `tool` items. They do not need to depend on the `confirm` item; the runtime gates the package automatically.
+4. Choose `assignment` from Session Task Admission below. Do not use assignment confirmation merely to explore, clarify, discuss a plan, report progress, or review results.
+5. A create or update confirmation may share a package with executable `agent` or `tool` items; the runtime gates that package automatically. A handoff confirmation has no source-session executable actions for the new Task.
 
 After the user confirms, the runtime automatically executes the remaining items from the persisted package.
+
+## Session Task Admission
+
+Ordinary conversation does not create or modify a Task. Explanations, clarification, progress questions, plan discussion, and result review need no `assignment` when the package has no executable action. Do not mechanically perform request admission for every message.
+
+Before preparing executable actions, read and follow Current Session Task from the supplied session context or runtime observations:
+
+- When no Task exists and the current request is the session's first execution task, propose `assignment={"op":"create","target":"self"}`.
+- When the request still serves the same Task without changing its content, scope, acceptance, or workflow boundary, continue the current Revision without creating a second Task. Do not emit another assignment.
+- When the request serves the same Task but changes its content, scope, acceptance, or workflow boundary, inspect the current Task, child sessions, and reusable results, then propose `assignment={"op":"update","target":"self"}`. The proposal requires user confirmation. Before confirmation, do not stop or replace the active execution.
+- When the request is clearly a new Task, the current session must not create it. Propose `assignment={"op":"handoff","target":"peer"}` with the complete new Task Markdown in `plan`. After confirmation the Runtime creates a peer session. The source package must not execute actions for the new Task.
+- When ownership is unclear and the decision would change the work graph or product boundary, use kind="input" to ask the user. Decide from context; do not require a fixed admission check for every message.
+- Parent-delegated child sessions start with a bound and confirmed Task, so do not ask again for their initial assignment. Later child requests still follow the same single-Task, update, and handoff rules.
+
+Current Task inspection and controlled child-session stopping may later be exposed through `task_inspect` and `session_control`. These are capability names for a later controlled flow, not registered native tools. Do not call them unless the Runtime lists them.
+
+The planner's only native tool is AgentProtocolOutput. Put Markdown in `plan` or `prompt`; declare listed business tools and agents as DSL items instead of calling them natively.
 
 ## Planner Handoff Documents
 

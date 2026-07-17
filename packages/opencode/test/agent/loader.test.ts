@@ -163,6 +163,32 @@ describe("AgentTemplateLoader", () => {
       )
     })
 
+    test("built-in entry planners declare one task revision and peer handoff rules", () => {
+      ;["default", "milestone-planner", "feature-planner"].forEach((id) => {
+        const agent = BUILTIN_AGENTS.find((item) => item.id === id)
+        const prompt = agent?.protocol?.prompt ?? ""
+        const footer = agent?.meta.request_footer?.prompt ?? ""
+
+        ;[
+          "Ordinary conversation does not create or modify a Task",
+          "Before preparing executable actions, read and follow Current Session Task",
+          "continue the current Revision without creating a second Task",
+          'assignment={"op":"update","target":"self"}',
+          'assignment={"op":"handoff","target":"peer"}',
+          "use kind=\"input\" to ask the user",
+          "Parent-delegated child sessions start with a bound and confirmed Task",
+          "The planner's only native tool is AgentProtocolOutput",
+        ].forEach((text) => {
+          expect(prompt).toContain(text)
+          expect(footer).toContain(text)
+        })
+
+        expect(footer).toContain('assignment={"op":"create","target":"self"}')
+        expect(footer).toContain('"assignment": { "op": "handoff", "target": "peer" }')
+        expect(footer).not.toContain('assignment={"op":"create","target":"peer"}')
+      })
+    })
+
     test("built-in programming team exposes specialist consultation and delivery roles", async () => {
       const agents = await loader.loadAll()
       const target = {

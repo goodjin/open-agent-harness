@@ -192,10 +192,14 @@ export namespace AgentProtocol {
   })
   const V2Assignment = z
     .object({
-      op: z.enum(["create", "update"]),
-      target: Text.default("self"),
+      op: z.enum(["create", "update", "handoff"]),
+      target: z.enum(["self", "peer"]).default("self"),
     })
     .strict()
+    .superRefine((value, ctx) => {
+      if ((value.op === "handoff") === (value.target === "peer")) return
+      ctx.addIssue({ code: "custom", path: ["target"], message: "handoff requires target=peer" })
+    })
   const V2Confirm = z.object({
     id: Text,
     kind: z.literal("confirm"),
@@ -376,11 +380,25 @@ export namespace AgentProtocol {
             assignment: {
               type: "object",
               properties: {
-                op: { type: "string", enum: ["create", "update"] },
-                target: { type: "string", minLength: 1, default: "self" },
+                op: { type: "string", enum: ["create", "update", "handoff"] },
+                target: { type: "string", enum: ["self", "peer"], default: "self" },
               },
               required: ["op"],
               additionalProperties: false,
+              oneOf: [
+                {
+                  properties: { op: { const: "create" }, target: { const: "self" } },
+                  required: ["op"],
+                },
+                {
+                  properties: { op: { const: "update" }, target: { const: "self" } },
+                  required: ["op"],
+                },
+                {
+                  properties: { op: { const: "handoff" }, target: { const: "peer" } },
+                  required: ["op", "target"],
+                },
+              ],
             },
             message: { type: "string", minLength: 1 },
             summary: { type: "string" },
