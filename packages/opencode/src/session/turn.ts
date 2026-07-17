@@ -1,6 +1,9 @@
 import { MessageV2 } from "./message-v2"
 import { Session } from "."
 import { MessageID } from "./schema"
+import { Bus } from "@/bus"
+import { and, Database, eq } from "@/storage/db"
+import { MessageTable } from "./session.sql"
 
 export namespace SessionTurn {
   export type Kind = "user" | "internal"
@@ -117,24 +120,41 @@ export namespace SessionTurn {
     stats?: Stats
     user: MessageV2.User
   }) {
-    const msg = await MessageV2.get({ sessionID: input.user.sessionID, messageID: input.user.id })
-    const user = msg.info.role === "user" ? msg.info : input.user
-    const turn = get(user)
-    if (turn?.status === "done") return user
-    return write(user, {
-      ...(turn ?? { kind: kind(user), time: { queued: user.time.created } }),
-      status: "done",
-      outcome: input.outcome,
-      reason: input.reason,
-      assistant_id: input.assistantID,
-      run_id: input.runID,
-      stats: input.stats,
-      time: {
-        ...(turn?.time ?? { queued: user.time.created }),
-        started: turn?.time.started ?? user.time.created,
-        completed: Date.now(),
+    return Database.transaction(
+      (tx) => {
+        const row = tx
+          .select()
+          .from(MessageTable)
+          .where(and(eq(MessageTable.id, input.user.id), eq(MessageTable.session_id, input.user.sessionID)))
+          .get()
+        const user = row ? ({ ...row.data, id: row.id, sessionID: row.session_id } as MessageV2.User) : input.user
+        const turn = get(user)
+        if (turn?.status === "done" && priority(turn.outcome) >= priority(input.outcome)) return user
+        const next = {
+          ...(turn ?? { kind: kind(user), time: { queued: user.time.created } }),
+          status: "done",
+          outcome: input.outcome,
+          reason: input.reason,
+          assistant_id: input.assistantID,
+          run_id: input.runID,
+          stats: { ...turn?.stats, ...input.stats },
+          time: {
+            ...(turn?.time ?? { queued: user.time.created }),
+            started: turn?.time.started ?? user.time.created,
+            completed: Date.now(),
+          },
+        } satisfies Info
+        const saved = { ...user, metadata: { ...user.metadata, turn: next } }
+        const { id, sessionID, ...data } = saved
+        tx.update(MessageTable)
+          .set({ data })
+          .where(and(eq(MessageTable.id, id), eq(MessageTable.session_id, sessionID)))
+          .run()
+        Database.effect(() => Bus.publish(MessageV2.Event.Updated, { info: saved }))
+        return saved
       },
-    })
+      { behavior: "immediate" },
+    )
   }
 
   export function fallback(input: { messages: MessageV2.WithParts[]; user: MessageV2.User }) {
@@ -165,6 +185,11 @@ export namespace SessionTurn {
 
   function kind(input: MessageV2.User): Kind {
     return input.metadata?.internal === true ? "internal" : "user"
+  }
+
+  function priority(input: Outcome | undefined) {
+    if (input === "completed" || input === "failed" || input === "blocked" || input === "error") return 1
+    return 0
   }
 
   async function write(user: MessageV2.User, turn: Info) {

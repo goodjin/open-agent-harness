@@ -40,6 +40,7 @@ async function setup(fn: () => Promise<void>) {
 async function legacy(input: {
   assignment: SessionAssignment.Info
   plan: string
+  route?: { op: "create" | "update" | "handoff"; target: string }
   source: Record<string, unknown>
   stored?: string
 }) {
@@ -50,6 +51,7 @@ async function legacy(input: {
     assignment_id: input.assignment.id,
     revision: input.assignment.content_version,
     plan: input.stored ?? input.plan,
+    assignment: input.route,
     source: input.source,
   })
   Database.use((tx) =>
@@ -831,6 +833,7 @@ describe("session task", () => {
       await legacy({
         assignment,
         plan: "Legacy canonical plan",
+        route: { op: "handoff", target: "peer" },
         source: { type: "confirm", session_id: session.id, run_id: "run_legacy_confirm", action_id: action.id },
       })
 
@@ -1045,13 +1048,14 @@ describe("session task", () => {
         runID: "run_old_confirm_only",
         sessionID: session.id,
       })
-      await SessionAssignment.confirm({
+      const assignment = await SessionAssignment.confirm({
         action: action("current_confirm_only", "Approved assignment"),
         messageID: MessageID.ascending(),
         plan: "Approved canonical plan",
         runID: "run_confirm_only",
         sessionID: session.id,
       })
+      if (!assignment) throw new Error("assignment missing")
 
       await SessionTask.confirmed({
         sessionID: session.id,
@@ -1068,6 +1072,143 @@ describe("session task", () => {
         run_id: "run_execute_later",
         run_ids: ["run_execute_later"],
       })
+      expect((await SessionAssignment.get(assignment.id))?.status).toBe("completed")
+      const bound = await SessionTask.get(session.id)
+      const replay = await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_confirm_only",
+        actionIDs: ["current_confirm_only"],
+        actions: [],
+        legacy: { title: "Unsafe", body: "Unsafe" },
+        requiresAssignment: true,
+      })
+      expect(replay.type).toBe("execute")
+      expect((await SessionTask.get(session.id))?.revision.id).toBe(bound?.revision.id)
+
+      await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_execute_again",
+        actionIDs: [],
+        actions: [{ id: "execute_again" }],
+        legacy: { title: "Unsafe", body: "Unsafe" },
+      })
+      await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_execute_third",
+        actionIDs: [],
+        actions: [{ id: "execute_third" }],
+        legacy: { title: "Unsafe", body: "Unsafe" },
+      })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: "run_execute_third",
+        run_ids: ["run_execute_later", "run_execute_again", "run_execute_third"],
+      })
+    }))
+
+  test("consumes an update assignment only after its draft is created", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_seed_update",
+        legacy: { title: "Seed", body: "Seed plan" },
+        actions: [],
+      })
+      const action = {
+        type: "action",
+        id: "confirm_update_consumed",
+        title: "Updated task",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "update", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Updated plan",
+        runID: "run_confirm_update_consumed",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+
+      const result = await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_confirm_update_consumed",
+        actionIDs: [action.id],
+        actions: [],
+        legacy: { title: "Unsafe", body: "Unsafe" },
+        requiresAssignment: true,
+      })
+      expect(result.type).toBe("update")
+      expect((await SessionAssignment.get(assignment.id))?.status).toBe("completed")
+      const replay = await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_confirm_update_consumed",
+        actionIDs: [action.id],
+        actions: [],
+        legacy: { title: "Unsafe", body: "Unsafe" },
+        requiresAssignment: true,
+      })
+      expect(replay.type).toBe("update")
+      expect(replay.type === "update" ? replay.revision.id : undefined).toBe(
+        result.type === "update" ? result.revision.id : undefined,
+      )
+    }))
+
+  test("keeps handoff assignment pending and rejects ordinary execution", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_seed_handoff",
+        legacy: { title: "Seed", body: "Seed plan" },
+        actions: [],
+      })
+      const action = {
+        type: "action",
+        id: "confirm_handoff_pending",
+        title: "Peer task",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "handoff", target: "peer" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Peer plan",
+        runID: "run_confirm_handoff_pending",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      expect(
+        (
+          await SessionTask.confirmed({
+            sessionID: session.id,
+            runID: "run_confirm_handoff_pending",
+            actionIDs: [action.id],
+            actions: [],
+            legacy: { title: "Unsafe", body: "Unsafe" },
+            requiresAssignment: true,
+          })
+        ).type,
+      ).toBe("handoff")
+      expect((await SessionAssignment.get(assignment.id))?.status).toBe("running")
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_execute_while_handoff_pending",
+          actionIDs: [],
+          actions: [{ id: "unsafe_execute" }],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+        }),
+      ).rejects.toThrow("session_task_handoff_pending")
+      expect((await SessionAssignment.get(assignment.id))?.status).toBe("running")
     }))
 
   test("rejects confirm-only inheritance when more than one assignment is active", () =>

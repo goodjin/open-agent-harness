@@ -274,13 +274,7 @@ export namespace SessionTask {
         legacy: input.legacy,
         actions: input.actions,
       })
-    const active = await SessionAssignment.active(input.sessionID)
-    if (
-      active?.id !== assignment.id ||
-      assignment.status !== "running" ||
-      assignment.source_type !== "confirm"
-    )
-      throw new Conflict("session_task_assignment_not_current")
+    if (assignment.source_type !== "confirm") throw new Conflict("session_task_assignment_not_current")
     if (assignment.session_id !== input.sessionID || assignment.source_session_id !== input.sessionID)
       throw new Conflict("session_task_assignment_source_conflict")
     if (
@@ -294,8 +288,9 @@ export namespace SessionTask {
       throw new Conflict("session_task_assignment_source_conflict")
     const content = await SessionAssignment.content(assignment.id)
     const body = content && typeof content === "object" && !Array.isArray(content) ? content : {}
-    const meta = "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
     const legacy = assignment.content_ref.split("/").at(-1)?.startsWith("rev-") === true
+    const meta =
+      !legacy && "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
     const fallback = legacy && !(await get(input.sessionID)) ? { op: "create", target: "self" } : undefined
     const op = "op" in meta ? meta.op : fallback?.op
     const target = "target" in meta ? meta.target : (fallback?.target ?? assignment.target)
@@ -305,6 +300,14 @@ export namespace SessionTask {
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string")
       throw new Conflict("session_task_assignment_content_invalid")
+    if (assignment.status === "completed") {
+      if (!sourced || op === "handoff") throw new Conflict("session_task_assignment_not_current")
+      return replay({ assignment, op, plan, sessionID: input.sessionID })
+    }
+    const active = await SessionAssignment.active(input.sessionID)
+    if (active?.id !== assignment.id || assignment.status !== "running")
+      throw new Conflict("session_task_assignment_not_current")
+    if (!sourced && op === "handoff") throw new Conflict("session_task_handoff_pending")
     return transact(
       (tx) => {
         const locator = {
@@ -326,7 +329,56 @@ export namespace SessionTask {
         })
         if (!SessionAssignment.withCurrent(tx, locator))
           throw new Conflict("session_task_assignment_not_current")
+        if (op !== "handoff" && !SessionAssignment.consume(tx, locator))
+          throw new Conflict("session_task_assignment_not_current")
         return saved
+      },
+      { behavior: "immediate" },
+    )
+  }
+
+  function replay(input: {
+    assignment: SessionAssignment.Info
+    op: "create" | "update"
+    plan: string
+    sessionID: SessionID
+  }) {
+    return transact(
+      (tx) => {
+        if (!SessionAssignment.withStatus(tx, input.assignment, "completed"))
+          throw new Conflict("session_task_assignment_not_current")
+        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
+        if (!task) throw new Conflict("session_task_assignment_not_current")
+        if (input.op === "update") {
+          const revision = tx
+            .select()
+            .from(TaskRevisionTable)
+            .where(
+              and(
+                eq(TaskRevisionTable.task_id, task.id),
+                eq(TaskRevisionTable.status, "draft"),
+                eq(TaskRevisionTable.title, input.assignment.title),
+                eq(TaskRevisionTable.body_hash, hash(input.plan)),
+              ),
+            )
+            .orderBy(desc(TaskRevisionTable.version))
+            .get()
+          if (!revision) throw new Conflict("session_task_assignment_not_current")
+          return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
+        }
+        if (!task.current_revision_id) throw new Conflict("session_task_revision_missing")
+        const revision = tx
+          .select()
+          .from(TaskRevisionTable)
+          .where(and(eq(TaskRevisionTable.id, task.current_revision_id), eq(TaskRevisionTable.task_id, task.id)))
+          .get()
+        if (
+          !revision ||
+          revision.title !== input.assignment.title ||
+          revision.body_hash !== hash(input.plan)
+        )
+          throw new Conflict("session_task_assignment_not_current")
+        return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(revision) }
       },
       { behavior: "immediate" },
     )

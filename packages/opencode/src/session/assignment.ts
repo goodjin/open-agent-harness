@@ -250,6 +250,38 @@ export namespace SessionAssignment {
     return item
   }
 
+  export function consume(
+    tx: Database.TxOrDb,
+    input: Parameters<typeof withCurrent>[1],
+  ) {
+    const current = withCurrent(tx, input)
+    if (!current) return
+    const row = tx
+      .update(AssignmentTable)
+      .set({ status: "completed", time_updated: Date.now() })
+      .where(
+        and(
+          eq(AssignmentTable.id, current.id),
+          eq(AssignmentTable.status, "running"),
+          eq(AssignmentTable.content_ref, current.content_ref),
+          eq(AssignmentTable.content_hash, current.content_hash),
+          eq(AssignmentTable.content_version, current.content_version),
+        ),
+      )
+      .returning()
+      .get()
+    if (!row) throw new Conflict()
+    return from(row)
+  }
+
+  export function withStatus(tx: Database.TxOrDb, assignment: Info, status: Status) {
+    const row = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, assignment.id)).get()
+    if (!row) return
+    const item = from(row)
+    if (item.status !== status || JSON.stringify(item) !== JSON.stringify(assignment)) return
+    return item
+  }
+
   export async function get(id: string) {
     const row = Database.use((tx) => tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, id)).get())
     return row ? from(row) : undefined

@@ -1,8 +1,18 @@
-import { describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
+import { WorkspaceID } from "../../src/control-plane/schema"
+import { WorkspaceContext } from "../../src/control-plane/workspace-context"
+import { Instance } from "../../src/project/instance"
+import { ModelID, ProviderID } from "../../src/provider/schema"
+import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
+import { MessageID } from "../../src/session/schema"
 import { SessionTurn } from "../../src/session/turn"
+import { resetDatabase } from "../fixture/db"
+import { tmpdir } from "../fixture/fixture"
 
 const sessionID = "ses_test"
+
+afterEach(resetDatabase)
 
 function user(input: { id: string; turn?: SessionTurn.Info }) {
   return {
@@ -117,5 +127,45 @@ describe("SessionTurn.next", () => {
     })
 
     expect(SessionTurn.next([running, done])).toBeUndefined()
+  })
+})
+
+describe("SessionTurn.finish", () => {
+  test("keeps terminal completion when a concurrent waiting finish writes later", async () => {
+    await using tmp = await tmpdir()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const msg = (await Session.updateMessage({
+              id: MessageID.ascending(),
+              sessionID: session.id,
+              role: "user",
+              time: { created: Date.now() },
+              agent: "protocol-runner",
+              model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+              tools: {},
+              mode: "",
+              metadata: {
+                turn: {
+                  kind: "user",
+                  status: "running",
+                  time: { queued: Date.now(), started: Date.now() },
+                },
+              },
+            } as MessageV2.User)) as MessageV2.User
+
+            await Promise.all([
+              SessionTurn.finish({ user: msg, outcome: "completed", reason: "assistant" }),
+              SessionTurn.finish({ user: msg, outcome: "waiting_child", reason: "waiting_child" }),
+            ])
+            const saved = await MessageV2.get({ sessionID: session.id, messageID: msg.id })
+            expect(SessionTurn.get(saved.info)).toMatchObject({ status: "done", outcome: "completed" })
+          },
+        }),
+    })
   })
 })

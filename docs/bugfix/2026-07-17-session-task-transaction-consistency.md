@@ -22,6 +22,10 @@
 10. 用明确 pending 状态轮询替换 Runner 测试中的固定 200ms 等待。
 11. 让 same-run dependent child launch 在 prompt 前走与 Runner 相同的 delegated Task 绑定与失败补偿。
 12. 让 binding failure 同步终结 owner turn 的 child Timeline 投影，保留 canonical child/action/agent/title 映射并保证重复补偿幂等。
+13. 让 create/update Assignment 在 Task 路由成功的同一 immediate 事务内完成消费，后续 executable Run 只继续现有 Task。
+14. 旧 `rev-<n>` 内容一律忽略 blob 内 assignment metadata，仅从可信 row/source 和当前 Task 上下文恢复有限路由。
+15. 将 `SessionTurn.finish` 的最新状态读取、终态优先判断与消息写入收进同一 immediate 事务，阻止 waiting 后写覆盖 terminal。
+16. 清理 Runner 测试的共享 spy/loop 计数依赖，并用多轮全文件与组合运行验证稳定性。
 
 ## 实际修复
 
@@ -29,12 +33,16 @@
 - 绑定阶段失败时将 Assignment 标记为 failed，清理父会话 pending delegation，将子会话审计迁移到 `failed_delegation`，持久化终态，并禁止进入父会话 fan-in 或发送 child prompt。
 - 绑定失败同时从 persisted canonical delegation 终结 owner turn child Timeline；`SessionTurn.finish` 写入前重读 owner message，避免 stale user 覆盖刚写入的 terminal child 投影。
 - 对旧 `rev-<n>` Assignment 保留受限兼容：无 Task 的 confirm 可按 create/self 绑定，已有 Task 拒绝隐式操作；delegation 继续按 source locator 绑定；plan hash 不匹配时拒绝。
+- create/update Task 路由成功后在同一 immediate 事务内 CAS 消费 Assignment；同 locator replay 返回既有 Revision，后续普通 Run 直接继续当前 Task。handoff 在持久 proposal 落地前保持 running，并阻止普通 execute 越过 pending handoff。
+- `SessionTurn.finish` 直接在 MessageTable immediate 事务内读取最新 turn、应用 terminal outcome 优先级并更新消息；Bus effect 仅在提交后发布。
+- Runner soft-limit 测试改为等待明确事件与 deadline，并在每个测试后统一恢复 mocks。
 
 ## 验证补充
 
 - Runner 与 same-run dependent launch 均注入 Assignment 写入后 `SQLITE_BUSY`，验证统一补偿结果。
 - 覆盖 same-run prompt 前 Task 已绑定、重复 complete 不重复启动，以及 legacy confirm/delegation/篡改兼容矩阵。
 - Runner 与 same-run failure 额外验证 owner turn child Timeline 由 current/pending 收敛为 failed terminal，重复 fail 不回到 pending。
+- 覆盖 Assignment consume/replay、legacy 路由 metadata 注入、handoff pending 拦截和 concurrent finish terminal 优先级。
 
 ## 影响模块
 
@@ -83,9 +91,12 @@
 
 ## 验证结果
 
-- Session Task：42 passed
+- Session Task：48 passed
 - Session Runner：63 passed
 - Session Runs：29 passed
-- Session Delegation：36 passed
-- 合计：170 passed，0 failed
+- Session Delegation：37 passed
+- Session Turn：5 passed
+- 合计：182 passed，0 failed
 - `bun typecheck`：通过
+- Runner 全文件连续 5 轮均为 63 passed；五文件组合连续 3 轮均为 182 passed。
+- 稳定性对照曾复现既有跨进程 draft conflict；单跑及最终三轮组合均通过。另定位并移除 self-delegation 测试对并发 prompt 数组顺序的依赖。

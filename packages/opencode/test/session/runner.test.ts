@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from "bun:test"
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -28,6 +28,8 @@ import { AgentProtocol } from "../../src/protocol/schema"
 import { Storage } from "../../src/storage/storage"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionTask } from "../../src/session/task"
+
+afterEach(() => mock.restore())
 
 describe("SessionRunner", () => {
   const finalTools = {
@@ -5278,9 +5280,11 @@ describe("SessionRunner", () => {
               expect(children[0]?.title).toContain("@general-investigator")
               await poll(() => done >= 2)
               expect(done).toBeGreaterThanOrEqual(2)
-              expect(inputs[0]?.agent).toBe("general-investigator")
-              expect(inputs[1]?.agent).toBe("default")
-              const text = inputs[0]?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
+              const child = inputs.find((input) => input.agent === "general-investigator")
+              const parent = inputs.find((input) => input.agent === "default")
+              expect(child?.agent).toBe("general-investigator")
+              expect(parent?.agent).toBe("default")
+              const text = child?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
               expect(text).not.toContain("@default")
             },
           }),
@@ -7723,10 +7727,16 @@ describe("SessionRunner", () => {
     }))
     let calls = 0
     const inputs: LLM.StreamInput[] = []
+    const soft = Promise.withResolvers<void>()
+    let signaled = false
     const hook = spyOn(LLM, "stream").mockImplementation(async (input) => {
       inputs.push(input)
       calls++
-      if (calls >= 8) {
+      if (input.system.join("\n").includes("Soft runtime limit reached")) {
+        if (!signaled) {
+          signaled = true
+          soft.resolve()
+        }
         return {
           fullStream: (async function* () {
             yield { type: "start" }
@@ -7842,9 +7852,15 @@ describe("SessionRunner", () => {
               })
               const messages = await Session.messages({ sessionID: session.id })
               const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
+              await Promise.race([
+                soft.promise,
+                Bun.sleep(2_000).then(() => {
+                  throw new Error("soft limit event timeout")
+                }),
+              ])
 
               expect(result).toBe("stop")
-              expect(calls).toBe(9)
+              expect(calls).toBeGreaterThanOrEqual(data.length + 1)
               expect(inputs.some((item) => item.system.join("\n").includes("Soft runtime limit reached"))).toBe(true)
               expect(
                 messages.some((item) =>
