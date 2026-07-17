@@ -1362,7 +1362,31 @@ describe("SessionDelegation", () => {
             fn: async () => {
               const parent = await Session.create({ agent: "protocol-runner" })
               const child = await Session.create({ parentID: parent.id, agent: "backend" })
-              const messageID = MessageID.ascending()
+              const owner = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: parent.id,
+                parentID: owner.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const messageID = assistant.id
               const item = {
                 type: "agent.delegation.assignment",
                 version: "1",
@@ -1490,6 +1514,61 @@ describe("SessionDelegation", () => {
               expect(await SessionTask.get(failed.session_id)).toBeUndefined()
               expect(["failed", "error", "aborted"]).toContain(SessionStatus.get(failed.session_id).type)
               expect(prompts.some((entry) => entry.sessionID === failed.session_id)).toBe(false)
+              const info = await Session.get(failed.session_id)
+              const audit = (info.dsl_context?.protocol as {
+                failed_delegation?: { action_id?: string; action_title?: string; agent?: string }
+              })?.failed_delegation
+              const first = await MessageV2.get({ sessionID: parent.id, messageID: owner.id })
+              const rows = first.info.role === "user" ? first.info.metadata?.turn?.children : undefined
+              const row = rows?.find((entry: { id?: string }) => entry.id === failed.session_id)
+              expect(row).toMatchObject({
+                id: failed.session_id,
+                label: audit?.action_title,
+                action: audit?.action_id,
+                agent: audit?.agent,
+                current: false,
+                status: "failed",
+                completed_at: expect.any(Number),
+              })
+              const time = row?.completed_at
+              await SessionDelegation.fail({
+                action: {
+                  type: "action",
+                  id: "tampered_action",
+                  title: "Tampered title",
+                  operation: "backend",
+                  executor: { type: "agent", target: "tampered-agent", capabilities: [] },
+                  input: {},
+                  depends_on: [],
+                  context_refs: [],
+                  result_policy: "summary",
+                },
+                agent: "tampered-agent",
+                binding: true,
+                childID: failed.session_id,
+                error: new Error("repeat"),
+                messageID,
+                parentAgent: "tampered-parent",
+                parentID: parent.id,
+                runID: "tampered-run",
+              })
+              const repeated = await MessageV2.get({ sessionID: parent.id, messageID: owner.id })
+              const next = repeated.info.role === "user" ? repeated.info.metadata?.turn?.children : undefined
+              expect(next?.filter((entry: { id?: string }) => entry.id === failed.session_id)).toHaveLength(1)
+              expect(next?.find((entry: { id?: string }) => entry.id === failed.session_id)).toMatchObject({
+                id: failed.session_id,
+                label: audit?.action_title,
+                action: audit?.action_id,
+                agent: audit?.agent,
+                current: false,
+                status: "failed",
+                completed_at: time,
+              })
+              const pending = ((await Session.get(parent.id)).dsl_context?.protocol as {
+                pending_delegations?: object
+              }).pending_delegations
+              expect(Object.keys(pending ?? {})).toHaveLength(0)
+              expect(SessionStatus.get(failed.session_id).type).toBe("failed")
             },
           }),
       })

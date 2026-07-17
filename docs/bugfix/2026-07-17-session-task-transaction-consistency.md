@@ -21,17 +21,20 @@
 9. 将 workflow 的持久化 working set 限制为最近 50 Runs，同时累计 compact progress。
 10. 用明确 pending 状态轮询替换 Runner 测试中的固定 200ms 等待。
 11. 让 same-run dependent child launch 在 prompt 前走与 Runner 相同的 delegated Task 绑定与失败补偿。
+12. 让 binding failure 同步终结 owner turn 的 child Timeline 投影，保留 canonical child/action/agent/title 映射并保证重复补偿幂等。
 
 ## 实际修复
 
 - 新增共享的 delegated Task 绑定入口，按 delegation、Assignment、Task 的顺序完成绑定，Runner 与 same-run dependent launch 共用该入口。
 - 绑定阶段失败时将 Assignment 标记为 failed，清理父会话 pending delegation，将子会话审计迁移到 `failed_delegation`，持久化终态，并禁止进入父会话 fan-in 或发送 child prompt。
+- 绑定失败同时从 persisted canonical delegation 终结 owner turn child Timeline；`SessionTurn.finish` 写入前重读 owner message，避免 stale user 覆盖刚写入的 terminal child 投影。
 - 对旧 `rev-<n>` Assignment 保留受限兼容：无 Task 的 confirm 可按 create/self 绑定，已有 Task 拒绝隐式操作；delegation 继续按 source locator 绑定；plan hash 不匹配时拒绝。
 
 ## 验证补充
 
 - Runner 与 same-run dependent launch 均注入 Assignment 写入后 `SQLITE_BUSY`，验证统一补偿结果。
 - 覆盖 same-run prompt 前 Task 已绑定、重复 complete 不重复启动，以及 legacy confirm/delegation/篡改兼容矩阵。
+- Runner 与 same-run failure 额外验证 owner turn child Timeline 由 current/pending 收敛为 failed terminal，重复 fail 不回到 pending。
 
 ## 影响模块
 

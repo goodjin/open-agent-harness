@@ -26,6 +26,7 @@ export namespace SessionTurn {
     label: string
     run?: string
     action?: string
+    agent?: string
     status?: string
     current?: boolean
     result_id?: string
@@ -116,10 +117,12 @@ export namespace SessionTurn {
     stats?: Stats
     user: MessageV2.User
   }) {
-    const turn = get(input.user)
-    if (turn?.status === "done") return input.user
-    return write(input.user, {
-      ...(turn ?? { kind: kind(input.user), time: { queued: input.user.time.created } }),
+    const msg = await MessageV2.get({ sessionID: input.user.sessionID, messageID: input.user.id })
+    const user = msg.info.role === "user" ? msg.info : input.user
+    const turn = get(user)
+    if (turn?.status === "done") return user
+    return write(user, {
+      ...(turn ?? { kind: kind(user), time: { queued: user.time.created } }),
       status: "done",
       outcome: input.outcome,
       reason: input.reason,
@@ -127,8 +130,8 @@ export namespace SessionTurn {
       run_id: input.runID,
       stats: input.stats,
       time: {
-        ...(turn?.time ?? { queued: input.user.time.created }),
-        started: turn?.time.started ?? input.user.time.created,
+        ...(turn?.time ?? { queued: user.time.created }),
+        started: turn?.time.started ?? user.time.created,
         completed: Date.now(),
       },
     })

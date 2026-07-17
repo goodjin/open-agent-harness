@@ -4604,6 +4604,20 @@ describe("SessionRunner", () => {
               expect(Object.keys(protocol?.pending_delegations ?? {})).toHaveLength(0)
               expect(["failed", "error", "aborted"]).toContain(SessionStatus.get(child.id).type)
               expect(await SessionTask.get(child.id)).toBeUndefined()
+              const owner = await MessageV2.get({ sessionID: session.id, messageID: user.id })
+              const audit = delegation?.failed_delegation as
+                | { action_id?: string; action_title?: string; agent?: string }
+                | undefined
+              const timeline = owner.info.role === "user" ? owner.info.metadata?.turn?.children : undefined
+              expect(timeline?.find((entry: { id?: string }) => entry.id === child.id)).toMatchObject({
+                id: child.id,
+                label: audit?.action_title,
+                action: audit?.action_id,
+                agent: audit?.agent,
+                current: false,
+                status: "failed",
+                completed_at: expect.any(Number),
+              })
             },
           }),
       })

@@ -277,14 +277,16 @@ export namespace SessionDelegation {
       const pctx = object(parent.dsl_context)
       const previous = object(pctx.protocol)
       const pending = { ...object(previous.pending_delegations) }
+      const ctx = session ? object(session.dsl_context) : {}
+      const protocol = object(ctx.protocol)
+      const canonical = item ?? parse(pending[input.childID]) ?? parse(protocol.failed_delegation)
+      const time = number(canonical?.completed_at) ?? Date.now()
       delete pending[input.childID]
       await Session.setDslContext({
         sessionID: input.parentID,
         dsl_context: { ...pctx, protocol: { ...previous, pending_delegations: pending } },
       })
       if (session) {
-        const ctx = object(session.dsl_context)
-        const protocol = object(ctx.protocol)
         await Session.setDslContext({
           sessionID: input.childID,
           dsl_context: {
@@ -292,29 +294,14 @@ export namespace SessionDelegation {
             protocol: {
               ...protocol,
               delegation: undefined,
-              failed_delegation: {
-                ...(item ?? {
-                  type: "agent.delegation.assignment",
-                  version: "1",
-                  run_id: input.runID,
-                  action_id: input.action.id,
-                  action_title: input.action.title,
-                  parent_session_id: input.parentID,
-                  parent_message_id: input.messageID,
-                  parent_agent: input.parentAgent,
-                  child_session_id: input.childID,
-                  agent: input.agent,
-                  result_policy: input.action.result_policy,
-                  created_at: Date.now(),
-                }),
-                status: "failed",
-                completed_at: Date.now(),
-                output: raw,
-              },
+              ...(canonical
+                ? { failed_delegation: { ...canonical, status: "failed", completed_at: time, output: raw } }
+                : {}),
             },
           },
         })
       }
+      if (canonical) await timeline(canonical, { current: false, status: "failed", completed_at: time })
       await SessionLog.emit({
         sessionID: input.parentID,
         messageID: input.messageID,
@@ -761,8 +748,7 @@ export namespace SessionDelegation {
     }
   }
 
-  function assignment(session: Session.Info): Item | undefined {
-    const item = object(object(session.dsl_context).protocol).delegation
+  function parse(item: unknown): Item | undefined {
     if (!item || typeof item !== "object" || Array.isArray(item)) return
     const data = object(item)
     if (data.type !== "agent.delegation.assignment") return
@@ -777,6 +763,10 @@ export namespace SessionDelegation {
     )
       return
     return data as Item
+  }
+
+  function assignment(session: Session.Info) {
+    return parse(object(object(session.dsl_context).protocol).delegation)
   }
 
   async function result(sessionID: SessionID, messageID: MessageID | undefined, item: Item) {
@@ -2645,6 +2635,7 @@ export namespace SessionDelegation {
       label: item.action_title,
       run: item.run_id,
       action: item.action_id,
+      agent: item.agent,
       created_at: item.created_at,
     }
     const found = prev.find((entry) => entry.id === item.child_session_id)
