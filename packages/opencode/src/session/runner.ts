@@ -3676,9 +3676,6 @@ export namespace SessionRunner {
       parentRunID: input.runID,
       parentActionID: input.action.id,
       messageID: input.messageID,
-      title: input.action.title,
-      body: input.prompt ?? text(input.action.input) ?? input.action.title,
-      actions: [input.action],
     })
     setTimeout(() => {
       SessionPrompt.resolvePromptParts(task(input.action, input.prompt, selected.agent))

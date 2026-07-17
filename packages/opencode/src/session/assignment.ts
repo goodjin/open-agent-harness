@@ -160,6 +160,40 @@ export namespace SessionAssignment {
     return Storage.read<unknown>(item.content_ref.split("/")).catch(() => undefined)
   }
 
+  export function withCurrent(
+    tx: Database.TxOrDb,
+    input: {
+      assignment: Info
+      sessionID: SessionID
+      sourceSessionID: SessionID
+      runID: string
+      actionIDs: string[]
+      source: Source
+    },
+  ) {
+    const row = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, input.assignment.id)).get()
+    const active = tx
+      .select()
+      .from(AssignmentTable)
+      .where(and(eq(AssignmentTable.session_id, input.sessionID), ne(AssignmentTable.status, "superseded")))
+      .orderBy(desc(AssignmentTable.time_updated))
+      .get()
+    if (!row || active?.id !== row.id) return
+    const item = from(row)
+    if (JSON.stringify(item) !== JSON.stringify(input.assignment)) return
+    if (
+      item.status !== "running" ||
+      item.source_type !== input.source ||
+      item.session_id !== input.sessionID ||
+      item.source_session_id !== input.sourceSessionID ||
+      item.source_run_id !== input.runID ||
+      !item.source_action_id ||
+      !input.actionIDs.includes(item.source_action_id)
+    )
+      return
+    return item
+  }
+
   export async function get(id: string) {
     const row = Database.use((tx) => tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, id)).get())
     return row ? from(row) : undefined

@@ -295,9 +295,6 @@ describe("session task", () => {
         parentSessionID: parent.id,
         parentRunID: "run_parent",
         parentActionID: "delegate_child",
-        title: "Delegated child",
-        body: "Canonical delegation plan",
-        actions: [{ id: "delegate_child" }],
       }
       await expect(SessionTask.beginDelegated(input)).rejects.toThrow("session_task_delegation_assignment_missing")
       await SessionAssignment.delegate({
@@ -322,9 +319,6 @@ describe("session task", () => {
           parentSessionID: parent.id,
           parentRunID: "run_wrong",
           parentActionID: "delegate_child",
-          title: "Delegated child",
-          body: "Wrong source",
-          actions: [{ id: "delegate_child" }],
         }),
       ).rejects.toThrow("session_task_delegation_assignment_missing")
     }))
@@ -433,6 +427,39 @@ describe("session task", () => {
       })
     }))
 
+  test("projects only the latest fifty runs with their matching action identities", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      for (const index of Array.from({ length: 55 }, (_, index) => index)) {
+        const run = `run_window_${index.toString().padStart(2, "0")}`
+        const action = `action_${index.toString().padStart(2, "0")}`
+        await SessionTask.route({
+          sessionID: session.id,
+          runID: run,
+          ...(index === 0
+            ? { assignment: { op: "create" as const, target: "self" as const, title: "Window", body: "Window" } }
+            : {}),
+          actions: [{ id: action, title: action }],
+        })
+        await Storage.write(
+          ["session_protocol_run", session.id, run],
+          result(run, [{ id: action, title: action, status: "completed" }]),
+        )
+      }
+
+      const current = await SessionTask.current(session.id)
+      expect(current?.actions).toHaveLength(50)
+      expect(current?.actions.map((item) => [item.run_id, item.id])).toEqual(
+        Array.from({ length: 50 }, (_, offset) => {
+          const index = offset + 5
+          const suffix = index.toString().padStart(2, "0")
+          return [`run_window_${suffix}`, `action_${suffix}`]
+        }),
+      )
+      expect(current?.progress).toEqual({ completed: 50, total: 50 })
+      expect((await SessionTask.get(session.id))?.revision.workflow.actions).toHaveLength(55)
+    }))
+
   test("strictly parses workflow run ids and task action identities", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -451,6 +478,88 @@ describe("session task", () => {
       expect(SessionTask.RevisionView.safeParse(revision).success).toBe(true)
       expect(revision?.workflow.run_ids).toEqual(["run_schema"])
       expect(revision?.actions[0]).toMatchObject({ run_id: "run_schema", id: "schema" })
+    }))
+
+  test("sync upgrades planned actions once and rejects divergent replays", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_sync_cas",
+        assignment: { op: "create", target: "self", title: "Sync CAS", body: "Sync CAS" },
+        actions: [{ id: "write", title: "Write" }],
+      })
+      const action = result("run_sync_cas", [{ id: "write", title: "Write", status: "completed" }]).actions[0]!
+      await SessionTask.sync({ sessionID: session.id, runID: "run_sync_cas", actions: [action] })
+      const saved = JSON.stringify(await SessionTask.get(session.id))
+
+      await SessionTask.sync({ sessionID: session.id, runID: "run_sync_cas", actions: [action] })
+      expect(JSON.stringify(await SessionTask.get(session.id))).toBe(saved)
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_sync_cas",
+          actions: [{ ...action, output: "Divergent replay" }],
+        }),
+      ).rejects.toThrow("session_task_action_conflict")
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_sync_cas",
+          actions: [{ id: "write", title: "Planned replay" } as never],
+        }),
+      ).rejects.toThrow("session_task_action_conflict")
+      expect(JSON.stringify(await SessionTask.get(session.id))).toBe(saved)
+    }))
+
+  test("rejects late sync after the task or current revision becomes terminal", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_sync_done",
+        assignment: { op: "create", target: "self", title: "Done", body: "Done" },
+        actions: [{ id: "done", title: "Done" }],
+      })
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_sync_done",
+        summary: "Done",
+        source: "protocol",
+      })
+      const completed = JSON.stringify(await SessionTask.get(session.id))
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_sync_done",
+          actions: result("run_sync_done", [{ id: "done", title: "Done", status: "completed" }]).actions,
+        }),
+      ).rejects.toThrow("session_task_stale_run")
+      expect(JSON.stringify(await SessionTask.get(session.id))).toBe(completed)
+
+      const archived = await Session.create({})
+      const bound = await SessionTask.route({
+        sessionID: archived.id,
+        runID: "run_sync_archived",
+        assignment: { op: "create", target: "self", title: "Archived", body: "Archived" },
+        actions: [{ id: "archived", title: "Archived" }],
+      })
+      if (bound.type !== "execute") throw new Error("task binding missing")
+      Database.transaction((tx) => {
+        tx.update(TaskRevisionTable).set({ status: "archived" }).where(eq(TaskRevisionTable.id, bound.revision.id)).run()
+        tx.update(SessionTaskTable).set({ status: "failed" }).where(eq(SessionTaskTable.id, bound.task.id)).run()
+      })
+      const terminal = JSON.stringify(await SessionTask.get(archived.id))
+      await expect(
+        SessionTask.sync({
+          sessionID: archived.id,
+          runID: "run_sync_archived",
+          actions: result("run_sync_archived", [
+            { id: "archived", title: "Archived", status: "completed" },
+          ]).actions,
+        }),
+      ).rejects.toThrow("session_task_stale_run")
+      expect(JSON.stringify(await SessionTask.get(archived.id))).toBe(terminal)
     }))
 
   test("binds only canonical confirmed assignment content after parsed action tampering", () =>
@@ -546,6 +655,134 @@ describe("session task", () => {
       ).rejects.toThrow("session_task_assignment_not_current")
     }))
 
+  test("rolls back confirmed binding when its assignment is superseded during task insert", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = {
+        type: "action",
+        id: "confirm_race",
+        title: "Canonical race",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "create", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID: MessageID.ascending(),
+        plan: "Canonical race plan",
+        runID: "run_confirm_race",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      Database.Client().run(
+        sql.raw(`
+          CREATE TEMP TRIGGER supersede_confirm_before_task
+          BEFORE INSERT ON session_task
+          BEGIN
+            UPDATE assignment SET status = 'superseded' WHERE id = '${assignment.id}';
+          END
+        `),
+      )
+
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_confirm_race",
+          actionIDs: [action.id],
+          actions: [action],
+          legacy: { title: "Untrusted", body: "Untrusted" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_not_current")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+    }))
+
+  test("rolls back delegated binding when its assignment is superseded during task insert", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const action = {
+        type: "action",
+        id: "delegate_race",
+        title: "Delegated race",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "Delegated race plan" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Delegated race plan",
+        runID: "run_delegate_race",
+        sessionID: parent.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      Database.Client().run(
+        sql.raw(`
+          CREATE TEMP TRIGGER supersede_delegate_before_task
+          BEFORE INSERT ON session_task
+          BEGIN
+            UPDATE assignment SET status = 'superseded' WHERE id = '${assignment.id}';
+          END
+        `),
+      )
+
+      await expect(
+        SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: "run_delegate_race",
+          parentActionID: action.id,
+          messageID: MessageID.ascending(),
+        }),
+      ).rejects.toThrow("session_task_delegation_assignment_missing")
+      expect(await SessionTask.get(child.id)).toBeUndefined()
+    }))
+
+  test("derives delegated task content from the canonical assignment locator", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const action = {
+        type: "action",
+        id: "delegate_locator",
+        title: "Canonical delegated title",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "Untrusted declaration body" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Canonical delegated plan",
+        runID: "run_delegate_locator",
+        sessionID: parent.id,
+      })
+
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_delegate_locator",
+        parentActionID: action.id,
+        messageID: MessageID.ascending(),
+      })
+      expect(await SessionTask.current(child.id)).toMatchObject({
+        title: "Canonical delegated title",
+        body: "Canonical delegated plan",
+      })
+    }))
+
   test("delegated task rejects local protocol completion as its canonical result", () =>
     setup(async () => {
       const parent = await Session.create({})
@@ -573,9 +810,6 @@ describe("session task", () => {
         parentSessionID: parent.id,
         parentRunID: "run_parent_source",
         parentActionID: "delegate_source",
-        title: "Delegated task",
-        body: "Delegation plan",
-        actions: [{ id: "delegate_source" }],
       })
       await SessionTask.route({
         sessionID: child.id,

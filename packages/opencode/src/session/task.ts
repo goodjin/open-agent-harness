@@ -2,7 +2,7 @@ import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
 import z from "zod"
 import { AgentProtocol } from "@/protocol/schema"
-import { and, Database, desc, eq, max } from "@/storage/db"
+import { and, Database, desc, eq, inArray, max } from "@/storage/db"
 import { MessageID, SessionID } from "./schema"
 import { SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
 import type { SessionRuns } from "./runs"
@@ -284,18 +284,41 @@ export namespace SessionTask {
     if (op !== "create" && op !== "update" && op !== "handoff")
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
-    if (!("plan" in body) || typeof body.plan !== "string")
+    const plan = "plan" in body ? body.plan : undefined
+    if (typeof plan !== "string")
       throw new Conflict("session_task_assignment_content_invalid")
-    return route({
-      sessionID: input.sessionID,
-      runID: input.runID,
-      messageID: input.messageID,
-      assignment: { op, target, title: assignment.title, body: body.plan },
-      actions: input.actions,
-    })
+    return Database.transaction(
+      (tx) => {
+        const locator = {
+          assignment,
+          sessionID: input.sessionID,
+          sourceSessionID: input.sessionID,
+          runID: input.runID,
+          actionIDs: input.actionIDs,
+          source: "confirm" as const,
+        }
+        if (!SessionAssignment.withCurrent(tx, locator))
+          throw new Conflict("session_task_assignment_not_current")
+        const saved = write({
+          sessionID: input.sessionID,
+          runID: input.runID,
+          messageID: input.messageID,
+          assignment: { op, target, title: assignment.title, body: plan },
+          actions: input.actions,
+        })
+        if (!SessionAssignment.withCurrent(tx, locator))
+          throw new Conflict("session_task_assignment_not_current")
+        return saved
+      },
+      { behavior: "immediate" },
+    )
   }
 
   export async function route(raw: z.input<typeof Route>) {
+    return write(raw)
+  }
+
+  function write(raw: z.input<typeof Route>) {
     const input = Route.parse(raw)
     const now = Date.now()
     try {
@@ -454,67 +477,72 @@ export namespace SessionTask {
     parentRunID: string
     parentActionID: string
     messageID?: MessageID
-    title: string
-    body: string
-    actions: unknown[]
   }) {
-    const child = Database.use((tx) =>
-      tx.select({ parent_id: SessionTable.parent_id }).from(SessionTable).where(eq(SessionTable.id, input.sessionID)).get(),
-    )
-    if (child?.parent_id !== input.parentSessionID) throw new Conflict("session_task_delegation_parent_conflict")
     const assignment = await SessionAssignment.bySource({
       sessionID: input.parentSessionID,
       runID: input.parentRunID,
       actionID: input.parentActionID,
     })
-    const active = await SessionAssignment.active(input.sessionID)
-    if (
-      !assignment ||
-      active?.id !== assignment.id ||
-      assignment.status !== "running" ||
-      assignment.source_type !== "delegation" ||
-      assignment.session_id !== input.sessionID ||
-      assignment.source_session_id !== input.parentSessionID ||
-      assignment.source_run_id !== input.parentRunID ||
-      assignment.source_action_id !== input.parentActionID
-    ) {
-      throw new Conflict("session_task_delegation_assignment_missing")
-    }
+    if (!assignment) throw new Conflict("session_task_delegation_assignment_missing")
     const content = await SessionAssignment.content(assignment.id)
     const plan =
       content && typeof content === "object" && !Array.isArray(content) && "plan" in content ? content.plan : undefined
-    if (assignment.title !== input.title || plan !== input.body) {
-      throw new Conflict("session_task_delegation_assignment_conflict")
-    }
-    const current = await get(input.sessionID)
-    if (current) {
-      const source = current.task.source_ref
-      if (
-        current.task.source_type !== "delegation" ||
-        source.sessionID !== input.parentSessionID ||
-        source.runID !== input.parentRunID ||
-        source.actionID !== input.parentActionID
-      )
-        throw new Conflict("session_task_delegation_source_conflict")
-      return route({
-        sessionID: input.sessionID,
-        messageID: input.messageID,
-        actions: input.actions,
-      })
-    }
-    return route({
-      sessionID: input.sessionID,
-      messageID: input.messageID,
-      assignment: { op: "create", target: "self", title: input.title, body: input.body },
-      actions: input.actions,
-      source: {
-        type: "delegation",
-        sessionID: input.parentSessionID,
-        messageID: input.messageID,
-        runID: input.parentRunID,
-        actionID: input.parentActionID,
+    if (typeof plan !== "string") throw new Conflict("session_task_delegation_assignment_conflict")
+    return Database.transaction(
+      (tx) => {
+        const child = tx
+          .select({ parent_id: SessionTable.parent_id })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, input.sessionID))
+          .get()
+        if (child?.parent_id !== input.parentSessionID)
+          throw new Conflict("session_task_delegation_parent_conflict")
+        const locator = {
+          assignment,
+          sessionID: input.sessionID,
+          sourceSessionID: input.parentSessionID,
+          runID: input.parentRunID,
+          actionIDs: [input.parentActionID],
+          source: "delegation" as const,
+        }
+        if (!SessionAssignment.withCurrent(tx, locator))
+          throw new Conflict("session_task_delegation_assignment_missing")
+        const current = tx
+          .select({ id: SessionTaskTable.id })
+          .from(SessionTaskTable)
+          .where(eq(SessionTaskTable.session_id, input.sessionID))
+          .get()
+        const saved = write({
+          sessionID: input.sessionID,
+          messageID: input.messageID,
+          ...(current
+            ? {}
+            : {
+                assignment: { op: "create" as const, target: "self" as const, title: assignment.title, body: plan },
+                source: {
+                  type: "delegation" as const,
+                  sessionID: input.parentSessionID,
+                  messageID: input.messageID,
+                  runID: input.parentRunID,
+                  actionID: input.parentActionID,
+                },
+              }),
+          actions: [],
+        })
+        const source = saved.task.source_ref
+        if (
+          saved.task.source_type !== "delegation" ||
+          source.sessionID !== input.parentSessionID ||
+          source.runID !== input.parentRunID ||
+          source.actionID !== input.parentActionID
+        )
+          throw new Conflict("session_task_delegation_source_conflict")
+        if (!SessionAssignment.withCurrent(tx, locator))
+          throw new Conflict("session_task_delegation_assignment_missing")
+        return saved
       },
-    })
+      { behavior: "immediate" },
+    )
   }
 
   export async function sync(input: { sessionID: SessionID; runID: string; actions?: AgentProtocol.ResultAction[] }) {
@@ -526,25 +554,55 @@ export namespace SessionTask {
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
+        if (task.status !== "running" && task.status !== "waiting_user" && task.status !== "revising")
+          throw new Conflict("session_task_stale_run")
         const revision = tx
           .select()
           .from(TaskRevisionTable)
           .where(eq(TaskRevisionTable.id, task.current_revision_id))
           .get()
-        if (!revision || !runids(Workflow.parse(revision.workflow)).includes(input.runID))
+        const flow = revision ? Workflow.parse(revision.workflow) : undefined
+        if (
+          !revision ||
+          revision.task_id !== task.id ||
+          revision.status !== "active" ||
+          !flow ||
+          !runids(flow).includes(input.runID)
+        )
           throw new Conflict("session_task_stale_run")
+        const actions = reconcile(flow.actions, run.actions, input.runID)
+        if (JSON.stringify(actions) === JSON.stringify(flow.actions)) return Revision.parse(revision)
         const saved = tx
           .update(TaskRevisionTable)
           .set({
             workflow: {
               ...revision.workflow,
-              actions: merge(workflow(Workflow.parse(revision.workflow)), tagged(run.actions, input.runID)),
+              actions,
             },
           })
-          .where(and(eq(TaskRevisionTable.id, revision.id), eq(TaskRevisionTable.task_id, task.id)))
+          .where(
+            and(
+              eq(TaskRevisionTable.id, revision.id),
+              eq(TaskRevisionTable.task_id, task.id),
+              eq(TaskRevisionTable.status, "active"),
+            ),
+          )
           .returning()
           .get()
         if (!saved) throw new Conflict("session_task_stale_run")
+        const current = tx
+          .update(SessionTaskTable)
+          .set({ time_updated: Date.now() })
+          .where(
+            and(
+              eq(SessionTaskTable.id, task.id),
+              eq(SessionTaskTable.current_revision_id, revision.id),
+              inArray(SessionTaskTable.status, ["running", "waiting_user", "revising"]),
+            ),
+          )
+          .returning({ id: SessionTaskTable.id })
+          .get()
+        if (!current) throw new Conflict("session_task_stale_run")
         return Revision.parse(saved)
       },
       { behavior: "immediate" },
@@ -896,13 +954,12 @@ export namespace SessionTask {
     const source = stored.task.source_ref
     const parent = stored.task.source_type === "delegation" && typeof source.runID === "string" ? source.runID : undefined
     const ids = parent ? [parent] : runids(stored.revision.workflow)
-    const runs = await Promise.all(
-      ids.slice(-50).map((runID) => SessionRuns.persisted(sessionID, runID).catch(() => undefined)),
-    )
+    const recent = ids.slice(-50)
+    const runs = await Promise.all(recent.map((runID) => SessionRuns.persisted(sessionID, runID).catch(() => undefined)))
     const trusted = parent ? valid(stored.task, runs[0]) : undefined
     const merged = runs.reduce<unknown[]>(
-      (all, run, index) => (run ? merge(all, tagged(run.actions, ids[index]!)) : all),
-      workflow(stored.revision.workflow),
+      (all, run, index) => (run ? merge(all, tagged(run.actions, recent[index]!)) : all),
+      workflow(stored.revision.workflow).filter((item) => recent.includes(item.run_id)),
     )
     const actions = parent ? workflow(stored.revision.workflow) : workflow({ actions: merged })
     const output = parent
@@ -1064,6 +1121,34 @@ export namespace SessionTask {
       items.set(key, item)
     }
     return [...items.values(), ...rest]
+  }
+
+  function reconcile(prev: unknown[], next: unknown[], runID: string) {
+    const actions = [...prev]
+    for (const item of tagged(next, runID)) {
+      const parsed = TaskAction.safeParse(item)
+      if (!parsed.success) throw new Conflict("session_task_action_conflict")
+      const index = actions.findIndex(
+        (saved) =>
+          saved &&
+          typeof saved === "object" &&
+          !Array.isArray(saved) &&
+          (saved as Record<string, unknown>).run_id === parsed.data.run_id &&
+          (saved as Record<string, unknown>).id === parsed.data.id,
+      )
+      if (index < 0) {
+        actions.push(parsed.data)
+        continue
+      }
+      const saved = TaskAction.safeParse(actions[index])
+      if (!saved.success) {
+        actions[index] = parsed.data
+        continue
+      }
+      if (JSON.stringify(saved.data) === JSON.stringify(parsed.data)) continue
+      throw new Conflict("session_task_action_conflict")
+    }
+    return actions
   }
 
   function tagged(actions: unknown[], runID: string) {
