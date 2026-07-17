@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
-import { mkdirSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "fs"
+import { fstatSync, fsyncSync, mkdirSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "fs"
+import { createServer } from "net"
 import path from "path"
 import { Instance } from "../../src/project/instance"
 import { TaskFS } from "../../src/session/task-fs"
@@ -55,6 +56,34 @@ async function ready(file: string) {
     await Bun.sleep(5)
   }
   throw new Error(`Timed out waiting for ${file}`)
+}
+
+function probe(root: string[]) {
+  return Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { Instance } from "./src/project/instance.ts"
+        import { TaskFS } from "./src/session/task-fs.ts"
+        const result = await Instance.provide({
+          directory: process.env.TASK_PROJECT,
+          fn: () => TaskFS.manifest(JSON.parse(process.env.TASK_ROOT), () => "manifest"),
+        })
+        console.log("PROBE_RESULT:" + result)
+      `,
+    ],
+    {
+      cwd: path.join(import.meta.dir, "../.."),
+      env: {
+        ...process.env,
+        TASK_PROJECT: Instance.directory,
+        TASK_ROOT: JSON.stringify(root),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
 }
 
 test("task fs rejects empty, dot, separator, and NUL segments", () => {
@@ -125,6 +154,117 @@ posix("task fs preserves a legacy directory lock and fails closed", () =>
     expect(TaskFS.manifest(root, () => "manifest")).toBe(false)
     expect(await Bun.file(path.join(lock, "sentinel")).text()).toBe("keep")
     expect(await Bun.file(path.join(Instance.directory, ...root, "manifest.md")).exists()).toBe(false)
+  }),
+)
+
+posix("task fs fails closed on a legacy FIFO lock without blocking", () =>
+  setup(async () => {
+    const root = [".harness", "sessions", "session_1", "tasks", "task_1"]
+    expect(TaskFS.publish(root, ["revisions", "v1", "task.md"], "body")).toBe(true)
+    const lock = path.join(Instance.directory, ".harness", "sessions", "session_1", "tasks", "task_1.manifest.lock")
+    expect(Bun.spawnSync(["mkfifo", lock]).exitCode).toBe(0)
+    const child = probe(root)
+    const result = await Promise.race([
+      child.exited.then((code) => ({ type: "exit" as const, code })),
+      Bun.sleep(1_000).then(() => ({ type: "timeout" as const })),
+    ])
+    if (result.type === "timeout") child.kill()
+
+    expect(result.type).toBe("exit")
+    if (result.type === "exit") expect(result.code).toBe(0)
+    expect(await new Response(child.stdout).text()).toContain("PROBE_RESULT:false")
+  }),
+)
+
+posix("task fs fails closed on a legacy Unix socket lock", () =>
+  setup(async () => {
+    const root = [".harness", "sessions", "session_1", "tasks", "task_1"]
+    expect(TaskFS.publish(root, ["revisions", "v1", "task.md"], "body")).toBe(true)
+    const lock = path.join(Instance.directory, ".harness", "sessions", "session_1", "tasks", "task_1.manifest.lock")
+    const socket = path.join("/tmp", `task-fs-${crypto.randomUUID()}.sock`)
+    const server = createServer()
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject)
+      server.listen(socket, resolve)
+    })
+    renameSync(socket, lock)
+    try {
+      expect(TaskFS.manifest(root, () => "manifest")).toBe(false)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  }),
+)
+
+posix("task fs fsyncs created and renamed directories", () =>
+  setup(async () => {
+    const calls: string[] = []
+    using hook = TaskFS.testing({
+      sync(fd, kind) {
+        fsyncSync(fd)
+        calls.push(kind)
+      },
+    })
+
+    expect(TaskFS.publish([".harness", "sessions"], ["session_1", "task.md"], "body")).toBe(true)
+    expect(calls.filter((kind) => kind === "file")).toHaveLength(1)
+    expect(calls.filter((kind) => kind === "directory")).toHaveLength(4)
+  }),
+)
+
+posix("task fs fsyncs a manifest lock only when first created", () =>
+  setup(async () => {
+    const root = [".harness", "sessions", "session_1", "tasks", "task_1"]
+    expect(TaskFS.publish(root, ["revisions", "v1", "task.md"], "body")).toBe(true)
+    const calls: string[] = []
+    using hook = TaskFS.testing({
+      sync(fd, kind) {
+        fsyncSync(fd)
+        calls.push(kind)
+      },
+    })
+
+    expect(TaskFS.manifest(root, () => "first")).toBe(true)
+    expect(calls).toEqual(["directory", "file", "directory"])
+    calls.length = 0
+    expect(TaskFS.manifest(root, () => "second")).toBe(true)
+    expect(calls).toEqual(["file", "directory"])
+  }),
+)
+
+posix("task fs fails closed and cleans temporary files when directory fsync fails", () =>
+  setup(async () => {
+    const root = [".harness", "sessions", "session_1", "tasks", "task_1"]
+    expect(TaskFS.publish(root, ["revisions", "v1", "task.md"], "first")).toBe(true)
+    expect(TaskFS.publish(root, ["revisions", "v2", "seed.md"], "seed")).toBe(true)
+    using hook = TaskFS.testing({
+      sync(fd, kind) {
+        if (kind === "directory") throw new Error("fsync failed")
+        fsyncSync(fd)
+      },
+    })
+
+    expect(TaskFS.publish(root, ["revisions", "v2", "task.md"], "second")).toBe(false)
+    expect(
+      Array.from(new Bun.Glob("*.tmp").scanSync(path.join(Instance.directory, ...root, "revisions", "v2"))),
+    ).toEqual([])
+  }),
+)
+
+posix("task fs closes a manifest lock descriptor when flock throws", () =>
+  setup(async () => {
+    const root = [".harness", "sessions", "session_1", "tasks", "task_1"]
+    let fd = -1
+    using hook = TaskFS.testing({
+      flock(value) {
+        fd = value
+        throw new Error("flock failed")
+      },
+    })
+
+    expect(TaskFS.manifest(root, () => "manifest")).toBe(false)
+    expect(fd).toBeGreaterThanOrEqual(0)
+    expect(() => fstatSync(fd)).toThrow()
   }),
 )
 

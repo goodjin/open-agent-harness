@@ -692,6 +692,28 @@ describe("session task", () => {
       expect(await Bun.file(path.join(Instance.directory, ".harness")).exists()).toBe(false)
     }))
 
+  posix("keeps the database commit when projection directory fsync fails", () =>
+    setup(async () => {
+      using hook = TaskFS.testing({
+        sync(_, kind) {
+          if (kind === "directory") throw new Error("fsync failed")
+        },
+      })
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Durable database task",
+        body: "# Durable database task\n",
+        source: { type: "user" },
+      })
+
+      expect((await SessionTask.get(session.id))?.task.id).toBe(saved.task.id)
+      expect(await Array.fromAsync(new Bun.Glob("**/*.tmp").scan({ cwd: Instance.directory, absolute: true }))).toEqual(
+        [],
+      )
+    }),
+  )
+
   posix("keeps the final rename relative to the opened directory after a parent swap", () =>
     setup(async () => {
       const session = await Session.create({})

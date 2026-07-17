@@ -17,6 +17,8 @@ export namespace TaskFS {
     backend?: null
     publish?: (tmp: string) => void
     lock?: () => void
+    sync?: (fd: number, kind: "file" | "directory") => void
+    flock?: (fd: number, op: number, next: () => Result) => Result
   }
 
   const ids = /^[A-Za-z0-9._-]+$/
@@ -39,6 +41,7 @@ export namespace TaskFS {
           nofollow: 0x100,
           directory: 0x100000,
           cloexec: 0x1000000,
+          nonblock: 0x4,
         }
       : {
           cwd: -100,
@@ -50,6 +53,7 @@ export namespace TaskFS {
           nofollow: 0x20000,
           directory: 0x10000,
           cloexec: 0x80000,
+          nonblock: 0x800,
         }
 
   const flock = { exclusive: 2, nonblock: 4, unlock: 8 }
@@ -77,9 +81,10 @@ export namespace TaskFS {
       file = opened.value
       fchmodSync(file, 0o600)
       writeFileSync(file, body, { encoding: "utf8" })
-      fsyncSync(file)
+      sync(file, "file")
       hooks.publish?.(tmp)
       if (!call(() => native.rename(dir, tmp, parts.at(-1)!)).ok) return false
+      sync(dir, "directory")
       tmp = ""
       return true
     } catch {
@@ -121,7 +126,7 @@ export namespace TaskFS {
       return false
     } finally {
       try {
-        if (owner >= 0) call(() => native.flock(owner, flock.unlock))
+        if (owner >= 0) call(() => locking(native, owner, flock.unlock))
       } catch {
       } finally {
         finish(owner)
@@ -151,8 +156,9 @@ export namespace TaskFS {
       fd = opened.value
       fchmodSync(fd, 0o600)
       writeFileSync(fd, body, { encoding: "utf8" })
-      fsyncSync(fd)
+      sync(fd, "file")
       if (!call(() => native.rename(dir, tmp, name)).ok) return false
+      sync(dir, "directory")
       tmp = ""
       return true
     } finally {
@@ -186,42 +192,71 @@ export namespace TaskFS {
   function child(native: Native, dir: number, name: string) {
     const made = call(() => native.mkdir(dir, name, 0o700))
     if (!made.ok && made.errno !== errno.exist) return -1
+    if (made.ok) sync(dir, "directory")
     const opened = call(() => native.open(dir, name, dirflags()))
     return opened.ok ? opened.value : -1
   }
 
   function acquire(native: Native, dir: number) {
-    const opened = call(() =>
-      native.open(dir, ".manifest.lock", flags.readwrite | flags.create | flags.nofollow | flags.cloexec, 0o600),
+    const made = call(() =>
+      native.open(
+        dir,
+        ".manifest.lock",
+        flags.readwrite | flags.create | flags.exclusive | flags.nofollow | flags.cloexec,
+        0o600,
+      ),
     )
+    const opened = made.ok
+      ? made
+      : made.errno === errno.exist
+        ? call(() => native.open(dir, ".manifest.lock", flags.readwrite | flags.nofollow | flags.cloexec))
+        : made
     if (!opened.ok) return -1
     const fd = opened.value
+    let keep = false
     try {
       fchmodSync(fd, 0o600)
-      if (!fstatSync(fd).isFile()) {
-        finish(fd)
-        return -1
+      if (!fstatSync(fd).isFile()) return -1
+      if (made.ok) sync(dir, "directory")
+      const deadline = Date.now() + 2_000
+      while (Date.now() < deadline) {
+        const locked = call(() => locking(native, fd, flock.exclusive | flock.nonblock))
+        if (locked.ok) {
+          keep = true
+          return fd
+        }
+        if (locked.errno !== errno.blocked) return -1
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
       }
-    } catch {
-      finish(fd)
       return -1
+    } catch {
+      return -1
+    } finally {
+      if (!keep) finish(fd)
     }
-    const deadline = Date.now() + 2_000
-    while (Date.now() < deadline) {
-      const locked = call(() => native.flock(fd, flock.exclusive | flock.nonblock))
-      if (locked.ok) return fd
-      if (locked.errno !== errno.blocked) break
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
-    }
-    finish(fd)
-    return -1
   }
 
   function missing(native: Native, dir: number, name: string) {
-    const opened = call(() => native.open(dir, name, flags.readonly | flags.nofollow | flags.cloexec))
+    const opened = call(() => native.open(dir, name, flags.readonly | flags.nonblock | flags.nofollow | flags.cloexec))
     if (!opened.ok) return opened.errno === errno.missing
-    finish(opened.value)
-    return false
+    try {
+      fstatSync(opened.value)
+      return false
+    } catch {
+      return false
+    } finally {
+      finish(opened.value)
+    }
+  }
+
+  function sync(fd: number, kind: "file" | "directory") {
+    if (hooks.sync) return hooks.sync(fd, kind)
+    fsyncSync(fd)
+  }
+
+  function locking(native: Native, fd: number, op: number) {
+    if (hooks.flock) return hooks.flock(fd, op, () => native.flock(fd, op))
+    return native.flock(fd, op)
   }
 
   function finish(fd: number) {
