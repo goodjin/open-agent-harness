@@ -354,38 +354,26 @@ export namespace SessionTask {
           throw new Conflict("session_task_assignment_not_current")
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task) throw new Conflict("session_task_assignment_not_current")
-        if (input.op === "update") {
-          const revisions = tx
-            .select()
-            .from(TaskRevisionTable)
-            .where(
-              and(
-                eq(TaskRevisionTable.task_id, task.id),
-                eq(TaskRevisionTable.status, "draft"),
-                eq(TaskRevisionTable.title, input.assignment.title),
-                eq(TaskRevisionTable.body_hash, hash(input.plan)),
-              ),
-            )
-            .orderBy(desc(TaskRevisionTable.version))
-            .all()
-          const revision = bound(revisions, input.assignment)
-          if (!revision) throw new Conflict("session_task_assignment_not_current")
-          return { type: "update" as const, task: Task.parse(task), revision: Revision.parse(revision) }
-        }
-        if (!task.current_revision_id) throw new Conflict("session_task_revision_missing")
-        const revision = tx
+        const revisions = tx
           .select()
           .from(TaskRevisionTable)
-          .where(and(eq(TaskRevisionTable.id, task.current_revision_id), eq(TaskRevisionTable.task_id, task.id)))
-          .get()
+          .where(
+            and(
+              eq(TaskRevisionTable.task_id, task.id),
+              eq(TaskRevisionTable.title, input.assignment.title),
+              eq(TaskRevisionTable.body_hash, hash(input.plan)),
+            ),
+          )
+          .orderBy(desc(TaskRevisionTable.version))
+          .all()
+        const revision = bound(revisions, input.assignment)
         if (
           !revision ||
-          revision.title !== input.assignment.title ||
-          revision.body_hash !== hash(input.plan) ||
-          !bound([revision], input.assignment)
+          (input.op === "create" && revision.previous_id !== null) ||
+          (input.op === "update" && revision.previous_id === null)
         )
           throw new Conflict("session_task_assignment_not_current")
-        return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(revision) }
+        return { type: "replay" as const, task: Task.parse(task), revision: Revision.parse(revision) }
       },
       { behavior: "immediate" },
     )

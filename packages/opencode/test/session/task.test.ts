@@ -1083,7 +1083,7 @@ describe("session task", () => {
         legacy: { title: "Unsafe", body: "Unsafe" },
         requiresAssignment: true,
       })
-      expect(replay.type).toBe("execute")
+      expect(replay.type).toBe("replay")
       expect((await SessionTask.get(session.id))?.revision.id).toBe(bound?.revision.id)
 
       await SessionTask.confirmed({
@@ -1160,8 +1160,8 @@ describe("session task", () => {
         legacy: { title: "Unsafe", body: "Unsafe" },
         requiresAssignment: true,
       })
-      expect(replay.type).toBe("update")
-      expect(replay.type === "update" ? replay.revision.id : undefined).toBe(
+      expect(replay.type).toBe("replay")
+      expect(replay.type === "replay" ? replay.revision.id : undefined).toBe(
         result.type === "update" ? result.revision.id : undefined,
       )
     }))
@@ -1226,9 +1226,9 @@ describe("session task", () => {
 
       expect(first.result.revision.workflow.assignment_id).toBe(first.assignment.id)
       expect(second.result.revision.workflow.assignment_id).toBe(second.assignment.id)
-      expect(old.type === "update" ? old.revision.id : undefined).toBe(first.result.revision.id)
-      expect(latest.type === "update" ? latest.revision.id : undefined).toBe(second.result.revision.id)
-      expect(again.type === "update" ? again.revision.id : undefined).toBe(first.result.revision.id)
+      expect(old.type === "replay" ? old.revision.id : undefined).toBe(first.result.revision.id)
+      expect(latest.type === "replay" ? latest.revision.id : undefined).toBe(second.result.revision.id)
+      expect(again.type === "replay" ? again.revision.id : undefined).toBe(first.result.revision.id)
       expect((await SessionTask.revision(session.id, 4))).toBeUndefined()
 
       Database.use((tx) =>
@@ -1243,6 +1243,99 @@ describe("session task", () => {
       await expect(replay("confirm_identity_first", "run_identity_first")).rejects.toThrow(
         "session_task_assignment_not_current",
       )
+    }))
+
+  test("replays create and update assignments from their original revisions without changing current", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const action = (id: string, op: "create" | "update", title: string) =>
+        ({
+          type: "action",
+          id,
+          title,
+          operation: "confirm",
+          executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+          input: { assignment: { op, target: "self" } },
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        }) as AgentProtocol.Action
+      const confirm = async (item: AgentProtocol.Action, run: string, plan: string) => {
+        const assignment = await SessionAssignment.confirm({
+          action: item,
+          messageID: MessageID.ascending(),
+          plan,
+          runID: run,
+          sessionID: session.id,
+        })
+        if (!assignment) throw new Error("assignment missing")
+        const result = await SessionTask.confirmed({
+          sessionID: session.id,
+          runID: run,
+          actionIDs: [item.id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        })
+        return { assignment, result }
+      }
+      const create = action("confirm_create_history", "create", "Original task")
+      const first = await confirm(create, "run_create_history", "Original plan")
+      if (first.result.type !== "execute") throw new Error("create missing")
+      const update = action("confirm_update_history", "update", "Revised task")
+      const second = await confirm(update, "run_update_history", "Revised plan")
+      if (second.result.type !== "update") throw new Error("update missing")
+      await SessionTask.activate({ taskID: second.result.task.id, revisionID: second.result.revision.id })
+
+      const replay = (item: AgentProtocol.Action, run: string) =>
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: run,
+          actionIDs: [item.id],
+          actions: [{ id: "must_not_execute" }],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        })
+      const old = await replay(create, "run_create_history")
+      const current = await replay(update, "run_update_history")
+
+      expect(old.type).toBe("replay")
+      if (old.type !== "replay") throw new Error("create replay missing")
+      expect(old.revision.id).toBe(first.result.revision.id)
+      expect(current.type).toBe("replay")
+      if (current.type !== "replay") throw new Error("update replay missing")
+      expect(current.revision.id).toBe(second.result.revision.id)
+      expect(old.revision.workflow.actions).not.toContainEqual({ id: "must_not_execute" })
+      expect(current.revision.workflow.actions).not.toContainEqual({ id: "must_not_execute" })
+      expect((await SessionTask.get(session.id))?.revision.id).toBe(second.result.revision.id)
+      expect((await SessionTask.revision(session.id, 3))).toBeUndefined()
+
+      const other = await Session.create({})
+      const foreign = await SessionTask.route({
+        sessionID: other.id,
+        runID: "run_foreign_task",
+        legacy: { title: "Foreign task", body: "Foreign plan" },
+        actions: [],
+      })
+      if (foreign.type !== "execute") throw new Error("foreign task missing")
+      Database.use((tx) =>
+        tx
+          .update(TaskRevisionTable)
+          .set({ workflow: { ...foreign.revision.workflow, assignment_id: first.assignment.id } })
+          .where(eq(TaskRevisionTable.id, foreign.revision.id))
+          .run(),
+      )
+      await expect(
+        SessionTask.confirmed({
+          sessionID: other.id,
+          runID: "run_create_history",
+          actionIDs: [create.id],
+          actions: [],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_source_conflict")
+      expect((await SessionTask.get(other.id))?.revision.id).toBe(foreign.revision.id)
     }))
 
   test("keeps handoff assignment pending and rejects ordinary execution", () =>

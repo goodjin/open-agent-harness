@@ -27,6 +27,7 @@
 15. 将 `SessionTurn.finish` 的最新状态读取、终态优先判断与消息写入收进同一 immediate 事务，阻止 waiting 后写覆盖 terminal。
 16. 清理 Runner 测试的共享 spy/loop 计数依赖，并用多轮全文件与组合运行验证稳定性。
 17. 将 confirmed create/update Assignment 的 canonical id 写入 Revision workflow，避免相同标题和正文的历史 Assignment replay 串到最新 draft。
+18. 让 consumed create/update Assignment replay 统一返回原始 Revision 的只读结果，包括已经 archived、completed 或 activated 的历史版本，不恢复执行或切换 current。
 
 ## 实际修复
 
@@ -39,6 +40,7 @@
 - Runner soft-limit 测试改为等待明确事件与 deadline，并在每个测试后统一恢复 mocks。
 - 新建 create/update Revision 的 workflow 持久化可选 `assignment_id`；completed Assignment replay 先校验精确 source locator 与完整 row fingerprint，再按该 id 返回对应 Revision。同一 Assignment 重放幂等，不会新增 Revision。
 - 历史 workflow 不含 `assignment_id` 时，仅在 `source_message_id` 或 `workflow.run_id` 与 Assignment source locator 精确一致且候选唯一时兼容；歧义场景直接冲突，不按标题或正文猜测。
+- create/update replay 在当前 session Task 的全部 Revisions 中按 canonical assignment id 查找，返回统一 `replay` 类型；Runner 将其作为只读阻断结果处理，不执行 package action。Task 查询受 session 约束，另一 Task 即使伪造相同 workflow id 也不能复用该 Assignment。
 
 ## 验证补充
 
@@ -47,6 +49,7 @@
 - Runner 与 same-run failure 额外验证 owner turn child Timeline 由 current/pending 收敛为 failed terminal，重复 fail 不回到 pending。
 - 覆盖 Assignment consume/replay、legacy 路由 metadata 注入、handoff pending 拦截和 concurrent finish terminal 优先级。
 - 覆盖两个标题和正文完全相同的 update Assignment 各自创建 draft，并验证 first/second locator 精确返回 first/second Revision、重复 first 不产生第三个 draft，以及 legacy locator 歧义拒绝。
+- 覆盖 create A 生成 v1、update B 生成并激活 v2 后，A/B locator 分别返回 archived v1 和 active v2，current 仍为 v2、无新 Revision、replay actions 未写入，以及跨 session Task 的相同 id 伪造被拒绝。
 
 ## 影响模块
 
@@ -95,12 +98,12 @@
 
 ## 验证结果
 
-- Session Task：49 passed
+- Session Task：50 passed
 - Session Runner：63 passed
 - Session Runs：29 passed
 - Session Delegation：37 passed
 - Session Turn：5 passed
-- 合计：183 passed，0 failed
+- 合计：184 passed，0 failed
 - `bun typecheck`：通过
 - Runner 全文件连续 5 轮均为 63 passed；五文件组合连续 3 轮均为 182 passed。
 - 稳定性对照曾复现既有跨进程 draft conflict；单跑及最终三轮组合均通过。另定位并移除 self-delegation 测试对并发 prompt 数组顺序的依赖。

@@ -1253,7 +1253,7 @@ export namespace SessionRunner {
         messages: [],
       }))
     let started = false
-    let bound: Awaited<ReturnType<typeof SessionTask.route>> | undefined
+    let bound: Awaited<ReturnType<typeof bind>> | undefined
     let active: AgentProtocol.Action | undefined
     let began: number | undefined
     const evidence = new Map<string, AgentProtocol.ResultAction>()
@@ -1293,7 +1293,9 @@ export namespace SessionRunner {
                 output:
                   bound.type === "update"
                     ? "Task update proposal saved as a draft; source actions were not executed."
-                    : "Task handoff is pending; source actions were not executed.",
+                    : bound.type === "replay"
+                      ? "Task assignment replay resolved to its original revision; source actions were not executed."
+                      : "Task handoff is pending; source actions were not executed.",
                 metadata: { blocked: true, reason: bound.type },
               })
             }
