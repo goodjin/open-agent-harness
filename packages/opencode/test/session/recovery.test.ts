@@ -10,8 +10,16 @@ import { SessionRecovery } from "../../src/session/recovery"
 import { SessionTaskRecovery } from "../../src/session/task-recovery"
 import { SessionTask } from "../../src/session/task"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID, PartID, type SessionID } from "../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionStatus } from "../../src/session/status"
+import { SessionAssignment } from "../../src/session/assignment"
+import { SessionDelegation } from "../../src/session/delegation"
+import { SessionResult } from "../../src/session/result"
+import { AgentProtocol } from "../../src/protocol/schema"
+import { SessionControlTool } from "../../src/tool/session-control"
+import type { Tool } from "../../src/tool/tool"
+import { Database, eq } from "../../src/storage/db"
+import { SessionEventOutboxTable } from "../../src/session/session.sql"
 import { Log } from "../../src/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -63,6 +71,209 @@ describe("session recovery", () => {
                 source: "task_revision_bootstrap",
                 revision_id: update.revision.id,
               })
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("collects every scoped child before activation and ignores unrelated tree sessions", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const calls: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      calls.push(input)
+      if (input.metadata?.source === "task_revision_bootstrap") return undefined
+      const user = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "summary",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)) as MessageV2.User
+      const assistant = (await Session.updateMessage({
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "summary",
+        agent: input.agent ?? "summary",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
+      })) as MessageV2.Assistant
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: assistant.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "Recovered partial child result with task revision stop reason.",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
+      return { info: assistant, parts: [part] } as MessageV2.WithParts
+    }) as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_children"),
+            fn: async () => {
+              const parent = await Session.create({ agent: "default" })
+              const confirm = action("confirm_create", "confirm", "user")
+              confirm.input = { assignment: { op: "create", target: "self" }, plan: "Original plan" }
+              const actions = [
+                action("running", "delegate", "backend"),
+                action("completed", "delegate", "backend"),
+                action("missing", "delegate", "backend"),
+                action("stuck", "delegate", "backend"),
+              ]
+              const assignment = await SessionAssignment.confirm({
+                action: confirm,
+                messageID: MessageID.ascending(),
+                plan: "Original plan",
+                runID: "run_task_children",
+                sessionID: parent.id,
+              })
+              if (!assignment) throw new Error("assignment missing")
+              const original = await SessionTask.confirmed({
+                sessionID: parent.id,
+                runID: "run_task_children",
+                actionIDs: [confirm.id],
+                actions: [confirm, ...actions],
+                legacy: { title: "Original", body: "Original plan" },
+                requiresAssignment: true,
+              })
+              if (original.type !== "execute") throw new Error("task missing")
+
+              const children = await Promise.all(
+                actions.map(async (item) => {
+                  const child = await Session.create({ parentID: parent.id, agent: "backend" })
+                  await SessionAssignment.delegate({
+                    action: item,
+                    childID: child.id,
+                    messageID: MessageID.ascending(),
+                    runID: "run_task_children",
+                    sessionID: parent.id,
+                  })
+                  return child
+                }),
+              )
+              for (const index of [0, 1, 2]) {
+                await SessionDelegation.assign({
+                  action: actions[index]!,
+                  agent: "backend",
+                  childID: children[index]!.id,
+                  messageID: MessageID.ascending(),
+                  parentAgent: "default",
+                  runID: "run_task_children",
+                  sessionID: parent.id,
+                })
+              }
+              SessionStatus.set(children[0]!.id, { type: "running" })
+              SessionStatus.set(children[1]!.id, { type: "completed" })
+              SessionStatus.set(children[2]!.id, { type: "completed" })
+              SessionStatus.set(children[3]!.id, { type: "running" })
+              await SessionResult.put({
+                carrier: "action_result",
+                status: "completed",
+                satisfying: true,
+                sessionID: children[1]!.id,
+                parentSessionID: parent.id,
+                childSessionID: children[1]!.id,
+                runID: "run_task_children",
+                actionID: "completed",
+                summary: "Completed native result",
+                raw: {
+                  output: "Completed native result",
+                  input: { kind: "action_result", role: "worker", action_id: "completed", status: "success" },
+                },
+              })
+              const unrelated = await Session.create({ parentID: parent.id, agent: "backend" })
+              SessionStatus.set(unrelated.id, { type: "running" })
+              const update = await SessionTask.route({
+                sessionID: parent.id,
+                runID: "run_task_update",
+                assignment: { op: "update", target: "self", title: "Revised", body: "Revised plan" },
+                actions: [{ id: "replacement" }],
+              })
+              if (update.type !== "update") throw new Error("draft missing")
+
+              const tool = await SessionControlTool.init()
+              const context = control(parent.id)
+              const listed = JSON.parse((await tool.execute({ action: "list" }, context)).output) as {
+                session_id: string
+              }[]
+              expect(listed.map((item) => item.session_id).sort()).toEqual(children.map((item) => item.id).sort())
+              expect(listed.map((item) => item.session_id)).not.toContain(unrelated.id)
+
+              expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
+              expect((await SessionTask.get(parent.id))?.task.status).toBe("revising")
+              expect((await SessionTask.get(parent.id))?.revision.id).toBe(original.revision.id)
+              expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
+              expect(SessionStatus.get(children[1]!.id).type).toBe("completed")
+              expect(SessionStatus.get(children[2]!.id).type).toBe("completed")
+              expect(SessionStatus.get(children[3]!.id).type).toBe("running")
+              expect(SessionStatus.get(unrelated.id).type).toBe("running")
+              expect(
+                Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, parent.id))
+                    .all(),
+                ),
+              ).toHaveLength(0)
+              const first = await SessionResult.listForParent(parent.id)
+              const running = first.find((item) => item.child_session_id === children[0]!.id)
+              const completed = first.find((item) => item.child_session_id === children[1]!.id)
+              const missing = first.find((item) => item.child_session_id === children[2]!.id)
+              expect(running?.status).toBe("partial")
+              expect((await SessionResult.parse(running?.id ?? ""))?.output).toContain("task revision stop reason")
+              expect(completed?.summary).toBe("Completed native result")
+              expect((await SessionResult.parse(completed?.id ?? ""))?.output).toBe("Completed native result")
+              expect(missing?.status).toBe("partial")
+              expect((await SessionResult.parse(missing?.id ?? ""))?.output).toContain("task revision stop reason")
+              expect(first.some((item) => item.child_session_id === children[3]!.id)).toBe(false)
+
+              const stopped = JSON.parse((await tool.execute({ action: "stop_all" }, context)).output) as {
+                session_id: string
+              }[]
+              expect(stopped.map((item) => item.session_id).sort()).toEqual(children.map((item) => item.id).sort())
+              await SessionDelegation.assign({
+                action: actions[3]!,
+                agent: "backend",
+                childID: children[3]!.id,
+                messageID: MessageID.ascending(),
+                parentAgent: "default",
+                runID: "run_task_children",
+                sessionID: parent.id,
+              })
+
+              expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
+              expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
+              const results = await SessionResult.listForParent(parent.id)
+              const ids = results.map((item) => item.id).sort()
+              const summaries = calls.filter((item) => item.agent === "summary").length
+              const bootstraps = calls.filter((item) => item.metadata?.source === "task_revision_bootstrap").length
+              expect(results.filter((item) => children.some((child) => child.id === item.child_session_id))).toHaveLength(4)
+              expect(bootstraps).toBe(1)
+              expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
+              expect(await SessionTaskRecovery.scan()).toContain(true)
+              expect((await SessionResult.listForParent(parent.id)).map((item) => item.id).sort()).toEqual(ids)
+              expect(calls.filter((item) => item.agent === "summary")).toHaveLength(summaries)
+              expect(calls.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
+              SessionStatus.set(unrelated.id, { type: "idle" })
             },
           }),
       })
@@ -253,5 +464,34 @@ async function stale(dir: string, command: string) {
     messageID,
     partID,
     start,
+  }
+}
+
+function action(id: string, operation: string, target: string) {
+  return {
+    type: "action",
+    id,
+    title: id,
+    operation,
+    executor:
+      target === "user"
+        ? { type: "human", target, capabilities: ["confirmation"] }
+        : { type: "agent", target, capabilities: ["implementation"] },
+    input: {},
+    depends_on: [],
+    context_refs: [],
+    result_policy: "summary",
+  } as AgentProtocol.Action
+}
+
+function control(sessionID: SessionID): Tool.Context {
+  return {
+    sessionID,
+    messageID: MessageID.ascending(),
+    agent: "default",
+    abort: new AbortController().signal,
+    messages: [],
+    metadata() {},
+    async ask() {},
   }
 }

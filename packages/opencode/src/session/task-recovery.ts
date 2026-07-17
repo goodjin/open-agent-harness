@@ -3,8 +3,10 @@ import { Session } from "."
 import { SessionDelegation } from "./delegation"
 import { MessageV2 } from "./message-v2"
 import { SessionPrompt } from "./prompt"
+import { SessionResult } from "./result"
 import { MessageID, SessionID } from "./schema"
 import { SessionEventOutboxTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
+import { SessionStatus } from "./status"
 import { SessionTask } from "./task"
 
 export namespace SessionTaskRecovery {
@@ -36,12 +38,40 @@ export namespace SessionTaskRecovery {
           reason: "Stopped for confirmed task revision.",
         })
       }
+      const results = await SessionResult.listForParent(sessionID)
+      if (
+        scope.some(
+          (item) =>
+            !terminal(SessionStatus.get(item.session_id)) ||
+            !results.some(
+              (result) =>
+                result.child_session_id === item.session_id &&
+                result.run_id === item.run_id &&
+                result.action_id === item.action_id,
+            ),
+        )
+      )
+        return true
       await SessionTask.activate({ taskID: stored.task.id, revisionID: draft.id, bootstrap: true })
     }
     const next = pending(sessionID)
     if (!next) return bootstrapped(sessionID)
     await start(next)
     return true
+  }
+
+  function terminal(status: SessionStatus.Info) {
+    return (
+      status.type === "completed" ||
+      status.type === "terminal_reply" ||
+      status.type === "user_completed" ||
+      status.type === "aborted" ||
+      status.type === "failed" ||
+      status.type === "blocked" ||
+      status.type === "timeout" ||
+      status.type === "error" ||
+      status.type === "archived"
+    )
   }
 
   export async function scan() {
