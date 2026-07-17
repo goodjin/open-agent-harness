@@ -10,6 +10,7 @@ export namespace TaskFS {
     mkdir(dir: number, name: string, mode: number): Result
     rename(dir: number, from: string, to: string): Result
     unlink(dir: number, name: string, flags: number): Result
+    flock(fd: number, op: number): Result
     close(): void
   }
   type Hooks = {
@@ -24,32 +25,34 @@ export namespace TaskFS {
     exist: 17,
     missing: 2,
     interrupt: 4,
-    notempty: process.platform === "darwin" ? 66 : 39,
+    blocked: process.platform === "darwin" ? 35 : 11,
   }
   const flags =
     process.platform === "darwin"
       ? {
           cwd: -2,
           readonly: 0,
+          readwrite: 2,
           write: 1,
           create: 0x200,
           exclusive: 0x800,
           nofollow: 0x100,
           directory: 0x100000,
           cloexec: 0x1000000,
-          removedir: 0x80,
         }
       : {
           cwd: -100,
           readonly: 0,
+          readwrite: 2,
           write: 1,
           create: 0x40,
           exclusive: 0x80,
           nofollow: 0x20000,
           directory: 0x10000,
           cloexec: 0x80000,
-          removedir: 0x200,
         }
+
+  const flock = { exclusive: 2, nonblock: 4, unlock: 8 }
 
   let hooks: Hooks = {}
   let source: string | null | undefined
@@ -102,14 +105,14 @@ export namespace TaskFS {
     let tasks = -1
     let task = -1
     let owner = -1
-    const name = `${root.at(-1)}.manifest.lock`
     try {
       tasks = walk(native, root.slice(0, -1))
       if (tasks < 0) return false
       task = child(native, tasks, root.at(-1)!)
       if (task < 0) return false
       hooks.lock?.()
-      owner = acquire(native, tasks, name)
+      if (!missing(native, tasks, `${root.at(-1)}.manifest.lock`)) return false
+      owner = acquire(native, task)
       if (owner < 0) return false
       const value = body()
       if (value === undefined) return false
@@ -118,7 +121,7 @@ export namespace TaskFS {
       return false
     } finally {
       try {
-        if (owner >= 0 && owned(native, tasks, name, owner)) call(() => native.unlink(tasks, name, flags.removedir))
+        if (owner >= 0) call(() => native.flock(owner, flock.unlock))
       } catch {
       } finally {
         finish(owner)
@@ -187,46 +190,38 @@ export namespace TaskFS {
     return opened.ok ? opened.value : -1
   }
 
-  function acquire(native: Native, dir: number, name: string) {
+  function acquire(native: Native, dir: number) {
+    const opened = call(() =>
+      native.open(dir, ".manifest.lock", flags.readwrite | flags.create | flags.nofollow | flags.cloexec, 0o600),
+    )
+    if (!opened.ok) return -1
+    const fd = opened.value
+    try {
+      fchmodSync(fd, 0o600)
+      if (!fstatSync(fd).isFile()) {
+        finish(fd)
+        return -1
+      }
+    } catch {
+      finish(fd)
+      return -1
+    }
     const deadline = Date.now() + 2_000
     while (Date.now() < deadline) {
-      const made = call(() => native.mkdir(dir, name, 0o700))
-      if (made.ok) {
-        const opened = call(() => native.open(dir, name, dirflags()))
-        return opened.ok ? opened.value : -1
-      }
-      if (made.errno !== errno.exist) return -1
-      const opened = call(() => native.open(dir, name, dirflags()))
-      if (!opened.ok) return -1
-      const stat = (() => {
-        try {
-          return fstatSync(opened.value)
-        } finally {
-          finish(opened.value)
-        }
-      })()
-      if (Date.now() - stat.mtimeMs > 30_000) {
-        const removed = call(() => native.unlink(dir, name, flags.removedir))
-        if (removed.ok || removed.errno === errno.missing) continue
-        if (removed.errno !== errno.notempty) return -1
-      }
+      const locked = call(() => native.flock(fd, flock.exclusive | flock.nonblock))
+      if (locked.ok) return fd
+      if (locked.errno !== errno.blocked) break
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10)
     }
+    finish(fd)
     return -1
   }
 
-  function owned(native: Native, dir: number, name: string, owner: number) {
-    const opened = call(() => native.open(dir, name, dirflags()))
-    if (!opened.ok) return false
-    try {
-      const live = fstatSync(opened.value)
-      const held = fstatSync(owner)
-      return live.dev === held.dev && live.ino === held.ino
-    } catch {
-      return false
-    } finally {
-      finish(opened.value)
-    }
+  function missing(native: Native, dir: number, name: string) {
+    const opened = call(() => native.open(dir, name, flags.readonly | flags.nofollow | flags.cloexec))
+    if (!opened.ok) return opened.errno === errno.missing
+    finish(opened.value)
+    return false
   }
 
   function finish(fd: number) {
@@ -294,6 +289,7 @@ export namespace TaskFS {
       mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
       renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
       unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
+      flock: { args: ["i32", "i32"], returns: "i32" },
     } as const
     const text = (value: string) => ptr(Buffer.from(`${value}\0`))
     if (process.platform === "darwin") {
@@ -308,6 +304,7 @@ export namespace TaskFS {
         mkdir: (dir, name, mode) => result(lib.symbols.mkdirat(dir, text(name), mode)),
         rename: (dir, from, to) => result(lib.symbols.renameat(dir, text(from), dir, text(to))),
         unlink: (dir, name, value) => result(lib.symbols.unlinkat(dir, text(name), value)),
+        flock: (fd, op) => result(lib.symbols.flock(fd, op)),
         close: () => {
           try {
             lib.close()
@@ -326,6 +323,7 @@ export namespace TaskFS {
       mkdir: (dir, name, mode) => result(lib.symbols.mkdirat(dir, text(name), mode)),
       rename: (dir, from, to) => result(lib.symbols.renameat(dir, text(from), dir, text(to))),
       unlink: (dir, name, value) => result(lib.symbols.unlinkat(dir, text(name), value)),
+      flock: (fd, op) => result(lib.symbols.flock(fd, op)),
       close: () => {
         try {
           lib.close()

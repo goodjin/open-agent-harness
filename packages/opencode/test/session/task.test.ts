@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, readdirSync, renameSync, symlinkSync, utimesSync, writeFileSync } from "fs"
+import { mkdirSync, readdirSync, renameSync, statSync, symlinkSync, utimesSync, writeFileSync } from "fs"
 import { symlink, unlink } from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -770,6 +770,8 @@ describe("session task", () => {
       expect(await Bun.file(path.join(`${tasks}-safe`, saved.task.id, "manifest.md")).text()).toContain(
         "Current revision: v1",
       )
+      expect(statSync(path.join(`${tasks}-safe`, saved.task.id, ".manifest.lock")).isFile()).toBe(true)
+      expect(await Bun.file(path.join(outside, saved.task.id, ".manifest.lock")).exists()).toBe(false)
     }),
   )
 
@@ -821,14 +823,14 @@ describe("session task", () => {
       expect(manifest).toContain("Current revision: v2")
       expect(manifest).not.toContain("Current revision: v1")
       expect(
-        await Bun.file(
-          path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", `${first.task.id}.manifest.lock`),
-        ).exists(),
-      ).toBe(false)
+        statSync(
+          path.join(Instance.directory, ".harness", "sessions", session.id, "tasks", first.task.id, ".manifest.lock"),
+        ).isFile(),
+      ).toBe(true)
     }),
   )
 
-  posix("bounds manifest lock waits and safely recovers a stale lock", () =>
+  posix("preserves a legacy manifest lock directory without recovery", () =>
     setup(async () => {
       const session = await Session.create({})
       const saved = await SessionTask.create({
@@ -846,7 +848,6 @@ describe("session task", () => {
         `${saved.task.id}.manifest.lock`,
       )
       mkdirSync(lock)
-      const start = Date.now()
       expect(
         TaskDocuments.publish({
           sessionID: session.id,
@@ -857,8 +858,7 @@ describe("session task", () => {
           current: true,
         }),
       ).toBe(false)
-      expect(Date.now() - start).toBeGreaterThanOrEqual(1_800)
-      expect(Date.now() - start).toBeLessThan(3_000)
+      expect(statSync(lock).isDirectory()).toBe(true)
 
       const stale = new Date(Date.now() - 31_000)
       utimesSync(lock, stale, stale)
@@ -871,8 +871,8 @@ describe("session task", () => {
           body: saved.revision.body,
           current: true,
         }),
-      ).toBe(true)
-      expect(await Bun.file(lock).exists()).toBe(false)
+      ).toBe(false)
+      expect(statSync(lock).isDirectory()).toBe(true)
     }),
   )
 
