@@ -1,7 +1,7 @@
 import { Database as BunDatabase } from "bun:sqlite"
 import { drizzle, type SQLiteBunDatabase } from "drizzle-orm/bun-sqlite"
 import { migrate } from "drizzle-orm/bun-sqlite/migrator"
-import { type SQLiteTransaction } from "drizzle-orm/sqlite-core"
+import { type SQLiteTransaction, type SQLiteTransactionConfig } from "drizzle-orm/sqlite-core"
 export * from "drizzle-orm"
 import { Context } from "../util/context"
 import { lazy } from "../util/lazy"
@@ -167,15 +167,19 @@ export namespace Database {
     }
   }
 
-  export function transaction<T>(callback: (tx: TxOrDb) => T): T {
+  export function transaction<T>(callback: (tx: TxOrDb) => T, config?: SQLiteTransactionConfig): T {
     try {
       return callback(ctx.use().tx)
     } catch (err) {
       if (err instanceof Context.NotFound) {
         const effects: (() => void | Promise<void>)[] = []
-        const result = (Client().transaction as any)((tx: TxOrDb) => {
+        const transact = Client().transaction.bind(Client()) as unknown as (
+          callback: (tx: TxOrDb) => T,
+          config?: SQLiteTransactionConfig,
+        ) => T
+        const result = transact((tx) => {
           return ctx.provide({ tx, effects }, () => callback(tx))
-        })
+        }, config)
         for (const effect of effects) effect()
         return result
       }

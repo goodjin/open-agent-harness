@@ -6,7 +6,9 @@ import { SessionTaskTable, TaskRevisionTable } from "./session.sql"
 
 export namespace SessionTask {
   export const Status = z.enum(["running", "waiting_user", "revising", "blocked", "completed", "failed"])
+  export type Status = z.infer<typeof Status>
   export const SourceType = z.enum(["user", "delegation", "handoff", "legacy"])
+  export type SourceType = z.infer<typeof SourceType>
   export const Source = z.discriminatedUnion("type", [
     z.object({ type: z.literal("user"), messageID: MessageID.zod.optional() }).strict(),
     z
@@ -20,8 +22,11 @@ export namespace SessionTask {
     z.object({ type: z.literal("handoff"), handoffID: z.string().min(1) }).strict(),
     z.object({ type: z.literal("legacy"), runID: z.string().min(1).optional() }).strict(),
   ])
+  export type Source = z.infer<typeof Source>
   export const RevisionStatus = z.enum(["draft", "active", "completed", "failed", "archived"])
+  export type RevisionStatus = z.infer<typeof RevisionStatus>
   export const Workflow = z.object({ actions: z.array(z.unknown()) }).strict()
+  export type Workflow = z.infer<typeof Workflow>
   export const Task = z
     .object({
       id: z.string().min(1),
@@ -35,6 +40,7 @@ export namespace SessionTask {
       time_updated: z.number().int().nonnegative(),
     })
     .strict()
+  export type Task = z.infer<typeof Task>
   export const Revision = z
     .object({
       id: z.string().min(1),
@@ -57,8 +63,11 @@ export namespace SessionTask {
       archive_reason: z.string().nullable(),
     })
     .strict()
+  export type Revision = z.infer<typeof Revision>
   export const View = z.object({ task: Task, revision: Revision }).strict()
+  export type View = z.infer<typeof View>
   export const History = Revision
+  export type History = z.infer<typeof History>
 
   const Create = z
     .object({
@@ -95,60 +104,63 @@ export namespace SessionTask {
     delete source.type
 
     try {
-      return Database.transaction((tx) => {
-        const found = tx
-          .select({ id: SessionTaskTable.id })
-          .from(SessionTaskTable)
-          .where(eq(SessionTaskTable.session_id, input.sessionID))
-          .get()
-        if (found) throw new Conflict()
-        tx.insert(SessionTaskTable)
-          .values({
-            id: task,
-            session_id: input.sessionID,
-            title: input.title,
-            status: "running",
-            current_revision_id: null,
-            source_type: input.source.type,
-            source_ref: source,
-            time_created: now,
-            time_updated: now,
-          })
-          .run()
-        tx.insert(TaskRevisionTable)
-          .values({
-            id: revision,
-            task_id: task,
-            version: 1,
-            previous_id: null,
-            status: "active",
-            title: input.title,
-            body: input.body,
-            body_hash: hash(input.body),
-            source_message_id: "messageID" in input.source ? (input.source.messageID ?? null) : null,
-            reason: null,
-            workflow: { actions: [] },
-            result: null,
-            result_source: null,
-            time_created: now,
-            time_activated: now,
-            time_completed: null,
-            time_archived: null,
-            archive_reason: null,
-          })
-          .run()
-        const saved = tx
-          .update(SessionTaskTable)
-          .set({ current_revision_id: revision })
-          .where(eq(SessionTaskTable.id, task))
-          .returning()
-          .get()
-        const current = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, revision)).get()
-        return View.parse({ task: saved, revision: current })
-      })
+      return Database.transaction(
+        (tx) => {
+          const found = tx
+            .select({ id: SessionTaskTable.id })
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.session_id, input.sessionID))
+            .get()
+          if (found) throw new Conflict()
+          tx.insert(SessionTaskTable)
+            .values({
+              id: task,
+              session_id: input.sessionID,
+              title: input.title,
+              status: "running",
+              current_revision_id: null,
+              source_type: input.source.type,
+              source_ref: source,
+              time_created: now,
+              time_updated: now,
+            })
+            .run()
+          tx.insert(TaskRevisionTable)
+            .values({
+              id: revision,
+              task_id: task,
+              version: 1,
+              previous_id: null,
+              status: "active",
+              title: input.title,
+              body: input.body,
+              body_hash: hash(input.body),
+              source_message_id: "messageID" in input.source ? (input.source.messageID ?? null) : null,
+              reason: null,
+              workflow: { actions: [] },
+              result: null,
+              result_source: null,
+              time_created: now,
+              time_activated: now,
+              time_completed: null,
+              time_archived: null,
+              archive_reason: null,
+            })
+            .run()
+          const saved = tx
+            .update(SessionTaskTable)
+            .set({ current_revision_id: revision })
+            .where(eq(SessionTaskTable.id, task))
+            .returning()
+            .get()
+          const current = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, revision)).get()
+          return View.parse({ task: saved, revision: current })
+        },
+        { behavior: "immediate" },
+      )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err)) throw new Conflict()
+      if (unique(err) || locked(err)) throw new Conflict()
       throw err
     }
   }
@@ -173,44 +185,47 @@ export namespace SessionTask {
     const input = Draft.parse(raw)
     const now = Date.now()
     try {
-      return Database.transaction((tx) => {
-        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
-        if (!task) throw new Conflict("session_task_missing")
-        const version =
-          (tx
-            .select({ value: max(TaskRevisionTable.version) })
-            .from(TaskRevisionTable)
-            .where(eq(TaskRevisionTable.task_id, input.taskID))
-            .get()?.value ?? 0) + 1
-        const row = tx
-          .insert(TaskRevisionTable)
-          .values({
-            id: `revision_${randomUUID()}`,
-            task_id: input.taskID,
-            version,
-            previous_id: task.current_revision_id,
-            status: "draft",
-            title: input.title,
-            body: input.body,
-            body_hash: hash(input.body),
-            source_message_id: input.messageID ?? null,
-            reason: input.reason ?? null,
-            workflow: { actions: [] },
-            result: null,
-            result_source: null,
-            time_created: now,
-            time_activated: null,
-            time_completed: null,
-            time_archived: null,
-            archive_reason: null,
-          })
-          .returning()
-          .get()
-        return Revision.parse(row)
-      })
+      return Database.transaction(
+        (tx) => {
+          const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
+          if (!task) throw new Conflict("session_task_missing")
+          const version =
+            (tx
+              .select({ value: max(TaskRevisionTable.version) })
+              .from(TaskRevisionTable)
+              .where(eq(TaskRevisionTable.task_id, input.taskID))
+              .get()?.value ?? 0) + 1
+          const row = tx
+            .insert(TaskRevisionTable)
+            .values({
+              id: `revision_${randomUUID()}`,
+              task_id: input.taskID,
+              version,
+              previous_id: task.current_revision_id,
+              status: "draft",
+              title: input.title,
+              body: input.body,
+              body_hash: hash(input.body),
+              source_message_id: input.messageID ?? null,
+              reason: input.reason ?? null,
+              workflow: { actions: [] },
+              result: null,
+              result_source: null,
+              time_created: now,
+              time_activated: null,
+              time_completed: null,
+              time_archived: null,
+              archive_reason: null,
+            })
+            .returning()
+            .get()
+          return Revision.parse(row)
+        },
+        { behavior: "immediate" },
+      )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err)) throw new Conflict("task_revision_conflict")
+      if (unique(err) || locked(err)) throw new Conflict("task_revision_conflict")
       throw err
     }
   }
@@ -219,31 +234,63 @@ export namespace SessionTask {
     const input = Activate.parse(raw)
     const now = Date.now()
     try {
-      return Database.transaction((tx) => {
-        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
-        const next = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, input.revisionID)).get()
-        if (!task || !next || next.task_id !== input.taskID || next.status !== "draft") throw new Conflict()
-        if (task.current_revision_id) {
-          tx.update(TaskRevisionTable)
+      return Database.transaction(
+        (tx) => {
+          const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
+          const next = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, input.revisionID)).get()
+          if (
+            !task?.current_revision_id ||
+            !next ||
+            next.task_id !== input.taskID ||
+            next.status !== "draft" ||
+            next.previous_id !== task.current_revision_id
+          )
+            throw new Conflict()
+          const archived = tx
+            .update(TaskRevisionTable)
             .set({ status: "archived", time_archived: now, archive_reason: next.reason ?? "Task revised" })
-            .where(eq(TaskRevisionTable.id, task.current_revision_id))
-            .run()
-        }
-        const revision = tx
-          .update(TaskRevisionTable)
-          .set({ status: "active", time_activated: now })
-          .where(eq(TaskRevisionTable.id, next.id))
-          .returning()
-          .get()
-        tx.update(SessionTaskTable)
-          .set({ title: next.title, current_revision_id: next.id, status: "running", time_updated: now })
-          .where(eq(SessionTaskTable.id, input.taskID))
-          .run()
-        return Revision.parse(revision)
-      })
+            .where(
+              and(
+                eq(TaskRevisionTable.id, task.current_revision_id),
+                eq(TaskRevisionTable.task_id, input.taskID),
+                eq(TaskRevisionTable.status, "active"),
+              ),
+            )
+            .returning({ id: TaskRevisionTable.id })
+            .get()
+          if (!archived) throw new Conflict()
+          const revision = tx
+            .update(TaskRevisionTable)
+            .set({ status: "active", time_activated: now })
+            .where(
+              and(
+                eq(TaskRevisionTable.id, next.id),
+                eq(TaskRevisionTable.task_id, input.taskID),
+                eq(TaskRevisionTable.status, "draft"),
+              ),
+            )
+            .returning()
+            .get()
+          if (!revision) throw new Conflict()
+          const updated = tx
+            .update(SessionTaskTable)
+            .set({ title: next.title, current_revision_id: next.id, status: "running", time_updated: now })
+            .where(
+              and(
+                eq(SessionTaskTable.id, input.taskID),
+                eq(SessionTaskTable.current_revision_id, task.current_revision_id),
+              ),
+            )
+            .returning({ id: SessionTaskTable.id })
+            .get()
+          if (!updated) throw new Conflict()
+          return Revision.parse(revision)
+        },
+        { behavior: "immediate" },
+      )
     } catch (err) {
       if (err instanceof Conflict) throw err
-      if (unique(err)) throw new Conflict("task_revision_active_conflict")
+      if (unique(err) || locked(err)) throw new Conflict("task_revision_active_conflict")
       throw err
     }
   }
@@ -274,5 +321,11 @@ export namespace SessionTask {
 
   function unique(err: unknown) {
     return err instanceof Error && err.message.includes("UNIQUE constraint failed")
+  }
+
+  function locked(err: unknown) {
+    if (!(err instanceof Error)) return false
+    const code = "code" in err && typeof err.code === "string" ? err.code : ""
+    return code === "SQLITE_BUSY" || code === "SQLITE_BUSY_SNAPSHOT" || err.message.includes("database is locked")
   }
 }

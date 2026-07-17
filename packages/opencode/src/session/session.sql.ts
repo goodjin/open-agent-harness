@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm"
-import { sqliteTable, text, integer, index, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
+import { check, foreignKey, sqliteTable, text, integer, index, primaryKey, uniqueIndex } from "drizzle-orm/sqlite-core"
 import { ProjectTable } from "../project/project.sql"
 import type { MessageV2 } from "./message-v2"
 import type { Snapshot } from "../snapshot"
@@ -228,7 +228,10 @@ export const SessionTaskTable = sqliteTable(
     time_created: integer().notNull(),
     time_updated: integer().notNull(),
   },
-  (table) => [uniqueIndex("session_task_session_unique_idx").on(table.session_id)],
+  (table) => [
+    uniqueIndex("session_task_session_unique_idx").on(table.session_id),
+    uniqueIndex("session_task_session_id_unique_idx").on(table.session_id, table.id),
+  ],
 )
 
 export const TaskRevisionTable = sqliteTable(
@@ -257,9 +260,15 @@ export const TaskRevisionTable = sqliteTable(
   },
   (table) => [
     uniqueIndex("task_revision_task_version_unique_idx").on(table.task_id, table.version),
+    uniqueIndex("task_revision_task_id_unique_idx").on(table.task_id, table.id),
     uniqueIndex("task_revision_one_active_idx")
       .on(table.task_id)
       .where(sql`${table.status} = 'active'`),
+    foreignKey({
+      columns: [table.task_id, table.previous_id],
+      foreignColumns: [table.task_id, table.id],
+      name: "task_revision_previous_fk",
+    }).onDelete("cascade"),
   ],
 )
 
@@ -273,8 +282,10 @@ export const TaskHandoffTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     source_task_id: text().references(() => SessionTaskTable.id, { onDelete: "cascade" }),
     source_message_id: text().$type<MessageID>(),
-    target_session_id: text().$type<SessionID>(),
-    target_task_id: text(),
+    target_session_id: text()
+      .$type<SessionID>()
+      .references(() => SessionTable.id),
+    target_task_id: text().references(() => SessionTaskTable.id),
     title: text().notNull(),
     body: text().notNull(),
     body_hash: text().notNull(),
@@ -286,7 +297,23 @@ export const TaskHandoffTable = sqliteTable(
     time_confirmed: integer(),
     time_completed: integer(),
   },
-  (table) => [uniqueIndex("task_handoff_dedupe_unique_idx").on(table.dedupe_key)],
+  (table) => [
+    uniqueIndex("task_handoff_dedupe_unique_idx").on(table.dedupe_key),
+    foreignKey({
+      columns: [table.source_session_id, table.source_task_id],
+      foreignColumns: [SessionTaskTable.session_id, SessionTaskTable.id],
+      name: "task_handoff_source_task_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.target_session_id, table.target_task_id],
+      foreignColumns: [SessionTaskTable.session_id, SessionTaskTable.id],
+      name: "task_handoff_target_task_fk",
+    }).onDelete("cascade"),
+    check(
+      "task_handoff_target_pair_check",
+      sql`(${table.target_session_id} IS NULL) = (${table.target_task_id} IS NULL)`,
+    ),
+  ],
 )
 
 export const TodoTable = sqliteTable(
