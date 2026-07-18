@@ -293,6 +293,78 @@ describe("session task", () => {
     expect(states).toEqual(["proposed", "confirming", "revising"])
   })
 
+  test("does not regress a local failure when an old proposed projection reparses", async () => {
+    const states: { status: string; error?: string }[] = []
+    const update = (status = "pending", error?: string) =>
+      proposal(
+        part({
+          kind: "task_update_proposal",
+          proposal_id: "run:update",
+          old_revision_id: "revision_1",
+          status,
+          error,
+        }),
+      )!
+    const flow = proposalFlow({
+      send: async () => Promise.reject(new Error("Confirmation failed")),
+      state: (value) => states.push(value),
+      focus() {},
+    })
+    flow.change(update(), "session_1")
+    await flow.confirm()
+    flow.change(update(), "session_1")
+
+    expect(states.at(-1)).toMatchObject({ status: "failed", error: "Confirmation failed" })
+    expect(states.map((item) => item.status)).toEqual(["proposed", "confirming", "failed"])
+    flow.change(update("failed", "Server failure"), "session_1")
+    expect(states.at(-1)).toMatchObject({ status: "failed", error: "Server failure" })
+  })
+
+  test("keeps confirmed progress over stale proposed and accepts later durable states", async () => {
+    const states: { id: string; status: string }[] = []
+    const handoff = (status: string, id = "run:handoff") =>
+      proposal(
+        part({
+          kind: status === "started" ? "task_handoff_started" : "task_handoff_proposal",
+          proposal_id: id,
+          handoff_id: id === "run:handoff" ? "handoff_1" : "handoff_2",
+          status,
+          target_session_id: status === "started" ? "session_target" : undefined,
+        }),
+      )!
+    const flow = proposalFlow({
+      send: async () => ({ status: "creating" }),
+      state: (value) => states.push(value),
+      focus() {},
+    })
+    flow.change(handoff("proposed"), "session_1")
+    await flow.confirm()
+    flow.change(handoff("proposed"), "session_1")
+    expect(states.map((item) => item.status)).toEqual(["proposed", "confirming", "creating"])
+
+    flow.change(handoff("failed"), "session_1")
+    flow.change(handoff("cancelled"), "session_1")
+    flow.change(handoff("started"), "session_1")
+    flow.change(handoff("failed"), "session_1")
+    expect(states.slice(-3).map((item) => item.status)).toEqual(["failed", "cancelled", "started"])
+
+    flow.change(handoff("proposed", "run:next"), "session_1")
+    expect(states.at(-1)).toMatchObject({ id: "run:next", status: "proposed" })
+
+    const updates: string[] = []
+    const update = () =>
+      proposal(part({ kind: "task_update_proposal", proposal_id: "run:update", old_revision_id: "revision_1" }))!
+    const revise = proposalFlow({
+      send: async () => ({ status: "revising" }),
+      state: (value) => updates.push(value.status),
+      focus() {},
+    })
+    revise.change(update(), "session_1")
+    await revise.confirm()
+    revise.change(update(), "session_1")
+    expect(updates).toEqual(["proposed", "confirming", "revising"])
+  })
+
   test("keeps discussion dismissed across reparses and resets for a new scoped proposal", () => {
     const states: { id: string; dismissed: boolean }[] = []
     const flow = proposalFlow({

@@ -198,17 +198,19 @@ export function proposalFlow(input: {
   let token = 0
   let busy = false
   let dismissed = false
+  let shown: View | undefined
 
   const emit = (value: Partial<Omit<View, "id">> = {}) => {
     if (!current) return
-    input.state({
+    shown = {
       id: current.id,
       status: current.status,
       dismissed,
       target: current.target,
       error: current.error,
       ...value,
-    })
+    }
+    input.state(shown)
   }
   const act = async (action: "confirm" | "cancel") => {
     if (!current || busy) return
@@ -240,6 +242,12 @@ export function proposalFlow(input: {
       if (key === next) {
         current = item
         if (busy || dismissed) return
+        if (shown?.status === "started" && item.status !== "started") return
+        if (item.status === "proposed" && shown?.status !== "proposed") return
+        if (item.status === "failed" && shown?.status === "failed" && !item.error) {
+          emit({ error: shown.error })
+          return
+        }
         emit()
         return
       }
@@ -248,6 +256,7 @@ export function proposalFlow(input: {
       current = item
       busy = false
       dismissed = false
+      shown = undefined
       emit()
     },
     confirm: () => act("confirm"),
