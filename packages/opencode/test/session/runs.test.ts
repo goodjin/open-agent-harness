@@ -122,7 +122,9 @@ describe("session runs", () => {
                   "bun",
                   "-e",
                   `
-                    console.log("RUN_STORE_READY")
+                    process.stdout.write("RUN_")
+                    await Bun.sleep(10)
+                    console.log("STORE_READY")
                     while (!(await Bun.file(process.env.RUN_START).exists())) await Bun.sleep(5)
                     const { AgentProtocol } = await import("./src/protocol/schema.ts")
                     const { SessionRuns } = await import("./src/session/runs.ts")
@@ -138,18 +140,11 @@ describe("session runs", () => {
                     RUN_VALUE: JSON.stringify({ ...result(same), title }),
                   },
                   stdout: "pipe",
-                  stderr: "inherit",
+                  stderr: "pipe",
                 },
               ),
             )
-            const ready = await Promise.all(
-              children.map(async (child) => {
-                const reader = child.stdout.getReader()
-                const item = await reader.read()
-                reader.releaseLock()
-                return new TextDecoder().decode(item.value)
-              }),
-            )
+            const ready = await Promise.all(children.map((child) => signal(child, "RUN_STORE_READY\n")))
             expect(ready.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
             await Bun.write(start, "go")
             expect(await Promise.all(children.map((child) => child.exited))).toEqual([0, 0])
@@ -1442,6 +1437,44 @@ function result(id: string, status: "completed" | "blocked" | "failed" = "comple
       duration_ms: 1,
     },
   })
+}
+
+async function signal(
+  child: {
+    stdout: ReadableStream<Uint8Array>
+    stderr: ReadableStream<Uint8Array>
+    exited: Promise<number>
+    kill(): void
+  },
+  expected: string,
+  timeout = 15_000,
+) {
+  const reader = child.stdout.getReader()
+  const decoder = new TextDecoder()
+  const end = Date.now() + timeout
+  let output = ""
+  let pending = reader.read()
+  while (Date.now() < end) {
+    const item = await Promise.race([
+      pending,
+      Bun.sleep(Math.min(25, end - Date.now())).then(() => undefined),
+    ])
+    if (!item) continue
+    if (item.done) break
+    output += decoder.decode(item.value, { stream: true })
+    if (output.includes(expected)) {
+      reader.releaseLock()
+      return output
+    }
+    pending = reader.read()
+  }
+  reader.releaseLock()
+  child.kill()
+  const code = await child.exited
+  const error = await new Response(child.stderr).text()
+  throw new Error(
+    `child readiness failed: expected=${JSON.stringify(expected)} exit=${code} stdout=${JSON.stringify(output)} stderr=${JSON.stringify(error)}`,
+  )
 }
 
 async function reply(

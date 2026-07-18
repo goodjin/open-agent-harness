@@ -22,6 +22,14 @@ export namespace Storage {
     }),
   )
 
+  export const LockTimeoutError = NamedError.create(
+    "StorageLockTimeoutError",
+    z.object({
+      key: z.string(),
+      timeout: z.number().int().nonnegative(),
+    }),
+  )
+
   const MIGRATIONS: Migration[] = [
     async (dir) => {
       const project = path.resolve(dir, "../project")
@@ -222,11 +230,31 @@ export namespace Storage {
     )
   }
 
-  export async function locked<T>(key: string[], fn: () => Promise<T>) {
+  export async function locked<T>(
+    key: string[],
+    fn: () => Promise<T>,
+    options: { timeout?: number; grace?: number } = {},
+  ) {
     const root = await state().then((x) => x.dir)
     const dir = path.join(root, ...key) + ".lock"
     const owner = path.join(dir, "owner.json")
-    const end = Date.now() + 30_000
+    const timeout = options.timeout ?? 30_000
+    const grace = options.grace ?? 1_000
+    const end = Date.now() + timeout
+    const token = crypto.randomUUID()
+    const parse = (raw: unknown) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
+      const item = raw as { pid?: unknown; token?: unknown }
+      if (!Number.isInteger(item.pid) || typeof item.token !== "string" || !item.token) return
+      return { pid: item.pid as number, token: item.token }
+    }
+    const read = () => Filesystem.readJson<unknown>(owner).then(parse).catch(() => undefined)
+    const remove = async (expected?: string) => {
+      const current = await read()
+      if (expected ? current?.token !== expected : current) return false
+      await fs.rm(dir, { recursive: true, force: true })
+      return true
+    }
     while (true) {
       const made = await fs.mkdir(dir, { recursive: false }).then(
         () => true,
@@ -241,34 +269,33 @@ export namespace Storage {
         continue
       }
       if (made) {
-        await Filesystem.writeJson(owner, { pid: process.pid, time: Date.now() })
+        await Filesystem.writeJson(owner, { pid: process.pid, token })
         try {
           return await fn()
         } finally {
-          await fs.rm(dir, { recursive: true, force: true })
+          await remove(token)
         }
       }
-      const saved = await Filesystem.readJson<{ pid?: number; time?: number }>(owner).catch(() => undefined)
+      const saved = await read()
       const age = await fs.stat(dir).then(
         (item) => Date.now() - item.mtimeMs,
         () => 0,
       )
-      const alive =
-        saved?.pid &&
-        (() => {
-          try {
-            process.kill(saved.pid, 0)
-            return true
-          } catch {
-            return false
-          }
-        })()
-      const stale = saved?.time ? Date.now() - saved.time > 60_000 : age > 60_000
-      if ((!alive && !!saved) || stale) {
-        await fs.rm(dir, { recursive: true, force: true })
+      const alive = saved
+        ? (() => {
+            try {
+              process.kill(saved.pid, 0)
+              return true
+            } catch {
+              return false
+            }
+          })()
+        : undefined
+      if (saved && !alive && (await remove(saved.token))) continue
+      if (!saved && age >= grace && (await remove())) {
         continue
       }
-      if (Date.now() >= end) throw new Error(`Storage lock timeout: ${key.join("/")}`)
+      if (Date.now() >= end) throw new LockTimeoutError({ key: key.join("/"), timeout })
       await Bun.sleep(10)
     }
   }
