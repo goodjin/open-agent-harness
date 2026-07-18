@@ -181,6 +181,13 @@ describe("session task endpoints", () => {
             await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id, stopped: 2 })
             const app = Server.Default()
 
+            const detail = await app.request(`/session/${session.id}`)
+            expect(detail.status).toBe(200)
+            expect(await detail.json()).toMatchObject({
+              id: session.id,
+              task: { id: first.task.id, title: "Revised", version: 2, status: "running" },
+            })
+
             const current = await app.request(`/session/${session.id}/task`)
             expect(current.status).toBe(200)
             expect(await current.json()).toMatchObject({

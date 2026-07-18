@@ -70,3 +70,11 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 - Revision stop 使用 `(revision_id, child_session_id)` 唯一账本，stop 前写 `planned`，仅在本 Revision canonical stop marker 可确认后写 `applied`；归档从 applied 行计数。
 - 旧 `action_result` 不由 migration 猜测 completed。读取时仅以唯一 workflow run/action identity 匹配 canonical `session_result.status`；无法唯一确认时保留结果存在性，但不返回等级。
 - canonical 匹配同时要求 `session_result.carrier = action_result`；相同 run/action identity 的 fallback、synthetic 或 agent protocol carrier 不能提供结果等级。
+
+## 质量复审收口
+
+- History 一次批量读取并索引 canonical action results，多个归档 Revision 不再逐项查询；新归档也只使用 `action_result` carrier 计算结果 metadata。
+- Session detail 返回可选 Task summary；Task 视图监听当前 Session 状态事件并以可清理定时器兜底刷新，重复请求继续由 abort 与 generation fence 防止旧响应覆盖。
+- 归档 Revision 缺少 `result_status` 时不展示原始结果正文；当前 Task 的可信 `action_result` 保持可展示。
+- Handoff source/target Task 外键查询增加索引与独立迁移；日期格式显式使用当前语言 locale。
+- UI 回归从源码断言补充为可控 timer、事件过滤/退订、locale 与异步请求竞态的行为测试。

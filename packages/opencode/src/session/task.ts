@@ -1207,6 +1207,7 @@ export namespace SessionTask {
         .get(),
     )
     if (!task) return []
+    const results = resultIndex(sessionID)
     return Database.use((tx) =>
       tx
         .select({
@@ -1230,7 +1231,7 @@ export namespace SessionTask {
         .orderBy(desc(TaskRevisionTable.version))
         .all()
         .map((item) => {
-          const status = archiveResult(item, sessionID)
+          const status = archiveResult(item, results)
           const saved = result(item.result, item.result_source)
           return History.parse({
             id: item.id,
@@ -1315,7 +1316,7 @@ export namespace SessionTask {
     if (!row) return
     const item = Revision.parse(row.revision)
     const saved = result(item.result, item.result_source)
-    const classified = archiveResult(item, sessionID)
+    const classified = archiveResult(item, resultIndex(sessionID))
     const { SessionTaskHandoff } = await import("./task-handoff")
     return RevisionView.parse({
       id: item.id,
@@ -1468,7 +1469,12 @@ export namespace SessionTask {
         status: SessionResultTable.status,
       })
       .from(SessionResultTable)
-      .where(eq(SessionResultTable.parent_session_id, sessionID))
+      .where(
+        and(
+          eq(SessionResultTable.parent_session_id, sessionID),
+          eq(SessionResultTable.carrier, "action_result"),
+        ),
+      )
       .all()
       .filter((item) => item.run && item.action && keys.has(`${item.run}:${item.action}`))
     const saved = result(revision.result, revision.result_source)
@@ -1500,12 +1506,15 @@ export namespace SessionTask {
     return { terminal, result: resultStatus }
   }
 
-  function archiveResult(item: {
-    result: string | null
-    result_source: string | null
-    result_status: string | null
-    workflow: Record<string, unknown>
-  }, sessionID: SessionID) {
+  function archiveResult(
+    item: {
+      result: string | null
+      result_source: string | null
+      result_status: string | null
+      workflow: Record<string, unknown>
+    },
+    results: Map<string, string[]>,
+  ) {
     const stored = ArchiveResult.safeParse(item.result_status)
     if (stored.success) return stored.data
     const saved = result(item.result, item.result_source)
@@ -1521,14 +1530,17 @@ export namespace SessionTask {
       }),
     )
     if (keys.size !== 1) return
+    const rows = [...keys].flatMap((key) => results.get(key) ?? [])
+    if (rows.length !== 1) return
+    if (rows[0] === "completed") return "completed" as const
+    if (rows[0] === "failed" || rows[0] === "aborted") return "failed" as const
+    if (["partial", "blocked", "waiting_user", "terminal_reply"].includes(rows[0] ?? "")) return "partial" as const
+  }
+
+  function resultIndex(sessionID: SessionID) {
     const rows = Database.use((tx) =>
       tx
-        .select({
-          carrier: SessionResultTable.carrier,
-          run: SessionResultTable.run_id,
-          action: SessionResultTable.action_id,
-          status: SessionResultTable.status,
-        })
+        .select({ run: SessionResultTable.run_id, action: SessionResultTable.action_id, status: SessionResultTable.status })
         .from(SessionResultTable)
         .where(
           and(
@@ -1536,13 +1548,16 @@ export namespace SessionTask {
             eq(SessionResultTable.carrier, "action_result"),
           ),
         )
-        .all()
-        .filter((row) => row.run && row.action && keys.has(`${row.run}:${row.action}`)),
+        .all(),
     )
-    if (rows.length !== 1) return
-    if (rows[0]?.status === "completed") return "completed" as const
-    if (rows[0]?.status === "failed" || (rows[0]?.status as string) === "aborted") return "failed" as const
-    if (["partial", "blocked", "waiting_user", "terminal_reply"].includes(rows[0]?.status ?? "")) return "partial" as const
+    return new Map(
+      [
+        ...Map.groupBy(
+          rows.filter((row): row is typeof row & { run: string; action: string } => !!row.run && !!row.action),
+          (row) => `${row.run}:${row.action}`,
+        ),
+      ].map(([key, items]) => [key, items.map((item) => item.status as string)]),
+    )
   }
 
   function workflow(value: Workflow) {

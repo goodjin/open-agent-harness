@@ -957,7 +957,8 @@ export const SessionRoutes = lazy(() =>
         const sessionID = c.req.valid("param").sessionID
         log.info("SEARCH", { url: c.req.url })
         const session = await Session.get(sessionID)
-        return c.json(session)
+        const task = SessionTask.summaries([sessionID]).get(sessionID)
+        return c.json({ ...session, ...(task ? { task } : {}) })
       },
     )
     .get(

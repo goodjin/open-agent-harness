@@ -36,10 +36,39 @@ const terminal = (status: Status) => status === "completed" || status === "block
 
 export const result = (task: Current | Revision) => {
   if (!task.result?.trim()) return "missing" as const
+  if ("workflow" in task && !task.result_status) return "missing" as const
   if (task.result_source === "fallback_summary") return "fallback" as const
   if (task.result_source === "protocol" || task.result_source === "action_result") return "recorded" as const
   return "missing" as const
 }
+
+export const refresh = (
+  run: () => void,
+  delay = 5_000,
+  timers: { set: (fn: () => void, timeout: number) => unknown; clear: (id: unknown) => void } = {
+    set: (fn: () => void, timeout: number) => setInterval(fn, timeout),
+    clear: (id) => clearInterval(id as ReturnType<typeof setInterval>),
+  },
+) => {
+  const id = timers.set(run, delay)
+  return () => timers.clear(id)
+}
+
+export const watch = (
+  sessionID: string,
+  on: (
+    type: "session.status",
+    fn: (event: { properties: { sessionID: string } }) => void,
+  ) => () => void,
+  run: () => void,
+) =>
+  on("session.status", (event) => {
+    if (event.properties.sessionID !== sessionID) return
+    run()
+  })
+
+export const stamp = (value: number, locale: string) =>
+  new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(value)
 
 export const content = (task: Current | Revision) => (result(task) === "missing" ? undefined : task.result?.trim())
 

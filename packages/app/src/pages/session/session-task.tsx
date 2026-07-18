@@ -10,9 +10,12 @@ import {
   handoff as handoffLabel,
   initial,
   progress as count,
+  refresh,
   requests,
   result,
+  stamp,
   view,
+  watch,
   type Current,
   type History,
   type Revision,
@@ -47,9 +50,6 @@ const tone = (status: string) => {
   if (status === "running" || status === "active") return "text-icon-info-base bg-surface-info-base/20"
   return "text-text-weak bg-surface-raised-base"
 }
-
-const stamp = (value: number) =>
-  new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(value)
 
 const updated = (task: Current | Revision) => {
   if ("updated" in task.time) return task.time.updated
@@ -138,7 +138,13 @@ export function SessionTask(props: { sessionID: string }) {
     void load(id)
   })
 
-  onCleanup(loader.reset)
+  const poll = refresh(() => void load(props.sessionID))
+  const unsub = watch(props.sessionID, sdk.event.on, () => void load(props.sessionID))
+  onCleanup(() => {
+    poll()
+    unsub()
+    loader.reset()
+  })
 
   const shown = () => state.detail ?? state.current
   const actions = () => shown()?.actions ?? []
@@ -190,7 +196,7 @@ export function SessionTask(props: { sessionID: string }) {
                     <div class="mt-1 text-11-regular text-text-weak">
                       {language.t("session.task.meta", {
                         version: task().version,
-                        time: stamp(updated(task())),
+                        time: stamp(updated(task()), language.intl()),
                       })}
                     </div>
                   </div>
@@ -349,7 +355,7 @@ export function SessionTask(props: { sessionID: string }) {
                     {language.t("session.task.history.version", { version: item.version })} · {item.title}
                   </div>
                   <div class="mt-1 text-10-regular text-text-weak">
-                    {stamp(item.time.archived ?? item.time.created)}
+                    {stamp(item.time.archived ?? item.time.created, language.intl())}
                   </div>
                   <Show when={item.reason ?? item.archive_reason}>
                     {(reason) => <div class="mt-1 text-11-regular text-text-weak">{reason()}</div>}

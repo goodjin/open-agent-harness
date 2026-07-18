@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { SessionTaskCurrentResponse, SessionTaskRevisionResponse } from "@open-agent-harness/sdk/v2/client"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
-import { action, content, handoff, initial, progress, requests, view } from "./session-task-data"
+import { action, content, handoff, initial, progress, refresh, requests, stamp, view, watch } from "./session-task-data"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
   ({
@@ -75,6 +75,14 @@ describe("session task", () => {
     })
     expect(content(task({ status: "completed", result: "Unattributed" }))).toBeUndefined()
     expect(content(task({ status: "completed", result: "Trusted", result_source: "protocol" }))).toBe("Trusted")
+    expect(
+      content(
+        revision({ result: "Unclassified action result", result_source: "action_result" }),
+      ),
+    ).toBeUndefined()
+    expect(
+      view(task({ status: "completed", result: "Trusted", result_source: "action_result" })).result,
+    ).toBe("recorded")
   })
 
   test("uses completed plus skipped actions and compact history progress", () => {
@@ -168,6 +176,64 @@ describe("session task", () => {
     expect(values).toEqual(["new current", "revision 2"])
   })
 
+  test("refreshes while mounted and clears its timer on cleanup", () => {
+    let tick = () => {}
+    let cleared = false
+    const calls: number[] = []
+    const stop = refresh(
+      () => calls.push(1),
+      25,
+      {
+        set(fn, delay) {
+          tick = fn
+          expect(delay).toBe(25)
+          return 7
+        },
+        clear(id) {
+          expect(id).toBe(7)
+          cleared = true
+        },
+      },
+    )
+    tick()
+    tick()
+    stop()
+    expect(calls).toHaveLength(2)
+    expect(cleared).toBe(true)
+  })
+
+  test("refreshes only for the mounted session and removes its event listener", () => {
+    let listener = (_event: { properties: { sessionID: string } }) => {}
+    let cleared = false
+    const calls: number[] = []
+    const stop = watch(
+      "session_1",
+      (type, fn) => {
+        expect(type).toBe("session.status")
+        listener = fn
+        return () => {
+          cleared = true
+        }
+      },
+      () => calls.push(1),
+    )
+    listener({ properties: { sessionID: "session_2" } })
+    listener({ properties: { sessionID: "session_1" } })
+    stop()
+    expect(calls).toHaveLength(1)
+    expect(cleared).toBe(true)
+  })
+
+  test("formats task timestamps with the active language locale", () => {
+    const value = Date.UTC(2026, 6, 18, 12, 30)
+    expect(stamp(value, "zh-CN")).toBe(
+      new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short" }).format(value),
+    )
+    expect(stamp(value, "en-US")).toBe(
+      new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(value),
+    )
+  })
+
   test("starts with current, history, and revision state cleared", () => {
     expect(initial()).toEqual({
       current: undefined,
@@ -210,6 +276,8 @@ describe("session task", () => {
     expect(src).toContain("item.result.status")
     expect(src).toContain("item.target_session_id")
     expect(src).toContain("item.error")
+    expect(src).toContain("watch(props.sessionID, sdk.event.on")
+    expect(src).toContain("language.intl()")
     expect(src).toContain('aria-live="polite"')
     expect(src).toContain('role="alert"')
     expect(src).not.toContain("resume")

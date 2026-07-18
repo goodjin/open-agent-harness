@@ -359,6 +359,8 @@ export const TaskHandoffTable = sqliteTable(
   },
   (table) => [
     uniqueIndex("task_handoff_dedupe_unique_idx").on(table.dedupe_key),
+    index("task_handoff_source_task_idx").on(table.source_task_id),
+    index("task_handoff_target_task_idx").on(table.target_task_id),
     foreignKey({
       columns: [table.source_session_id, table.source_task_id],
       foreignColumns: [SessionTaskTable.session_id, SessionTaskTable.id],

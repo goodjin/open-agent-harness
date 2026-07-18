@@ -2333,6 +2333,75 @@ describe("session task", () => {
     expect(correction).toContain("SET `result_status` = NULL")
   })
 
+  test("indexes canonical action results once for multiple archived revisions", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "First",
+        body: "# First\n",
+        source: { type: "user" },
+      })
+      const seed = (revision: string, run: string, action: string, status: "completed" | "failed") =>
+        Database.use((db) => {
+          const item = result(run, [{ id: action, title: action, status }]).actions[0]!
+          db.update(TaskRevisionTable)
+            .set({
+              workflow: { actions: [{ ...item, run_id: run }] },
+              result: `${action} result`,
+              result_source: "action_result",
+            })
+            .where(eq(TaskRevisionTable.id, revision))
+            .run()
+          db.insert(SessionResultTable)
+            .values({
+              id: `result_${action}`,
+              carrier: "action_result",
+              status,
+              satisfying: status === "completed",
+              session_id: session.id,
+              parent_session_id: session.id,
+              child_session_id: null,
+              run_id: run,
+              action_id: action,
+              target_action_id: null,
+              raw_ref: `history/${action}`,
+              summary: `${action} result`,
+              created_at: Date.now(),
+            })
+            .run()
+        })
+      seed(first.revision.id, "run_history_first", "history_first", "completed")
+      const second = await SessionTask.draft({ taskID: first.task.id, title: "Second", body: "# Second\n" })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: second.id })
+      seed(second.id, "run_history_second", "history_second", "failed")
+      const third = await SessionTask.draft({ taskID: first.task.id, title: "Third", body: "# Third\n" })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: third.id })
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ result_status: null })
+          .where(inArray(TaskRevisionTable.id, [first.revision.id, second.id]))
+          .run(),
+      )
+
+      const use = Database.use
+      let calls = 0
+      const spy = spyOn(Database, "use").mockImplementation(((fn) => {
+        calls++
+        return use(fn)
+      }) as typeof Database.use)
+      try {
+        expect((await SessionTask.history(session.id)).map((item) => item.result.status)).toEqual([
+          "failed",
+          "completed",
+        ])
+        expect(calls).toBe(3)
+      } finally {
+        spy.mockRestore()
+      }
+    }))
+
   test("derives archived terminal status from compact-only progress", () =>
     setup(async () => {
       for (const item of [
@@ -2371,6 +2440,51 @@ describe("session task", () => {
         const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
         await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
         expect((await SessionTask.history(session.id))[0]?.terminal_status).toBe(item.expected)
+      }
+    }))
+
+  test("ignores non-action carriers when archiving canonical result metadata", () =>
+    setup(async () => {
+      for (const carrier of ["fallback_summary", "synthetic", "agent_protocol_output"] as const) {
+        const session = await Session.create({})
+        const first = await SessionTask.create({
+          sessionID: session.id,
+          title: "Carrier archive",
+          body: "# Carrier archive\n",
+          source: { type: "user" },
+        })
+        const action = result("run_carrier_archive", [
+          { id: "carrier_action", title: "Carrier action", status: "completed" },
+        ]).actions[0]!
+        Database.use((db) => {
+          db.update(TaskRevisionTable)
+            .set({ workflow: { actions: [{ ...action, run_id: "run_carrier_archive" }] } })
+            .where(eq(TaskRevisionTable.id, first.revision.id))
+            .run()
+          db.insert(SessionResultTable)
+            .values({
+              id: `result_carrier_${carrier}`,
+              carrier,
+              status: "failed",
+              satisfying: false,
+              session_id: session.id,
+              parent_session_id: session.id,
+              child_session_id: null,
+              run_id: "run_carrier_archive",
+              action_id: "carrier_action",
+              target_action_id: null,
+              raw_ref: `carrier/${carrier}`,
+              summary: "Mismatched carrier",
+              created_at: Date.now(),
+            })
+            .run()
+        })
+        const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
+        await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+        expect(await SessionTask.revision(session.id, 1)).toMatchObject({
+          terminal_status: "completed",
+        })
+        expect((await SessionTask.revision(session.id, 1))?.result_status).toBeUndefined()
       }
     }))
 

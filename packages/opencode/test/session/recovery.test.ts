@@ -1280,9 +1280,9 @@ describe("session recovery", () => {
               expect((await SessionTask.get(parent.id))?.task.status).toBe("running")
               expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
               expect(await SessionTask.revision(parent.id, 1)).toMatchObject({
-                terminal_status: "blocked",
+                terminal_status: "completed",
                 stopped_child_count: 2,
-                result_status: "partial",
+                result_status: "completed",
               })
               expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
               expect(SessionStatus.get(children[1]!.id).type).toBe("completed")
