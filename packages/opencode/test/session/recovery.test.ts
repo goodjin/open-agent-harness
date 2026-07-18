@@ -19,7 +19,7 @@ import { AgentProtocol } from "../../src/protocol/schema"
 import { SessionControlTool } from "../../src/tool/session-control"
 import type { Tool } from "../../src/tool/tool"
 import { Database, eq } from "../../src/storage/db"
-import { SessionEventOutboxTable, SessionTaskTable } from "../../src/session/session.sql"
+import { SessionEventOutboxTable, SessionTaskTable, TaskRevisionStopTable } from "../../src/session/session.sql"
 import { Log } from "../../src/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -1243,6 +1243,39 @@ describe("session recovery", () => {
               await tool.execute({ action: "stop", session_ids: [children[4]!.id] }, context)
               expect(SessionStatus.get(children[4]!.id).type).toBe("user_completed")
 
+              Database.use((db) =>
+                db
+                  .insert(TaskRevisionStopTable)
+                  .values({
+                    revision_id: original.revision.id,
+                    child_session_id: children[4]!.id,
+                    run_id: "run_task_children",
+                    action_id: actions[4]!.id,
+                    state: "planned",
+                    reason: "Independent terminal transition.",
+                    time_created: Date.now(),
+                    time_applied: null,
+                  })
+                  .run(),
+              )
+              const put = SessionResult.put
+              let crash = true
+              const fault = spyOn(SessionResult, "put").mockImplementation(async (input) => {
+                if (crash && input.childSessionID === children[0]!.id) {
+                  crash = false
+                  throw new Error("stop result store crashed")
+                }
+                return put(input)
+              })
+              await expect(SessionTaskRecovery.resume(parent.id)).rejects.toThrow("stop result store crashed")
+              fault.mockRestore()
+              await SessionStatus.flush()
+              expect(SessionStatus.refresh(children[0]!.id)).toMatchObject({
+                type: "user_completed",
+                message: `Stopped for confirmed task revision ${original.revision.id}.`,
+              })
+              expect(SessionResult.put).toBe(put)
+
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
               expect((await SessionTask.get(parent.id))?.task.status).toBe("running")
               expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
@@ -1279,6 +1312,16 @@ describe("session recovery", () => {
               expect(bootstraps).toBe(1)
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
               expect((await SessionTask.revision(parent.id, 1))?.stopped_child_count).toBe(2)
+              expect(
+                Database.use((db) =>
+                  db
+                    .select()
+                    .from(TaskRevisionStopTable)
+                    .where(eq(TaskRevisionStopTable.revision_id, original.revision.id))
+                    .all()
+                    .filter((item) => item.state === "applied"),
+                ),
+              ).toHaveLength(2)
               expect(await SessionTaskRecovery.scan()).toEqual([])
               expect((await SessionResult.listForParent(parent.id)).map((item) => item.id).sort()).toEqual(ids)
               expect(calls.filter((item) => item.agent === "summary")).toHaveLength(summaries)

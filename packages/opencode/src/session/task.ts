@@ -1221,6 +1221,7 @@ export namespace SessionTask {
           result_status: TaskRevisionTable.result_status,
           result: TaskRevisionTable.result,
           result_source: TaskRevisionTable.result_source,
+          workflow: TaskRevisionTable.workflow,
           time_created: TaskRevisionTable.time_created,
           time_archived: TaskRevisionTable.time_archived,
         })
@@ -1229,7 +1230,8 @@ export namespace SessionTask {
         .orderBy(desc(TaskRevisionTable.version))
         .all()
         .map((item) => {
-          const status = archiveResult(item)
+          const status = archiveResult(item, sessionID)
+          const saved = result(item.result, item.result_source)
           return History.parse({
             id: item.id,
             version: item.version,
@@ -1239,7 +1241,9 @@ export namespace SessionTask {
             archive_reason: item.archive_reason,
             ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
             ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
-            result: status ? { present: true, status } : { present: false },
+            result: saved.result
+              ? { present: true, ...(status ? { status } : {}) }
+              : { present: false },
             time: {
               created: item.time_created,
               ...(item.time_archived === null ? {} : { archived: item.time_archived }),
@@ -1311,7 +1315,7 @@ export namespace SessionTask {
     if (!row) return
     const item = Revision.parse(row.revision)
     const saved = result(item.result, item.result_source)
-    const classified = archiveResult(item)
+    const classified = archiveResult(item, sessionID)
     const { SessionTaskHandoff } = await import("./task-handoff")
     return RevisionView.parse({
       id: item.id,
@@ -1500,12 +1504,35 @@ export namespace SessionTask {
     result: string | null
     result_source: string | null
     result_status: string | null
-  }) {
+    workflow: Record<string, unknown>
+  }, sessionID: SessionID) {
     const stored = ArchiveResult.safeParse(item.result_status)
     if (stored.success) return stored.data
     const saved = result(item.result, item.result_source)
     if (!saved.result) return
-    return saved.result_source === "fallback_summary" ? ("partial" as const) : ("completed" as const)
+    if (saved.result_source === "fallback_summary") return "partial" as const
+    if (saved.result_source === "protocol") return "completed" as const
+    const keys = new Set(
+      Workflow.parse(item.workflow).actions.flatMap((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+        const action = raw as { id?: unknown; run_id?: unknown }
+        if (typeof action.id !== "string" || typeof action.run_id !== "string") return []
+        return [`${action.run_id}:${action.id}`]
+      }),
+    )
+    if (keys.size !== 1) return
+    const rows = Database.use((tx) =>
+      tx
+        .select({ run: SessionResultTable.run_id, action: SessionResultTable.action_id, status: SessionResultTable.status })
+        .from(SessionResultTable)
+        .where(eq(SessionResultTable.parent_session_id, sessionID))
+        .all()
+        .filter((row) => row.run && row.action && keys.has(`${row.run}:${row.action}`)),
+    )
+    if (rows.length !== 1) return
+    if (rows[0]?.status === "completed") return "completed" as const
+    if (rows[0]?.status === "failed" || (rows[0]?.status as string) === "aborted") return "failed" as const
+    if (["partial", "blocked", "waiting_user", "terminal_reply"].includes(rows[0]?.status ?? "")) return "partial" as const
   }
 
   function workflow(value: Workflow) {

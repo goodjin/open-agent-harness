@@ -7,10 +7,10 @@ ALTER TABLE `task_revision` ADD `result_status` text;
 UPDATE `task_revision`
 SET `result_status` = CASE
   WHEN `result_source` = 'fallback_summary' THEN 'partial'
-  WHEN `result_source` IN ('protocol', 'action_result') THEN 'completed'
+  WHEN `result_source` = 'protocol' THEN 'completed'
 END
 WHERE `status` = 'archived'
   AND `result_status` IS NULL
   AND `result` IS NOT NULL
   AND length(trim(`result`)) > 0
-  AND `result_source` IN ('protocol', 'action_result', 'fallback_summary');
+  AND `result_source` IN ('protocol', 'fallback_summary');

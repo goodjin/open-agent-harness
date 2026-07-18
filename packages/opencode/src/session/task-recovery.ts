@@ -5,7 +5,13 @@ import { MessageV2 } from "./message-v2"
 import { SessionPrompt } from "./prompt"
 import { SessionResult } from "./result"
 import { MessageID, PartID, SessionID } from "./schema"
-import { SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
+import {
+  SessionEventOutboxTable,
+  SessionTable,
+  SessionTaskTable,
+  TaskRevisionStopTable,
+  TaskRevisionTable,
+} from "./session.sql"
 import { SessionStatus } from "./status"
 import { SessionTask } from "./task"
 import { Log } from "@/util/log"
@@ -68,15 +74,17 @@ export namespace SessionTaskRecovery {
       if (draft) {
         owner.revision = draft.id
         const scope = await SessionTask.scope(sessionID)
-        const stopped: SessionID[] = []
+        const reason = `Stopped for confirmed task revision ${stored.revision.id}.`
+        plan(stored.revision.id, scope, reason)
+        reconcile(stored.revision.id)
         for (const [run, rows] of Map.groupBy(scope, (item) => item.run_id)) {
           const result = await SessionDelegation.stopScoped({
             sessionID,
             runID: run,
             childIDs: rows.map((item) => item.session_id),
-            reason: "Stopped for confirmed task revision.",
+            reason,
           })
-          stopped.push(...result.stopped)
+          apply(stored.revision.id, result.stopped)
         }
         const results = await SessionResult.listForParent(sessionID)
         if (
@@ -97,7 +105,7 @@ export namespace SessionTaskRecovery {
             taskID: stored.task.id,
             revisionID: draft.id,
             bootstrap: true,
-            stopped: stopped.length,
+            stopped: count(stored.revision.id),
           })
         } catch (err) {
           if (err instanceof SessionTask.Conflict && advanced(sessionID, stored.task.id, draft.id)) return true
@@ -159,6 +167,73 @@ export namespace SessionTaskRecovery {
       status.type === "timeout" ||
       status.type === "error" ||
       status.type === "archived"
+    )
+  }
+
+  function plan(revision: string, scope: Awaited<ReturnType<typeof SessionTask.scope>>, reason: string) {
+    const now = Date.now()
+    const rows = scope
+      .filter((item) => !terminal(SessionStatus.get(item.session_id)))
+      .map((item) => ({
+        revision_id: revision,
+        child_session_id: item.session_id,
+        run_id: item.run_id,
+        action_id: item.action_id,
+        state: "planned" as const,
+        reason,
+        time_created: now,
+        time_applied: null,
+      }))
+    if (!rows.length) return
+    Database.use((tx) =>
+      tx.insert(TaskRevisionStopTable).values(rows).onConflictDoNothing().run(),
+    )
+  }
+
+  function reconcile(revision: string) {
+    const rows = Database.use((tx) =>
+      tx
+        .select()
+        .from(TaskRevisionStopTable)
+        .where(and(eq(TaskRevisionStopTable.revision_id, revision), eq(TaskRevisionStopTable.state, "planned")))
+        .all(),
+    )
+    apply(
+      revision,
+      rows
+        .filter((item) => {
+          const status = SessionStatus.get(item.child_session_id)
+          return status.type === "user_completed" && status.message === item.reason
+        })
+        .map((item) => item.child_session_id),
+    )
+  }
+
+  function apply(revision: string, children: SessionID[]) {
+    if (!children.length) return
+    Database.use((tx) =>
+      tx
+        .update(TaskRevisionStopTable)
+        .set({ state: "applied", time_applied: Date.now() })
+        .where(
+          and(
+            eq(TaskRevisionStopTable.revision_id, revision),
+            eq(TaskRevisionStopTable.state, "planned"),
+            inArray(TaskRevisionStopTable.child_session_id, children),
+          ),
+        )
+        .run(),
+    )
+  }
+
+  function count(revision: string) {
+    return Database.use(
+      (tx) =>
+        tx
+          .select({ id: TaskRevisionStopTable.child_session_id })
+          .from(TaskRevisionStopTable)
+          .where(and(eq(TaskRevisionStopTable.revision_id, revision), eq(TaskRevisionStopTable.state, "applied")))
+          .all().length,
     )
   }
 

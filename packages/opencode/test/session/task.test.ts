@@ -10,7 +10,13 @@ import { Session } from "../../src/session"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionAssignment } from "../../src/session/assignment"
 import { MessageID } from "../../src/session/schema"
-import { AssignmentTable, SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
+import {
+  AssignmentTable,
+  SessionResultTable,
+  SessionTaskTable,
+  TaskHandoffTable,
+  TaskRevisionTable,
+} from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { TaskFS } from "../../src/session/task-fs"
@@ -2256,27 +2262,73 @@ describe("session task", () => {
       })
       const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
       await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      const action = result("run_legacy_archive", [
+        { id: "legacy_result", title: "Legacy result", status: "completed" },
+      ]).actions[0]!
 
       const cases = [
-        { result: "Protocol result", source: "protocol", expected: { present: true, status: "completed" } },
-        { result: "Fallback result", source: "fallback_summary", expected: { present: true, status: "partial" } },
-        { result: "Untrusted result", source: null, expected: { present: false } },
-        { result: null, source: null, expected: { present: false } },
+        { result: "Protocol result", source: "protocol", canonical: undefined, expected: { present: true, status: "completed" } },
+        { result: "Fallback result", source: "fallback_summary", canonical: undefined, expected: { present: true, status: "partial" } },
+        { result: "Action completed", source: "action_result", canonical: "completed", expected: { present: true, status: "completed" } },
+        { result: "Action failed", source: "action_result", canonical: "failed", expected: { present: true, status: "failed" } },
+        { result: "Action aborted", source: "action_result", canonical: "aborted", expected: { present: true, status: "failed" } },
+        { result: "Action ambiguous", source: "action_result", canonical: "ambiguous", expected: { present: true } },
+        { result: "Action unknown", source: "action_result", canonical: undefined, expected: { present: true } },
+        { result: "Untrusted result", source: null, canonical: undefined, expected: { present: false } },
+        { result: null, source: null, canonical: undefined, expected: { present: false } },
       ] as const
       for (const item of cases) {
-        Database.use((db) =>
+        Database.use((db) => {
+          db.delete(SessionResultTable).where(eq(SessionResultTable.parent_session_id, session.id)).run()
+          if (item.canonical) {
+            const statuses = item.canonical === "ambiguous" ? ["completed", "failed"] : [item.canonical]
+            db.insert(SessionResultTable)
+              .values(statuses.map((status, index) => ({
+                id: `result_${item.canonical}_${index}`,
+                carrier: "action_result" as const,
+                status: status as never,
+                satisfying: status === "completed",
+                session_id: session.id,
+                parent_session_id: session.id,
+                child_session_id: null,
+                run_id: "run_legacy_archive",
+                action_id: "legacy_result",
+                target_action_id: null,
+                raw_ref: `legacy/${item.canonical}/${index}`,
+                summary: item.result,
+                created_at: Date.now(),
+              })))
+              .run()
+          }
           db
             .update(TaskRevisionTable)
-            .set({ result: item.result, result_source: item.source, result_status: null })
+            .set({
+              result: item.result,
+              result_source: item.source,
+              result_status: null,
+              workflow: { actions: [{ ...action, run_id: "run_legacy_archive" }] },
+            })
             .where(eq(TaskRevisionTable.id, first.revision.id))
-            .run(),
-        )
+            .run()
+        })
         expect((await SessionTask.history(session.id))[0]?.result).toEqual(item.expected)
         const revision = await SessionTask.revision(session.id, 1)
         expect(revision?.result_status).toBe("status" in item.expected ? item.expected.status : undefined)
         expect(revision?.result).toBe(item.expected.present && item.result ? item.result : undefined)
       }
     }))
+
+  test("does not backfill legacy action results as completed without canonical evidence", async () => {
+    const migration = await Bun.file(
+      new URL("../../migration/20260718190000_task_revision_archive_metadata/migration.sql", import.meta.url),
+    ).text()
+    expect(migration).not.toContain("action_result")
+    const correction = await Bun.file(
+      new URL("../../migration/20260718213000_task_revision_stop_ledger/migration.sql", import.meta.url),
+    ).text()
+    expect(correction).toContain("`result_source` = 'action_result'")
+    expect(correction).toContain("SET `result_status` = NULL")
+  })
 
   test("derives archived terminal status from compact-only progress", () =>
     setup(async () => {

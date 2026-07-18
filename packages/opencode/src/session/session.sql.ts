@@ -26,6 +26,7 @@ type TaskSource = "user" | "delegation" | "handoff" | "legacy"
 type RevisionStatus = "draft" | "active" | "completed" | "failed" | "archived"
 type RevisionTerminal = "completed" | "blocked" | "failed"
 type RevisionResult = "completed" | "partial" | "failed"
+type RevisionStop = "planned" | "applied"
 type HandoffStatus = "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
 
 export const SessionTable = sqliteTable(
@@ -310,6 +311,26 @@ export const TaskRevisionTable = sqliteTable(
       foreignColumns: [table.task_id, table.id],
       name: "task_revision_previous_fk",
     }).onDelete("cascade"),
+  ],
+)
+
+export const TaskRevisionStopTable = sqliteTable(
+  "task_revision_stop",
+  {
+    revision_id: text()
+      .notNull()
+      .references(() => TaskRevisionTable.id, { onDelete: "cascade" }),
+    child_session_id: text().$type<SessionID>().notNull(),
+    run_id: text().notNull(),
+    action_id: text().notNull(),
+    state: text().$type<RevisionStop>().notNull(),
+    reason: text().notNull(),
+    time_created: integer().notNull(),
+    time_applied: integer(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.revision_id, table.child_session_id] }),
+    index("task_revision_stop_state_idx").on(table.revision_id, table.state),
   ],
 )
 

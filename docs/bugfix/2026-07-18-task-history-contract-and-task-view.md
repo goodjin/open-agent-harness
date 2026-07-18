@@ -63,4 +63,9 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 - 旧归档 `result_status = null` 时，History 与 Revision 都从可信 `result_source` 和非空正文推导兼容分类；无可信来源的旧文本保持未记录。
 - 归档终态复用 live progress 口径：`workflow.compact` 与显式 actions 共同计算完成度，显式 failed/blocked 证据优先。
 
-复审回归覆盖 130 项 Task/Recovery/Delegation/API 测试；app Task 定向测试、双端 typecheck、SDK 一致性、迁移检查与 Chromium smoke 均通过。
+复审回归覆盖 131 项 Task/Recovery/Delegation/API 测试；app Task 定向测试、双端 typecheck、SDK 一致性、迁移检查与 Chromium smoke 均通过。
+
+## 崩溃一致性补充
+
+- Revision stop 使用 `(revision_id, child_session_id)` 唯一账本，stop 前写 `planned`，仅在本 Revision canonical stop marker 可确认后写 `applied`；归档从 applied 行计数。
+- 旧 `action_result` 不由 migration 猜测 completed。读取时仅以唯一 workflow run/action identity 匹配 canonical `session_result.status`；无法唯一确认时保留结果存在性，但不返回等级。
