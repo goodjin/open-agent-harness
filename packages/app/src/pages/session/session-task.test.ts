@@ -9,6 +9,7 @@ import {
   content,
   handoff,
   initial,
+  observe,
   progress,
   refresh,
   requests,
@@ -298,6 +299,90 @@ describe("session task", () => {
     flight.stop()
   })
 
+  test("updates the timeline badge with bounded refreshes without mounting the task tab", async () => {
+    const missing = deferred<SessionTaskCurrentResponse>()
+    const running = deferred<SessionTaskCurrentResponse>()
+    const completed = deferred<SessionTaskCurrentResponse>()
+    const error = deferred<SessionTaskCurrentResponse>()
+    const old = deferred<SessionTaskCurrentResponse>()
+    const next = deferred<SessionTaskCurrentResponse>()
+    const queues = { session_1: [missing, running, completed, error, old], session_2: [next] }
+    const signals: AbortSignal[] = []
+    const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
+    let tick = () => {}
+    let local: Badge | undefined
+    let calls = 0
+    const monitor = observe({
+      on(type, fn) {
+        expect(type).toBe("session.status")
+        listeners.add(fn)
+        return () => listeners.delete(fn)
+      },
+      load(sessionID, signal) {
+        calls++
+        signals.push(signal)
+        return queues[sessionID as keyof typeof queues].shift()!.promise
+      },
+      done(value) {
+        local = value
+      },
+      missing: (err) => (err as { status?: number }).status === 404,
+      delay: 25,
+      timers: {
+        set(fn) {
+          tick = fn
+          return 1
+        },
+        clear() {},
+      },
+    })
+    const event = (sessionID: string) =>
+      listeners.forEach((fn) => fn({ properties: { sessionID } }))
+
+    monitor.change("session_1")
+    await Promise.resolve()
+    await Promise.resolve()
+    missing.reject({ status: 404 })
+    await Bun.sleep(0)
+    expect(choose("session_1", local)).toBeUndefined()
+
+    event("session_1")
+    tick()
+    tick()
+    event("session_1")
+    await Bun.sleep(0)
+    expect(calls).toBe(2)
+    expect(signals[1]?.aborted).toBe(false)
+    running.resolve(task({ status: "running" }))
+    await Bun.sleep(0)
+    expect(choose("session_1", local)?.status).toBe("running")
+    expect(calls).toBe(3)
+    completed.resolve(task({ status: "completed" }))
+    await Bun.sleep(0)
+    expect(choose("session_1", local)?.status).toBe("completed")
+
+    event("session_1")
+    await Promise.resolve()
+    error.reject({ status: 500 })
+    await Bun.sleep(0)
+    expect(choose("session_1", local)?.status).toBe("completed")
+
+    event("session_1")
+    await Bun.sleep(0)
+    local = undefined
+    monitor.change("session_2")
+    expect(signals[4]?.aborted).toBe(true)
+    old.resolve(task({ status: "failed" }))
+    next.resolve(task({ id: "task_2", session_id: "session_2", status: "running" }))
+    await Bun.sleep(0)
+    expect(calls).toBe(6)
+    expect(choose("session_2", local)?.status).toBe("running")
+    expect(listeners.size).toBe(1)
+
+    monitor.stop()
+    expect(listeners.size).toBe(0)
+  })
+
   test("rebinds the mounted task listener when its session prop changes", () => {
     const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
     const calls: string[] = []
@@ -397,10 +482,13 @@ describe("session task", () => {
     expect(await Bun.file(new URL("session-runs.tsx", import.meta.url)).exists()).toBe(true)
   })
 
-  test("wires current task summaries back to the session badge", async () => {
+  test("wires current task summaries to the page lifecycle", async () => {
     const page = await Bun.file(new URL("../session.tsx", import.meta.url)).text()
-    expect(page).toContain("onSummary")
-    expect(page).toContain("if (params.id !== id) return")
+    expect(page).toContain("const monitor = observe")
+    expect(page).toContain("monitor.change(id)")
+    expect(page).toContain("onCleanup(monitor.stop)")
     expect(page).toContain("choose(params.id, latest(), info()?.task)")
+    expect(page.indexOf("const monitor = observe")).toBeLessThan(page.indexOf("const taskMode ="))
+    expect(page).not.toContain("onSummary=")
   })
 })

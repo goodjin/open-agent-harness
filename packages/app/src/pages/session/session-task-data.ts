@@ -13,6 +13,7 @@ export type Result = "recorded" | "fallback" | "missing"
 export type Request = "current" | "history" | "detail"
 export type Summary = SessionTaskSummary
 export type Badge = { sessionID: string; value?: Summary }
+type Timers = { set: (fn: () => void, timeout: number) => unknown; clear: (id: unknown) => void }
 
 const actions = {
   pending: "session.task.action.pending",
@@ -94,6 +95,12 @@ export const compact = (task?: Current): Summary | undefined =>
 
 export const choose = (sessionID: string | undefined, local: Badge | undefined, fallback?: Summary) =>
   local && local.sessionID === sessionID ? local.value : fallback
+
+export const code = (err: unknown) => {
+  if (!err || typeof err !== "object") return
+  const item = err as { status?: number; response?: { status?: number } }
+  return item.status ?? item.response?.status
+}
 
 export const content = (task: Current | Revision) => (result(task) === "missing" ? undefined : task.result?.trim())
 
@@ -191,6 +198,53 @@ export const single = (run: (sessionID: string) => Promise<unknown>, reset: () =
     pending = undefined
   }
   return { change, refresh, stop }
+}
+
+export const observe = (input: {
+  on: Parameters<typeof watch>[0]
+  load: (sessionID: string, signal: AbortSignal) => Promise<Current>
+  done: (value: Badge) => void
+  missing: (err: unknown) => boolean
+  delay?: number
+  timers?: Timers
+}) => {
+  const loader = requests()
+  let id: string | undefined
+  const load = (sessionID: string) =>
+    loader.run(
+      "current",
+      (signal) => input.load(sessionID, signal),
+      (value) => input.done({ sessionID, value: compact(value) }),
+      (err) => {
+        if (!input.missing(err)) return
+        input.done({ sessionID, value: undefined })
+      },
+    )
+  const flight = single(load, loader.reset)
+  const bind = watch(input.on, (sessionID) => void flight.refresh(sessionID))
+  const poll = refresh(
+    () => {
+      if (id) void flight.refresh(id)
+    },
+    input.delay,
+    input.timers,
+  )
+  const change = (sessionID?: string) => {
+    id = sessionID
+    bind(id)
+    if (!id) {
+      flight.stop()
+      return
+    }
+    void flight.change(id)
+  }
+  const stop = () => {
+    id = undefined
+    poll()
+    bind()
+    flight.stop()
+  }
+  return { change, stop }
 }
 
 export const view = (task?: Current) => {

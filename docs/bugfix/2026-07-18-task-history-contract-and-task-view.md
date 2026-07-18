@@ -80,3 +80,4 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 - UI 回归从源码断言补充为可控 timer、同组件 Session 切换时的事件过滤/退订/重绑、locale 与异步请求竞态的行为测试。
 - 新归档的 delegation 完整性按 Revision parent、workflow run/action、Assignment child 四个维度同时限定；显式 workflow 中的 agent action 缺少唯一 Assignment 或结果时保持 blocked。另一 Revision 的 parent、同 parent 的额外 key 和重复 locator 都不参与；无 actions 的旧 Revision 仅以已记录 run 和 null/current parent 走兼容路径，tool action 不进入 delegation 完整性检查。
 - Task current 刷新使用 single-flight：poll 与 status 事件在请求进行中只合并为一个 pending refresh，请求 settle 后再补跑；切换 Session 仍立即中断旧请求并加载新 Session。Task current 的轻量 summary 回传页面本地状态，徽标优先读取匹配当前 Session 的本地 summary，404 显示未绑定，普通错误保留上次可信状态，旧 Session 回调不能覆盖新 Session。
+- 顶部 Task 徽标的轻量 current 监听放在 Session 页面生命周期内，不依赖 Task tab 是否挂载；Timeline/Logs 视图同样监听当前 Session 状态事件并以有界 single-flight 刷新摘要。切换 Session 时解绑并中止旧请求，404 明确更新为未绑定，普通错误保留上次可信摘要。

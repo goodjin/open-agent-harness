@@ -6,7 +6,7 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import {
   action as actionLabel,
-  compact,
+  code,
   content,
   handoff as handoffLabel,
   initial,
@@ -58,13 +58,7 @@ const updated = (task: Current | Revision) => {
   return task.time.archived ?? task.time.created
 }
 
-const code = (err: unknown) => {
-  if (!err || typeof err !== "object") return
-  const item = err as { status?: number; response?: { status?: number } }
-  return item.status ?? item.response?.status
-}
-
-export function SessionTask(props: { sessionID: string; onSummary?: (task: ReturnType<typeof compact>) => void }) {
+export function SessionTask(props: { sessionID: string }) {
   const sdk = useSDK()
   const language = useLanguage()
   const [state, setState] = createStore(initial())
@@ -79,12 +73,10 @@ export function SessionTask(props: { sessionID: string; onSummary?: (task: Retur
       (signal) => sdk.client.session.task.current({ sessionID: id }, { signal }),
       (res) => {
         setState({ current: res.data, loading: { ...state.loading, current: false } })
-        props.onSummary?.(compact(res.data))
       },
       (err) => {
         if (code(err) === 404) {
           setState({ current: undefined, loading: { ...state.loading, current: false } })
-          props.onSummary?.(undefined)
           return
         }
         setState("loading", "current", false)

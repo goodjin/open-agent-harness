@@ -66,7 +66,7 @@ import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { SessionTask } from "@/pages/session/session-task"
-import { choose } from "@/pages/session/session-task-data"
+import { choose, code, observe } from "@/pages/session/session-task-data"
 import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -509,7 +509,23 @@ export default function Page() {
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
   const [latest, setLatest] = createSignal<{ sessionID: string; value?: SessionTaskSummary }>()
-  createEffect(on(() => params.id, () => setLatest(undefined)))
+  const monitor = observe({
+    on: sdk.event.on,
+    load: (sessionID, signal) =>
+      sdk.client.session.task.current({ sessionID }, { signal }).then((res) => res.data!),
+    done: setLatest,
+    missing: (err) => code(err) === 404,
+  })
+  createEffect(
+    on(
+      () => params.id,
+      (id) => {
+        setLatest(undefined)
+        monitor.change(id)
+      },
+    ),
+  )
+  onCleanup(monitor.stop)
   const summary = createMemo(() => choose(params.id, latest(), info()?.task))
   const badge = createMemo(() => {
     const item = summary()
@@ -1386,15 +1402,7 @@ export default function Page() {
             >
               <Match when={taskMode()}>
                 <Show when={params.id} keyed>
-                  {(id) => (
-                    <SessionTask
-                      sessionID={id}
-                      onSummary={(value) => {
-                        if (params.id !== id) return
-                        setLatest({ sessionID: id, value })
-                      }}
-                    />
-                  )}
+                  {(id) => <SessionTask sessionID={id} />}
                 </Show>
               </Match>
               <Match when={logMode()}>{logPanel()}</Match>
