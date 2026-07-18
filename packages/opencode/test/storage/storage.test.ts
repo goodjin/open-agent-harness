@@ -97,6 +97,60 @@ describe("storage", () => {
     })
     await fs.rm(dir, { recursive: true, force: true })
   })
+
+  test("serializes concurrent reclaimers without deleting a new owner", async () => {
+    const key = ["test", "lock", crypto.randomUUID()]
+    const dir = lockdir(key)
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(path.join(dir, "owner.json"), JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" }))
+    const seen: string[] = []
+    let active = 0
+    let peak = 0
+    const run = (name: string) =>
+      Storage.locked(
+        key,
+        async () => {
+          active++
+          peak = Math.max(peak, active)
+          seen.push(name)
+          await Bun.sleep(20)
+          active--
+        },
+        { timeout: 1_000, grace: 5 },
+      )
+
+    await Promise.all([run("a"), run("b")])
+    expect(peak).toBe(1)
+    expect(seen.sort()).toEqual(["a", "b"])
+    expect((await fs.readdir(path.dirname(dir))).filter((item) => item.includes(path.basename(dir)))).toEqual([])
+  })
+
+  test("keeps release and reclaim races mutually exclusive", async () => {
+    const key = ["test", "lock", crypto.randomUUID()]
+    const gate = Promise.withResolvers<void>()
+    const seen: string[] = []
+    let active = 0
+    let peak = 0
+    const first = Storage.locked(key, async () => {
+      active++
+      peak = Math.max(peak, active)
+      seen.push("owner")
+      await gate.promise
+      active--
+    })
+    while (!seen.length) await Bun.sleep(5)
+    const next = Storage.locked(key, async () => {
+      active++
+      peak = Math.max(peak, active)
+      seen.push("reclaimer")
+      active--
+    })
+    gate.resolve()
+    await Promise.all([first, next])
+
+    expect(peak).toBe(1)
+    expect(seen).toEqual(["owner", "reclaimer"])
+  })
 })
 
 function lockdir(key: string[]) {

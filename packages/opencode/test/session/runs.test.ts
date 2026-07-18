@@ -157,6 +157,63 @@ describe("session runs", () => {
     })
   })
 
+  test("settles a fragmented readiness read before reporting timeout diagnostics", async () => {
+    const failures: unknown[] = []
+    const hook = (err: unknown) => failures.push(err)
+    process.on("unhandledRejection", hook)
+    const child = Bun.spawn(
+      ["bun", "-e", `process.stdout.write("RUN_"); console.error("waiting"); await Bun.sleep(10_000)`],
+      { stdout: "pipe", stderr: "pipe" },
+    )
+    try {
+      const err = await signal(child, "RUN_STORE_READY\n", 1_000).then(
+        () => undefined,
+        (cause) => cause,
+      )
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toContain('stdout="RUN_"')
+      expect((err as Error).message).toContain('stderr="waiting\\n"')
+      await Bun.sleep(20)
+      expect(failures).toEqual([])
+    } finally {
+      process.off("unhandledRejection", hook)
+      child.kill()
+      await child.exited
+    }
+  })
+
+  test("settles a rejected readiness read without an unhandled rejection", async () => {
+    const failures: unknown[] = []
+    const hook = (err: unknown) => failures.push(err)
+    process.on("unhandledRejection", hook)
+    try {
+      const err = await signal(
+        {
+          stdout: new ReadableStream({
+            start(controller) {
+              controller.error(new Error("read failed"))
+            },
+          }),
+          stderr: new Response("reader stderr").body!,
+          exited: Promise.resolve(7),
+          kill() {},
+        },
+        "RUN_STORE_READY\n",
+        100,
+      ).then(
+        () => undefined,
+        (cause) => cause,
+      )
+      expect(err).toBeInstanceOf(Error)
+      expect((err as Error).message).toContain('stderr="reader stderr"')
+      expect((err as Error).message).toContain('read="read failed"')
+      await Bun.sleep(20)
+      expect(failures).toEqual([])
+    } finally {
+      process.off("unhandledRejection", hook)
+    }
+  })
+
   test("projects a running delegated run from its verified assignment", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
@@ -1454,26 +1511,36 @@ async function signal(
   const end = Date.now() + timeout
   let output = ""
   let pending = reader.read()
-  while (Date.now() < end) {
-    const item = await Promise.race([
-      pending,
-      Bun.sleep(Math.min(25, end - Date.now())).then(() => undefined),
-    ])
-    if (!item) continue
-    if (item.done) break
-    output += decoder.decode(item.value, { stream: true })
-    if (output.includes(expected)) {
-      reader.releaseLock()
-      return output
+  let failure: unknown
+  try {
+    while (Date.now() < end) {
+      const item = await Promise.race([
+        pending,
+        Bun.sleep(Math.min(25, end - Date.now())).then(() => undefined),
+      ])
+      if (!item) continue
+      if (item.done) break
+      output += decoder.decode(item.value, { stream: true })
+      if (output.includes(expected)) {
+        await pending.catch(() => undefined)
+        reader.releaseLock()
+        return output
+      }
+      pending = reader.read()
     }
-    pending = reader.read()
+  } catch (err) {
+    failure = err
   }
+  await Promise.resolve()
+    .then(() => child.kill())
+    .catch(() => undefined)
+  await reader.cancel().catch(() => undefined)
+  await pending.catch(() => undefined)
   reader.releaseLock()
-  child.kill()
-  const code = await child.exited
+  const code = await child.exited.catch(() => -1)
   const error = await new Response(child.stderr).text()
   throw new Error(
-    `child readiness failed: expected=${JSON.stringify(expected)} exit=${code} stdout=${JSON.stringify(output)} stderr=${JSON.stringify(error)}`,
+    `child readiness failed: expected=${JSON.stringify(expected)} exit=${code} stdout=${JSON.stringify(output)} stderr=${JSON.stringify(error)} read=${JSON.stringify(failure instanceof Error ? failure.message : failure)}`,
   )
 }
 

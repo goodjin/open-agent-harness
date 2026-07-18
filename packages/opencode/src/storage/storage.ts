@@ -237,7 +237,6 @@ export namespace Storage {
   ) {
     const root = await state().then((x) => x.dir)
     const dir = path.join(root, ...key) + ".lock"
-    const owner = path.join(dir, "owner.json")
     const timeout = options.timeout ?? 30_000
     const grace = options.grace ?? 1_000
     const end = Date.now() + timeout
@@ -248,11 +247,30 @@ export namespace Storage {
       if (!Number.isInteger(item.pid) || typeof item.token !== "string" || !item.token) return
       return { pid: item.pid as number, token: item.token }
     }
-    const read = () => Filesystem.readJson<unknown>(owner).then(parse).catch(() => undefined)
-    const remove = async (expected?: string) => {
+    const read = (root = dir) =>
+      Filesystem.readJson<unknown>(path.join(root, "owner.json"))
+        .then(parse)
+        .catch(() => undefined)
+    const claim = async (expected?: string) => {
       const current = await read()
       if (expected ? current?.token !== expected : current) return false
-      await fs.rm(dir, { recursive: true, force: true })
+      const tomb = `${dir}.${expected ?? "empty"}.${crypto.randomUUID()}.tomb`
+      const moved = await fs.rename(dir, tomb).then(
+        () => true,
+        (err: unknown) => {
+          if (!(err instanceof Error)) throw err
+          const code = (err as NodeJS.ErrnoException).code
+          if (code === "ENOENT" || code === "EEXIST") return false
+          throw err
+        },
+      )
+      if (!moved) return false
+      const saved = await read(tomb)
+      if (expected ? saved?.token !== expected : saved) {
+        await fs.rename(tomb, dir).catch(() => undefined)
+        return false
+      }
+      await fs.rm(tomb, { recursive: true, force: true })
       return true
     }
     while (true) {
@@ -269,11 +287,11 @@ export namespace Storage {
         continue
       }
       if (made) {
-        await Filesystem.writeJson(owner, { pid: process.pid, token })
+        await Filesystem.writeJson(path.join(dir, "owner.json"), { pid: process.pid, token })
         try {
           return await fn()
         } finally {
-          await remove(token)
+          await claim(token)
         }
       }
       const saved = await read()
@@ -291,8 +309,8 @@ export namespace Storage {
             }
           })()
         : undefined
-      if (saved && !alive && (await remove(saved.token))) continue
-      if (!saved && age >= grace && (await remove())) {
+      if (saved && !alive && (await claim(saved.token))) continue
+      if (!saved && age >= grace && (await claim())) {
         continue
       }
       if (Date.now() >= end) throw new LockTimeoutError({ key: key.join("/"), timeout })
