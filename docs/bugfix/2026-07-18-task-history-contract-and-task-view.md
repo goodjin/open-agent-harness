@@ -73,8 +73,8 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 
 ## 质量复审收口
 
-- History 一次批量读取并索引 canonical action results，多个归档 Revision 不再逐项查询；新归档也只使用 `action_result` carrier 计算结果 metadata。
-- Session detail 返回可选 Task summary；Task 视图监听当前 Session 状态事件并以可清理定时器兜底刷新，重复请求继续由 abort 与 generation fence 防止旧响应覆盖。
+- History 一次批量读取并索引 canonical `action_result`，多个旧归档 Revision 不再逐项查询；新归档则通过当前 workflow 对应的 delegation Assignment 定位 child，聚合该 child 的全部 canonical result carrier，避免同 parent/run/action 下的错 child 污染。
+- Session detail 返回可选 Task summary；Task 视图监听当前 Session 状态事件并以可清理定时器兜底刷新。组件切换 Session 时先退订旧 listener，再为新 Session 绑定固定 id listener；重复请求继续由 abort 与 generation fence 防止旧响应覆盖。
 - 归档 Revision 缺少 `result_status` 时不展示原始结果正文；当前 Task 的可信 `action_result` 保持可展示。
 - Handoff source/target Task 外键查询增加索引与独立迁移；日期格式显式使用当前语言 locale。
-- UI 回归从源码断言补充为可控 timer、事件过滤/退订、locale 与异步请求竞态的行为测试。
+- UI 回归从源码断言补充为可控 timer、同组件 Session 切换时的事件过滤/退订/重绑、locale 与异步请求竞态的行为测试。

@@ -130,19 +130,21 @@ export function SessionTask(props: { sessionID: string }) {
     void load(props.sessionID)
   }
 
+  const bind = watch(sdk.event.on, (id) => void load(id))
+
   createEffect(() => {
     const id = props.sessionID
     loader.reset()
     setDrawer(false)
     setState(initial())
+    bind(id)
     void load(id)
   })
 
   const poll = refresh(() => void load(props.sessionID))
-  const unsub = watch(props.sessionID, sdk.event.on, () => void load(props.sessionID))
   onCleanup(() => {
     poll()
-    unsub()
+    bind()
     loader.reset()
   })
 

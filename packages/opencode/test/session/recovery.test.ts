@@ -1282,7 +1282,7 @@ describe("session recovery", () => {
               expect(await SessionTask.revision(parent.id, 1)).toMatchObject({
                 terminal_status: "completed",
                 stopped_child_count: 2,
-                result_status: "completed",
+                result_status: "partial",
               })
               expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
               expect(SessionStatus.get(children[1]!.id).type).toBe("completed")

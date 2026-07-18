@@ -202,26 +202,32 @@ describe("session task", () => {
     expect(cleared).toBe(true)
   })
 
-  test("refreshes only for the mounted session and removes its event listener", () => {
-    let listener = (_event: { properties: { sessionID: string } }) => {}
-    let cleared = false
-    const calls: number[] = []
-    const stop = watch(
-      "session_1",
+  test("rebinds the mounted task listener when its session prop changes", () => {
+    const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
+    const calls: string[] = []
+    const bind = watch(
       (type, fn) => {
         expect(type).toBe("session.status")
-        listener = fn
-        return () => {
-          cleared = true
-        }
+        listeners.add(fn)
+        return () => listeners.delete(fn)
       },
-      () => calls.push(1),
+      (sessionID) => calls.push(sessionID),
     )
-    listener({ properties: { sessionID: "session_2" } })
-    listener({ properties: { sessionID: "session_1" } })
-    stop()
-    expect(calls).toHaveLength(1)
-    expect(cleared).toBe(true)
+    const emit = (sessionID: string) =>
+      listeners.forEach((listener) => listener({ properties: { sessionID } }))
+
+    expect(typeof bind).toBe("function")
+    bind("session_1")
+    emit("session_1")
+    bind("session_2")
+    expect(listeners.size).toBe(1)
+    emit("session_1")
+    emit("session_2")
+    bind()
+    emit("session_2")
+
+    expect(calls).toEqual(["session_1", "session_2"])
+    expect(listeners.size).toBe(0)
   })
 
   test("formats task timestamps with the active language locale", () => {
@@ -276,7 +282,9 @@ describe("session task", () => {
     expect(src).toContain("item.result.status")
     expect(src).toContain("item.target_session_id")
     expect(src).toContain("item.error")
-    expect(src).toContain("watch(props.sessionID, sdk.event.on")
+    expect(src).toContain("const bind = watch(sdk.event.on")
+    expect(src).toContain("bind(id)")
+    expect(src).toContain("bind()")
     expect(src).toContain("language.intl()")
     expect(src).toContain('aria-live="polite"')
     expect(src).toContain('role="alert"')

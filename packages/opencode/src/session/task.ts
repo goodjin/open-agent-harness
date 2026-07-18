@@ -1454,6 +1454,7 @@ export namespace SessionTask {
   function archive(tx: Database.TxOrDb, sessionID: SessionID, revision: typeof TaskRevisionTable.$inferSelect) {
     const flow = Workflow.parse(revision.workflow)
     const actions = workflow(flow)
+    const parents = flow.assignment_id ? new Set([flow.assignment_id]) : new Set<string>()
     const keys = new Set(
       flow.actions.flatMap((raw) => {
         if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
@@ -1462,25 +1463,56 @@ export namespace SessionTask {
         return [`${item.run_id}:${item.id}`]
       }),
     )
+    const assigned = tx
+      .select({
+        parent: AssignmentTable.parent_id,
+        child: AssignmentTable.session_id,
+        run: AssignmentTable.source_run_id,
+        action: AssignmentTable.source_action_id,
+      })
+      .from(AssignmentTable)
+      .where(
+        and(
+          eq(AssignmentTable.source_session_id, sessionID),
+          eq(AssignmentTable.source_type, "delegation"),
+        ),
+      )
+      .all()
+      .filter((item): item is typeof item & { run: string; action: string } => {
+        if (!item.run || !item.action) return false
+        return keys.has(`${item.run}:${item.action}`) || (!!item.parent && parents.has(item.parent))
+      })
+    const locators = new Map(assigned.map((item) => [`${item.run}:${item.action}`, item.child]))
     const rows = tx
       .select({
         run: SessionResultTable.run_id,
         action: SessionResultTable.action_id,
+        child: SessionResultTable.child_session_id,
         status: SessionResultTable.status,
       })
       .from(SessionResultTable)
-      .where(
-        and(
-          eq(SessionResultTable.parent_session_id, sessionID),
-          eq(SessionResultTable.carrier, "action_result"),
-        ),
-      )
+      .where(eq(SessionResultTable.parent_session_id, sessionID))
       .all()
-      .filter((item) => item.run && item.action && keys.has(`${item.run}:${item.action}`))
+      .filter(
+        (item) =>
+          item.run &&
+          item.action &&
+          item.child &&
+          locators.get(`${item.run}:${item.action}`) === item.child,
+      )
     const saved = result(revision.result, revision.result_source)
+    const complete =
+      assigned.length === 0 ||
+      assigned.every((item) =>
+        rows.some((row) => row.child === item.child && row.run === item.run && row.action === item.action),
+      )
     const resultStatus = rows.some((item) => item.status === "failed")
       ? ("failed" as const)
-      : rows.some((item) => item.status !== "completed") || saved.result_source === "fallback_summary"
+      : !complete
+        ? rows.length > 0
+          ? ("partial" as const)
+          : undefined
+        : rows.some((item) => item.status !== "completed") || saved.result_source === "fallback_summary"
         ? ("partial" as const)
         : rows.length > 0 || saved.result
           ? ("completed" as const)
@@ -1494,15 +1526,20 @@ export namespace SessionTask {
     const terminal =
       actions.some((item) => item.status === "failed") || resultStatus === "failed"
         ? ("failed" as const)
-        : actions.some((item) => item.status === "blocked" || item.status === "pending" || item.status === "running")
+        : actions.some((item) => item.status === "blocked" || item.status === "pending" || item.status === "running") ||
+            rows.some((item) => item.status === "blocked" || item.status === "waiting_user")
           ? ("blocked" as const)
+          : !complete
+            ? ("blocked" as const)
           : progress.total > 0
             ? progress.completed >= progress.total
               ? ("completed" as const)
               : ("blocked" as const)
             : resultStatus === "completed"
               ? ("completed" as const)
-              : ("blocked" as const)
+              : assigned.length > 0 && resultStatus === "partial"
+                ? ("completed" as const)
+                : ("blocked" as const)
     return { terminal, result: resultStatus }
   }
 

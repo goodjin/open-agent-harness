@@ -55,17 +55,24 @@ export const refresh = (
 }
 
 export const watch = (
-  sessionID: string,
   on: (
     type: "session.status",
     fn: (event: { properties: { sessionID: string } }) => void,
   ) => () => void,
-  run: () => void,
-) =>
-  on("session.status", (event) => {
-    if (event.properties.sessionID !== sessionID) return
-    run()
-  })
+  run: (sessionID: string) => void,
+) => {
+  let stop: (() => void) | undefined
+  return (sessionID?: string) => {
+    stop?.()
+    stop = undefined
+    if (!sessionID) return
+    const id = sessionID
+    stop = on("session.status", (event) => {
+      if (event.properties.sessionID !== id) return
+      run(id)
+    })
+  }
+}
 
 export const stamp = (value: number, locale: string) =>
   new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(value)

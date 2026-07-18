@@ -2488,6 +2488,173 @@ describe("session task", () => {
       }
     }))
 
+  test("archives only canonical child results across current result carriers", () =>
+    setup(async () => {
+      const archive = async (input: {
+        id: string
+        actions: { id: string; status: "completed" | "failed" | "blocked" }[]
+        rows: { action: string; carrier: "action_result" | "fallback_summary" | "agent_protocol_output" | "plain_text_result" | "synthetic"; status: "completed" | "partial" | "failed" | "blocked" | "waiting_user" }[]
+        shared?: boolean
+        wrong?: "completed" | "failed"
+      }) => {
+        const session = await Session.create({})
+        const first = await SessionTask.create({
+          sessionID: session.id,
+          title: input.id,
+          body: `# ${input.id}\n`,
+          source: { type: "user" },
+        })
+        const run = `run_${input.id}`
+        const actions = input.actions.map((item) => ({
+          type: "action",
+          id: item.id,
+          title: item.id,
+          operation: "delegate",
+          executor: { type: "agent", target: "backend", capabilities: [] },
+          input: {},
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        })) as AgentProtocol.Action[]
+        const child = input.shared ? await Session.create({ parentID: session.id }) : undefined
+        const children = child
+          ? actions.map(() => child)
+          : await Promise.all(actions.map(() => Session.create({ parentID: session.id })))
+        const wrong = input.wrong ? await Session.create({ parentID: session.id }) : undefined
+        await Promise.all(
+          actions.map((action, index) =>
+            SessionAssignment.delegate({
+              action,
+              childID: children[index]!.id,
+              messageID: MessageID.ascending(),
+              runID: run,
+              sessionID: session.id,
+            }),
+          ),
+        )
+        Database.use((db) => {
+          db.update(TaskRevisionTable)
+            .set({
+              workflow: {
+                actions: result(run, input.actions.map((item) => ({ ...item, title: item.id }))).actions.map(
+                  (action) => ({ ...action, run_id: run }),
+                ),
+              },
+            })
+            .where(eq(TaskRevisionTable.id, first.revision.id))
+            .run()
+          input.rows.forEach((row, index) => {
+            const child = children[input.actions.findIndex((item) => item.id === row.action)]!
+            db.insert(SessionResultTable)
+              .values({
+                id: `result_${input.id}_${index}`,
+                carrier: row.carrier,
+                status: row.status,
+                satisfying: row.status === "completed",
+                session_id: child.id,
+                parent_session_id: session.id,
+                child_session_id: child.id,
+                run_id: run,
+                action_id: row.action,
+                target_action_id: null,
+                raw_ref: `archive/${input.id}/${index}`,
+                summary: `${row.action} result`,
+                created_at: Date.now(),
+              })
+              .run()
+          })
+          if (!input.wrong || !wrong) return
+          db.insert(SessionResultTable)
+            .values({
+              id: `result_${input.id}_wrong`,
+              carrier: "action_result",
+              status: input.wrong,
+              satisfying: input.wrong === "completed",
+              session_id: wrong.id,
+              parent_session_id: session.id,
+              child_session_id: wrong.id,
+              run_id: run,
+              action_id: input.actions[0]!.id,
+              target_action_id: null,
+              raw_ref: `archive/${input.id}/wrong`,
+              summary: "Wrong child result",
+              created_at: Date.now(),
+            })
+            .run()
+        })
+        const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
+        await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+        return SessionTask.revision(session.id, 1)
+      }
+
+      expect(
+        await archive({
+          id: "mixed",
+          actions: [
+            { id: "native", status: "completed" },
+            { id: "fallback", status: "completed" },
+          ],
+          rows: [
+            { action: "native", carrier: "action_result", status: "completed" },
+            { action: "fallback", carrier: "fallback_summary", status: "partial" },
+          ],
+        }),
+      ).toMatchObject({ terminal_status: "completed", result_status: "partial" })
+      expect(
+        await archive({
+          id: "fallback",
+          actions: [
+            { id: "first", status: "completed" },
+            { id: "second", status: "completed" },
+          ],
+          rows: [
+            { action: "first", carrier: "fallback_summary", status: "partial" },
+            { action: "second", carrier: "fallback_summary", status: "partial" },
+          ],
+        }),
+      ).toMatchObject({ terminal_status: "completed", result_status: "partial" })
+      expect(
+        await archive({
+          id: "failed",
+          actions: [{ id: "failed", status: "failed" }],
+          rows: [{ action: "failed", carrier: "plain_text_result", status: "failed" }],
+        }),
+      ).toMatchObject({ terminal_status: "failed", result_status: "failed" })
+      expect(
+        await archive({
+          id: "blocked",
+          actions: [{ id: "blocked", status: "blocked" }],
+          rows: [{ action: "blocked", carrier: "agent_protocol_output", status: "waiting_user" }],
+        }),
+      ).toMatchObject({ terminal_status: "blocked", result_status: "partial" })
+      expect(
+        await archive({
+          id: "synthetic",
+          actions: [{ id: "synthetic", status: "completed" }],
+          rows: [{ action: "synthetic", carrier: "synthetic", status: "partial" }],
+          wrong: "failed",
+        }),
+      ).toMatchObject({ terminal_status: "completed", result_status: "partial" })
+      expect(
+        await archive({ id: "missing", actions: [{ id: "missing", status: "completed" }], rows: [] }),
+      ).toMatchObject({ terminal_status: "blocked" })
+      expect(
+        (await archive({ id: "missing_status", actions: [{ id: "missing", status: "completed" }], rows: [] }))
+          ?.result_status,
+      ).toBeUndefined()
+      expect(
+        await archive({
+          id: "shared_child_missing",
+          actions: [
+            { id: "present", status: "completed" },
+            { id: "missing", status: "completed" },
+          ],
+          rows: [{ action: "present", carrier: "fallback_summary", status: "partial" }],
+          shared: true,
+        }),
+      ).toMatchObject({ terminal_status: "blocked", result_status: "partial" })
+    }))
+
   test("does not reuse a result from an archived revision", () =>
     setup(async () => {
       const session = await Session.create({})
