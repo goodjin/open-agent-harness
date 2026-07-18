@@ -589,7 +589,8 @@ describe("SessionTaskHandoff", () => {
       }) as never)
       const enqueue = spyOn(SessionPrompt, "enqueue")
       try {
-        expect(await SessionTaskHandoff.resume(proposed.id)).toBe(true)
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
         expect(loops).toBe(1)
         expect(enqueue).toHaveBeenCalledTimes(0)
         expect((await SessionTaskHandoff.get(proposed.id))?.status).toBe("started")

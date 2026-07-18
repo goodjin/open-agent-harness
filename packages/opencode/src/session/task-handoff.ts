@@ -332,10 +332,7 @@ export namespace SessionTaskHandoff {
           message_id: found?.payload.message_id ?? MessageID.ascending(),
         }
         if (found) {
-          const retry =
-            found.status === "pending" ||
-            found.status === "failed" ||
-            (found.status === "delivering" && found.updated_at <= now - 30_000)
+          const retry = found.status === "pending" || found.status === "failed"
           if (retry)
             tx.update(SessionEventOutboxTable)
               .set({ status: "pending", payload, updated_at: now, error: null })
