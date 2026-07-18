@@ -35,6 +35,7 @@ import { SessionResult } from "./result"
 import { SessionRuns } from "./runs"
 import { SessionTask } from "./task"
 import { SessionTaskRecovery } from "./task-recovery"
+import { SessionTaskHandoff } from "./task-handoff"
 import { DelegatedTask } from "./delegated-task"
 import { Database } from "@/storage/db"
 
@@ -3387,6 +3388,17 @@ export namespace SessionRunner {
     const plan = typeof data.plan === "string" ? data.plan : ""
     const prompt = typeof data.prompt === "string" ? data.prompt : "Please confirm this plan before execution."
     const intent = object(data.assignment)
+    const refs = input.action.context_refs.filter((item): item is string => typeof item === "string")
+    const handoff =
+      intent.op === "handoff"
+        ? await SessionTaskHandoff.propose({
+            sourceID: input.sessionID,
+            messageID: input.messageID,
+            title: input.action.title,
+            body: plan,
+            contextRefs: refs,
+          })
+        : undefined
     if (intent.op === "update") {
       const task = await SessionTask.get(input.sessionID)
       const scope = await SessionTask.scope(input.sessionID)
@@ -3452,6 +3464,11 @@ export namespace SessionRunner {
           sessionID: input.sessionID,
         })
       : undefined
+    const transferred =
+      ok && assignment && handoff
+        ? await SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id })
+        : undefined
+    if (!ok && handoff) await SessionTaskHandoff.cancel(handoff.id)
     await storeConfirm({
       action: input.action,
       assignment,
@@ -3473,8 +3490,17 @@ export namespace SessionRunner {
     if (ok) {
       return {
         title: input.action.title,
-        output: "Plan confirmed by user. Continue executing the remaining package actions in this run.",
-        metadata: { confirmed: true },
+        output: transferred
+          ? "Task handoff confirmed. The Runtime created a peer session; source actions will not execute."
+          : "Plan confirmed by user. Continue executing the remaining package actions in this run.",
+        metadata: transferred
+          ? {
+              confirmed: true,
+              handoff_id: transferred.id,
+              target_session_id: transferred.target_session_id,
+              target_task_id: transferred.target_task_id,
+            }
+          : { confirmed: true },
       }
     }
     return {

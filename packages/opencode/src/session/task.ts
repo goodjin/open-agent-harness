@@ -28,7 +28,7 @@ export namespace SessionTask {
         runID: RunID.optional(),
       })
       .strict(),
-    z.object({ type: z.literal("handoff"), handoffID: z.string().min(1) }).strict(),
+    z.object({ type: z.literal("handoff"), handoffID: z.string().min(1), sourceSessionID: SessionID.zod.optional() }).strict(),
     z.object({ type: z.literal("legacy"), runID: z.string().min(1).optional() }).strict(),
   ])
   export type Source = z.infer<typeof Source>
@@ -307,7 +307,12 @@ export namespace SessionTask {
     if (typeof plan !== "string")
       throw new Conflict("session_task_assignment_content_invalid")
     if (assignment.status === "completed") {
-      if (!sourced || op === "handoff") throw new Conflict("session_task_assignment_not_current")
+      if (!sourced) throw new Conflict("session_task_assignment_not_current")
+      if (op === "handoff") {
+        const task = await get(input.sessionID)
+        if (!task) throw new Conflict("task_handoff_requires_bound_source")
+        return { type: "handoff" as const, task: task.task }
+      }
       return replay({ assignment, op, plan, sessionID: input.sessionID })
     }
     const active = await SessionAssignment.active(input.sessionID)

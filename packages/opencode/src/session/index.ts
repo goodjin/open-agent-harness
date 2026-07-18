@@ -382,7 +382,7 @@ export namespace Session {
     })
   })
 
-  export async function createNext(input: {
+  export type Create = {
     id?: SessionID
     title?: string
     agent?: string
@@ -391,8 +391,10 @@ export namespace Session {
     workspaceID?: WorkspaceID
     directory: string
     permission?: PermissionNext.Ruleset
-  }) {
-    const result: Info = {
+  }
+
+  export function build(input: Create) {
+    return Info.parse({
       id: SessionID.descending(input.id),
       slug: Slug.create(),
       version: Installation.VERSION,
@@ -408,28 +410,27 @@ export namespace Session {
         created: Date.now(),
         updated: Date.now(),
       },
-    }
+    })
+  }
+
+  export function save(tx: Database.TxOrDb, result: Info) {
+    tx.insert(SessionTable).values(toRow(result)).run()
+    Database.effect(() => {
+      Metrics.emit("opencode_session_lifecycle_total", { event: "created", status: "idle" })
+      return Promise.all([Bus.publish(Event.Created, { info: result }), Bus.publish(Event.Updated, { info: result })])
+    })
+    return result
+  }
+
+  export async function createNext(input: Create) {
+    const result = build(input)
     log.info("created", result)
-    Database.use((db) => {
-      db.insert(SessionTable).values(toRow(result)).run()
-      Database.effect(() =>
-        Bus.publish(Event.Created, {
-          info: result,
-        }),
-      )
-    })
-    Metrics.emit("opencode_session_lifecycle_total", {
-      event: "created",
-      status: "idle",
-    })
+    Database.use((tx) => save(tx, result))
     const cfg = await Config.get()
     if (!result.parentID && (Flag.OPENCODE_AUTO_SHARE || cfg.share === "auto"))
       share(result.id).catch(() => {
         // Silently ignore sharing errors during session creation
       })
-    Bus.publish(Event.Updated, {
-      info: result,
-    })
     return result
   }
 

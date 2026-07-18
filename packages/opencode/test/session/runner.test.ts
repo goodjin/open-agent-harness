@@ -28,6 +28,9 @@ import { AgentProtocol } from "../../src/protocol/schema"
 import { Storage } from "../../src/storage/storage"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionTask } from "../../src/session/task"
+import { SessionTaskHandoff } from "../../src/session/task-handoff"
+import { TaskHandoffTable } from "../../src/session/session.sql"
+import { Database, eq } from "../../src/storage/db"
 
 afterEach(() => mock.restore())
 
@@ -1330,6 +1333,145 @@ describe("SessionRunner", () => {
       }) })
     } finally {
       prompt.mockRestore()
+      provider.mockRestore()
+      stream.mockRestore()
+    }
+  })
+
+  test("protocol runner confirms handoff into a peer and never executes source actions", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const stream = spyOn(LLM, "stream").mockImplementation(async () =>
+      packet(
+        {
+          version: "2",
+          items: [
+            {
+              id: "confirm_handoff",
+              kind: "confirm",
+              title: "Peer task",
+              prompt: "Create peer?",
+              plan: "Peer body",
+              assignment: { op: "handoff", target: "peer" },
+            },
+            {
+              id: "source_read",
+              kind: "tool",
+              target: "read",
+              args: { filePath: "package.json" },
+              depends_on: ["confirm_handoff"],
+            },
+          ],
+        },
+        "call_handoff",
+      ),
+    )
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    const starts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const enqueue = SessionPrompt.enqueue
+    const prompt = spyOn(SessionPrompt, "enqueue").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      starts.push(input)
+      return enqueue(input)
+    }) as never)
+    const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const source = await Session.create({ parentID: parent.id, agent: "protocol-runner" })
+              await SessionTask.route({
+                sessionID: source.id,
+                runID: "run_handoff_source",
+                legacy: { title: "Source", body: "Source body" },
+                actions: [],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: source.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: source.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              } as MessageV2.Assistant)) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: source.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              let reads = 0
+              const result = runner.process({
+                user,
+                sessionID: source.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "start a different task" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [{ id: "read", description: "Read", schema: { type: "object" } }],
+                  prompt: "",
+                  execute: async () => {
+                    reads++
+                    return { title: "Read", output: "unexpected", metadata: {} }
+                  },
+                } as never,
+              })
+
+              await poll(async () => (await Question.list()).length > 0)
+              const proposed = Database.use((tx) =>
+                tx.select().from(TaskHandoffTable).where(eq(TaskHandoffTable.source_session_id, source.id)).get(),
+              )
+              expect(proposed?.status).toBe("proposed")
+              expect(await Session.children(parent.id)).toHaveLength(1)
+              await Question.reply({
+                requestID: (await Question.list())[0]!.id,
+                answers: [["Confirm"]],
+                response: "confirm",
+              })
+              await result
+              await poll(async () => (await SessionTaskHandoff.get(proposed!.id))?.status === "started")
+
+              const handoff = await SessionTaskHandoff.get(proposed!.id)
+              expect(reads).toBe(0)
+              expect(await Session.children(parent.id)).toHaveLength(2)
+              expect((await Session.get(SessionID.make(handoff?.target_session_id ?? ""))).parentID).toBe(parent.id)
+              expect(starts.filter((item) => item.metadata?.source === "task_handoff_bootstrap")).toHaveLength(1)
+              expect(JSON.stringify(starts[0]?.metadata)).not.toContain("Peer body")
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+      loop.mockRestore()
       provider.mockRestore()
       stream.mockRestore()
     }
