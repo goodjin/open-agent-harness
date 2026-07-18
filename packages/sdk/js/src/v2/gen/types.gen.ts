@@ -5374,7 +5374,7 @@ export type SessionProtocolTraceResponses = {
 
 export type SessionProtocolTraceResponse = SessionProtocolTraceResponses[keyof SessionProtocolTraceResponses]
 
-export type SessionTaskData = {
+export type SessionTaskCurrentData = {
   body?: never
   path: {
     sessionID: string
@@ -5385,7 +5385,7 @@ export type SessionTaskData = {
   url: "/session/{sessionID}/task"
 }
 
-export type SessionTaskErrors = {
+export type SessionTaskCurrentErrors = {
   /**
    * Bad request
    */
@@ -5400,9 +5400,9 @@ export type SessionTaskErrors = {
   404: NotFoundError
 }
 
-export type SessionTaskError = SessionTaskErrors[keyof SessionTaskErrors]
+export type SessionTaskCurrentError = SessionTaskCurrentErrors[keyof SessionTaskCurrentErrors]
 
-export type SessionTaskResponses = {
+export type SessionTaskCurrentResponses = {
   /**
    * Current task
    */
@@ -5467,7 +5467,7 @@ export type SessionTaskResponses = {
   }
 }
 
-export type SessionTaskResponse = SessionTaskResponses[keyof SessionTaskResponses]
+export type SessionTaskCurrentResponse = SessionTaskCurrentResponses[keyof SessionTaskCurrentResponses]
 
 export type SessionTaskHistoryData = {
   body?: never

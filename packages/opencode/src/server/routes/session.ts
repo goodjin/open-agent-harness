@@ -783,7 +783,7 @@ export const SessionRoutes = lazy(() =>
       describeRoute({
         summary: "Get the current session task",
         tags: ["Session"],
-        operationId: "session.task",
+        operationId: "session.task.current",
         responses: {
           200: {
             description: "Current task",
@@ -838,10 +838,7 @@ export const SessionRoutes = lazy(() =>
           ...errors(400, 403, 404),
         },
       }),
-      validator(
-        "param",
-        z.object({ sessionID: SessionID.zod, version: z.coerce.number().int().positive() }),
-      ),
+      validator("param", z.object({ sessionID: SessionID.zod, version: z.coerce.number().int().positive() })),
       async (c) => {
         const params = c.req.valid("param")
         await Session.get(params.sessionID)
@@ -893,6 +890,7 @@ export const SessionRoutes = lazy(() =>
             proposalID: body.proposal_id,
             action: body.action,
             op: "update",
+            revisionID: body.revision_id,
           })),
           revision_id: body.revision_id,
         })
@@ -913,10 +911,7 @@ export const SessionRoutes = lazy(() =>
         },
       }),
       validator("param", z.object({ sessionID: SessionID.zod, handoffID: z.string().min(1) })),
-      validator(
-        "json",
-        z.object({ proposal_id: z.string().min(3), action: z.enum(["confirm", "cancel"]) }).strict(),
-      ),
+      validator("json", z.object({ proposal_id: z.string().min(3), action: z.enum(["confirm", "cancel"]) }).strict()),
       async (c) => {
         const params = c.req.valid("param")
         const body = c.req.valid("json")

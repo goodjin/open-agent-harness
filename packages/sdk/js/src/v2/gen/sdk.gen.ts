@@ -276,12 +276,12 @@ import type {
   SessionStatusUserCompletedResponses,
   SessionSummarizeErrors,
   SessionSummarizeResponses,
-  SessionTaskErrors,
+  SessionTaskCurrentErrors,
+  SessionTaskCurrentResponses,
   SessionTaskHandoffConfirmErrors,
   SessionTaskHandoffConfirmResponses,
   SessionTaskHistoryErrors,
   SessionTaskHistoryResponses,
-  SessionTaskResponses,
   SessionTaskRevisionErrors,
   SessionTaskRevisionResponses,
   SessionTaskUpdateConfirmErrors,
@@ -1967,6 +1967,34 @@ export class Handoff extends HeyApiClient {
 
 export class Task extends HeyApiClient {
   /**
+   * Get the current session task
+   */
+  public current<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTaskCurrentResponses, SessionTaskCurrentErrors, ThrowOnError>({
+      url: "/session/{sessionID}/task",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
    * List archived task revisions
    */
   public history<ThrowOnError extends boolean = false>(
@@ -2570,34 +2598,6 @@ export class Session3 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionLogResponses, SessionLogErrors, ThrowOnError>({
       url: "/session/{sessionID}/log",
-      ...options,
-      ...params,
-    })
-  }
-
-  /**
-   * Get the current session task
-   */
-  public task<ThrowOnError extends boolean = false>(
-    parameters: {
-      sessionID: string
-      directory?: string
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "sessionID" },
-            { in: "query", key: "directory" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).get<SessionTaskResponses, SessionTaskErrors, ThrowOnError>({
-      url: "/session/{sessionID}/task",
       ...options,
       ...params,
     })
@@ -3742,7 +3742,7 @@ export class Session3 extends HeyApiClient {
   }
 
   private _task?: Task
-  get task2(): Task {
+  get task(): Task {
     return (this._task ??= new Task({ client: this.client }))
   }
 

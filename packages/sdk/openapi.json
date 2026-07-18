@@ -3577,7 +3577,7 @@
     },
     "/session/{sessionID}/task": {
       "get": {
-        "operationId": "session.task",
+        "operationId": "session.task.current",
         "parameters": [
           {
             "in": "query",
@@ -3952,7 +3952,7 @@
         "x-codeSamples": [
           {
             "lang": "js",
-            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.task({\n  ...\n})"
+            "source": "import { createOpencodeClient } from \"@open-agent-harness/sdk\n\nconst client = createOpencodeClient()\nawait client.session.task.current({\n  ...\n})"
           }
         ]
       }

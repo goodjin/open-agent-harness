@@ -7,36 +7,76 @@ import { Session } from "../../src/session"
 import { SessionTask } from "../../src/session/task"
 import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
+import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
+import { Database } from "../../src/storage/db"
 import { tmpdir } from "../fixture/fixture"
 
 afterEach(resetDatabase)
 
 describe("session task endpoints", () => {
+  test("claims one proposal across real Bun processes", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const session = await Session.create({})
+        const code = [
+          'import { Database } from "bun:sqlite"',
+          "const db = new Database(process.env.DB)",
+          'db.run("PRAGMA busy_timeout = 5000")',
+          'db.run("BEGIN IMMEDIATE")',
+          'const result = db.run(`INSERT OR IGNORE INTO task_confirmation (id, session_id, proposal_id, operation, decision, status, expected_revision_id, handoff_id, assignment_id, message_id, error, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?)`, [`confirmation_${process.pid}`, process.env.SESSION, "run_process:confirm", "handoff", "confirm", "claimed", `msg_${process.pid}`, Date.now(), Date.now()])',
+          'db.run("COMMIT")',
+          "console.log(result.changes)",
+        ].join("\n")
+        const children = [0, 1].map(() =>
+          Bun.spawn(["bun", "-e", code], {
+            env: { ...process.env, DB: Database.Path, SESSION: session.id },
+            stdout: "pipe",
+            stderr: "pipe",
+          }),
+        )
+        const results = await Promise.all(
+          children.map(async (child) => ({
+            code: await child.exited,
+            out: Number((await new Response(child.stdout).text()).trim()),
+            err: await new Response(child.stderr).text(),
+          })),
+        )
+        expect(results.map((item) => item.code)).toEqual([0, 0])
+        expect(results.map((item) => item.out).sort()).toEqual([0, 1])
+        expect(results.map((item) => item.err)).toEqual(["", ""])
+      },
+    })
+  })
+
   test("generated OpenAPI describes the task lifecycle without exposing target controls", async () => {
     const spec = await Bun.file(new URL("../../../sdk/openapi.json", import.meta.url)).json()
     const paths = spec.paths as Record<string, Record<string, { operationId?: string; requestBody?: unknown }>>
 
-    expect(paths["/session/{sessionID}/task"]?.get?.operationId).toBe("session.task")
+    expect(paths["/session/{sessionID}/task"]?.get?.operationId).toBe("session.task.current")
     expect(paths["/session/{sessionID}/task/history"]?.get?.operationId).toBe("session.task.history")
-    expect(paths["/session/{sessionID}/task/revisions/{version}"]?.get?.operationId).toBe(
-      "session.task.revision",
-    )
-    expect(paths["/session/{sessionID}/task/update/confirm"]?.post?.operationId).toBe(
-      "session.task.update.confirm",
-    )
+    expect(paths["/session/{sessionID}/task/revisions/{version}"]?.get?.operationId).toBe("session.task.revision")
+    expect(paths["/session/{sessionID}/task/update/confirm"]?.post?.operationId).toBe("session.task.update.confirm")
     expect(paths["/session/{sessionID}/task/handoff/{handoffID}/confirm"]?.post?.operationId).toBe(
       "session.task.handoff.confirm",
     )
     expect(JSON.stringify(paths["/session/{sessionID}/task/update/confirm"]?.post?.requestBody)).not.toContain(
       "target_session_id",
     )
-    expect(JSON.stringify(paths["/session/{sessionID}/task/handoff/{handoffID}/confirm"]?.post?.requestBody)).not.toContain(
-      "assignment_id",
+    expect(
+      JSON.stringify(paths["/session/{sessionID}/task/handoff/{handoffID}/confirm"]?.post?.requestBody),
+    ).not.toContain("assignment_id")
+    const sdk = await Bun.file(new URL("../../../sdk/js/src/v2/gen/sdk.gen.ts", import.meta.url)).text()
+    expect(sdk).toContain("get task(): Task")
+    expect(sdk).not.toContain("get task2(): Task")
+    expect(sdk.indexOf("public current", sdk.indexOf("export class Task"))).toBeGreaterThan(
+      sdk.indexOf("export class Task"),
     )
   })
 
@@ -277,11 +317,13 @@ describe("session task endpoints", () => {
               })
               expect(replies[0].assignment_id).toBe(replies[1].assignment_id)
               expect(prompt).toHaveBeenCalledTimes(1)
-              expect(await SessionAssignment.bySource({
-                sessionID: session.id,
-                runID: "run_update",
-                actionID: "confirm_update",
-              })).toMatchObject({ status: "running", target: "self" })
+              expect(
+                await SessionAssignment.bySource({
+                  sessionID: session.id,
+                  runID: "run_update",
+                  actionID: "confirm_update",
+                }),
+              ).toMatchObject({ status: "running", target: "self" })
 
               await proposal({
                 sessionID: session.id,
@@ -303,17 +345,122 @@ describe("session task endpoints", () => {
                 }),
               })
               expect(cancelled.status).toBe(200)
-              expect(await SessionAssignment.bySource({
+              expect(
+                await SessionAssignment.bySource({
+                  sessionID: session.id,
+                  runID: "run_cancel",
+                  actionID: "confirm_cancel",
+                }),
+              ).toBeUndefined()
+
+              await proposal({
                 sessionID: session.id,
-                runID: "run_cancel",
-                actionID: "confirm_cancel",
-              })).toBeUndefined()
+                messageID,
+                runID: "run_retry",
+                actionID: "confirm_retry",
+                title: "Retry",
+                plan: "Retry body",
+                op: "update",
+                target: "self",
+              })
+              prompt.mockRejectedValueOnce(new Error("continuation unavailable"))
+              const failed = await app.request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  proposal_id: "run_retry:confirm_retry",
+                  revision_id: current.revision.id,
+                  action: "confirm",
+                }),
+              })
+              expect(failed.status).toBe(409)
+              const first = prompt.mock.calls.at(-1)?.[0]?.messageID
+              expect(await SessionTaskConfirmation.scan()).toContain(true)
+              expect(prompt.mock.calls.at(-1)?.[0]?.messageID).toBe(first)
+              const calls = prompt.mock.calls.length
+              const retried = await app.request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  proposal_id: "run_retry:confirm_retry",
+                  revision_id: current.revision.id,
+                  action: "confirm",
+                }),
+              })
+              expect(retried.status).toBe(200)
+              expect(prompt.mock.calls.length).toBe(calls)
             },
           }),
       })
     } finally {
       prompt.mockRestore()
     }
+  })
+
+  test("rejects a revision activated between route check and confirmation claim", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_revision_barrier"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_barrier_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_barrier",
+              actionID: "confirm_barrier",
+              title: "Barrier",
+              plan: "Barrier body",
+              op: "update",
+              target: "self",
+            })
+            const next = await SessionTask.draft({ taskID: task.task.id, title: "Concurrent", body: "Concurrent" })
+            const original = SessionTaskConfirmation.respond
+            const gate = spyOn(SessionTaskConfirmation, "respond").mockImplementation(async (input) => {
+              await SessionTask.activate({ taskID: task.task.id, revisionID: next.id })
+              return original(input)
+            })
+            try {
+              const res = await Server.Default().request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  proposal_id: "run_barrier:confirm_barrier",
+                  revision_id: task.revision.id,
+                  action: "confirm",
+                }),
+              })
+              expect(res.status).toBe(409)
+              expect(
+                await SessionAssignment.bySource({
+                  sessionID: session.id,
+                  runID: "run_barrier",
+                  actionID: "confirm_barrier",
+                }),
+              ).toBeUndefined()
+              expect(prompt).not.toHaveBeenCalled()
+              const ctx = (await Session.get(session.id)).dsl_context?.protocol as {
+                confirmations?: { status?: string }[]
+              }
+              expect(ctx.confirmations?.[0]?.status).toBe("pending")
+            } finally {
+              gate.mockRestore()
+              prompt.mockRestore()
+            }
+          },
+        }),
+    })
   })
 
   test("confirms and cancels handoffs only through canonical assignment proof", async () => {

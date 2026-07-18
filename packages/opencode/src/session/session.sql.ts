@@ -20,7 +20,7 @@ type AssignmentResult = "completed" | "partial" | "blocked" | "failed" | "waitin
 type StatusClass = "active" | "blocked" | "interrupted" | "terminal" | "archived"
 type StatusSource = "runtime" | "recovery" | "user" | "system"
 type OutboxStatus = "pending" | "delivering" | "delivered" | "acked" | "failed"
-type OutboxKind = "parent_handoff" | "task_revision_bootstrap" | "task_handoff"
+type OutboxKind = "parent_handoff" | "task_revision_bootstrap" | "task_handoff" | "task_confirmation"
 type TaskStatus = "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
 type TaskSource = "user" | "delegation" | "handoff" | "legacy"
 type RevisionStatus = "draft" | "active" | "completed" | "failed" | "archived"
@@ -209,6 +209,32 @@ export const AssignmentTable = sqliteTable(
     index("assignment_session_status_idx").on(table.session_id, table.status),
     index("assignment_parent_idx").on(table.parent_id),
     index("assignment_source_idx").on(table.source_session_id, table.source_run_id, table.source_action_id),
+  ],
+)
+
+export const TaskConfirmationTable = sqliteTable(
+  "task_confirmation",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    proposal_id: text().notNull(),
+    operation: text().$type<"update" | "handoff">().notNull(),
+    decision: text().$type<"confirm" | "cancel">().notNull(),
+    status: text().$type<"claimed" | "continuation_pending" | "completed" | "cancelled" | "failed">().notNull(),
+    expected_revision_id: text(),
+    handoff_id: text(),
+    assignment_id: text(),
+    message_id: text().$type<MessageID>().notNull(),
+    error: text(),
+    time_created: integer().notNull(),
+    time_updated: integer().notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_confirmation_session_proposal_unique_idx").on(table.session_id, table.proposal_id),
+    index("task_confirmation_status_idx").on(table.status),
   ],
 )
 

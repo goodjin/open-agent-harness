@@ -9,6 +9,7 @@ import { SessionStatus } from "./status"
 import type { MessageID, PartID, SessionID } from "./schema"
 import { SessionTaskRecovery } from "./task-recovery"
 import { SessionTaskHandoff } from "./task-handoff"
+import { SessionTaskConfirmation } from "./task-confirmation"
 
 export namespace SessionRecovery {
   const error = "Tool call interrupted by process restart before finish/error was recorded."
@@ -64,7 +65,10 @@ export namespace SessionRecovery {
           data: PartTable.data,
         })
         .from(PartTable)
-        .innerJoin(MessageTable, and(eq(MessageTable.id, PartTable.message_id), eq(MessageTable.session_id, PartTable.session_id)))
+        .innerJoin(
+          MessageTable,
+          and(eq(MessageTable.id, PartTable.message_id), eq(MessageTable.session_id, PartTable.session_id)),
+        )
         .where(inArray(PartTable.session_id, ids))
         .all(),
     )
@@ -142,6 +146,7 @@ export namespace SessionRecovery {
   export async function mark(input?: { directory?: string; limit?: number }) {
     await SessionTaskRecovery.scan()
     await SessionTaskHandoff.scan()
+    await SessionTaskConfirmation.scan()
     const packets = await detect(input)
     const now = Date.now()
     for (const packet of packets) {
