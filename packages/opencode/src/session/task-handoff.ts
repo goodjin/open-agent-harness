@@ -197,7 +197,7 @@ export namespace SessionTaskHandoff {
       },
       { behavior: "immediate" },
     )
-    await project(row, "task_handoff_proposal")
+    await project(row, "task_handoff_proposal", `${input.runID}:${input.actionID}`)
     return row
   }
 
@@ -464,6 +464,7 @@ export namespace SessionTaskHandoff {
           }),
         )
     }
+    await project(row, "task_handoff_proposal")
     Database.effect(() =>
       resume(row.id).catch((err) => log.warn("task handoff start blocked", { err, handoffID: row.id })),
     )
@@ -487,7 +488,9 @@ export namespace SessionTaskHandoff {
         .returning()
         .get(),
     )
-    return row ?? get(id)
+    const saved = row ?? (await get(id))
+    if (saved) await project(saved, "task_handoff_proposal")
+    return saved
   }
 
   export async function resume(id: string) {
@@ -502,8 +505,8 @@ export namespace SessionTaskHandoff {
     )
     if (!row) return false
     if (row.kind !== "task_handoff") return false
-    return start(handoff, row).catch((err) => {
-      reject(handoff, row, err)
+    return start(handoff, row).catch(async (err) => {
+      await reject(handoff, row, err)
       throw err
     })
   }
@@ -753,7 +756,7 @@ export namespace SessionTaskHandoff {
       await deliver(handoff, row, stamp)
       return true
     } catch (err) {
-      fail(handoff, row, stamp, err)
+      await fail(handoff, row, stamp, err)
       throw err
     }
   }
@@ -772,7 +775,7 @@ export namespace SessionTaskHandoff {
       await deliver(handoff, row, stamp)
       return true
     } catch (err) {
-      fail(handoff, row, stamp, err)
+      await fail(handoff, row, stamp, err)
       throw err
     }
   }
@@ -783,9 +786,9 @@ export namespace SessionTaskHandoff {
     )
   }
 
-  function fail(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, stamp: number, err: unknown) {
+  async function fail(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, stamp: number, err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    Database.transaction(
+    const saved = Database.transaction(
       (tx) => {
         const reset = tx
           .update(SessionEventOutboxTable)
@@ -801,18 +804,21 @@ export namespace SessionTaskHandoff {
           .returning({ id: SessionEventOutboxTable.id })
           .get()
         if (!reset) return
-        tx.update(TaskHandoffTable)
+        return tx
+          .update(TaskHandoffTable)
           .set({ status: "failed", error: message })
           .where(and(eq(TaskHandoffTable.id, handoff.id), inArray(TaskHandoffTable.status, ["creating", "failed"])))
-          .run()
+          .returning()
+          .get()
       },
       { behavior: "immediate" },
     )
+    if (saved) await project(saved, "task_handoff_proposal")
   }
 
-  function reject(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, err: unknown) {
+  async function reject(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, err: unknown) {
     const message = err instanceof Error ? err.message : String(err)
-    Database.transaction(
+    const saved = Database.transaction(
       (tx) => {
         const reset = tx
           .update(SessionEventOutboxTable)
@@ -828,13 +834,16 @@ export namespace SessionTaskHandoff {
           .returning({ id: SessionEventOutboxTable.id })
           .get()
         if (!reset) return
-        tx.update(TaskHandoffTable)
+        return tx
+          .update(TaskHandoffTable)
           .set({ status: "failed", error: message })
           .where(and(eq(TaskHandoffTable.id, handoff.id), inArray(TaskHandoffTable.status, ["creating", "failed"])))
-          .run()
+          .returning()
+          .get()
       },
       { behavior: "immediate" },
     )
+    if (saved) await project(saved, "task_handoff_proposal")
   }
 
   async function deliver(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, stamp: number) {
@@ -906,15 +915,21 @@ export namespace SessionTaskHandoff {
     )
   }
 
-  async function project(row: Info, kind: "task_handoff_proposal" | "task_handoff_started") {
+  async function project(
+    row: Info,
+    kind: "task_handoff_proposal" | "task_handoff_started",
+    proposal?: string,
+  ) {
     if (!row.source_message_id) return
     const message = await MessageV2.get({ sessionID: row.source_session_id, messageID: row.source_message_id }).catch(
       () => undefined,
     )
     if (!message) return
     const prev = message.parts.find(
-      (item) => item.type === "text" && item.metadata?.kind === kind && item.metadata.handoff_id === row.id,
+      (item): item is MessageV2.TextPart =>
+        item.type === "text" && item.metadata?.kind === kind && item.metadata.handoff_id === row.id,
     )
+    const id = proposal ?? (typeof prev?.metadata?.proposal_id === "string" ? prev.metadata.proposal_id : undefined)
     const now = Date.now()
     await Session.updatePart({
       id: prev?.id ?? PartID.ascending(),
@@ -927,8 +942,11 @@ export namespace SessionTaskHandoff {
       metadata: {
         kind,
         handoff_id: row.id,
+        ...(id ? { proposal_id: id } : {}),
         ...(kind === "task_handoff_proposal" ? { title: row.title } : {}),
+        context_refs: row.context_refs,
         status: row.status,
+        error: row.error,
         target_session_id: row.target_session_id,
         target_task_id: row.target_task_id,
       },

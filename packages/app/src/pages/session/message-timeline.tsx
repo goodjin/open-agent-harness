@@ -64,6 +64,7 @@ import {
   turn,
   type DelegationItem,
 } from "@/pages/session/session-delegations"
+import { proposals as proposalList, SessionTaskProposal, type TaskProposal } from "@/pages/session/session-task-proposal"
 
 type MessageComment = {
   path: string
@@ -459,6 +460,7 @@ export function MessageTimeline(props: {
   onJumpPreviousUserInput: () => void
   onJumpNextUserInput: () => void
   canJumpUserInput: boolean
+  onFocusComposer: () => void
 }) {
   let touchGesture: number | undefined
 
@@ -1661,11 +1663,56 @@ export function MessageTimeline(props: {
                     return req
                   })
                   const all = createMemo(() => confirmations(info()?.dsl_context, messageID, sessionMessages()))
+                  const proposals = createMemo(() => {
+                    const plans = new Map(all().map((item) => [`${item.run_id}:${item.action_id}`, item.plan]))
+                    return proposalList(
+                      turnAssistants(sessionMessages(), messageID).flatMap(
+                        (message) => sync.data.part[message.id] ?? [],
+                      ),
+                      plans,
+                      new Map(all().map((item) => [`${item.run_id}:${item.action_id}`, item.status])),
+                    )
+                  })
                   const questionKey = createMemo(() => questionConfirmationKey(question()))
+                  const taskQuestion = createMemo(() => {
+                    const key = questionKey()
+                    if (!key) return false
+                    return all().some(
+                      (item) =>
+                        confirmationKey(item) === key &&
+                        proposals().some((proposal) => proposal.id === `${item.run_id}:${item.action_id}`),
+                    )
+                  })
                   const confirms = createMemo(() => visibleConfirmations(all(), questionKey()))
                   const timelineConfirms = createMemo(() =>
-                    confirms().filter((item) => timelineQuestionVisible({ active: active(), request: question(), confirm: item })),
+                    confirms().filter(
+                      (item) =>
+                        !proposals().some((proposal) => proposal.id === `${item.run_id}:${item.action_id}`) &&
+                        timelineQuestionVisible({ active: active(), request: question(), confirm: item }),
+                    ),
                   )
+                  const decide = async (item: TaskProposal, action: "confirm" | "cancel") => {
+                    const id = sessionID()
+                    if (!id) throw new Error(language.t("common.requestFailed"))
+                    const result =
+                      item.kind === "update"
+                        ? await sdk.client.session.task.update.confirm({
+                            sessionID: id,
+                            directory: sdk.directory,
+                            proposal_id: item.id,
+                            revision_id: item.revision,
+                            action,
+                          })
+                        : await sdk.client.session.task.handoff.confirm({
+                            sessionID: id,
+                            handoffID: item.handoff,
+                            directory: sdk.directory,
+                            proposal_id: item.id,
+                            action,
+                          })
+                    if (result.error) throw result.error
+                    return result.data ?? {}
+                  }
                   const confirmRequest = (item: ConfirmRecord) => {
                     if (item.status !== "pending") return
                     if (confirmationKey(item) === questionKey()) return question()
@@ -1771,6 +1818,16 @@ export function MessageTimeline(props: {
                         )}
                       </Show>
                       <Show when={props.filter === "all"}>
+                        <For each={proposals()}>
+                          {(item) => (
+                            <SessionTaskProposal
+                              value={item}
+                              confirm={decide}
+                              discuss={props.onFocusComposer}
+                              open={(target) => navigate(`/${params.dir}/session/${target}`)}
+                            />
+                          )}
+                        </For>
                         <For each={timelineConfirms()}>
                           {(item) => (
                             <SessionConfirmationCard
@@ -1784,6 +1841,7 @@ export function MessageTimeline(props: {
                       <Show
                         when={
                           props.filter === "all" && timelineQuestionVisible({ active: active(), request: question() })
+                            && !taskQuestion()
                             ? question()
                             : undefined
                         }

@@ -1397,6 +1397,7 @@ export default function Page() {
                     onJumpPreviousUserInput={() => navigateMessageByOffset(-1)}
                     onJumpNextUserInput={() => navigateMessageByOffset(1)}
                     canJumpUserInput={visibleUserMessages().length > 1}
+                    onFocusComposer={focusInput}
                   />
                 </Show>
               }

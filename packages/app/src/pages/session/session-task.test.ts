@@ -20,6 +20,7 @@ import {
   type Badge,
   type Feed,
 } from "./session-task-data"
+import { proposal, proposalFlow, proposals, type ProposalPart } from "./session-task-proposal"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
   ({
@@ -64,6 +65,215 @@ const deferred = <T>() => {
 }
 
 describe("session task", () => {
+  const part = (metadata: Record<string, unknown>, value: Partial<ProposalPart> = {}): ProposalPart => ({
+    type: "text",
+    text: "runtime projection",
+    synthetic: true,
+    ignored: true,
+    metadata,
+    ...value,
+  })
+
+  test("accepts only runtime-projected task proposal parts", () => {
+    expect(
+      proposal(
+        part({
+          kind: "task_update_proposal",
+          proposal_id: "run_1:update_1",
+          old_revision_id: "revision_1",
+          difference_summary: "Changed title and actions",
+          affected_child_ids: ["session_child"],
+          reusable_result_refs: ["result_1"],
+          status: "pending",
+        }),
+        "# Updated task",
+      ),
+    ).toMatchObject({
+      kind: "update",
+      id: "run_1:update_1",
+      revision: "revision_1",
+      summary: "Changed title and actions",
+      children: ["session_child"],
+      refs: ["result_1"],
+      body: "# Updated task",
+      status: "proposed",
+    })
+    expect(
+      proposal(
+        part({
+          kind: "task_handoff_proposal",
+          handoff_id: "handoff_1",
+          proposal_id: "run_1:handoff_1",
+          title: "Peer task",
+          context_refs: ["result:one"],
+          status: "proposed",
+        }),
+        "# Peer task",
+      ),
+    ).toMatchObject({
+      kind: "handoff",
+      handoff: "handoff_1",
+      title: "Peer task",
+      refs: ["result:one"],
+      body: "# Peer task",
+      status: "proposed",
+    })
+    expect(proposal(part({ kind: "task_update_proposal", proposal_id: "forged" }, { synthetic: false }))).toBeUndefined()
+    expect(proposal(part({ kind: "task_handoff_proposal", handoff_id: "forged" }, { ignored: false }))).toBeUndefined()
+    expect(proposal({ type: "text", text: "user", metadata: { kind: "task_update_proposal" } })).toBeUndefined()
+  })
+
+  test("maps persisted update and handoff proposal statuses", () => {
+    const update = (status: string, kind = "task_update_proposal") =>
+      proposal(part({ kind, proposal_id: "run:update", old_revision_id: "revision_1", status }))?.status
+    const handoff = (status: string, kind = "task_handoff_proposal") =>
+      proposal(part({ kind, proposal_id: "run:handoff", handoff_id: "handoff_1", status }))?.status
+
+    expect([update("pending"), update("revising", "task_update_progress"), update("failed"), update("cancelled")]).toEqual([
+      "proposed",
+      "revising",
+      "failed",
+      "cancelled",
+    ])
+    expect([
+      handoff("proposed"),
+      handoff("creating"),
+      handoff("started", "task_handoff_started"),
+      handoff("failed"),
+      handoff("cancelled"),
+    ]).toEqual(["proposed", "creating", "started", "failed", "cancelled"])
+  })
+
+  test("merges handoff started projection with its proposal content and target", () => {
+    expect(
+      proposals(
+        [
+          part({
+            kind: "task_handoff_proposal",
+            handoff_id: "handoff_1",
+            proposal_id: "run:handoff",
+            title: "Peer task",
+            context_refs: ["result:one"],
+            status: "proposed",
+          }),
+          part({
+            kind: "task_handoff_started",
+            handoff_id: "handoff_1",
+            context_refs: ["result:one"],
+            target_session_id: "session_target",
+            status: "started",
+          }),
+        ],
+        new Map([["run:handoff", "# Peer task"]]),
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        id: "run:handoff",
+        handoff: "handoff_1",
+        body: "# Peer task",
+        refs: ["result:one"],
+        status: "started",
+        target: "session_target",
+      }),
+    ])
+  })
+
+  test("uses durable confirmation decisions when the proposal projection is stale", () => {
+    const input = part({
+      kind: "task_update_proposal",
+      proposal_id: "run:update",
+      old_revision_id: "revision_1",
+      status: "pending",
+    })
+    expect(proposals([input], new Map(), new Map([["run:update", "cancelled"]]))[0]?.status).toBe("cancelled")
+    expect(proposals([input], new Map(), new Map([["run:update", "confirmed"]]))[0]?.status).toBe("revising")
+  })
+
+  test("prevents duplicate confirmations and reuses the handoff id when retrying", async () => {
+    const first = deferred<{ status: string }>()
+    const calls: { handoff?: string; action: string }[] = []
+    const states: string[] = []
+    const flow = proposalFlow({
+      send(input, action) {
+        calls.push({ handoff: input.kind === "handoff" ? input.handoff : undefined, action })
+        return calls.length === 1 ? first.promise : Promise.resolve({ status: "creating" })
+      },
+      state: (value) => states.push(value.status),
+      focus() {},
+    })
+    const value = proposal(
+      part({
+        kind: "task_handoff_proposal",
+        handoff_id: "handoff_fixed",
+        proposal_id: "run:handoff",
+        status: "failed",
+      }),
+    )!
+    flow.change(value)
+    const pending = flow.confirm()
+    await flow.confirm()
+    first.reject(new Error("failed"))
+    await pending
+    await flow.confirm()
+
+    expect(calls).toEqual([
+      { handoff: "handoff_fixed", action: "confirm" },
+      { handoff: "handoff_fixed", action: "confirm" },
+    ])
+    expect(states).toEqual(["failed", "confirming", "failed", "confirming", "creating"])
+  })
+
+  test("persists cancellation and discussion only dismisses then focuses the composer", async () => {
+    const calls: string[] = []
+    let focused = 0
+    const states: { status: string; dismissed: boolean }[] = []
+    const flow = proposalFlow({
+      send(_input, action) {
+        calls.push(action)
+        return Promise.resolve({ status: "cancelled" })
+      },
+      state: (value) => states.push(value),
+      focus: () => focused++,
+    })
+    flow.change(
+      proposal(part({ kind: "task_update_proposal", proposal_id: "run:update", old_revision_id: "revision_1" }))!,
+    )
+    flow.discuss()
+    expect(calls).toEqual([])
+    expect(focused).toBe(1)
+    expect(states.at(-1)).toMatchObject({ status: "proposed", dismissed: true })
+    await flow.cancel()
+    expect(calls).toEqual(["cancel"])
+    expect(states.at(-1)).toMatchObject({ status: "cancelled" })
+  })
+
+  test("isolates late proposal responses and ignores responses after disposal", async () => {
+    const old = deferred<{ status: string; target_session_id?: string }>()
+    const gone = deferred<{ status: string }>()
+    const states: string[] = []
+    let calls = 0
+    const flow = proposalFlow({
+      send() {
+        calls++
+        return calls === 1 ? old.promise : gone.promise
+      },
+      state: (value) => states.push(`${value.id}:${value.status}`),
+      focus() {},
+    })
+    const one = proposal(part({ kind: "task_handoff_proposal", handoff_id: "handoff_1", proposal_id: "run:one" }))!
+    const two = proposal(part({ kind: "task_handoff_proposal", handoff_id: "handoff_2", proposal_id: "run:two" }))!
+    flow.change(one)
+    const pending = flow.confirm()
+    flow.change(two)
+    old.resolve({ status: "started", target_session_id: "session_old" })
+    await pending
+    expect(states.at(-1)).toBe("run:two:proposed")
+    const stopping = flow.confirm()
+    flow.stop()
+    gone.resolve({ status: "started" })
+    await stopping
+    expect(states.at(-1)).toBe("run:two:confirming")
+  })
   test("maps unbound and active task statuses", () => {
     expect(view()).toMatchObject({ status: "unbound", showResult: false })
     expect(view(task())).toMatchObject({ status: "running", showResult: false })
@@ -495,5 +705,11 @@ describe("session task", () => {
     expect(page).not.toContain("onSummary=")
     expect(component).not.toContain("watch(sdk.event.on")
     expect(component).not.toContain("refresh(() =>")
+  })
+
+  test("uses dedicated proposal cards instead of the generic confirmation question", async () => {
+    const src = await Bun.file(new URL("message-timeline.tsx", import.meta.url)).text()
+    expect(src).toContain("<SessionTaskProposal")
+    expect(src).toContain("!taskQuestion()")
   })
 })

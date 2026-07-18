@@ -113,7 +113,13 @@ describe("SessionTaskHandoff", () => {
       const part = message.parts.find(
         (item): item is MessageV2.TextPart => item.type === "text" && item.metadata?.kind === "task_handoff_proposal",
       )
-      expect(part?.metadata).toMatchObject({ handoff_id: first.id, title: "Peer task", status: "proposed" })
+      expect(part?.metadata).toMatchObject({
+        handoff_id: first.id,
+        proposal_id: `run_${current.messageID}:confirm_${current.messageID}`,
+        title: "Peer task",
+        context_refs: ["result:one"],
+        status: "proposed",
+      })
       expect(JSON.stringify(part?.metadata)).not.toContain("Do the new work")
     }))
 
@@ -272,6 +278,17 @@ describe("SessionTaskHandoff", () => {
         )
         expect(failed?.error).toBe("enqueue rejected")
         expect(before?.status).toBe("pending")
+        const message = await MessageV2.get({ sessionID: current.session.id, messageID: current.messageID })
+        expect(
+          message.parts.find(
+            (item): item is MessageV2.TextPart =>
+              item.type === "text" && item.metadata?.kind === "task_handoff_proposal",
+          )?.metadata,
+        ).toMatchObject({
+          proposal_id: `run_${current.messageID}:confirm_${current.messageID}`,
+          status: "failed",
+          error: "enqueue rejected",
+        })
 
         expect(await SessionTaskHandoff.scan()).toEqual([true])
         await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
@@ -611,6 +628,13 @@ describe("SessionTaskHandoff", () => {
         contextRefs: [],
       })
       expect((await SessionTaskHandoff.cancel(proposed.id))?.status).toBe("cancelled")
+      const message = await MessageV2.get({ sessionID: current.session.id, messageID: current.messageID })
+      expect(
+        message.parts.find(
+          (item): item is MessageV2.TextPart =>
+            item.type === "text" && item.metadata?.kind === "task_handoff_proposal",
+        )?.metadata,
+      ).toMatchObject({ status: "cancelled" })
       const assignment = await approve({ handoff: proposed, source: current })
       await expect(SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })).rejects.toThrow(
         "task_handoff_not_confirmable",
