@@ -668,6 +668,8 @@ export const dict = {
   "session.task.detail.loading": "Loading archived revision...",
   "session.task.unbound.title": "No task has been created",
   "session.task.unbound.description": "The task will appear here after this session starts executable work.",
+  "session.task.legacy.title": "Legacy session",
+  "session.task.legacy.description": "Found {{count}} legacy Runs. Organize and confirm the current task first; these Runs remain read-only history until then.",
   "session.task.status.unbound": "Unbound",
   "session.task.status.running": "Running",
   "session.task.status.waitingUser": "Waiting for user",

@@ -2080,6 +2080,97 @@ export type ConflictError = {
   }
 }
 
+export type SessionTaskLegacyMigration = {
+  type: "legacy_multi_run"
+  count: number
+  proposal: {
+    status: "pending_confirmation"
+    session_id: string
+    runs: Array<{
+      run_id: string
+      title: string
+      status: "running" | "completed" | "blocked" | "failed"
+      result?: string
+      result_source?: "protocol" | "action_result" | "fallback_summary"
+      time: {
+        started: number
+        completed?: number
+      }
+    }>
+  }
+}
+
+export type SessionTaskCurrent =
+  | {
+      id: string
+      session_id: string
+      title: string
+      version: number
+      status: "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
+      body: string
+      progress: {
+        completed: number
+        total: number
+      }
+      actions: Array<{
+        id: string
+        title: string
+        operation: string
+        executor: {
+          type: "tool" | "agent" | "runtime" | "human"
+          target?: string
+          capabilities?: Array<string>
+        }
+        input?: {
+          [key: string]: unknown
+        }
+        depends_on?: Array<string>
+        verification?: {
+          role?: "test" | "review"
+          worker?: string
+          required?: boolean
+          reason?: string
+          system?: boolean
+          allow_skip_on_no_change?: boolean
+        }
+        status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+        summary?: string
+        output?: string
+        error?: string
+        sessionID?: string
+        tool_call_ids?: Array<string>
+        duration_ms?: number
+        time: {
+          started: number
+          completed?: number
+        }
+        run_id: string
+      }>
+      result?: string
+      result_source?: "protocol" | "action_result" | "fallback_summary"
+      handoffs: Array<{
+        id: string
+        title: string
+        status: "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
+        target_session_id?: string
+        target_task_id?: string
+        source_session_id: string
+        source_task_id?: string
+        error?: string
+        time: {
+          created: number
+          confirmed?: number
+          completed?: number
+        }
+      }>
+      time: {
+        created: number
+        updated: number
+        completed?: number
+      }
+    }
+  | SessionTaskLegacyMigration
+
 export type SessionTaskConfirmation = {
   proposal_id: string
   revision_id?: string
@@ -5406,74 +5497,7 @@ export type SessionTaskCurrentResponses = {
   /**
    * Current task
    */
-  200: {
-    id: string
-    session_id: string
-    title: string
-    version: number
-    status: "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
-    body: string
-    progress: {
-      completed: number
-      total: number
-    }
-    actions: Array<{
-      id: string
-      title: string
-      operation: string
-      executor: {
-        type: "tool" | "agent" | "runtime" | "human"
-        target?: string
-        capabilities?: Array<string>
-      }
-      input?: {
-        [key: string]: unknown
-      }
-      depends_on?: Array<string>
-      verification?: {
-        role?: "test" | "review"
-        worker?: string
-        required?: boolean
-        reason?: string
-        system?: boolean
-        allow_skip_on_no_change?: boolean
-      }
-      status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
-      summary?: string
-      output?: string
-      error?: string
-      sessionID?: string
-      tool_call_ids?: Array<string>
-      duration_ms?: number
-      time: {
-        started: number
-        completed?: number
-      }
-      run_id: string
-    }>
-    result?: string
-    result_source?: "protocol" | "action_result" | "fallback_summary"
-    handoffs: Array<{
-      id: string
-      title: string
-      status: "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
-      target_session_id?: string
-      target_task_id?: string
-      source_session_id: string
-      source_task_id?: string
-      error?: string
-      time: {
-        created: number
-        confirmed?: number
-        completed?: number
-      }
-    }>
-    time: {
-      created: number
-      updated: number
-      completed?: number
-    }
-  }
+  200: SessionTaskCurrent
 }
 
 export type SessionTaskCurrentResponse = SessionTaskCurrentResponses[keyof SessionTaskCurrentResponses]

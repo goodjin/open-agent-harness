@@ -1017,6 +1017,14 @@ describe("session task", () => {
   test("binds a legacy rev assignment as create only for a session without a task", () =>
     setup(async () => {
       const session = await Session.create({})
+      await Storage.write(["session_protocol_run", session.id, "run_legacy_history_a"],
+        protocol("run_legacy_history_a", "Legacy history A"))
+      await Storage.write(["session_protocol_run", session.id, "run_legacy_history_b"],
+        protocol("run_legacy_history_b", "Legacy history B"))
+      expect(await SessionTask.open(session.id)).toMatchObject({
+        type: "legacy_multi_run",
+        proposal: { status: "pending_confirmation" },
+      })
       const action = {
         type: "action",
         id: "legacy_confirm",
@@ -1054,6 +1062,13 @@ describe("session task", () => {
         title: "Legacy canonical title",
         body: "Legacy canonical plan",
       })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: "run_legacy_execute",
+        run_ids: ["run_legacy_execute"],
+      })
+      expect(JSON.stringify((await SessionTask.get(session.id))?.revision.workflow)).not.toContain(
+        "run_legacy_history",
+      )
     }))
 
   test("rejects a legacy rev confirm assignment when the session already has a task", () =>
@@ -3176,6 +3191,104 @@ describe("session task", () => {
         run_id: "run_legacy_two",
       })
       expect(await SessionTask.legacy(session.id)).toEqual({ type: "legacy_multi_run", count: 2 })
+    }))
+
+  test("opens zero legacy runs without binding a task", () =>
+    setup(async () => {
+      const session = await Session.create({})
+
+      expect(await SessionTask.open(session.id)).toBeUndefined()
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+    }))
+
+  test("lazily migrates one legacy run once with trusted results", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const run = protocol("run_legacy_migrate", "Migrated task")
+      await Storage.write(["session_protocol_run", session.id, run.run_id], {
+        ...run,
+        actions: result(run.run_id, [{ id: "legacy_done", title: "legacy_done", status: "completed" }]).actions,
+      })
+      await SessionRuns.finish({
+        sessionID: session.id,
+        runID: run.run_id,
+        summary: "Trusted legacy result",
+        messageID: "msg_legacy_migrate",
+      })
+
+      const opened = await Promise.all([SessionTask.open(session.id), SessionTask.open(session.id)])
+      const stored = await SessionTask.get(session.id)
+
+      expect(opened[0]).toMatchObject({
+        id: stored?.task.id,
+        version: 1,
+        title: "Migrated task",
+        result: "Trusted legacy result",
+        result_source: "protocol",
+        actions: [{ id: "legacy_done", run_id: run.run_id }],
+      })
+      expect(opened[1]).toEqual(opened[0])
+      expect(stored?.task.source_type).toBe("legacy")
+      expect(stored?.task.source_ref).toEqual({
+        runID: run.run_id,
+        dedupe_key: `legacy-task:${session.id}:${run.run_id}`,
+      })
+      expect(stored?.revision.workflow).toMatchObject({
+        run_id: run.run_id,
+        run_ids: [run.run_id],
+        actions: [{ id: "legacy_done", run_id: run.run_id }],
+      })
+      expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(1)
+      expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(1)
+      expect(await SessionTask.open(session.id)).toEqual(opened[0])
+    }))
+
+  test("preserves a failed legacy run result classification", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const run = { ...protocol("run_legacy_failed", "Failed legacy task"), status: "failed" as const }
+      await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+      await SessionRuns.finish({
+        sessionID: session.id,
+        runID: run.run_id,
+        summary: "Failed legacy result",
+        messageID: "msg_legacy_failed",
+      })
+
+      await SessionTask.open(session.id)
+
+      expect(await SessionTask.get(session.id)).toMatchObject({
+        task: { status: "failed" },
+        revision: { status: "failed", terminal_status: "failed", result_status: "failed" },
+      })
+    }))
+
+  test("proposes multiple legacy runs as read-only snapshots without binding", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = protocol("run_legacy_first", "First legacy task")
+      const second = protocol("run_legacy_second", "Second legacy task")
+      await Storage.write(["session_protocol_run", session.id, first.run_id], first)
+      await Storage.write(["session_protocol_run", session.id, second.run_id], second)
+
+      const opened = await SessionTask.open(session.id)
+
+      expect(opened).toMatchObject({
+        type: "legacy_multi_run",
+        count: 2,
+        proposal: {
+          status: "pending_confirmation",
+          session_id: session.id,
+          runs: [
+            { run_id: second.run_id, title: second.title, status: second.status },
+            { run_id: first.run_id, title: first.title, status: first.status },
+          ],
+        },
+      })
+      if (!opened || !("type" in opened)) throw new Error("legacy migration proposal missing")
+      expect(opened.proposal.runs.every((item) => !("actions" in item))).toBe(true)
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+      expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(0)
     }))
 })
 

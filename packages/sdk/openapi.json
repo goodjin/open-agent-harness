@@ -3606,355 +3606,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "session_id": {
-                      "type": "string",
-                      "pattern": "^ses.*"
-                    },
-                    "title": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "version": {
-                      "type": "integer",
-                      "exclusiveMinimum": 0,
-                      "maximum": 9007199254740991
-                    },
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "running",
-                        "waiting_user",
-                        "revising",
-                        "blocked",
-                        "completed",
-                        "failed"
-                      ]
-                    },
-                    "body": {
-                      "type": "string"
-                    },
-                    "progress": {
-                      "type": "object",
-                      "properties": {
-                        "completed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "total": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "completed",
-                        "total"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "actions": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "title": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "operation": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "executor": {
-                            "type": "object",
-                            "properties": {
-                              "type": {
-                                "type": "string",
-                                "enum": [
-                                  "tool",
-                                  "agent",
-                                  "runtime",
-                                  "human"
-                                ]
-                              },
-                              "target": {
-                                "default": "auto",
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "capabilities": {
-                                "default": [],
-                                "type": "array",
-                                "items": {
-                                  "type": "string",
-                                  "minLength": 1
-                                }
-                              }
-                            },
-                            "required": [
-                              "type"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "input": {
-                            "type": "object",
-                            "propertyNames": {
-                              "type": "string"
-                            },
-                            "additionalProperties": {}
-                          },
-                          "depends_on": {
-                            "default": [],
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "verification": {
-                            "type": "object",
-                            "properties": {
-                              "role": {
-                                "type": "string",
-                                "enum": [
-                                  "test",
-                                  "review"
-                                ]
-                              },
-                              "worker": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "required": {
-                                "type": "boolean"
-                              },
-                              "reason": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "system": {
-                                "type": "boolean"
-                              },
-                              "allow_skip_on_no_change": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": false
-                          },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "pending",
-                              "running",
-                              "completed",
-                              "blocked",
-                              "failed",
-                              "skipped"
-                            ]
-                          },
-                          "summary": {
-                            "default": "",
-                            "type": "string"
-                          },
-                          "output": {
-                            "type": "string"
-                          },
-                          "error": {
-                            "type": "string"
-                          },
-                          "sessionID": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "tool_call_ids": {
-                            "default": [],
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          },
-                          "duration_ms": {
-                            "default": 0,
-                            "type": "integer",
-                            "minimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "time": {
-                            "type": "object",
-                            "properties": {
-                              "started": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "completed": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              }
-                            },
-                            "required": [
-                              "started"
-                            ],
-                            "additionalProperties": false
-                          },
-                          "run_id": {
-                            "type": "string",
-                            "pattern": "^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "title",
-                          "operation",
-                          "executor",
-                          "status",
-                          "time",
-                          "run_id"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "result": {
-                      "type": "string"
-                    },
-                    "result_source": {
-                      "type": "string",
-                      "enum": [
-                        "protocol",
-                        "action_result",
-                        "fallback_summary"
-                      ]
-                    },
-                    "handoffs": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "title": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "status": {
-                            "type": "string",
-                            "enum": [
-                              "proposed",
-                              "confirmed",
-                              "creating",
-                              "started",
-                              "failed",
-                              "cancelled"
-                            ]
-                          },
-                          "target_session_id": {
-                            "type": "string",
-                            "pattern": "^ses.*"
-                          },
-                          "target_task_id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "source_session_id": {
-                            "type": "string",
-                            "pattern": "^ses.*"
-                          },
-                          "source_task_id": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "error": {
-                            "type": "string"
-                          },
-                          "time": {
-                            "type": "object",
-                            "properties": {
-                              "created": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "confirmed": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              },
-                              "completed": {
-                                "type": "integer",
-                                "minimum": 0,
-                                "maximum": 9007199254740991
-                              }
-                            },
-                            "required": [
-                              "created"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "title",
-                          "status",
-                          "source_session_id",
-                          "time"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "time": {
-                      "type": "object",
-                      "properties": {
-                        "created": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "updated": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        },
-                        "completed": {
-                          "type": "integer",
-                          "minimum": 0,
-                          "maximum": 9007199254740991
-                        }
-                      },
-                      "required": [
-                        "created",
-                        "updated"
-                      ],
-                      "additionalProperties": false
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "session_id",
-                    "title",
-                    "version",
-                    "status",
-                    "body",
-                    "progress",
-                    "actions",
-                    "handoffs",
-                    "time"
-                  ],
-                  "additionalProperties": false
+                  "$ref": "#/components/schemas/SessionTaskCurrent"
                 }
               }
             }
@@ -24771,6 +24423,465 @@
         "required": [
           "name",
           "data"
+        ]
+      },
+      "SessionTaskLegacyMigration": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "legacy_multi_run"
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 2,
+            "maximum": 9007199254740991
+          },
+          "proposal": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "pending_confirmation"
+              },
+              "session_id": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "run_id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "running",
+                        "completed",
+                        "blocked",
+                        "failed"
+                      ]
+                    },
+                    "result": {
+                      "type": "string"
+                    },
+                    "result_source": {
+                      "type": "string",
+                      "enum": [
+                        "protocol",
+                        "action_result",
+                        "fallback_summary"
+                      ]
+                    },
+                    "time": {
+                      "type": "object",
+                      "properties": {
+                        "started": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "completed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "started"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "run_id",
+                    "title",
+                    "status",
+                    "time"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "status",
+              "session_id",
+              "runs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "type",
+          "count",
+          "proposal"
+        ],
+        "additionalProperties": false
+      },
+      "SessionTaskCurrent": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "session_id": {
+                "type": "string",
+                "pattern": "^ses.*"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "version": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "waiting_user",
+                  "revising",
+                  "blocked",
+                  "completed",
+                  "failed"
+                ]
+              },
+              "body": {
+                "type": "string"
+              },
+              "progress": {
+                "type": "object",
+                "properties": {
+                  "completed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "total": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "completed",
+                  "total"
+                ],
+                "additionalProperties": false
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "operation": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "tool",
+                            "agent",
+                            "runtime",
+                            "human"
+                          ]
+                        },
+                        "target": {
+                          "default": "auto",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "capabilities": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "input": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    },
+                    "depends_on": {
+                      "default": [],
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "verification": {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "test",
+                            "review"
+                          ]
+                        },
+                        "worker": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "required": {
+                          "type": "boolean"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "system": {
+                          "type": "boolean"
+                        },
+                        "allow_skip_on_no_change": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "pending",
+                        "running",
+                        "completed",
+                        "blocked",
+                        "failed",
+                        "skipped"
+                      ]
+                    },
+                    "summary": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "output": {
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "sessionID": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "tool_call_ids": {
+                      "default": [],
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "duration_ms": {
+                      "default": 0,
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "time": {
+                      "type": "object",
+                      "properties": {
+                        "started": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "completed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "started"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "run_id": {
+                      "type": "string",
+                      "pattern": "^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "operation",
+                    "executor",
+                    "status",
+                    "time",
+                    "run_id"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "result": {
+                "type": "string"
+              },
+              "result_source": {
+                "type": "string",
+                "enum": [
+                  "protocol",
+                  "action_result",
+                  "fallback_summary"
+                ]
+              },
+              "handoffs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "proposed",
+                        "confirmed",
+                        "creating",
+                        "started",
+                        "failed",
+                        "cancelled"
+                      ]
+                    },
+                    "target_session_id": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    },
+                    "target_task_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "source_session_id": {
+                      "type": "string",
+                      "pattern": "^ses.*"
+                    },
+                    "source_task_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "time": {
+                      "type": "object",
+                      "properties": {
+                        "created": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "confirmed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "completed": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "created"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "status",
+                    "source_session_id",
+                    "time"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "time": {
+                "type": "object",
+                "properties": {
+                  "created": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "updated": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "completed": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "created",
+                  "updated"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "id",
+              "session_id",
+              "title",
+              "version",
+              "status",
+              "body",
+              "progress",
+              "actions",
+              "handoffs",
+              "time"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "$ref": "#/components/schemas/SessionTaskLegacyMigration"
+          }
         ]
       },
       "SessionTaskConfirmation": {

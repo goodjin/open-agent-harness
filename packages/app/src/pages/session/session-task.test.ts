@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionTaskCurrentResponse, SessionTaskRevisionResponse } from "@open-agent-harness/sdk/v2/client"
+import type { SessionTaskRevisionResponse } from "@open-agent-harness/sdk/v2/client"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
 import {
   action,
+  active,
   choose,
   compact,
   content,
@@ -19,10 +20,11 @@ import {
   watch,
   type Badge,
   type Feed,
+  type Current,
 } from "./session-task-data"
 import { proposal, proposalError, proposalFlow, proposalIndex, proposals, type ProposalPart } from "./session-task-proposal"
 
-const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
+const task = (value: Partial<Current> = {}) =>
   ({
     id: "task_1",
     session_id: "session_1",
@@ -35,7 +37,7 @@ const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
     handoffs: [],
     time: { created: 1, updated: 2 },
     ...value,
-  }) as SessionTaskCurrentResponse
+  }) as Current
 
 const revision = (value: Partial<SessionTaskRevisionResponse> = {}) =>
   ({
@@ -685,10 +687,10 @@ describe("session task", () => {
 
   test("does not starve a slow current request across poll and status refreshes", async () => {
     const loader = requests()
-    const first = deferred<SessionTaskCurrentResponse>()
-    const second = deferred<SessionTaskCurrentResponse>()
-    const old = deferred<SessionTaskCurrentResponse>()
-    const next = deferred<SessionTaskCurrentResponse>()
+    const first = deferred<Current>()
+    const second = deferred<Current>()
+    const old = deferred<Current>()
+    const next = deferred<Current>()
     const queues = { session_1: [first, second, old], session_2: [next] }
     const signals: AbortSignal[] = []
     let local: Badge | undefined
@@ -765,12 +767,12 @@ describe("session task", () => {
   })
 
   test("updates the timeline badge with bounded refreshes without mounting the task tab", async () => {
-    const missing = deferred<SessionTaskCurrentResponse>()
-    const running = deferred<SessionTaskCurrentResponse>()
-    const completed = deferred<SessionTaskCurrentResponse>()
-    const error = deferred<SessionTaskCurrentResponse>()
-    const old = deferred<SessionTaskCurrentResponse>()
-    const next = deferred<SessionTaskCurrentResponse>()
+    const missing = deferred<Current>()
+    const running = deferred<Current>()
+    const completed = deferred<Current>()
+    const error = deferred<Current>()
+    const old = deferred<Current>()
+    const next = deferred<Current>()
     const queues = { session_1: [missing, running, completed, error, old], session_2: [next] }
     const signals: AbortSignal[] = []
     const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
@@ -822,7 +824,7 @@ describe("session task", () => {
     running.resolve(task({ status: "running" }))
     await Bun.sleep(0)
     expect(choose("session_1", local)?.status).toBe("running")
-    expect(local?.current?.body).toBe("# Task")
+    expect(active(local?.current)?.body).toBe("# Task")
     expect(calls).toBe(3)
     completed.resolve(task({ status: "completed" }))
     await Bun.sleep(0)
@@ -936,6 +938,18 @@ describe("session task", () => {
     expect(src).toContain('aria-live="polite"')
     expect(src).toContain('role="alert"')
     expect(src).not.toContain("resume")
+  })
+
+  test("renders multi-run legacy proposals without reading current task fields", async () => {
+    const data = await Bun.file(new URL("session-task-data.ts", import.meta.url)).text()
+    const src = await Bun.file(new URL("session-task.tsx", import.meta.url)).text()
+
+    expect(data).toContain('task.type === "legacy_multi_run"')
+    expect(src).toContain('language.t("session.task.legacy.title")')
+    expect(src).toContain('language.t("session.task.legacy.description"')
+    expect(src).toContain("legacy()?.proposal.runs")
+    expect(src).toContain("!shown() && !legacy()")
+    expect(src.indexOf('when={legacy()}')).toBeLessThan(src.indexOf('when={shown()}'))
   })
 
   test("replaces the runs entry without deleting its compatibility component", async () => {

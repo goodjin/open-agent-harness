@@ -5,7 +5,9 @@ import type {
   SessionTaskSummary,
 } from "@open-agent-harness/sdk/v2/client"
 
-export type Current = SessionTaskCurrentResponse
+export type Legacy = Extract<SessionTaskCurrentResponse, { type: "legacy_multi_run" }>
+export type Current = Exclude<SessionTaskCurrentResponse, Legacy>
+export type Response = Current | Legacy
 export type History = SessionTaskHistoryResponse[number]
 export type Revision = SessionTaskRevisionResponse
 export type Status = Current["status"] | "unbound"
@@ -13,7 +15,7 @@ export type Result = "recorded" | "fallback" | "missing"
 export type Request = "current" | "history" | "detail"
 export type Summary = SessionTaskSummary
 export type Badge = { sessionID: string; value?: Summary }
-export type Feed = Badge & { current?: Current; loading: boolean; error?: string; ready: boolean }
+export type Feed = Badge & { current?: Response; loading: boolean; error?: string; ready: boolean }
 type Timers = { set: (fn: () => void, timeout: number) => unknown; clear: (id: unknown) => void }
 
 const actions = {
@@ -82,17 +84,25 @@ export const watch = (
 export const stamp = (value: number, locale: string) =>
   new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(value)
 
-export const compact = (task?: Current): Summary | undefined =>
-  task
+const historical = (task: Response): task is Legacy => "type" in task && task.type === "legacy_multi_run"
+
+export const migration = (task?: Response): Legacy | undefined => (task && historical(task) ? task : undefined)
+
+export const active = (task?: Response): Current | undefined => (task && !historical(task) ? task : undefined)
+
+export const compact = (task?: Response): Summary | undefined => {
+  const item = active(task)
+  return item
     ? {
-        id: task.id,
-        title: task.title,
-        version: task.version,
-        status: task.status,
-        completed_actions: task.progress.completed,
-        total_actions: task.progress.total,
+        id: item.id,
+        title: item.title,
+        version: item.version,
+        status: item.status,
+        completed_actions: item.progress.completed,
+        total_actions: item.progress.total,
       }
     : undefined
+}
 
 export const choose = (sessionID: string | undefined, local: Badge | undefined, fallback?: Summary) =>
   local && local.sessionID === sessionID ? local.value : fallback
@@ -203,7 +213,7 @@ export const single = (run: (sessionID: string) => Promise<unknown>, reset: () =
 
 export const observe = (input: {
   on: Parameters<typeof watch>[0]
-  load: (sessionID: string, signal: AbortSignal) => Promise<Current>
+  load: (sessionID: string, signal: AbortSignal) => Promise<Response>
   done: (value: Feed) => void
   missing: (err: unknown) => boolean
   error: (err: unknown) => string
@@ -279,7 +289,7 @@ export const view = (task?: Current) => {
 }
 
 export const initial = () => ({
-  current: undefined as Current | undefined,
+  current: undefined as Response | undefined,
   history: { loaded: false, items: [] as History[] },
   detail: undefined as Revision | undefined,
   loading: { current: true, history: false, detail: false },

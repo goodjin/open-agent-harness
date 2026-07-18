@@ -183,6 +183,38 @@ export namespace SessionTask {
   export type Summary = z.infer<typeof Summary>
   export const LegacyView = View.extend({ type: z.literal("legacy_task") }).strict()
   export type LegacyView = z.infer<typeof LegacyView>
+  export const LegacyMigration = z
+    .object({
+      type: z.literal("legacy_multi_run"),
+      count: z.number().int().min(2),
+      proposal: z
+        .object({
+          status: z.literal("pending_confirmation"),
+          session_id: SessionID.zod,
+          runs: z.array(
+            z
+              .object({
+                run_id: RunID,
+                title: z.string().min(1),
+                status: z.enum(["running", "completed", "blocked", "failed"]),
+                result: z.string().optional(),
+                result_source: ResultSource.optional(),
+                time: z
+                  .object({
+                    started: z.number().int().nonnegative(),
+                    completed: z.number().int().nonnegative().optional(),
+                  })
+                  .strict(),
+              })
+              .strict(),
+          ),
+        })
+        .strict(),
+    })
+    .strict()
+    .meta({ ref: "SessionTaskLegacyMigration" })
+  export type LegacyMigration = z.infer<typeof LegacyMigration>
+  export const Current = z.union([View, LegacyMigration]).meta({ ref: "SessionTaskCurrent" })
   export const History = z
     .object({
       id: z.string().min(1),
@@ -1312,6 +1344,32 @@ export namespace SessionTask {
     })
   }
 
+  export async function open(sessionID: SessionID) {
+    const bound = await current(sessionID)
+    if (bound) return bound
+    const { SessionRuns } = await import("./runs")
+    const runs = await SessionRuns.persistedList(sessionID)
+    if (!runs.length) return
+    if (runs.length > 1)
+      return LegacyMigration.parse({
+        type: "legacy_multi_run",
+        count: runs.length,
+        proposal: {
+          status: "pending_confirmation",
+          session_id: sessionID,
+          runs: runs.map((run) => ({
+            run_id: run.run_id,
+            title: run.title ?? "Legacy task",
+            status: run.status,
+            ...(run.summary && run.summary_source ? { result: run.summary, result_source: run.summary_source } : {}),
+            time: run.time,
+          })),
+        },
+      })
+    await migrate(sessionID, runs[0]!)
+    return current(sessionID)
+  }
+
   export async function revision(sessionID: SessionID, version: number) {
     const parsed = z.number().int().positive().safeParse(version)
     if (!parsed.success) return
@@ -1431,6 +1489,95 @@ export namespace SessionTask {
         ...(run.time.completed === undefined ? {} : { completed: run.time.completed }),
       },
     })
+  }
+
+  async function migrate(sessionID: SessionID, run: SessionRuns.Run) {
+    const now = Date.now()
+    const task = `task_${randomUUID()}`
+    const revision = `revision_${randomUUID()}`
+    const key = `legacy-task:${sessionID}:${run.run_id}`
+    const actions = tagged(run.actions, run.run_id)
+    const terminal = run.status === "completed" || run.status === "failed"
+    try {
+      return transact(
+        (tx) => {
+          const found = tx
+            .select()
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.session_id, sessionID))
+            .get()
+          if (found) return found
+          tx.insert(SessionTaskTable)
+            .values({
+              id: task,
+              session_id: sessionID,
+              title: run.title ?? "Legacy task",
+              status: run.status,
+              current_revision_id: null,
+              source_type: "legacy",
+              source_ref: { runID: run.run_id, dedupe_key: key },
+              time_created: run.time.started,
+              time_updated: run.time.completed ?? now,
+            })
+            .run()
+          tx.insert(TaskRevisionTable)
+            .values({
+              id: revision,
+              task_id: task,
+              version: 1,
+              previous_id: null,
+              status: run.status === "failed" ? "failed" : run.status === "completed" ? "completed" : "active",
+              title: run.title ?? "Legacy task",
+              body: run.task,
+              body_hash: hash(run.task),
+              source_message_id: null,
+              reason: "Migrated from one legacy Run",
+              workflow: { actions, run_id: run.run_id, run_ids: [run.run_id] },
+              result: run.summary ?? null,
+              result_source: run.summary_source ?? null,
+              time_created: run.time.started,
+              time_activated: run.time.started,
+              time_completed: terminal ? (run.time.completed ?? now) : null,
+              time_archived: null,
+              archive_reason: null,
+              terminal_status: run.status === "completed" ? "completed" : run.status === "failed" ? "failed" : null,
+              stopped_child_count: null,
+              result_status: run.summary
+                ? run.status === "failed"
+                  ? "failed"
+                  : run.summary_source === "fallback_summary" || run.status === "blocked"
+                    ? "partial"
+                    : "completed"
+                : null,
+            })
+            .run()
+          const saved = tx
+            .update(SessionTaskTable)
+            .set({ current_revision_id: revision })
+            .where(eq(SessionTaskTable.id, task))
+            .returning()
+            .get()
+          Database.effect(() =>
+            TaskDocuments.publish({
+              sessionID,
+              taskID: task,
+              version: 1,
+              title: run.title ?? "Legacy task",
+              body: run.task,
+              current: true,
+            }),
+          )
+          return saved
+        },
+        { behavior: "immediate" },
+      )
+    } catch (err) {
+      if (!constraint(err) && !locked(err) && !(err instanceof Conflict)) throw err
+      const found = await get(sessionID)
+      if (found?.task.source_type === "legacy" && found.task.source_ref.dedupe_key === key) return found.task
+      if (found) return found.task
+      throw new Conflict("legacy_task_migration_conflict")
+    }
   }
 
   function valid(task: Task, run: SessionRuns.Run | undefined) {

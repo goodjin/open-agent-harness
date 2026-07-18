@@ -10,6 +10,7 @@ import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionTaskRecovery } from "../../src/session/task-recovery"
+import { SessionRuns } from "../../src/session/runs"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -27,6 +28,8 @@ import {
   TaskRevisionTable,
 } from "../../src/session/session.sql"
 import { tmpdir } from "../fixture/fixture"
+import { Storage } from "../../src/storage/storage"
+import { AgentProtocol } from "../../src/protocol/schema"
 
 afterEach(resetDatabase)
 
@@ -282,6 +285,61 @@ describe("session task endpoints", () => {
             expect((await app.request(`/session/${foreign.id}/task`)).status).toBe(403)
             expect((await app.request(`/session/${empty.id}/task`)).status).toBe(404)
             expect((await app.request(`/session/${session.id}/task/revisions/9`)).status).toBe(404)
+          },
+        }),
+    })
+  })
+
+  test("opens legacy task routes for zero, one, and multiple runs", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_legacy_open"),
+          fn: async () => {
+            const empty = await Session.create({})
+            const single = await Session.create({})
+            const multi = await Session.create({})
+            const one = legacy("run_route_one", "Route legacy task")
+            await Storage.write(["session_protocol_run", single.id, one.run_id], one)
+            await SessionRuns.finish({
+              sessionID: single.id,
+              runID: one.run_id,
+              summary: "Route legacy result",
+              messageID: "msg_route_legacy",
+            })
+            await Storage.write(["session_protocol_run", multi.id, "run_route_first"], {
+              ...one,
+              run_id: "run_route_first",
+            })
+            await Storage.write(["session_protocol_run", multi.id, "run_route_second"], {
+              ...one,
+              run_id: "run_route_second",
+            })
+            const app = Server.Default()
+
+            expect((await app.request(`/session/${empty.id}/task`)).status).toBe(404)
+            const migrated = await app.request(`/session/${single.id}/task`)
+            expect(migrated.status).toBe(200)
+            expect(await migrated.json()).toMatchObject({
+              version: 1,
+              title: "Route legacy task",
+              result: "Route legacy result",
+              result_source: "protocol",
+            })
+            expect((await SessionTask.get(single.id))?.task.source_ref).toEqual({
+              runID: one.run_id,
+              dedupe_key: `legacy-task:${single.id}:${one.run_id}`,
+            })
+            const proposal = await app.request(`/session/${multi.id}/task`)
+            expect(proposal.status).toBe(200)
+            expect(await proposal.json()).toMatchObject({
+              type: "legacy_multi_run",
+              count: 2,
+              proposal: { status: "pending_confirmation", session_id: multi.id },
+            })
+            expect(await SessionTask.get(multi.id)).toBeUndefined()
           },
         }),
     })
@@ -1990,6 +2048,28 @@ function action(id: string, status: "pending" | "completed") {
     duration_ms: status === "completed" ? 1 : undefined,
     time: { started: now, ...(status === "completed" ? { completed: now + 1 } : {}) },
   }
+}
+
+function legacy(id: string, title: string) {
+  const now = Date.now()
+  return AgentProtocol.Result.parse({
+    type: "agent.protocol.result",
+    version: "1",
+    run_id: id,
+    status: "completed",
+    title,
+    actions: [],
+    summary: "Execution summary",
+    time: { started: now, completed: now },
+    metrics: {
+      actions: 0,
+      internal_tool_calls: 0,
+      direct_model_tool_calls: 0,
+      model_visible_bytes: 0,
+      raw_output_bytes: 0,
+      duration_ms: 0,
+    },
+  })
 }
 
 async function message(sessionID: SessionID) {

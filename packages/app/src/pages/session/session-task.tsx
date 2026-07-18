@@ -5,10 +5,12 @@ import { createStore } from "solid-js/store"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import {
+  active,
   action as actionLabel,
   content,
   handoff as handoffLabel,
   initial,
+  migration,
   progress as count,
   requests,
   result,
@@ -122,7 +124,8 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
   })
   onCleanup(loader.reset)
 
-  const shown = () => state.detail ?? state.current
+  const legacy = () => migration(state.current)
+  const shown = () => state.detail ?? active(state.current)
   const actions = () => shown()?.actions ?? []
   const progress = () => (shown() ? count(shown()!) : { completed: 0, total: 0 })
   const outcome = () => {
@@ -150,11 +153,36 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
             </div>
           )}
         </Show>
-        <Show when={!state.loading.current && !state.error.current && !shown()}>
+        <Show when={!state.loading.current && !state.error.current && !shown() && !legacy()}>
           <div class="mx-auto max-w-4xl px-6 py-8">
             <div class="text-16-medium text-text-strong">{language.t("session.task.unbound.title")}</div>
             <div class="mt-2 text-12-regular text-text-weak">{language.t("session.task.unbound.description")}</div>
           </div>
+        </Show>
+
+        <Show when={legacy()}>
+          {(item) => (
+            <div class="mx-auto max-w-4xl px-6 py-8">
+              <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                <div class="text-16-medium text-text-strong">{language.t("session.task.legacy.title")}</div>
+                <div class="mt-2 text-12-regular text-text-weak">
+                  {language.t("session.task.legacy.description", { count: item().count })}
+                </div>
+                <div class="mt-4 flex flex-col gap-2">
+                  <For each={legacy()?.proposal.runs}>
+                    {(run) => (
+                      <div class="rounded bg-background-stronger px-3 py-2">
+                        <div class="text-12-medium text-text-strong">{run.title}</div>
+                        <div class="mt-1 text-11-regular text-text-weak">
+                          {run.run_id} · {language.t(labels[run.status])}
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </div>
+          )}
         </Show>
 
         <Show when={shown()}>
@@ -178,11 +206,11 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
                     <span
-                      class={`rounded px-2 py-1 text-11-medium ${tone(state.detail ? "archived" : view(state.current).status)}`}
+                      class={`rounded px-2 py-1 text-11-medium ${tone(state.detail ? "archived" : view(active(state.current)).status)}`}
                     >
                       {state.detail
                         ? language.t("session.task.status.archived")
-                        : language.t(labels[view(state.current).status])}
+                        : language.t(labels[view(active(state.current)).status])}
                     </span>
                     <Show when={!state.detail}>
                       <Button variant="ghost" size="small" onClick={() => void history()}>
@@ -237,7 +265,7 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
                 <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.task.result")}</h3>
                 <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
                   <Show
-                    when={state.detail || view(state.current).showResult}
+                    when={state.detail || view(active(state.current)).showResult}
                     fallback={
                       <div class="text-12-regular text-text-weak">
                         {language.t("session.task.result.running", {

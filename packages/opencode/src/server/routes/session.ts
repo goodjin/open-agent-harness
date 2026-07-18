@@ -787,7 +787,7 @@ export const SessionRoutes = lazy(() =>
         responses: {
           200: {
             description: "Current task",
-            content: { "application/json": { schema: resolver(SessionTask.View) } },
+            content: { "application/json": { schema: resolver(SessionTask.Current) } },
           },
           ...errors(400, 403, 404),
         },
@@ -796,7 +796,7 @@ export const SessionRoutes = lazy(() =>
       async (c) => {
         const sessionID = c.req.valid("param").sessionID
         await Session.get(sessionID)
-        const task = await SessionTask.current(sessionID)
+        const task = await SessionTask.open(sessionID)
         if (!task) throw new NotFoundError({ message: `Task not found for session: ${sessionID}` })
         return c.json(task)
       },

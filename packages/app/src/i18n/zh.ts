@@ -645,6 +645,8 @@ export const dict = {
   "session.task.detail.loading": "正在加载归档版本...",
   "session.task.unbound.title": "尚未生成任务",
   "session.task.unbound.description": "当前会话开始执行可运行工作后，任务会显示在这里。",
+  "session.task.legacy.title": "旧版会话",
+  "session.task.legacy.description": "发现 {{count}} 次旧 Run。请先整理并确认当前任务；确认前这些 Run 只作为历史快照读取。",
   "session.task.status.unbound": "尚未绑定",
   "session.task.status.running": "执行中",
   "session.task.status.waitingUser": "等待用户",
