@@ -18,6 +18,7 @@ import {
   view,
   watch,
   type Badge,
+  type Feed,
 } from "./session-task-data"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
@@ -310,7 +311,7 @@ describe("session task", () => {
     const signals: AbortSignal[] = []
     const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
     let tick = () => {}
-    let local: Badge | undefined
+    let local: Feed | undefined
     let calls = 0
     const monitor = observe({
       on(type, fn) {
@@ -327,6 +328,7 @@ describe("session task", () => {
         local = value
       },
       missing: (err) => (err as { status?: number }).status === 404,
+      error: () => "Failed",
       delay: 25,
       timers: {
         set(fn) {
@@ -356,6 +358,7 @@ describe("session task", () => {
     running.resolve(task({ status: "running" }))
     await Bun.sleep(0)
     expect(choose("session_1", local)?.status).toBe("running")
+    expect(local?.current?.body).toBe("# Task")
     expect(calls).toBe(3)
     completed.resolve(task({ status: "completed" }))
     await Bun.sleep(0)
@@ -431,10 +434,11 @@ describe("session task", () => {
     })
   })
 
-  test("loads current eagerly and history details only from explicit actions", async () => {
+  test("receives current externally and loads history details only from explicit actions", async () => {
     const src = await Bun.file(new URL("session-task.tsx", import.meta.url)).text()
 
-    expect(src).toContain("sdk.client.session.task.current")
+    expect(src).not.toContain("sdk.client.session.task.current")
+    expect(src).toContain("const feed = props.feed")
     expect(src).toContain("sdk.client.session.task.history")
     expect(src).toContain("sdk.client.session.task.revision")
     expect(src).toContain("createEffect")
@@ -463,9 +467,7 @@ describe("session task", () => {
     expect(src).toContain("item.result.status")
     expect(src).toContain("item.target_session_id")
     expect(src).toContain("item.error")
-    expect(src).toContain("const bind = watch(sdk.event.on")
-    expect(src).toContain("bind(id)")
-    expect(src).toContain("bind()")
+    expect(src).not.toContain("watch(sdk.event.on")
     expect(src).toContain("language.intl()")
     expect(src).toContain('aria-live="polite"')
     expect(src).toContain('role="alert"')
@@ -484,11 +486,14 @@ describe("session task", () => {
 
   test("wires current task summaries to the page lifecycle", async () => {
     const page = await Bun.file(new URL("../session.tsx", import.meta.url)).text()
+    const component = await Bun.file(new URL("session-task.tsx", import.meta.url)).text()
     expect(page).toContain("const monitor = observe")
     expect(page).toContain("monitor.change(id)")
     expect(page).toContain("onCleanup(monitor.stop)")
-    expect(page).toContain("choose(params.id, latest(), info()?.task)")
+    expect(page).toContain("choose(params.id, latest()?.ready ? latest() : undefined, info()?.task)")
     expect(page.indexOf("const monitor = observe")).toBeLessThan(page.indexOf("const taskMode ="))
     expect(page).not.toContain("onSummary=")
+    expect(component).not.toContain("watch(sdk.event.on")
+    expect(component).not.toContain("refresh(() =>")
   })
 })

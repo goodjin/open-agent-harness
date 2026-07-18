@@ -6,19 +6,16 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import {
   action as actionLabel,
-  code,
   content,
   handoff as handoffLabel,
   initial,
   progress as count,
-  refresh,
   requests,
   result,
-  single,
   stamp,
   view,
-  watch,
   type Current,
+  type Feed,
   type History,
   type Revision,
 } from "./session-task-data"
@@ -58,34 +55,12 @@ const updated = (task: Current | Revision) => {
   return task.time.archived ?? task.time.created
 }
 
-export function SessionTask(props: { sessionID: string }) {
+export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: () => void }) {
   const sdk = useSDK()
   const language = useLanguage()
   const [state, setState] = createStore(initial())
   const [drawer, setDrawer] = createSignal(false)
   const loader = requests()
-
-  const load = (id: string) => {
-    setState("loading", "current", true)
-    setState("error", "current", undefined)
-    return loader.run(
-      "current",
-      (signal) => sdk.client.session.task.current({ sessionID: id }, { signal }),
-      (res) => {
-        setState({ current: res.data, loading: { ...state.loading, current: false } })
-      },
-      (err) => {
-        if (code(err) === 404) {
-          setState({ current: undefined, loading: { ...state.loading, current: false } })
-          return
-        }
-        setState("loading", "current", false)
-        setState("error", "current", formatServerError(err, language.t, language.t("session.task.error.current")))
-      },
-    )
-  }
-
-  const flight = single(load, loader.reset)
 
   const history = () => {
     setDrawer(true)
@@ -127,25 +102,25 @@ export function SessionTask(props: { sessionID: string }) {
     setState({ detail: undefined, loading: { ...state.loading, detail: false } })
     setState("error", "detail", undefined)
     setDrawer(false)
-    void flight.refresh(props.sessionID)
+    props.onRefresh()
   }
 
-  const bind = watch(sdk.event.on, (id) => void flight.refresh(id))
-
   createEffect(() => {
-    const id = props.sessionID
-    setDrawer(false)
+    props.sessionID
+    loader.reset()
     setState(initial())
-    bind(id)
-    void flight.change(id)
+    setDrawer(false)
   })
-
-  const poll = refresh(() => void flight.refresh(props.sessionID))
-  onCleanup(() => {
-    poll()
-    bind()
-    flight.stop()
+  createEffect(() => {
+    const feed = props.feed
+    if (!feed || feed.sessionID !== props.sessionID) return
+    setState({
+      current: feed.current,
+      loading: { ...state.loading, current: feed.loading },
+      error: { ...state.error, current: feed.error },
+    })
   })
+  onCleanup(loader.reset)
 
   const shown = () => state.detail ?? state.current
   const actions = () => shown()?.actions ?? []

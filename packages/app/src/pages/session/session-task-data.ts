@@ -13,6 +13,7 @@ export type Result = "recorded" | "fallback" | "missing"
 export type Request = "current" | "history" | "detail"
 export type Summary = SessionTaskSummary
 export type Badge = { sessionID: string; value?: Summary }
+export type Feed = Badge & { current?: Current; loading: boolean; error?: string; ready: boolean }
 type Timers = { set: (fn: () => void, timeout: number) => unknown; clear: (id: unknown) => void }
 
 const actions = {
@@ -203,21 +204,39 @@ export const single = (run: (sessionID: string) => Promise<unknown>, reset: () =
 export const observe = (input: {
   on: Parameters<typeof watch>[0]
   load: (sessionID: string, signal: AbortSignal) => Promise<Current>
-  done: (value: Badge) => void
+  done: (value: Feed) => void
   missing: (err: unknown) => boolean
+  error: (err: unknown) => string
   delay?: number
   timers?: Timers
 }) => {
   const loader = requests()
   let id: string | undefined
+  let feed: Feed | undefined
   const load = (sessionID: string) =>
     loader.run(
       "current",
       (signal) => input.load(sessionID, signal),
-      (value) => input.done({ sessionID, value: compact(value) }),
+      (current) => {
+        feed = { sessionID, current, value: compact(current), loading: false, ready: true }
+        input.done(feed)
+      },
       (err) => {
-        if (!input.missing(err)) return
-        input.done({ sessionID, value: undefined })
+        if (input.missing(err)) {
+          feed = { sessionID, current: undefined, value: undefined, loading: false, ready: true }
+          input.done(feed)
+          return
+        }
+        const prior = feed?.sessionID === sessionID ? feed : undefined
+        feed = {
+          sessionID,
+          current: prior?.current,
+          value: prior?.value,
+          loading: false,
+          ready: prior?.ready ?? false,
+          error: input.error(err),
+        }
+        input.done(feed)
       },
     )
   const flight = single(load, loader.reset)
@@ -236,6 +255,8 @@ export const observe = (input: {
       flight.stop()
       return
     }
+    feed = { sessionID: id, loading: true, ready: false }
+    input.done(feed)
     void flight.change(id)
   }
   const stop = () => {
@@ -244,7 +265,7 @@ export const observe = (input: {
     bind()
     flight.stop()
   }
-  return { change, stop }
+  return { change, refresh: flight.refresh, stop }
 }
 
 export const view = (task?: Current) => {

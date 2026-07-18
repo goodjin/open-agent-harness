@@ -1,4 +1,4 @@
-import type { FileDiff, Project, SessionTaskSummary, UserMessage } from "@open-agent-harness/sdk/v2"
+import type { FileDiff, Project, UserMessage } from "@open-agent-harness/sdk/v2"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import {
   batch,
@@ -66,7 +66,7 @@ import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { SessionTask } from "@/pages/session/session-task"
-import { choose, code, observe } from "@/pages/session/session-task-data"
+import { choose, code, observe, type Feed } from "@/pages/session/session-task-data"
 import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -508,13 +508,14 @@ export default function Page() {
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
-  const [latest, setLatest] = createSignal<{ sessionID: string; value?: SessionTaskSummary }>()
+  const [latest, setLatest] = createSignal<Feed>()
   const monitor = observe({
     on: sdk.event.on,
     load: (sessionID, signal) =>
       sdk.client.session.task.current({ sessionID }, { signal }).then((res) => res.data!),
     done: setLatest,
     missing: (err) => code(err) === 404,
+    error: (err) => formatServerError(err, language.t, language.t("session.task.error.current")),
   })
   createEffect(
     on(
@@ -526,7 +527,7 @@ export default function Page() {
     ),
   )
   onCleanup(monitor.stop)
-  const summary = createMemo(() => choose(params.id, latest(), info()?.task))
+  const summary = createMemo(() => choose(params.id, latest()?.ready ? latest() : undefined, info()?.task))
   const badge = createMemo(() => {
     const item = summary()
     if (!item) return "session.task.status.unbound" as const
@@ -1402,7 +1403,7 @@ export default function Page() {
             >
               <Match when={taskMode()}>
                 <Show when={params.id} keyed>
-                  {(id) => <SessionTask sessionID={id} />}
+                  {(id) => <SessionTask sessionID={id} feed={latest()} onRefresh={() => monitor.refresh(id)} />}
                 </Show>
               </Match>
               <Match when={logMode()}>{logPanel()}</Match>
