@@ -1,4 +1,5 @@
 import { Question } from "@/question"
+import { QuestionID } from "@/question/schema"
 import { Instance } from "@/project/instance"
 import {
   and,
@@ -85,105 +86,106 @@ export namespace SessionTaskConfirmation {
       hash: digest(snapshot),
     })
     const proof = claimed.owner ? claimed.row : await settled(claimed.row)
+    const beat = claimed.owner ? pulse(proof) : undefined
 
-    const handoff = input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
-    if (input.op === "handoff" && !handoff)
-      throw new NotFoundError({ message: `Task handoff not found: ${input.handoffID}` })
-    if (handoff && handoff.source_session_id !== input.sessionID)
-      throw new ForbiddenError({ message: `Task handoff does not belong to session: ${input.sessionID}` })
-    if (handoff && input.action === "cancel" && handoff.status !== "proposed" && handoff.status !== "cancelled")
-      throw new ConflictError({ message: `Task handoff is already ${handoff.status}: ${handoff.id}` })
-    if (handoff?.status === "cancelled" && input.action === "confirm")
-      throw new ConflictError({ message: `Task handoff is already cancelled: ${handoff.id}` })
-    if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
-      throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
-    const status = input.action === "confirm" ? "confirmed" : "cancelled"
-    if (proof.status === "completed" || proof.status === "cancelled") {
-      if (rec(proof.result)) return proof.result
-      throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
-    }
-    if (item.status === status) {
-      const saved = proof.assignment_id ?? (rec(item.assignment) ? text(item.assignment.id) : undefined)
-      return {
+    try {
+      const handoff = input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
+      if (input.op === "handoff" && !handoff)
+        throw new NotFoundError({ message: `Task handoff not found: ${input.handoffID}` })
+      if (handoff && handoff.source_session_id !== input.sessionID)
+        throw new ForbiddenError({ message: `Task handoff does not belong to session: ${input.sessionID}` })
+      if (handoff && input.action === "cancel" && handoff.status !== "proposed" && handoff.status !== "cancelled")
+        throw new ConflictError({ message: `Task handoff is already ${handoff.status}: ${handoff.id}` })
+      if (handoff?.status === "cancelled" && input.action === "confirm")
+        throw new ConflictError({ message: `Task handoff is already cancelled: ${handoff.id}` })
+      if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
+        throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
+      const status = input.action === "confirm" ? "confirmed" : "cancelled"
+      if (proof.status === "completed" || proof.status === "cancelled") {
+        if (rec(proof.result)) return proof.result
+        throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
+      }
+      if (item.status === status) {
+        const saved = proof.assignment_id ?? (rec(item.assignment) ? text(item.assignment.id) : undefined)
+        return {
+          proposal_id: input.proposalID,
+          action: input.action,
+          assignment_id: saved,
+          status: handoff?.status,
+          target_session_id: handoff?.target_session_id ?? undefined,
+          target_task_id: handoff?.target_task_id ?? undefined,
+        }
+      }
+
+      beat?.guard()
+      const assignment = proof.assignment_id
+        ? await SessionAssignment.get(proof.assignment_id)
+        : input.action === "confirm"
+          ? await safe(
+              SessionAssignment.apply({
+                actionID: action,
+                assignment: intent,
+                messageID: MessageID.make(message),
+                plan,
+                runID: run,
+                sessionID: input.sessionID,
+                title,
+              }),
+            )
+          : undefined
+      if (input.action === "confirm" && !assignment)
+        throw new ConflictError({ message: `Task proposal assignment is invalid: ${input.proposalID}` })
+      fence(proof)
+      if (assignment && !proof.assignment_id)
+        Database.use((db) =>
+          db
+            .update(TaskConfirmationTable)
+            .set({ assignment_id: assignment.id, status: "continuation_pending", time_updated: Date.now() })
+            .where(
+              and(
+                eq(TaskConfirmationTable.id, proof.id),
+                owned(proof.owner_token),
+                eq(TaskConfirmationTable.generation, proof.generation),
+                gt(TaskConfirmationTable.lease_until, Date.now()),
+              ),
+            )
+            .returning({ id: TaskConfirmationTable.id })
+            .get(),
+        )
+      fence(proof)
+      beat?.guard()
+      const transfer =
+        assignment && handoff
+          ? await safe(SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id }))
+          : input.action === "cancel" && handoff
+            ? await safe(SessionTaskHandoff.cancel(handoff.id))
+            : undefined
+      if (input.action === "cancel" && handoff && transfer?.status !== "cancelled")
+        throw new ConflictError({ message: `Task handoff could not be cancelled: ${handoff.id}` })
+      fence(proof)
+      const live = (await Question.list()).find(
+        (request) =>
+          request.sessionID === input.sessionID &&
+          request.tool?.messageID === message &&
+          request.tool.callID === `call_${action}`,
+      )
+      await deliver(proof, input.sessionID, run, action, input.action, live?.id, beat)
+      fence(proof)
+      const result = {
         proposal_id: input.proposalID,
         action: input.action,
-        assignment_id: saved,
-        status: handoff?.status,
-        target_session_id: handoff?.target_session_id ?? undefined,
-        target_task_id: handoff?.target_task_id ?? undefined,
+        assignment_id: assignment?.id,
+        status: transfer?.status,
+        target_session_id: transfer?.target_session_id ?? undefined,
+        target_task_id: transfer?.target_task_id ?? undefined,
       }
+      beat?.guard()
+      const saved = complete(proof, result, status, assignment)
+      await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
+      return result
+    } finally {
+      beat?.stop()
     }
-
-    fence(proof)
-    const assignment = proof.assignment_id
-      ? await SessionAssignment.get(proof.assignment_id)
-      : input.action === "confirm"
-        ? await safe(
-            SessionAssignment.apply({
-              actionID: action,
-              assignment: intent,
-              messageID: MessageID.make(message),
-              plan,
-              runID: run,
-              sessionID: input.sessionID,
-              title,
-            }),
-          )
-        : undefined
-    if (input.action === "confirm" && !assignment)
-      throw new ConflictError({ message: `Task proposal assignment is invalid: ${input.proposalID}` })
-    fence(proof)
-    if (assignment && !proof.assignment_id)
-      Database.use((db) =>
-        db
-          .update(TaskConfirmationTable)
-          .set({ assignment_id: assignment.id, status: "continuation_pending", time_updated: Date.now() })
-          .where(
-            and(
-              eq(TaskConfirmationTable.id, proof.id),
-              owned(proof.owner_token),
-              eq(TaskConfirmationTable.generation, proof.generation),
-              gt(TaskConfirmationTable.lease_until, Date.now()),
-            ),
-          )
-          .returning({ id: TaskConfirmationTable.id })
-          .get(),
-      )
-    fence(proof)
-    const transfer =
-      assignment && handoff
-        ? await safe(SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id }))
-        : input.action === "cancel" && handoff
-          ? await safe(SessionTaskHandoff.cancel(handoff.id))
-          : undefined
-    if (input.action === "cancel" && handoff && transfer?.status !== "cancelled")
-      throw new ConflictError({ message: `Task handoff could not be cancelled: ${handoff.id}` })
-    fence(proof)
-    const live = (await Question.list()).find(
-      (request) =>
-        request.sessionID === input.sessionID &&
-        request.tool?.messageID === message &&
-        request.tool.callID === `call_${action}`,
-    )
-    if (live)
-      await Question.reply({
-        requestID: live.id,
-        answers: [[input.action === "confirm" ? "Confirm" : "Cancel"]],
-        response: input.action,
-      })
-    if (!live) await deliver(proof, input.sessionID, run, action, input.action)
-    fence(proof)
-    const result = {
-      proposal_id: input.proposalID,
-      action: input.action,
-      assignment_id: assignment?.id,
-      status: transfer?.status,
-      target_session_id: transfer?.target_session_id ?? undefined,
-      target_task_id: transfer?.target_task_id ?? undefined,
-    }
-    const saved = complete(proof, result, status, assignment)
-    await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
-    return result
   }
 
   export async function scan() {
@@ -320,7 +322,7 @@ export namespace SessionTaskConfirmation {
       (db) =>
         !!db
           .update(TaskConfirmationTable)
-          .set({ lease_until: Date.now() + 30_000, time_updated: Date.now() })
+          .set({ lease_until: Date.now() + ttl(), time_updated: Date.now() })
           .where(
             and(
               eq(TaskConfirmationTable.id, proof.id),
@@ -332,6 +334,57 @@ export namespace SessionTaskConfirmation {
           .returning({ id: TaskConfirmationTable.id })
           .get(),
     )
+  }
+
+  function pulse(proof: typeof TaskConfirmationTable.$inferSelect) {
+    let lost = false
+    const touch = () => {
+      if (!renew(proof)) return false
+      const key = `task_confirmation:${proof.id}`
+      const row = Database.use((db) =>
+        db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.dedupe_key, key)).get(),
+      )
+      if (!row || row.status !== "delivering") return true
+      if (!rec(row.payload)) return false
+      if (row.payload.owner_token !== proof.owner_token || row.payload.generation !== proof.generation)
+        return typeof row.payload.lease_until === "number" && row.payload.lease_until < Date.now()
+      const next = { ...row.payload, lease_until: Date.now() + ttl() }
+      return Database.use(
+        (db) =>
+          !!db
+            .update(SessionEventOutboxTable)
+            .set({ payload: next, updated_at: Date.now() })
+            .where(
+              and(
+                eq(SessionEventOutboxTable.id, row.id),
+                eq(SessionEventOutboxTable.status, "delivering"),
+                eq(SessionEventOutboxTable.payload, row.payload),
+              ),
+            )
+            .returning({ id: SessionEventOutboxTable.id })
+            .get(),
+      )
+    }
+    if (!touch()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+    const timer = setInterval(
+      () => {
+        if (!touch()) lost = true
+      },
+      Math.max(10, Math.floor(ttl() / 3)),
+    )
+    return {
+      guard() {
+        if (lost || !touch()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+      },
+      stop() {
+        clearInterval(timer)
+      },
+    }
+  }
+
+  function ttl() {
+    const value = Number(process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS)
+    return Number.isFinite(value) && value >= 30 ? value : 30_000
   }
 
   function owned(token: string | null) {
@@ -422,20 +475,11 @@ export namespace SessionTaskConfirmation {
     run: string,
     action: string,
     decision: Action,
+    requestID: QuestionID | undefined,
+    beat: ReturnType<typeof pulse> | undefined,
   ) {
     const key = `task_confirmation:${proof.id}`
     const now = Date.now()
-    const lease = now + 30_000
-    const payload = {
-      confirmation_id: proof.id,
-      message_id: proof.message_id,
-      run_id: run,
-      action_id: action,
-      decision,
-      owner_token: proof.owner_token,
-      generation: proof.generation,
-      lease_until: lease,
-    }
     const outbox = Database.transaction(
       (tx) => {
         const valid = tx
@@ -453,9 +497,23 @@ export namespace SessionTaskConfirmation {
         if (!valid) return
         const found = tx.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.dedupe_key, key)).get()
         if (found?.status === "delivered" || found?.status === "acked") return found
+        const prior = rec(found?.payload) ? found.payload : {}
+        const mode = "prompt"
+        const request = text(prior.request_id) ?? requestID
+        const payload = {
+          confirmation_id: proof.id,
+          message_id: proof.message_id,
+          run_id: run,
+          action_id: action,
+          decision,
+          mode,
+          request_id: request,
+          owner_token: proof.owner_token,
+          generation: proof.generation,
+          lease_until: now + ttl(),
+        }
         if (found) {
-          const meta = rec(found.payload) ? found.payload : {}
-          if (found.status === "delivering" && typeof meta.lease_until === "number" && meta.lease_until >= now) return
+          if (found.status === "delivering" && typeof prior.lease_until === "number" && prior.lease_until >= now) return
           return tx
             .update(SessionEventOutboxTable)
             .set({ status: "delivering", payload, updated_at: now, error: null })
@@ -486,36 +544,39 @@ export namespace SessionTaskConfirmation {
     )
     if (outbox?.status === "delivered" || outbox?.status === "acked") return
     if (!outbox) throw new ConflictError({ message: `Task continuation is already leased: ${proof.id}` })
-    let lost = false
-    let meta = outbox.payload
-    const beat = setInterval(() => {
-      const next = extend(outbox.id, meta)
-      if (!renew(proof) || !next) lost = true
-      if (next) meta = next
-    }, 10_000)
     try {
-      const existing = await MessageV2.get({ sessionID, messageID: proof.message_id }).catch(() => undefined)
-      if (existing) await SessionPrompt.loop({ sessionID, messageID: proof.message_id })
-      if (!existing)
-        await SessionPrompt.prompt({
-          sessionID,
-          messageID: proof.message_id,
-          metadata: { internal: true, source: "task_confirmation", run_id: run },
-          parts: [
-            {
-              type: "text",
-              text:
-                decision === "confirm"
-                  ? `User confirmed protocol action ${action} from run ${run}. Continue from the persisted assignment proof.`
-                  : `User cancelled protocol action ${action} from run ${run}. Do not execute dependent work.`,
-            },
-          ],
+      if (!rec(outbox.payload)) throw new ConflictError({ message: `Task delivery proof is invalid: ${proof.id}` })
+      const mode = outbox.payload.mode
+      beat?.guard()
+      if (outbox.payload.request_id)
+        await Question.reply({
+          requestID: QuestionID.make(String(outbox.payload.request_id)),
+          answers: [[decision === "confirm" ? "Confirm" : "Cancel"]],
+          response: decision,
+          guard: () => right(proof, outbox.id, "prompt"),
+          rerouted: true,
         })
-      clearInterval(beat)
-      const next = extend(outbox.id, meta)
-      if (lost || !renew(proof) || !next)
-        throw new ConflictError({ message: `Task continuation lease was lost: ${proof.id}` })
-      meta = next
+      if (mode === "prompt") {
+        const existing = await MessageV2.get({ sessionID, messageID: proof.message_id }).catch(() => undefined)
+        beat?.guard()
+        if (existing) await SessionPrompt.loop({ sessionID, messageID: proof.message_id })
+        if (!existing)
+          await SessionPrompt.prompt({
+            sessionID,
+            messageID: proof.message_id,
+            metadata: { internal: true, source: "task_confirmation", run_id: run },
+            parts: [
+              {
+                type: "text",
+                text:
+                  decision === "confirm"
+                    ? `User confirmed protocol action ${action} from run ${run}. Continue from the persisted assignment proof.`
+                    : `User cancelled protocol action ${action} from run ${run}. Do not execute dependent work.`,
+              },
+            ],
+          })
+      }
+      fence(proof)
       const delivered = Database.transaction(
         (db) => {
           const valid = db
@@ -531,6 +592,19 @@ export namespace SessionTaskConfirmation {
             )
             .get()
           if (!valid) return
+          const current = db
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.id, outbox.id))
+            .get()
+          const meta = rec(current?.payload) ? current.payload : {}
+          if (
+            current?.status !== "delivering" ||
+            meta.owner_token !== proof.owner_token ||
+            meta.generation !== proof.generation ||
+            meta.mode !== mode
+          )
+            return
           return db
             .update(SessionEventOutboxTable)
             .set({ status: "delivered", delivered_at: Date.now(), updated_at: Date.now(), error: null })
@@ -538,7 +612,7 @@ export namespace SessionTaskConfirmation {
               and(
                 eq(SessionEventOutboxTable.id, outbox.id),
                 eq(SessionEventOutboxTable.status, "delivering"),
-                eq(SessionEventOutboxTable.payload, meta),
+                eq(SessionEventOutboxTable.payload, current.payload),
               ),
             )
             .returning({ id: SessionEventOutboxTable.id })
@@ -549,19 +623,25 @@ export namespace SessionTaskConfirmation {
       fence(proof)
       if (!delivered) throw new ConflictError({ message: `Task continuation lease was lost: ${proof.id}` })
     } catch (err) {
-      clearInterval(beat)
       const message = err instanceof Error ? err.message : String(err)
       Database.use((db) => {
-        db.update(SessionEventOutboxTable)
-          .set({ status: "failed", error: message, updated_at: Date.now() })
-          .where(
-            and(
-              eq(SessionEventOutboxTable.id, outbox.id),
-              eq(SessionEventOutboxTable.status, "delivering"),
-              eq(SessionEventOutboxTable.payload, meta),
-            ),
-          )
-          .run()
+        const current = db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, outbox.id)).get()
+        const meta = rec(current?.payload) ? current.payload : {}
+        if (
+          current?.status === "delivering" &&
+          meta.owner_token === proof.owner_token &&
+          meta.generation === proof.generation
+        )
+          db.update(SessionEventOutboxTable)
+            .set({ status: "failed", error: message, updated_at: Date.now() })
+            .where(
+              and(
+                eq(SessionEventOutboxTable.id, outbox.id),
+                eq(SessionEventOutboxTable.status, "delivering"),
+                eq(SessionEventOutboxTable.payload, current.payload),
+              ),
+            )
+            .run()
         db.update(TaskConfirmationTable)
           .set({ status: "failed", error: message, time_updated: Date.now() })
           .where(
@@ -578,25 +658,35 @@ export namespace SessionTaskConfirmation {
     }
   }
 
-  function extend(id: string, payload: unknown) {
-    if (!rec(payload)) return
-    const next = { ...payload, lease_until: Date.now() + 30_000 }
-    const saved = Database.use(
-      (db) =>
-        db
-          .update(SessionEventOutboxTable)
-          .set({ payload: next, updated_at: Date.now() })
+  function right(proof: typeof TaskConfirmationTable.$inferSelect, id: string, mode: "question" | "prompt") {
+    return Database.transaction(
+      (db) => {
+        const valid = db
+          .select({ id: TaskConfirmationTable.id })
+          .from(TaskConfirmationTable)
           .where(
             and(
-              eq(SessionEventOutboxTable.id, id),
-              eq(SessionEventOutboxTable.status, "delivering"),
-              eq(SessionEventOutboxTable.payload, payload),
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
             ),
           )
-          .returning({ id: SessionEventOutboxTable.id })
-          .get(),
+          .get()
+        if (!valid) return false
+        const row = db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, id)).get()
+        const payload = rec(row?.payload) ? row.payload : {}
+        return (
+          row?.status === "delivering" &&
+          payload.owner_token === proof.owner_token &&
+          payload.generation === proof.generation &&
+          payload.mode === mode &&
+          typeof payload.lease_until === "number" &&
+          payload.lease_until > Date.now()
+        )
+      },
+      { behavior: "immediate" },
     )
-    return saved ? next : undefined
   }
 
   function claim(input: {
@@ -672,7 +762,7 @@ export namespace SessionTaskConfirmation {
                 status: "claimed",
                 owner_token: token,
                 generation: found.generation + 1,
-                lease_until: Date.now() + 30_000,
+                lease_until: Date.now() + ttl(),
                 error: null,
                 time_updated: Date.now(),
               })
@@ -720,7 +810,7 @@ export namespace SessionTaskConfirmation {
               ),
               owner_token: token,
               generation: 1,
-              lease_until: now + 30_000,
+              lease_until: now + ttl(),
               snapshot: input.snapshot,
               snapshot_hash: input.hash,
               result: null,

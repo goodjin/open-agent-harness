@@ -88,7 +88,12 @@ export namespace SessionRunner {
     const items = (raw as { version?: unknown; items?: unknown }).items
     if ((raw as { version?: unknown }).version !== "2" || !Array.isArray(items)) return "invalid_prior_run_package"
     const rows = items.filter((item): item is { kind: string } => {
-      return !!item && typeof item === "object" && !Array.isArray(item) && typeof (item as { kind?: unknown }).kind === "string"
+      return (
+        !!item &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        typeof (item as { kind?: unknown }).kind === "string"
+      )
     })
     if (rows.length !== items.length) return "invalid_prior_run_package"
     const terminal = new Set(["answer", "done", "success", "failure", "error", "reply"])
@@ -1412,20 +1417,21 @@ export namespace SessionRunner {
                 durationMs: item.duration_ms,
               },
             }),
-          ...item.tool_call_ids.map((callID) => () =>
-            SessionLog.emit({
-              sessionID: input.sessionID,
-              messageID: input.chat.message.id,
-              level: "info",
-              type: "protocol.action.tool_call",
-              data: {
-                runID,
-                actionID: item.id,
-                callID,
-                tool: item.executor.target,
-                outputBytes: (item.output ?? item.summary).length,
-              },
-            }),
+          ...item.tool_call_ids.map(
+            (callID) => () =>
+              SessionLog.emit({
+                sessionID: input.sessionID,
+                messageID: input.chat.message.id,
+                level: "info",
+                type: "protocol.action.tool_call",
+                data: {
+                  runID,
+                  actionID: item.id,
+                  callID,
+                  tool: item.executor.target,
+                  outputBytes: (item.output ?? item.summary).length,
+                },
+              }),
           ),
         ]),
         () =>
@@ -1580,10 +1586,7 @@ export namespace SessionRunner {
     return result
   }
 
-  async function difference(
-    sessionID: SessionID,
-    next: { title: string; body: string; actions: string[] },
-  ) {
+  async function difference(sessionID: SessionID, next: { title: string; body: string; actions: string[] }) {
     const current = await SessionTask.current(sessionID)
     if (!current) return "title: added; body: added; actions: added"
     const old = new Set(current.actions.map((item) => `${item.run_id}:${item.id}`))
@@ -2184,7 +2187,9 @@ export namespace SessionRunner {
       state.tracked
         ? "First provide exactly one success/failure/error/reply item for the previous Run, before any new executable items."
         : "Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.",
-      state.tracked ? "Do not use answer or done for the previous Run result." : "Use a `done` item when there is nothing else useful to add.",
+      state.tracked
+        ? "Do not use answer or done for the previous Run result."
+        : "Use a `done` item when there is nothing else useful to add.",
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
       "Only use tool, agent, input, or confirm items if another runtime call is truly required.",
       "If the previous run stopped on an input item, use the captured user input to decide the next package; do not re-ask the same question unless the answer is unusable.",
@@ -3266,10 +3271,10 @@ export namespace SessionRunner {
     const lines: string[] = []
     if (form) {
       fields.forEach((field, index) => {
-          const opts = Array.isArray(field.options) ? field.options.map(object) : []
-          const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
-          const parsed = parseInquireAnswer(answers[index], valid)
-          const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
+        const opts = Array.isArray(field.options) ? field.options.map(object) : []
+        const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
+        const parsed = parseInquireAnswer(answers[index], valid)
+        const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
         const id = typeof field.id === "string" ? field.id : `field_${index + 1}`
         const label = typeof field.label === "string" ? field.label : id
         lines.push(`- ${id} (${label}):`)
@@ -3455,6 +3460,12 @@ export namespace SessionRunner {
       ],
       tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
     })
+    if (reply.rerouted)
+      return {
+        title: input.action.title,
+        output: "Plan confirmation moved to its durable continuation carrier.",
+        metadata: { blocked: true, confirmed: true, rerouted: true },
+      }
     const answer = reply.answers[0]?.[0] ?? ""
     const ok = reply.response ? reply.response === "confirm" : yes(answer)
     const assignment = ok
@@ -3924,22 +3935,25 @@ export namespace SessionRunner {
     parent: string,
   ): Promise<{ ok: true; agent: Agent.Info } | { ok: false; error: string }> {
     const agents = AgentDelegation.list(await Agent.list(), parent)
-    const found = action.executor.target === "auto"
-      ? AgentProtocolExecutor.select(
-          action,
-          agents.map((item) => ({
-            id: item.name,
-            entry: item.entry,
-            capability: item.capability,
-          })),
-        )?.id
-      : action.executor.target
+    const found =
+      action.executor.target === "auto"
+        ? AgentProtocolExecutor.select(
+            action,
+            agents.map((item) => ({
+              id: item.name,
+              entry: item.entry,
+              capability: item.capability,
+            })),
+          )?.id
+        : action.executor.target
     if (!found)
       return { ok: false as const, error: `Protocol agent not available from ${parent}: ${action.executor.target}` }
     const selected = await Agent.get(found)
     if (!selected) return { ok: false as const, error: `Protocol agent not found: ${found}` }
-    if (action.executor.target === "auto" && AgentDelegation.visible(selected, parent)) return { ok: true as const, agent: selected }
-    if (action.executor.target !== "auto" && AgentDelegation.explicit(selected, parent)) return { ok: true as const, agent: selected }
+    if (action.executor.target === "auto" && AgentDelegation.visible(selected, parent))
+      return { ok: true as const, agent: selected }
+    if (action.executor.target !== "auto" && AgentDelegation.explicit(selected, parent))
+      return { ok: true as const, agent: selected }
     return { ok: false as const, error: `Protocol agent not available from ${parent}: ${selected.name}` }
   }
 
@@ -4490,7 +4504,10 @@ export namespace SessionRunner {
   async function project(sessionID: SessionID, run: AgentProtocol.Result) {
     await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
     await SessionTask.sync({ sessionID, runID: run.run_id, actions: run.actions }).catch((err) => {
-      if (err instanceof SessionTask.Conflict && ["session_task_missing", "session_task_stale_run"].includes(err.message))
+      if (
+        err instanceof SessionTask.Conflict &&
+        ["session_task_missing", "session_task_stale_run"].includes(err.message)
+      )
         return
       throw err
     })

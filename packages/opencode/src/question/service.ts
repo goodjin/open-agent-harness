@@ -45,14 +45,25 @@ export const Request = z
   .meta({ ref: "QuestionRequest" })
 export type Request = z.infer<typeof Request>
 
-export const Answer = z.array(z.string()).describe("Selected answers. A selected option may include user-entered details as `label: details`.").meta({ ref: "QuestionAnswer" })
+export const Answer = z
+  .array(z.string())
+  .describe("Selected answers. A selected option may include user-entered details as `label: details`.")
+  .meta({ ref: "QuestionAnswer" })
 export type Answer = z.infer<typeof Answer>
 
 export const Reply = z.object({
-  answers: z.array(Answer).describe("User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)"),
-  response: z.enum(["confirm", "cancel"]).optional().describe("Explicit confirmation response for confirm-only prompts"),
+  answers: z
+    .array(Answer)
+    .describe(
+      "User answers in order of questions (each answer is an array of selected labels, optionally with per-option details)",
+    ),
+  response: z
+    .enum(["confirm", "cancel"])
+    .optional()
+    .describe("Explicit confirmation response for confirm-only prompts"),
 })
 export type Reply = z.infer<typeof Reply>
+export type Result = Reply & { rerouted?: boolean }
 
 export const Event = {
   Asked: BusEvent.define("question.asked", Request),
@@ -84,7 +95,7 @@ export class RejectedError extends Schema.TaggedErrorClass<RejectedError>()("Que
 
 interface PendingEntry {
   info: Request
-  deferred: Deferred.Deferred<Reply, RejectedError>
+  deferred: Deferred.Deferred<Result, RejectedError>
 }
 
 export namespace QuestionService {
@@ -98,8 +109,14 @@ export namespace QuestionService {
       sessionID: SessionID
       questions: Info[]
       tool?: { messageID: MessageID; callID: string }
-    }) => Effect.Effect<Reply, RejectedError>
-    readonly reply: (input: { requestID: QuestionID; answers: Answer[]; response?: Reply["response"] }) => Effect.Effect<void>
+    }) => Effect.Effect<Result, RejectedError>
+    readonly reply: (input: {
+      requestID: QuestionID
+      answers: Answer[]
+      response?: Reply["response"]
+      guard?: () => boolean
+      rerouted?: boolean
+    }) => Effect.Effect<boolean>
     readonly reject: (requestID: QuestionID) => Effect.Effect<void>
     readonly list: () => Effect.Effect<Request[]>
   }
@@ -131,7 +148,7 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         const id = QuestionID.ascending()
         log.info("asking", { id, questions: input.questions.length })
 
-        const deferred = yield* Deferred.make<Reply, RejectedError>()
+        const deferred = yield* Deferred.make<Result, RejectedError>()
         const info: Request = {
           id,
           sessionID: input.sessionID,
@@ -144,8 +161,7 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
           // Treat terminal states (timeout/error) as idle so the session can recover
           // once the user replies. Otherwise the prior would be restored on reply and
           // every follow-up ask would re-enter the same terminal state.
-          const prior =
-            current.type === "timeout" || current.type === "error" ? { type: "idle" as const } : current
+          const prior = current.type === "timeout" || current.type === "error" ? { type: "idle" as const } : current
           status.set(input.sessionID, prior)
         }
         SessionStatus.set(input.sessionID, { type: "waiting_user" })
@@ -172,12 +188,15 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
         requestID: QuestionID
         answers: Answer[]
         response?: Reply["response"]
+        guard?: () => boolean
+        rerouted?: boolean
       }) {
         const existing = pending.get(input.requestID)
         if (!existing) {
           log.warn("reply for unknown request", { requestID: input.requestID })
-          return
+          return false
         }
+        if (input.guard && !input.guard()) return false
         pending.delete(input.requestID)
         log.info("replied", { requestID: input.requestID, answers: input.answers, response: input.response })
         Bus.publish(Event.Replied, {
@@ -186,7 +205,12 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
           answers: input.answers,
           response: input.response,
         })
-        yield* Deferred.succeed(existing.deferred, { answers: input.answers, response: input.response })
+        yield* Deferred.succeed(existing.deferred, {
+          answers: input.answers,
+          response: input.response,
+          rerouted: input.rerouted,
+        })
+        return true
       })
 
       const reject = Effect.fn("QuestionService.reject")(function* (requestID: QuestionID) {

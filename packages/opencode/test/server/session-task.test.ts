@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { Question } from "../../src/question"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
@@ -590,6 +591,328 @@ describe("session task endpoints", () => {
             } finally {
               unblock()
               apply.mockRestore()
+              prompt.mockRestore()
+            }
+          },
+        }),
+    })
+  })
+
+  test("keeps a healthy owner across assignment, handoff, and live reply barriers", async () => {
+    const prior = process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS
+    process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS = "300"
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_session_task_confirmation_heartbeat"),
+            fn: async () => {
+              const session = await Session.create({})
+              const task = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_heartbeat_old",
+                legacy: { title: "Original", body: "Original" },
+                actions: [],
+              })
+              if (task.type !== "execute") throw new Error("task missing")
+              const app = Server.Default()
+
+              const run = async (input: {
+                id: string
+                op: "update" | "handoff"
+                block: (enter: () => void, wait: Promise<void>) => () => void
+                handoffID?: string
+              }) => {
+                const body = JSON.stringify({
+                  proposal_id: `run_${input.id}:confirm_${input.id}`,
+                  revision_id: input.op === "update" ? task.revision.id : undefined,
+                  action: "confirm",
+                })
+                let enter = () => {}
+                let release = () => {}
+                const entered = new Promise<void>((resolve) => (enter = resolve))
+                const blocked = new Promise<void>((resolve) => (release = resolve))
+                const restore = input.block(enter, blocked)
+                const path =
+                  input.op === "update"
+                    ? `/session/${session.id}/task/update/confirm`
+                    : `/session/${session.id}/task/handoff/${input.handoffID}/confirm`
+                try {
+                  const first = app.request(path, {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body,
+                  })
+                  await entered
+                  Database.use((db) =>
+                    db
+                      .update(TaskConfirmationTable)
+                      .set({ lease_until: Date.now() + 300 })
+                      .where(eq(TaskConfirmationTable.proposal_id, `run_${input.id}:confirm_${input.id}`))
+                      .run(),
+                  )
+                  await Bun.sleep(650)
+                  let done = false
+                  const second = Promise.resolve(
+                    app.request(path, {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body,
+                    }),
+                  ).then((value) => {
+                    done = true
+                    return value
+                  })
+                  await Bun.sleep(100)
+                  expect(done).toBe(false)
+                  release()
+                  expect((await first).status).toBe(200)
+                  expect((await second).status).toBe(200)
+                } finally {
+                  release()
+                  restore()
+                }
+              }
+
+              const messageID = await message(session.id)
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID: "run_heartbeat_assignment",
+                actionID: "confirm_heartbeat_assignment",
+                title: "Assignment heartbeat",
+                plan: "Assignment heartbeat body",
+                op: "update",
+                target: "self",
+              })
+              let assignments = 0
+              await run({
+                id: "heartbeat_assignment",
+                op: "update",
+                block: (enter, wait) => {
+                  const original = SessionAssignment.apply
+                  const spy = spyOn(SessionAssignment, "apply").mockImplementation(async (value) => {
+                    assignments++
+                    enter()
+                    await wait
+                    return original(value)
+                  })
+                  return () => spy.mockRestore()
+                },
+              })
+              expect(assignments).toBe(1)
+
+              const messageID2 = await message(session.id)
+              const handoff = await SessionTaskHandoff.propose({
+                sourceID: session.id,
+                messageID: messageID2,
+                runID: "run_heartbeat_handoff",
+                actionID: "confirm_heartbeat_handoff",
+                title: "Handoff heartbeat",
+                body: "Handoff heartbeat body",
+                contextRefs: [],
+              })
+              await proposal({
+                sessionID: session.id,
+                messageID: messageID2,
+                runID: "run_heartbeat_handoff",
+                actionID: "confirm_heartbeat_handoff",
+                title: "Handoff heartbeat",
+                plan: "Handoff heartbeat body",
+                op: "handoff",
+                target: "peer",
+              })
+              let handoffs = 0
+              await run({
+                id: "heartbeat_handoff",
+                op: "handoff",
+                handoffID: handoff.id,
+                block: (enter, wait) => {
+                  const original = SessionTaskHandoff.confirm
+                  const spy = spyOn(SessionTaskHandoff, "confirm").mockImplementation(async (id, value) => {
+                    handoffs++
+                    enter()
+                    await wait
+                    return original(id, value)
+                  })
+                  return () => spy.mockRestore()
+                },
+              })
+              expect(handoffs).toBe(1)
+
+              const messageID3 = await message(session.id)
+              await proposal({
+                sessionID: session.id,
+                messageID: messageID3,
+                runID: "run_heartbeat_reply",
+                actionID: "confirm_heartbeat_reply",
+                title: "Reply heartbeat",
+                plan: "Reply heartbeat body",
+                op: "update",
+                target: "self",
+              })
+              const asked = Question.askReply({
+                sessionID: session.id,
+                questions: [
+                  { question: "Confirm?", header: "Confirm", options: [{ label: "Confirm", description: "Confirm" }] },
+                ],
+                tool: { messageID: messageID3, callID: "call_confirm_heartbeat_reply" },
+              })
+              while (!(await Question.list()).length) await Bun.sleep(1)
+              let replies = 0
+              await run({
+                id: "heartbeat_reply",
+                op: "update",
+                block: (enter, wait) => {
+                  const original = Question.reply
+                  const spy = spyOn(Question, "reply").mockImplementation(async (value) => {
+                    replies++
+                    enter()
+                    await wait
+                    return original(value)
+                  })
+                  return () => spy.mockRestore()
+                },
+              })
+              expect(replies).toBe(1)
+              expect((await asked).response).toBe("confirm")
+              expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(3)
+              const outbox = Database.use((db) => db.select().from(SessionEventOutboxTable).all()).filter(
+                (row) => row.kind === "task_confirmation",
+              )
+              expect(outbox).toHaveLength(3)
+              expect(
+                outbox
+                  .map((row) => (typeof row.payload === "object" && row.payload ? row.payload.mode : undefined))
+                  .sort(),
+              ).toEqual(["prompt", "prompt", "prompt"])
+              expect(prompt).toHaveBeenCalledTimes(3)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+      if (prior === undefined) delete process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS
+      if (prior !== undefined) process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS = prior
+    }
+  })
+
+  test("keeps a reclaimed live reply on its durable prompt carrier", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_reply_mode"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_reply_mode_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_reply_mode",
+              actionID: "confirm_reply_mode",
+              title: "Reply mode",
+              plan: "Reply mode body",
+              op: "update",
+              target: "self",
+            })
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [
+                {
+                  question: "Confirm?",
+                  header: "Confirm",
+                  options: [{ label: "Confirm", description: "Confirm" }],
+                },
+              ],
+              tool: { messageID, callID: "call_confirm_reply_mode" },
+            })
+            while (!(await Question.list()).length) await Bun.sleep(1)
+            const pending = (await Question.list())[0]
+            if (!pending) throw new Error("question missing")
+            const original = Question.reply
+            let enter = () => {}
+            let release = () => {}
+            const entered = new Promise<void>((resolve) => (enter = resolve))
+            const blocked = new Promise<void>((resolve) => (release = resolve))
+            let replies = 0
+            const reply = spyOn(Question, "reply").mockImplementation(async (value) => {
+              replies++
+              if (replies === 1) {
+                enter()
+                await blocked
+                return original(value)
+              }
+              return false
+            })
+            const body = JSON.stringify({
+              proposal_id: "run_reply_mode:confirm_reply_mode",
+              revision_id: task.revision.id,
+              action: "confirm",
+            })
+            const path = `/session/${session.id}/task/update/confirm`
+            try {
+              const first = Server.Default().request(path, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body,
+              })
+              await entered
+              Database.transaction(
+                (db) => {
+                  db.update(TaskConfirmationTable)
+                    .set({ lease_until: 0 })
+                    .where(eq(TaskConfirmationTable.proposal_id, "run_reply_mode:confirm_reply_mode"))
+                    .run()
+                  const row = db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.kind, "task_confirmation"))
+                    .get()
+                  if (!row || typeof row.payload !== "object" || !row.payload) throw new Error("outbox missing")
+                  db.update(SessionEventOutboxTable)
+                    .set({ payload: { ...row.payload, lease_until: 0 } })
+                    .where(eq(SessionEventOutboxTable.id, row.id))
+                    .run()
+                },
+                { behavior: "immediate" },
+              )
+              const second = await Server.Default().request(path, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body,
+              })
+              release()
+              expect(second.status).toBe(200)
+              expect((await first).status).toBe(409)
+              expect(replies).toBe(2)
+              expect(prompt).toHaveBeenCalledTimes(1)
+              const outbox = Database.use((db) =>
+                db
+                  .select()
+                  .from(SessionEventOutboxTable)
+                  .where(eq(SessionEventOutboxTable.kind, "task_confirmation"))
+                  .get(),
+              )
+              expect(outbox?.status).toBe("delivered")
+              expect(outbox?.payload).toMatchObject({ mode: "prompt", generation: 2 })
+            } finally {
+              release()
+              await Question.reject(pending.id)
+              await asked.catch(() => undefined)
+              reply.mockRestore()
               prompt.mockRestore()
             }
           },

@@ -14,6 +14,7 @@ export namespace Question {
   export type Answer = S.Answer
   export const Reply = S.Reply
   export type Reply = S.Reply
+  export type Result = S.Result
   export const Event = S.Event
   export const RejectedError = S.RejectedError
 
@@ -29,7 +30,7 @@ export namespace Question {
     sessionID: SessionID
     questions: Info[]
     tool?: { messageID: MessageID; callID: string }
-  }): Promise<Reply> {
+  }): Promise<Result> {
     return runPromiseInstance(S.QuestionService.use((service) => service.askReply(input)))
   }
 
@@ -37,7 +38,9 @@ export namespace Question {
     requestID: QuestionID
     answers: Answer[]
     response?: Reply["response"]
-  }): Promise<void> {
+    guard?: () => boolean
+    rerouted?: boolean
+  }): Promise<boolean> {
     return runPromiseInstance(S.QuestionService.use((service) => service.reply(input)))
   }
 
