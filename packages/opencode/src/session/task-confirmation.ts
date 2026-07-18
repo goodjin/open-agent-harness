@@ -367,7 +367,17 @@ export namespace SessionTaskConfirmation {
 
   function pulse(proof: typeof TaskConfirmationTable.$inferSelect) {
     let lost = false
-    let error: unknown
+    let timer: ReturnType<typeof setInterval> | undefined
+    const lose = (err?: unknown) => {
+      if (lost) return
+      lost = true
+      if (timer) clearInterval(timer)
+      if (err) {
+        log.error("task confirmation heartbeat failed", { confirmationID: proof.id, err })
+        return
+      }
+      log.warn("task confirmation heartbeat lost", { confirmationID: proof.id })
+    }
     const touch = () => {
       if (!renew(proof)) return false
       const key = `task_confirmation:${proof.id}`
@@ -395,37 +405,29 @@ export namespace SessionTaskConfirmation {
             .get(),
       )
     }
-    if (!touch()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
-    const timer = setInterval(
+    const check = () => {
+      try {
+        if (touch()) return true
+        lose()
+      } catch (err) {
+        lose(err)
+      }
+      return false
+    }
+    if (!check()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+    timer = setInterval(
       () => {
-        if (lost) return
-        try {
-          if (!touch()) lost = true
-        } catch (err) {
-          lost = true
-          error = err
-          log.error("task confirmation heartbeat failed", { confirmationID: proof.id, err })
-        }
+        if (!lost) check()
       },
       Math.max(10, Math.floor(ttl() / 3)),
     )
     return {
       guard() {
-        if (lost) {
-          log.warn("task confirmation heartbeat lost", { confirmationID: proof.id, err: error })
-          throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
-        }
-        try {
-          if (touch()) return
-        } catch (err) {
-          error = err
-          log.error("task confirmation heartbeat failed", { confirmationID: proof.id, err })
-        }
-        lost = true
+        if (!lost && check()) return
         throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
       },
       stop() {
-        clearInterval(timer)
+        if (timer) clearInterval(timer)
       },
     }
   }

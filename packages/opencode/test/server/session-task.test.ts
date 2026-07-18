@@ -15,6 +15,7 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
 import { ConflictError, Database, eq } from "../../src/storage/db"
+import { Log } from "../../src/util/log"
 import {
   AssignmentTable,
   SessionEventOutboxTable,
@@ -821,6 +822,9 @@ describe("session task endpoints", () => {
       }
       return use(fn)
     }) as typeof Database.use)
+    const logger = Log.create({ service: "session.task-confirmation" })
+    const error = spyOn(logger, "error").mockImplementation(() => {})
+    const warn = spyOn(logger, "warn").mockImplementation(() => {})
     const unhandled: unknown[] = []
     const listener = (err: unknown) => unhandled.push(err)
     process.on("unhandledRejection", listener)
@@ -870,7 +874,10 @@ describe("session task endpoints", () => {
                 })
                 await entered
                 fail = true
-                await Bun.sleep(50)
+                await Bun.sleep(140)
+                expect(throws).toBe(1)
+                expect(error).toHaveBeenCalledTimes(1)
+                expect(warn).toHaveBeenCalledTimes(0)
                 fail = false
                 release()
                 await expect(response).rejects.toBeInstanceOf(ConflictError)
@@ -888,6 +895,8 @@ describe("session task endpoints", () => {
       })
     } finally {
       process.off("unhandledRejection", listener)
+      error.mockRestore()
+      warn.mockRestore()
       db.mockRestore()
       prompt.mockRestore()
       if (prior === undefined) delete process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS
