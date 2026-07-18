@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import { Instance } from "@/project/instance"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { and, Database, eq, exists, inArray, isNull } from "@/storage/db"
+import { and, Database, eq, exists, inArray, isNull, or } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Session } from "."
 import { MessageV2 } from "./message-v2"
@@ -431,9 +431,20 @@ export namespace SessionTaskHandoff {
         .select({ id: TaskHandoffTable.id })
         .from(TaskHandoffTable)
         .innerJoin(SessionTable, eq(SessionTable.id, TaskHandoffTable.source_session_id))
+        .innerJoin(
+          SessionEventOutboxTable,
+          and(
+            eq(SessionEventOutboxTable.kind, "task_handoff"),
+            eq(SessionEventOutboxTable.session_id, TaskHandoffTable.source_session_id),
+            eq(SessionEventOutboxTable.target_session_id, TaskHandoffTable.target_session_id),
+          ),
+        )
         .where(
           and(
-            inArray(TaskHandoffTable.status, ["confirmed", "creating", "failed"]),
+            or(
+              inArray(TaskHandoffTable.status, ["confirmed", "creating", "failed"]),
+              and(eq(TaskHandoffTable.status, "started"), eq(SessionEventOutboxTable.status, "delivered")),
+            ),
             eq(SessionTable.project_id, Instance.project.id),
             eq(SessionTable.directory, Instance.directory),
           ),
@@ -461,7 +472,14 @@ export namespace SessionTaskHandoff {
     const target = typeof data.target_session_id === "string" ? SessionID.make(data.target_session_id) : undefined
     const task = typeof data.target_task_id === "string" ? data.target_task_id : ""
     const revision = typeof data.target_revision_id === "string" ? data.target_revision_id : ""
-    if (!target || !task || !revision) return
+    if (
+      data.handoff_id !== handoff.id ||
+      data.source_session_id !== handoff.source_session_id ||
+      !target ||
+      !task ||
+      !revision
+    )
+      return
     const owner = tx
       .select({ id: TaskHandoffTable.id })
       .from(TaskHandoffTable)
@@ -536,6 +554,8 @@ export namespace SessionTaskHandoff {
     const message = typeof data.message_id === "string" ? MessageID.make(data.message_id) : undefined
     if (!target || !task || !revision || !message) throw new Conflict("task_handoff_outbox_invalid")
     if (
+      data.handoff_id !== handoff.id ||
+      data.source_session_id !== handoff.source_session_id ||
       target !== handoff.target_session_id ||
       task !== handoff.target_task_id ||
       row.target_session_id !== target ||
@@ -692,7 +712,7 @@ export namespace SessionTaskHandoff {
         if (!reset) return
         tx.update(TaskHandoffTable)
           .set({ status: "failed", error: message })
-          .where(and(eq(TaskHandoffTable.id, handoff.id), eq(TaskHandoffTable.status, "creating")))
+          .where(and(eq(TaskHandoffTable.id, handoff.id), inArray(TaskHandoffTable.status, ["creating", "failed"])))
           .run()
       },
       { behavior: "immediate" },
@@ -749,7 +769,10 @@ export namespace SessionTaskHandoff {
     )
     if (!delivered) throw new Conflict("task_handoff_delivery_lost")
     const saved = await get(handoff.id)
-    if (saved) await project(saved, "task_handoff_started")
+    if (saved) {
+      await project(saved, "task_handoff_started")
+      ack(saved, row)
+    }
   }
 
   async function complete(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect) {
@@ -765,7 +788,31 @@ export namespace SessionTaskHandoff {
         .run(),
     )
     const saved = await get(handoff.id)
-    if (saved) await project(saved, "task_handoff_started")
+    if (saved) {
+      await project(saved, "task_handoff_started")
+      if (row.status === "delivered") ack(saved, row)
+    }
+  }
+
+  function ack(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect) {
+    const target = handoff.target_session_id
+    if (!target) return
+    const now = Date.now()
+    Database.use((tx) =>
+      tx
+        .update(SessionEventOutboxTable)
+        .set({ status: "acked", acked_at: now, updated_at: now })
+        .where(
+          and(
+            eq(SessionEventOutboxTable.id, row.id),
+            eq(SessionEventOutboxTable.session_id, handoff.source_session_id),
+            eq(SessionEventOutboxTable.target_session_id, target),
+            eq(SessionEventOutboxTable.payload, row.payload),
+            eq(SessionEventOutboxTable.status, "delivered"),
+          ),
+        )
+        .run(),
+    )
   }
 
   async function project(row: Info, kind: "task_handoff_proposal" | "task_handoff_started") {

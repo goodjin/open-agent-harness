@@ -218,7 +218,7 @@ describe("SessionTaskHandoff", () => {
           .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
           .get(),
       )
-      expect(row?.status).toBe("delivered")
+      expect(row?.status).toBe("acked")
       expect(row?.payload).toMatchObject({
         handoff_id: proposed.id,
       })
@@ -348,6 +348,127 @@ describe("SessionTaskHandoff", () => {
         expect(await Session.children(parent.id)).toHaveLength(2)
       } finally {
         write.mockRestore()
+        loop.mockRestore()
+      }
+    }))
+
+  test("refreshes the handoff error when a recovered delivery fails again", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Repeated failure peer",
+        body: "Repeated failure body",
+        contextRefs: [],
+      })
+      const errors = ["first delivery failure", "second delivery failure"]
+      const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => {
+        throw new Error(errors.shift() ?? "unexpected delivery")
+      }) as never)
+      try {
+        const assignment = await approve({ handoff: proposed, source: current })
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.error === "first delivery failure"))
+
+        await expect(SessionTaskHandoff.resume(proposed.id)).rejects.toThrow("second delivery failure")
+        expect(await SessionTaskHandoff.get(proposed.id)).toMatchObject({
+          status: "failed",
+          error: "second delivery failure",
+        })
+      } finally {
+        write.mockRestore()
+      }
+    }))
+
+  test("rejects an outbox whose handoff identity is tampered", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Tampered outbox peer",
+        body: "Tampered outbox body",
+        contextRefs: [],
+      })
+      const blocked = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => {
+        throw new Error("hold delivery")
+      }) as never)
+      const assignment = await approve({ handoff: proposed, source: current })
+      await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+      await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
+      blocked.mockRestore()
+      Database.use((tx) => {
+        const row = tx
+          .select()
+          .from(SessionEventOutboxTable)
+          .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+          .get()!
+        tx.update(SessionEventOutboxTable)
+          .set({ payload: { ...row.payload, handoff_id: "handoff_tampered", source_session_id: "ses_tampered" } })
+          .where(eq(SessionEventOutboxTable.id, row.id))
+          .run()
+      })
+      const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => undefined) as never)
+      try {
+        await expect(SessionTaskHandoff.resume(proposed.id)).rejects.toThrow("task_handoff_outbox_scope_invalid")
+        expect(write).toHaveBeenCalledTimes(0)
+        expect(await SessionTaskHandoff.get(proposed.id)).toMatchObject({ status: "failed" })
+      } finally {
+        write.mockRestore()
+      }
+    }))
+
+  test("reconciles a started projection after delivery commits before projection", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Projection recovery peer",
+        body: "Projection recovery body",
+        contextRefs: [],
+      })
+      const update = Session.updatePart
+      let failed = false
+      const part = spyOn(Session, "updatePart").mockImplementation((async (input: Parameters<typeof update>[0]) => {
+        if (!failed && input.type === "text" && input.metadata?.kind === "task_handoff_started") {
+          failed = true
+          throw new Error("projection interrupted")
+        }
+        return update(input)
+      }) as never)
+      const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+      try {
+        const assignment = await approve({ handoff: proposed, source: current })
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
+        const before = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+        expect(before?.status).toBe("delivered")
+
+        expect(await SessionTaskHandoff.scan()).toEqual([true])
+        const after = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+        const message = await MessageV2.get({ sessionID: current.session.id, messageID: current.messageID })
+        expect(after?.status).toBe("acked")
+        expect(
+          message.parts.some(
+            (item) => item.type === "text" && item.metadata?.kind === "task_handoff_started" && item.metadata.handoff_id === proposed.id,
+          ),
+        ).toBe(true)
+      } finally {
+        part.mockRestore()
         loop.mockRestore()
       }
     }))
