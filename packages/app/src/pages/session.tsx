@@ -63,9 +63,9 @@ import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
-import { SessionRuns } from "@/pages/session/session-runs"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
+import { SessionTask } from "@/pages/session/session-task"
 import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -507,6 +507,18 @@ export default function Page() {
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const badge = createMemo(() => {
+    const task = info()?.task
+    if (!task) return "session.task.status.unbound" as const
+    return {
+      running: "session.task.status.running",
+      waiting_user: "session.task.status.waitingUser",
+      revising: "session.task.status.revising",
+      blocked: "session.task.status.blocked",
+      completed: "session.task.status.completed",
+      failed: "session.task.status.failed",
+    }[task.status]
+  })
   const status = createMemo(() => (params.id ? sync.data.session_status[params.id] : undefined))
   const resumable = createMemo(() => resumePrompt(status()))
   const diffs = createMemo(() => (params.id ? (sync.data.session_diff[params.id] ?? []) : []))
@@ -608,7 +620,7 @@ export default function Page() {
 
   const [store, setStore] = createStore({
     messageId: undefined as string | undefined,
-    sessionView: "timeline" as "timeline" | "logs" | "runs",
+    sessionView: "timeline" as "timeline" | "logs" | "task",
     mobileTab: "session" as "session" | "changes" | "logs",
     changes: "session" as "session" | "turn",
     filter: "all" as SessionTurnFilter,
@@ -1087,7 +1099,7 @@ export default function Page() {
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   const mobileLogs = createMemo(() => !isDesktop() && store.mobileTab === "logs")
   const logMode = createMemo(() => mobileLogs() || (isDesktop() && store.sessionView === "logs"))
-  const runMode = createMemo(() => isDesktop() && store.sessionView === "runs")
+  const taskMode = createMemo(() => isDesktop() && store.sessionView === "task")
 
   const fileTreeTab = () => layout.fileTree.tab()
   const setFileTreeTab = (value: "changes" | "all") => layout.fileTree.setTab(value)
@@ -1289,12 +1301,13 @@ export default function Page() {
               type="button"
               class="rounded px-2.5 py-1 text-12-medium transition-colors"
               classList={{
-                "bg-surface-base text-text-strong": store.sessionView === "runs",
-                "text-text-weak hover:text-text-base": store.sessionView !== "runs",
+                "bg-surface-base text-text-strong": store.sessionView === "task",
+                "text-text-weak hover:text-text-base": store.sessionView !== "task",
               }}
-              onClick={() => setStore("sessionView", "runs")}
+              onClick={() => setStore("sessionView", "task")}
             >
-              {language.t("session.tab.runs")}
+              {language.t("session.tab.task")}
+              <span class="ml-1 text-10-regular text-text-weak">{language.t(badge())}</span>
             </button>
           </div>
         </div>
@@ -1367,9 +1380,9 @@ export default function Page() {
                 </Show>
               }
             >
-              <Match when={runMode()}>
+              <Match when={taskMode()}>
                 <Show when={params.id} keyed>
-                  {(id) => <SessionRuns sessionID={id} />}
+                  {(id) => <SessionTask sessionID={id} />}
                 </Show>
               </Match>
               <Match when={logMode()}>{logPanel()}</Match>

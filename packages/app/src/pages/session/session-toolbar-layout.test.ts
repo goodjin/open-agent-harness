@@ -29,11 +29,11 @@ describe("session toolbar layout", () => {
     expect(side).toContain("session.panel.collapse")
   })
 
-  test("offers protocol runs beside timeline and logs", async () => {
+  test("offers the current task beside timeline and logs", async () => {
     const page = await text("../session.tsx")
 
-    expect(page).toContain('sessionView: "timeline" as "timeline" | "logs" | "runs"')
-    expect(page).toContain('language.t("session.tab.runs")')
-    expect(page).toContain("<SessionRuns sessionID={id} />")
+    expect(page).toContain('sessionView: "timeline" as "timeline" | "logs" | "task"')
+    expect(page).toContain('language.t("session.tab.task")')
+    expect(page).toContain("<SessionTask sessionID={id} />")
   })
 })

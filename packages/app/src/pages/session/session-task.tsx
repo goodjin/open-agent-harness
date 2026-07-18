@@ -1,0 +1,354 @@
+import { Button } from "@open-agent-harness/ui/button"
+import { Markdown } from "@open-agent-harness/ui/markdown"
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { createStore } from "solid-js/store"
+import { useLanguage } from "@/context/language"
+import { useSDK } from "@/context/sdk"
+import { initial, result, view, type Current, type History, type Revision } from "./session-task-data"
+import { formatServerError } from "@/utils/server-errors"
+
+const labels = {
+  unbound: "session.task.status.unbound",
+  running: "session.task.status.running",
+  waiting_user: "session.task.status.waitingUser",
+  revising: "session.task.status.revising",
+  blocked: "session.task.status.blocked",
+  completed: "session.task.status.completed",
+  failed: "session.task.status.failed",
+} as const
+
+const results = {
+  recorded: "session.task.result.recorded",
+  fallback: "session.task.result.fallback",
+  missing: "session.task.result.missing",
+} as const
+
+const tone = (status: string) => {
+  if (status === "completed") return "text-icon-success-base bg-surface-success-base/20"
+  if (status === "blocked" || status === "failed") return "text-icon-critical-base bg-surface-critical-weak"
+  if (status === "running" || status === "active") return "text-icon-info-base bg-surface-info-base/20"
+  return "text-text-weak bg-surface-raised-base"
+}
+
+const stamp = (value: number) =>
+  new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(value)
+
+const updated = (task: Current | Revision) => {
+  if ("updated" in task.time) return task.time.updated
+  return task.time.archived ?? task.time.created
+}
+
+const code = (err: unknown) => {
+  if (!err || typeof err !== "object") return
+  const item = err as { status?: number; response?: { status?: number } }
+  return item.status ?? item.response?.status
+}
+
+const aborted = (err: unknown) => err instanceof DOMException && err.name === "AbortError"
+
+export function SessionTask(props: { sessionID: string }) {
+  const sdk = useSDK()
+  const language = useLanguage()
+  const [state, setState] = createStore(initial())
+  const [drawer, setDrawer] = createSignal(false)
+  let generation = 0
+  let current: AbortController | undefined
+  let archive: AbortController | undefined
+  let detail: AbortController | undefined
+  let selection = 0
+
+  const clear = () => {
+    current?.abort()
+    archive?.abort()
+    detail?.abort()
+  }
+
+  const load = async (id: string, gen: number) => {
+    current?.abort()
+    const ctrl = new AbortController()
+    current = ctrl
+    setState("loading", "current", true)
+    setState("error", "current", undefined)
+    try {
+      const res = await sdk.client.session.task.current({ sessionID: id }, { signal: ctrl.signal })
+      if (generation !== gen || props.sessionID !== id || ctrl.signal.aborted) return
+      setState({ current: res.data, loading: { ...state.loading, current: false } })
+    } catch (err) {
+      if (generation !== gen || props.sessionID !== id || ctrl.signal.aborted || aborted(err)) return
+      if (code(err) === 404) {
+        setState({ current: undefined, loading: { ...state.loading, current: false } })
+        return
+      }
+      setState("loading", "current", false)
+      setState("error", "current", formatServerError(err, language.t, language.t("session.task.error.current")))
+    }
+  }
+
+  const history = async () => {
+    setDrawer(true)
+    if (state.history.loaded || state.loading.history) return
+    const id = props.sessionID
+    const gen = generation
+    archive?.abort()
+    const ctrl = new AbortController()
+    archive = ctrl
+    setState("loading", "history", true)
+    setState("error", "history", undefined)
+    try {
+      const res = await sdk.client.session.task.history({ sessionID: id }, { signal: ctrl.signal })
+      if (generation !== gen || props.sessionID !== id || ctrl.signal.aborted) return
+      setState("history", { loaded: true, items: res.data ?? [] })
+      setState("loading", "history", false)
+    } catch (err) {
+      if (generation !== gen || props.sessionID !== id || ctrl.signal.aborted || aborted(err)) return
+      setState("loading", "history", false)
+      setState("error", "history", formatServerError(err, language.t, language.t("session.task.error.history")))
+    }
+  }
+
+  const revision = async (version: number) => {
+    const id = props.sessionID
+    const gen = generation
+    const pick = ++selection
+    detail?.abort()
+    const ctrl = new AbortController()
+    detail = ctrl
+    setState({ detail: undefined, loading: { ...state.loading, detail: true } })
+    setState("error", "detail", undefined)
+    try {
+      const res = await sdk.client.session.task.revision({ sessionID: id, version }, { signal: ctrl.signal })
+      if (generation !== gen || selection !== pick || props.sessionID !== id || ctrl.signal.aborted) return
+      setState({ detail: res.data, loading: { ...state.loading, detail: false } })
+    } catch (err) {
+      if (generation !== gen || selection !== pick || props.sessionID !== id || ctrl.signal.aborted || aborted(err))
+        return
+      setState("loading", "detail", false)
+      setState("error", "detail", formatServerError(err, language.t, language.t("session.task.error.detail")))
+    }
+  }
+
+  const back = () => {
+    selection += 1
+    detail?.abort()
+    setState({ detail: undefined, loading: { ...state.loading, detail: false } })
+    setState("error", "detail", undefined)
+    setDrawer(false)
+    void load(props.sessionID, generation)
+  }
+
+  createEffect(() => {
+    const id = props.sessionID
+    const gen = ++generation
+    selection += 1
+    clear()
+    setDrawer(false)
+    setState(initial())
+    void load(id, gen)
+  })
+
+  onCleanup(clear)
+
+  const shown = () => state.detail ?? state.current
+  const actions = () => shown()?.actions ?? []
+  const progress = () => {
+    const task = shown()
+    if (!task) return { completed: 0, total: 0 }
+    if ("progress" in task) return task.progress
+    return { completed: task.actions.filter((item) => item.status === "completed").length, total: task.actions.length }
+  }
+  const outcome = () => {
+    const task = shown()
+    if (!task) return "missing" as const
+    return result(task)
+  }
+  return (
+    <div class="flex h-full min-h-0 bg-background-stronger" data-component="session-task">
+      <main class="min-w-0 flex-1 overflow-y-auto">
+        <Show when={state.loading.current && !shown()}>
+          <div class="mx-auto max-w-4xl px-6 py-8 text-12-regular text-text-weak">
+            {language.t("session.task.loading")}
+          </div>
+        </Show>
+        <Show when={state.error.current}>
+          {(err) => <div class="mx-auto max-w-4xl px-6 py-8 text-12-regular text-icon-critical-base">{err()}</div>}
+        </Show>
+        <Show when={!state.loading.current && !state.error.current && !shown()}>
+          <div class="mx-auto max-w-4xl px-6 py-8">
+            <div class="text-16-medium text-text-strong">{language.t("session.task.unbound.title")}</div>
+            <div class="mt-2 text-12-regular text-text-weak">{language.t("session.task.unbound.description")}</div>
+          </div>
+        </Show>
+
+        <Show when={shown()}>
+          {(task) => (
+            <div class="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-5">
+              <section>
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <div class="text-11-medium uppercase text-text-weak">{language.t("session.task.current")}</div>
+                    <h2 class="mt-1 text-16-medium text-text-strong">{task().title}</h2>
+                    <div class="mt-1 text-11-regular text-text-weak">
+                      {language.t("session.task.meta", {
+                        version: task().version,
+                        time: stamp(updated(task())),
+                      })}
+                    </div>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <span
+                      class={`rounded px-2 py-1 text-11-medium ${tone(state.detail ? "archived" : view(state.current).status)}`}
+                    >
+                      {state.detail
+                        ? language.t("session.task.status.archived")
+                        : language.t(labels[view(state.current).status])}
+                    </span>
+                    <Show when={!state.detail}>
+                      <Button variant="ghost" size="small" onClick={() => void history()}>
+                        {language.t("session.task.history")}
+                      </Button>
+                    </Show>
+                    <Show when={state.detail}>
+                      <Button variant="ghost" size="small" onClick={back}>
+                        {language.t("session.task.return")}
+                      </Button>
+                    </Show>
+                  </div>
+                </div>
+              </section>
+
+              <section class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                <Markdown text={task().body} />
+              </section>
+
+              <section>
+                <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.task.progress")}</h3>
+                <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                  <div class="text-12-regular text-text-weak">
+                    {language.t("session.task.progressValue", {
+                      completed: progress().completed,
+                      total: progress().total,
+                    })}
+                  </div>
+                  <Show when={actions().length > 0}>
+                    <div class="mt-3 flex flex-col gap-2">
+                      <For each={actions()}>
+                        {(action) => (
+                          <div class="flex items-start justify-between gap-3 rounded bg-background-stronger px-3 py-2">
+                            <div class="min-w-0">
+                              <div class="text-12-medium text-text-strong">{action.title}</div>
+                              <Show when={action.summary ?? action.error}>
+                                {(summary) => <div class="mt-1 text-11-regular text-text-weak">{summary()}</div>}
+                              </Show>
+                            </div>
+                            <span class={`shrink-0 rounded px-1.5 py-0.5 text-10-medium ${tone(action.status)}`}>
+                              {action.status}
+                            </span>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+              </section>
+
+              <section>
+                <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.task.result")}</h3>
+                <div class="rounded-md border border-border-weaker-base bg-background-base p-4">
+                  <Show
+                    when={state.detail || view(state.current).showResult}
+                    fallback={
+                      <div class="text-12-regular text-text-weak">
+                        {language.t("session.task.result.running", {
+                          completed: progress().completed,
+                          total: progress().total,
+                        })}
+                      </div>
+                    }
+                  >
+                    <div class="mb-2 text-11-medium text-text-weak">{language.t(results[outcome()])}</div>
+                    <Show
+                      when={task().result}
+                      fallback={
+                        <div class="text-12-regular text-text-weak">{language.t("session.task.result.missing")}</div>
+                      }
+                    >
+                      {(text) => <Markdown text={text()} />}
+                    </Show>
+                  </Show>
+                </div>
+              </section>
+
+              <section>
+                <h3 class="mb-2 text-13-medium text-text-strong">{language.t("session.task.handoffs")}</h3>
+                <Show
+                  when={!state.detail && state.current && state.current.handoffs.length > 0}
+                  fallback={
+                    <div class="text-12-regular text-text-weak">{language.t("session.task.handoffs.empty")}</div>
+                  }
+                >
+                  <div class="flex flex-col gap-2">
+                    <For each={state.current?.handoffs ?? []}>
+                      {(item) => (
+                        <div class="rounded-md border border-border-weaker-base bg-background-base p-3">
+                          <div class="text-12-medium text-text-strong">{item.title}</div>
+                          <div class="mt-1 text-11-regular text-text-weak">{item.status}</div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </section>
+            </div>
+          )}
+        </Show>
+      </main>
+
+      <Show when={drawer()}>
+        <aside class="w-72 shrink-0 overflow-y-auto border-l border-border-weaker-base bg-background-base p-3">
+          <div class="mb-3 flex items-center justify-between gap-2">
+            <div class="text-13-medium text-text-strong">{language.t("session.task.history")}</div>
+            <Button variant="ghost" size="small" onClick={() => setDrawer(false)}>
+              {language.t("common.close")}
+            </Button>
+          </div>
+          <Show when={state.loading.history}>
+            <div class="py-4 text-12-regular text-text-weak">{language.t("session.task.history.loading")}</div>
+          </Show>
+          <Show when={state.error.history}>
+            {(err) => <div class="py-4 text-12-regular text-icon-critical-base">{err()}</div>}
+          </Show>
+          <Show when={state.history.loaded && state.history.items.length === 0}>
+            <div class="py-4 text-12-regular text-text-weak">{language.t("session.task.history.empty")}</div>
+          </Show>
+          <div class="flex flex-col gap-1">
+            <For each={state.history.items}>
+              {(item: History) => (
+                <button
+                  type="button"
+                  class="rounded-md px-2.5 py-2 text-left transition-colors hover:bg-surface-raised-base"
+                  onClick={() => void revision(item.version)}
+                >
+                  <div class="text-12-medium text-text-strong">
+                    {language.t("session.task.history.version", { version: item.version })} · {item.title}
+                  </div>
+                  <div class="mt-1 text-10-regular text-text-weak">
+                    {stamp(item.time.archived ?? item.time.created)}
+                  </div>
+                  <Show when={item.reason ?? item.archive_reason}>
+                    {(reason) => <div class="mt-1 text-11-regular text-text-weak">{reason()}</div>}
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+          <Show when={state.loading.detail}>
+            <div class="mt-3 text-12-regular text-text-weak">{language.t("session.task.detail.loading")}</div>
+          </Show>
+          <Show when={state.error.detail}>
+            {(err) => <div class="mt-3 text-12-regular text-icon-critical-base">{err()}</div>}
+          </Show>
+        </aside>
+      </Show>
+    </div>
+  )
+}
