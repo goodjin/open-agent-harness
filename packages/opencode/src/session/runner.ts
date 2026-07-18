@@ -3394,6 +3394,8 @@ export namespace SessionRunner {
         ? await SessionTaskHandoff.propose({
             sourceID: input.sessionID,
             messageID: input.messageID,
+            runID: input.runID,
+            actionID: input.action.id,
             title: input.action.title,
             body: plan,
             contextRefs: refs,

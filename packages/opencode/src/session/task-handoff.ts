@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import { Instance } from "@/project/instance"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { and, Database, eq, inArray } from "@/storage/db"
+import { and, Database, eq, exists, inArray, isNull } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Session } from "."
 import { MessageV2 } from "./message-v2"
@@ -33,25 +33,52 @@ export namespace SessionTaskHandoff {
   export type Info = typeof TaskHandoffTable.$inferSelect
 
   export async function get(id: string) {
-    return Database.use((tx) => tx.select().from(TaskHandoffTable).where(eq(TaskHandoffTable.id, id)).get())
+    return Database.use(
+      (tx) =>
+        tx
+          .select({ handoff: TaskHandoffTable })
+          .from(TaskHandoffTable)
+          .innerJoin(SessionTable, eq(SessionTable.id, TaskHandoffTable.source_session_id))
+          .where(
+            and(
+              eq(TaskHandoffTable.id, id),
+              eq(SessionTable.project_id, Instance.project.id),
+              eq(SessionTable.directory, Instance.directory),
+            ),
+          )
+          .get()?.handoff,
+    )
   }
 
   export async function propose(input: {
     sourceID: SessionID
     messageID: MessageID
+    runID: string
+    actionID: string
     title: string
     body: string
     contextRefs: string[]
   }) {
     const title = input.title.trim()
     if (!title) throw new Conflict("task_handoff_title_required")
-    const digest = hash(JSON.stringify([input.sourceID, input.messageID, title, input.body, input.contextRefs]))
-    const key = `task_handoff_proposal:${input.sourceID}:${input.messageID}:${digest}`
+    if (!input.runID || !input.actionID) throw new Conflict("task_handoff_source_invalid")
+    const key = dedupe({ ...input, title })
     const now = Date.now()
     const row = Database.transaction(
       (tx) => {
-        const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sourceID)).get()
-        if (!task) throw new Conflict("task_handoff_requires_bound_source")
+        const owner = tx
+          .select({ task: SessionTaskTable })
+          .from(SessionTaskTable)
+          .innerJoin(SessionTable, eq(SessionTable.id, SessionTaskTable.session_id))
+          .where(
+            and(
+              eq(SessionTaskTable.session_id, input.sourceID),
+              eq(SessionTable.project_id, Instance.project.id),
+              eq(SessionTable.directory, Instance.directory),
+            ),
+          )
+          .get()
+        if (!owner) throw new Conflict("task_handoff_requires_bound_source")
         const message = tx
           .select({ id: MessageTable.id })
           .from(MessageTable)
@@ -63,7 +90,7 @@ export namespace SessionTaskHandoff {
           if (
             found.source_session_id !== input.sourceID ||
             found.source_message_id !== input.messageID ||
-            found.source_task_id !== task.id ||
+            found.source_task_id !== owner.task.id ||
             found.title !== title ||
             found.body !== input.body ||
             JSON.stringify(found.context_refs) !== JSON.stringify(input.contextRefs)
@@ -76,7 +103,7 @@ export namespace SessionTaskHandoff {
           .values({
             id: `handoff_${randomUUID()}`,
             source_session_id: input.sourceID,
-            source_task_id: task.id,
+            source_task_id: owner.task.id,
             source_message_id: input.messageID,
             target_session_id: null,
             target_task_id: null,
@@ -100,15 +127,20 @@ export namespace SessionTaskHandoff {
     return row
   }
 
-  export async function confirm(id: string, input?: { assignmentID: string }) {
-    const proof = input ? await SessionAssignment.get(input.assignmentID) : undefined
+  export async function confirm(id: string, input: { assignmentID: string }) {
+    if (!input?.assignmentID) throw new Conflict("task_handoff_confirmation_required")
+    const expected = await get(id)
+    if (!expected) throw new Conflict("task_handoff_not_found")
+    const proof = await SessionAssignment.get(input.assignmentID)
     const content = proof ? await SessionAssignment.content(proof.id) : undefined
     const plan = object(content)
     const route = object(plan.assignment)
-    const expected = input ? await get(id) : undefined
     if (
-      input &&
-      (!proof || !expected || plan.plan !== expected.body || route.op !== "handoff" || route.target !== "peer")
+      !proof ||
+      plan.plan !== expected.body ||
+      route.op !== "handoff" ||
+      route.target !== "peer" ||
+      expected.body_hash !== hash(expected.body)
     )
       throw new Conflict("task_handoff_confirmation_invalid")
     const now = Date.now()
@@ -124,6 +156,8 @@ export namespace SessionTaskHandoff {
             and(
               eq(SessionTaskTable.id, current.source_task_id ?? ""),
               eq(SessionTaskTable.session_id, current.source_session_id),
+              eq(SessionTable.project_id, Instance.project.id),
+              eq(SessionTable.directory, Instance.directory),
             ),
           )
           .get()
@@ -141,32 +175,71 @@ export namespace SessionTaskHandoff {
               .get()
           : undefined
         if (!message) throw new Conflict("task_handoff_source_message_invalid")
-        if (current.status === "started" || current.status === "confirmed" || current.status === "creating")
-          return current
-        if (current.status !== "proposed" && current.status !== "failed")
-          throw new Conflict("task_handoff_not_confirmable")
-        const assignment = input
-          ? tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, input.assignmentID)).get()
-          : undefined
+        const assignment = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, input.assignmentID)).get()
+        const replay = current.status === "started" || current.status === "confirmed" || current.status === "creating"
         if (
-          input &&
-          (!assignment ||
-            assignment.status !== "running" ||
-            assignment.source_type !== "confirm" ||
-            assignment.session_id !== current.source_session_id ||
-            assignment.source_session_id !== current.source_session_id ||
-            assignment.source_message_id !== current.source_message_id ||
-            assignment.target !== "peer" ||
-            assignment.title !== current.title ||
-            assignment.content_ref !== proof?.content_ref ||
-            assignment.content_hash !== proof?.content_hash ||
-            assignment.content_version !== proof?.content_version)
+          !assignment ||
+          assignment.status !== (replay ? "completed" : "running") ||
+          assignment.source_type !== "confirm" ||
+          assignment.session_id !== current.source_session_id ||
+          assignment.source_session_id !== current.source_session_id ||
+          assignment.source_message_id !== current.source_message_id ||
+          !assignment.source_message_id ||
+          !assignment.source_run_id ||
+          !assignment.source_action_id ||
+          current.dedupe_key !==
+            dedupe({
+              sourceID: current.source_session_id,
+              messageID: assignment.source_message_id,
+              runID: assignment.source_run_id,
+              actionID: assignment.source_action_id,
+              title: current.title,
+              body: current.body,
+              contextRefs: current.context_refs,
+            }) ||
+          assignment.target !== "peer" ||
+          assignment.title !== current.title ||
+          assignment.content_ref !== proof.content_ref ||
+          assignment.content_hash !== proof.content_hash ||
+          assignment.content_version !== proof.content_version
         )
           throw new Conflict("task_handoff_confirmation_invalid")
+        if (replay) return current
+        if (current.status !== "proposed" && current.status !== "failed")
+          throw new Conflict("task_handoff_not_confirmable")
+
+        const parent = source.session.parent_id
+          ? tx
+              .select({ id: SessionTable.id })
+              .from(SessionTable)
+              .where(
+                and(
+                  eq(SessionTable.id, source.session.parent_id),
+                  eq(SessionTable.project_id, Instance.project.id),
+                  eq(SessionTable.directory, Instance.directory),
+                ),
+              )
+              .get()
+          : undefined
+        if (source.session.parent_id && !parent) throw new Conflict("task_handoff_parent_invalid")
 
         const target = current.target_session_id
-          ? tx.select().from(SessionTable).where(eq(SessionTable.id, current.target_session_id)).get()
+          ? tx
+              .select()
+              .from(SessionTable)
+              .where(
+                and(
+                  eq(SessionTable.id, current.target_session_id),
+                  eq(SessionTable.project_id, Instance.project.id),
+                  eq(SessionTable.directory, Instance.directory),
+                  source.session.parent_id
+                    ? eq(SessionTable.parent_id, source.session.parent_id)
+                    : isNull(SessionTable.parent_id),
+                ),
+              )
+              .get()
           : undefined
+        if (current.target_session_id && !target) throw new Conflict("task_handoff_target_invalid")
         const session = target
           ? Session.fromRow(target)
           : Session.build({
@@ -314,11 +387,19 @@ export namespace SessionTaskHandoff {
   }
 
   export async function cancel(id: string) {
+    const current = await get(id)
+    if (!current) return
     const row = Database.use((tx) =>
       tx
         .update(TaskHandoffTable)
         .set({ status: "cancelled", error: null, time_completed: Date.now() })
-        .where(and(eq(TaskHandoffTable.id, id), eq(TaskHandoffTable.status, "proposed")))
+        .where(
+          and(
+            eq(TaskHandoffTable.id, current.id),
+            eq(TaskHandoffTable.source_session_id, current.source_session_id),
+            eq(TaskHandoffTable.status, "proposed"),
+          ),
+        )
         .returning()
         .get(),
     )
@@ -337,7 +418,10 @@ export namespace SessionTaskHandoff {
     )
     if (!row) return false
     if (row.kind !== "task_handoff") return false
-    return start(handoff, row)
+    return start(handoff, row).catch((err) => {
+      reject(handoff, row, err)
+      throw err
+    })
   }
 
   export async function scan() {
@@ -365,6 +449,84 @@ export namespace SessionTaskHandoff {
     )
   }
 
+  function guard(
+    tx: Database.TxOrDb,
+    handoff: Info,
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    status: typeof SessionEventOutboxTable.$inferSelect.status,
+    updated?: number,
+  ) {
+    const data = row.payload
+    const target = typeof data.target_session_id === "string" ? SessionID.make(data.target_session_id) : undefined
+    const task = typeof data.target_task_id === "string" ? data.target_task_id : ""
+    const revision = typeof data.target_revision_id === "string" ? data.target_revision_id : ""
+    if (!target || !task || !revision) return
+    const owner = tx
+      .select({ id: TaskHandoffTable.id })
+      .from(TaskHandoffTable)
+      .innerJoin(SessionTable, eq(SessionTable.id, TaskHandoffTable.target_session_id))
+      .innerJoin(
+        SessionTaskTable,
+        and(
+          eq(SessionTaskTable.id, TaskHandoffTable.target_task_id),
+          eq(SessionTaskTable.session_id, TaskHandoffTable.target_session_id),
+        ),
+      )
+      .innerJoin(
+        TaskRevisionTable,
+        and(
+          eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id),
+          eq(TaskRevisionTable.task_id, SessionTaskTable.id),
+        ),
+      )
+      .where(
+        and(
+          eq(TaskHandoffTable.id, handoff.id),
+          eq(TaskHandoffTable.source_session_id, handoff.source_session_id),
+          eq(TaskHandoffTable.target_session_id, target),
+          eq(TaskHandoffTable.target_task_id, task),
+          inArray(TaskHandoffTable.status, ["creating", "failed"]),
+          eq(SessionTable.project_id, Instance.project.id),
+          eq(SessionTable.directory, Instance.directory),
+          eq(SessionTaskTable.current_revision_id, revision),
+          eq(TaskRevisionTable.status, "active"),
+        ),
+      )
+    return and(
+      eq(SessionEventOutboxTable.id, row.id),
+      eq(SessionEventOutboxTable.session_id, handoff.source_session_id),
+      eq(SessionEventOutboxTable.target_session_id, target),
+      eq(SessionEventOutboxTable.payload, row.payload),
+      eq(SessionEventOutboxTable.status, status),
+      updated === undefined ? undefined : eq(SessionEventOutboxTable.updated_at, updated),
+      exists(owner),
+    )
+  }
+
+  function valid(
+    handoff: Info,
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    status: typeof SessionEventOutboxTable.$inferSelect.status,
+    updated?: number,
+  ) {
+    return Database.use((tx) => {
+      const where = guard(tx, handoff, row, status, updated)
+      if (!where) return false
+      return !!tx.select({ id: SessionEventOutboxTable.id }).from(SessionEventOutboxTable).where(where).get()
+    })
+  }
+
+  function changed(row: typeof SessionEventOutboxTable.$inferSelect) {
+    return Database.use((tx) => {
+      const current = tx
+        .select({ status: SessionEventOutboxTable.status, updated: SessionEventOutboxTable.updated_at })
+        .from(SessionEventOutboxTable)
+        .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.payload, row.payload)))
+        .get()
+      return !!current && (current.status !== row.status || current.updated !== row.updated_at)
+    })
+  }
+
   async function start(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect): Promise<boolean> {
     const data = row.payload
     const target = typeof data.target_session_id === "string" ? SessionID.make(data.target_session_id) : undefined
@@ -379,128 +541,131 @@ export namespace SessionTaskHandoff {
       row.session_id !== handoff.source_session_id
     )
       throw new Conflict("task_handoff_outbox_scope_invalid")
-    const owner = Database.use((tx) =>
-      tx
-        .select({ task: SessionTaskTable.id })
-        .from(SessionTaskTable)
-        .innerJoin(
-          TaskRevisionTable,
-          and(
-            eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id),
-            eq(TaskRevisionTable.task_id, SessionTaskTable.id),
-          ),
-        )
-        .where(
-          and(
-            eq(SessionTaskTable.id, task),
-            eq(SessionTaskTable.session_id, target),
-            eq(SessionTaskTable.current_revision_id, revision),
-            eq(TaskRevisionTable.status, "active"),
-          ),
-        )
-        .get(),
-    )
-    if (!owner) throw new Conflict("task_handoff_target_invalid")
-    const now = Date.now()
-    const existing = await MessageV2.get({ sessionID: target, messageID: message }).catch(() => undefined)
+    if (!valid(handoff, row, row.status, row.updated_at) && row.status !== "delivered" && row.status !== "acked") {
+      if (changed(row)) return true
+      throw new Conflict("task_handoff_target_invalid")
+    }
     if (row.status === "delivered" || row.status === "acked") {
       await complete(handoff, row)
       return true
+    }
+    const now = Date.now()
+    const existing = await MessageV2.get({ sessionID: target, messageID: message }).catch(() => undefined)
+    if (!valid(handoff, row, row.status, row.updated_at)) {
+      if (changed(row)) return true
+      throw new Conflict("task_handoff_target_invalid")
     }
     if (row.status === "delivering") {
       if (row.updated_at > now - 30_000) return true
       if (existing) {
         const stamp = Date.now()
-        const claimed = Database.use((tx) =>
-          tx
+        const claimed = Database.use((tx) => {
+          const where = guard(tx, handoff, row, "delivering", row.updated_at)
+          if (!where) return
+          return tx
             .update(SessionEventOutboxTable)
             .set({ updated_at: stamp })
-            .where(
-              and(
-                eq(SessionEventOutboxTable.id, row.id),
-                eq(SessionEventOutboxTable.payload, row.payload),
-                eq(SessionEventOutboxTable.status, "delivering"),
-                eq(SessionEventOutboxTable.updated_at, row.updated_at),
-              ),
-            )
+            .where(where)
             .returning({ id: SessionEventOutboxTable.id })
-            .get(),
-        )
+            .get()
+        })
         if (!claimed) return true
-        await launch(target, message)
-        await deliver(handoff, row, stamp)
-        return true
+        return recover(handoff, row, target, message, stamp)
       }
-      const reset = Database.use((tx) =>
-        tx
+      const reset = Database.use((tx) => {
+        const where = guard(tx, handoff, row, "delivering", row.updated_at)
+        if (!where) return
+        return tx
           .update(SessionEventOutboxTable)
           .set({ status: "pending", updated_at: now })
-          .where(
-            and(
-              eq(SessionEventOutboxTable.id, row.id),
-              eq(SessionEventOutboxTable.payload, row.payload),
-              eq(SessionEventOutboxTable.status, "delivering"),
-              eq(SessionEventOutboxTable.updated_at, row.updated_at),
-            ),
-          )
+          .where(where)
           .returning()
-          .get(),
-      )
+          .get()
+      })
       return reset ? start(handoff, reset) : true
     }
     if (row.status !== "pending" && row.status !== "failed") return true
     const stamp = Date.now()
-    const claimed = Database.use((tx) =>
-      tx
+    const claimed = Database.use((tx) => {
+      const where = guard(tx, handoff, row, row.status, row.updated_at)
+      if (!where) return
+      return tx
         .update(SessionEventOutboxTable)
         .set({ status: "delivering", updated_at: stamp, error: null })
-        .where(
-          and(
-            eq(SessionEventOutboxTable.id, row.id),
-            eq(SessionEventOutboxTable.payload, row.payload),
-            eq(SessionEventOutboxTable.status, row.status),
-            eq(SessionEventOutboxTable.updated_at, row.updated_at),
-          ),
-        )
+        .where(where)
         .returning()
-        .get(),
-    )
+        .get()
+    })
     if (!claimed) return true
-    const session = await Session.get(target)
-    await SessionPrompt.enqueue({
-      sessionID: target,
-      messageID: message,
-      agent: session.agent,
-      metadata: {
-        internal: true,
-        source: "task_handoff_bootstrap",
-        handoff_id: handoff.id,
-        task_id: task,
-        revision_id: revision,
-      },
-      parts: [
-        {
-          type: "text",
-          text: [
-            "A confirmed Task handoff is ready in this session.",
-            "Inspect the current Task and execute only its active revision.",
-            "Return results in this session; do not continue the source session's task.",
-          ].join("\n"),
+    return dispatch(handoff, row, target, task, revision, message, stamp)
+  }
+
+  async function dispatch(
+    handoff: Info,
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    target: SessionID,
+    task: string,
+    revision: string,
+    message: MessageID,
+    stamp: number,
+  ) {
+    try {
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      const session = await Session.get(target)
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      await SessionPrompt.enqueue({
+        sessionID: target,
+        messageID: message,
+        agent: session.agent,
+        metadata: {
+          internal: true,
+          source: "task_handoff_bootstrap",
+          handoff_id: handoff.id,
+          task_id: task,
+          revision_id: revision,
         },
-      ],
-    }).catch((err) => {
+        parts: [
+          {
+            type: "text",
+            text: [
+              "A confirmed Task handoff is ready in this session.",
+              "Inspect the current Task and execute only its active revision.",
+              "Return results in this session; do not continue the source session's task.",
+            ].join("\n"),
+          },
+        ],
+      })
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      await launch(target, message)
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      await deliver(handoff, row, stamp)
+      return true
+    } catch (err) {
       fail(handoff, row, stamp, err)
       throw err
-    })
-    await launch(target, message)
-    await deliver(handoff, row, stamp)
-    return true
+    }
+  }
+
+  async function recover(
+    handoff: Info,
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    target: SessionID,
+    message: MessageID,
+    stamp: number,
+  ) {
+    try {
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      await launch(target, message)
+      if (!valid(handoff, row, "delivering", stamp)) throw new Conflict("task_handoff_target_invalid")
+      await deliver(handoff, row, stamp)
+      return true
+    } catch (err) {
+      fail(handoff, row, stamp, err)
+      throw err
+    }
   }
 
   async function launch(sessionID: SessionID, messageID: MessageID) {
-    if (SessionPrompt.busy(sessionID)) return
-    const messages = await Session.messages({ sessionID, limit: 20 })
-    if (messages.some((item) => item.info.role === "assistant" && item.info.parentID === messageID)) return
     void SessionPrompt.loop({ sessionID, messageID }).catch((err) =>
       log.warn("task handoff target failed", { err, sessionID, messageID }),
     )
@@ -533,21 +698,43 @@ export namespace SessionTaskHandoff {
     )
   }
 
-  async function deliver(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, stamp: number) {
-    const delivered = Database.transaction(
+  function reject(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
+    Database.transaction(
       (tx) => {
-        const now = Date.now()
-        const sent = tx
+        const reset = tx
           .update(SessionEventOutboxTable)
-          .set({ status: "delivered", delivered_at: now, acked_at: null, updated_at: now, error: null })
+          .set({ status: "pending", updated_at: Date.now(), error: message })
           .where(
             and(
               eq(SessionEventOutboxTable.id, row.id),
               eq(SessionEventOutboxTable.payload, row.payload),
-              eq(SessionEventOutboxTable.status, "delivering"),
-              eq(SessionEventOutboxTable.updated_at, stamp),
+              eq(SessionEventOutboxTable.status, row.status),
+              eq(SessionEventOutboxTable.updated_at, row.updated_at),
             ),
           )
+          .returning({ id: SessionEventOutboxTable.id })
+          .get()
+        if (!reset) return
+        tx.update(TaskHandoffTable)
+          .set({ status: "failed", error: message })
+          .where(and(eq(TaskHandoffTable.id, handoff.id), inArray(TaskHandoffTable.status, ["creating", "failed"])))
+          .run()
+      },
+      { behavior: "immediate" },
+    )
+  }
+
+  async function deliver(handoff: Info, row: typeof SessionEventOutboxTable.$inferSelect, stamp: number) {
+    const delivered = Database.transaction(
+      (tx) => {
+        const now = Date.now()
+        const where = guard(tx, handoff, row, "delivering", stamp)
+        if (!where) return false
+        const sent = tx
+          .update(SessionEventOutboxTable)
+          .set({ status: "delivered", delivered_at: now, acked_at: null, updated_at: now, error: null })
+          .where(where)
           .returning({ id: SessionEventOutboxTable.id })
           .get()
         if (!sent) return false
@@ -559,7 +746,7 @@ export namespace SessionTaskHandoff {
       },
       { behavior: "immediate" },
     )
-    if (!delivered) return
+    if (!delivered) throw new Conflict("task_handoff_delivery_lost")
     const saved = await get(handoff.id)
     if (saved) await project(saved, "task_handoff_started")
   }
@@ -601,7 +788,7 @@ export namespace SessionTaskHandoff {
       metadata: {
         kind,
         handoff_id: row.id,
-        title: row.title,
+        ...(kind === "task_handoff_proposal" ? { title: row.title } : {}),
         status: row.status,
         target_session_id: row.target_session_id,
         target_task_id: row.target_task_id,
@@ -612,6 +799,29 @@ export namespace SessionTaskHandoff {
 
   function hash(input: string) {
     return new Bun.CryptoHasher("sha256").update(input).digest("hex")
+  }
+
+  function dedupe(input: {
+    sourceID: SessionID
+    messageID: MessageID
+    runID: string
+    actionID: string
+    title: string
+    body: string
+    contextRefs: string[]
+  }) {
+    const digest = hash(
+      JSON.stringify([
+        input.sourceID,
+        input.messageID,
+        input.runID,
+        input.actionID,
+        input.title,
+        input.body,
+        input.contextRefs,
+      ]),
+    )
+    return `task_handoff_proposal:${input.sourceID}:${input.messageID}:${digest}`
   }
 
   function object(input: unknown) {

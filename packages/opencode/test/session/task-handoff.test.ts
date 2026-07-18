@@ -6,7 +6,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, SessionID } from "../../src/session/schema"
-import { SessionEventOutboxTable, TaskHandoffTable } from "../../src/session/session.sql"
+import { SessionEventOutboxTable, SessionTaskTable, TaskHandoffTable } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionAssignment } from "../../src/session/assignment"
@@ -62,6 +62,32 @@ async function until(fn: () => boolean | Promise<boolean>) {
   throw new Error("condition timeout")
 }
 
+async function approve(input: {
+  handoff: SessionTaskHandoff.Info
+  source: Awaited<ReturnType<typeof source>>
+  body?: string
+}) {
+  const assignment = await SessionAssignment.apply({
+    actionID: `confirm_${input.source.messageID}`,
+    assignment: { op: "handoff", target: "peer" },
+    messageID: input.source.messageID,
+    plan: input.body ?? input.handoff.body,
+    runID: `run_${input.source.messageID}`,
+    sessionID: input.source.session.id,
+    title: input.handoff.title,
+  })
+  if (!assignment) throw new Error("assignment missing")
+  return assignment
+}
+
+function offer(input: Omit<Parameters<typeof SessionTaskHandoff.propose>[0], "runID" | "actionID">) {
+  return SessionTaskHandoff.propose({
+    ...input,
+    runID: `run_${input.messageID}`,
+    actionID: `confirm_${input.messageID}`,
+  })
+}
+
 describe("SessionTaskHandoff", () => {
   test("persists a proposal without creating a target and replays its stable dedupe", () =>
     setup(async () => {
@@ -75,8 +101,8 @@ describe("SessionTaskHandoff", () => {
         body: "# Peer task\n\nDo the new work.",
         contextRefs: ["result:one"],
       }
-      const first = await SessionTaskHandoff.propose(input)
-      const replay = await SessionTaskHandoff.propose(input)
+      const first = await offer(input)
+      const replay = await offer(input)
 
       expect(first.status).toBe("proposed")
       expect(replay.id).toBe(first.id)
@@ -95,7 +121,7 @@ describe("SessionTaskHandoff", () => {
     setup(async () => {
       const parent = await Session.create({})
       const current = await source(parent.id)
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Peer task",
@@ -104,9 +130,10 @@ describe("SessionTaskHandoff", () => {
       })
 
       expect(await Session.children(parent.id)).toHaveLength(1)
+      const assignment = await approve({ handoff: proposed, source: current })
       const [first, replay] = await Promise.all([
-        SessionTaskHandoff.confirm(proposed.id),
-        SessionTaskHandoff.confirm(proposed.id),
+        SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
+        SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
       ])
       expect(replay.target_session_id).toBe(first.target_session_id)
       expect(await Session.children(parent.id)).toHaveLength(2)
@@ -133,7 +160,7 @@ describe("SessionTaskHandoff", () => {
         tools: {},
       } as MessageV2.User)
       await expect(
-        SessionTaskHandoff.propose({
+        offer({
           sourceID: current.session.id,
           messageID,
           title: "Invalid",
@@ -142,21 +169,22 @@ describe("SessionTaskHandoff", () => {
         }),
       ).rejects.toThrow("task_handoff_source_message_invalid")
 
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Root peer",
         body: "Root peer body",
         contextRefs: [],
       })
-      const confirmed = await SessionTaskHandoff.confirm(proposed.id)
+      const assignment = await approve({ handoff: proposed, source: current })
+      const confirmed = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
       expect((await Session.get(SessionID.make(confirmed.target_session_id!))).parentID).toBeUndefined()
     }))
 
   test("claims one fixed bootstrap and recovers a failed delivery without duplicate targets", () =>
     setup(async () => {
       const current = await source()
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Recover peer",
@@ -169,13 +197,14 @@ describe("SessionTaskHandoff", () => {
         return undefined
       }) as never)
       try {
-        const confirmed = await SessionTaskHandoff.confirm(proposed.id)
+        const assignment = await approve({ handoff: proposed, source: current })
+        const confirmed = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
         const runs = Promise.all([SessionTaskHandoff.resume(proposed.id), SessionTaskHandoff.resume(proposed.id)])
         await until(() => calls === 1)
         expect(calls).toBe(1)
         await runs
         await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
-        expect(await SessionTaskHandoff.confirm(proposed.id)).toMatchObject({
+        expect(await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })).toMatchObject({
           target_session_id: confirmed.target_session_id,
           target_task_id: confirmed.target_task_id,
         })
@@ -212,7 +241,7 @@ describe("SessionTaskHandoff", () => {
   test("persists enqueue failure and scan retries the same target and fixed message", () =>
     setup(async () => {
       const current = await source()
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Retry peer",
@@ -230,7 +259,8 @@ describe("SessionTaskHandoff", () => {
       }) as never)
       const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
       try {
-        const confirmed = await SessionTaskHandoff.confirm(proposed.id)
+        const assignment = await approve({ handoff: proposed, source: current })
+        const confirmed = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
         await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
         const failed = await SessionTaskHandoff.get(proposed.id)
         const before = Database.use((tx) =>
@@ -266,7 +296,7 @@ describe("SessionTaskHandoff", () => {
   test("recovers an expired delivering row from its fixed message without enqueueing twice", () =>
     setup(async () => {
       const current = await source()
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Crash peer",
@@ -276,7 +306,8 @@ describe("SessionTaskHandoff", () => {
       const fail = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => {
         throw new Error("crash before enqueue")
       }) as never)
-      const confirmed = await SessionTaskHandoff.confirm(proposed.id)
+      const assignment = await approve({ handoff: proposed, source: current })
+      const confirmed = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
       await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
       fail.mockRestore()
       const row = Database.use((tx) =>
@@ -322,7 +353,7 @@ describe("SessionTaskHandoff", () => {
   test("cancels a proposal without a target and refuses later confirmation", () =>
     setup(async () => {
       const current = await source()
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Cancelled peer",
@@ -330,14 +361,17 @@ describe("SessionTaskHandoff", () => {
         contextRefs: [],
       })
       expect((await SessionTaskHandoff.cancel(proposed.id))?.status).toBe("cancelled")
-      await expect(SessionTaskHandoff.confirm(proposed.id)).rejects.toThrow("task_handoff_not_confirmable")
+      const assignment = await approve({ handoff: proposed, source: current })
+      await expect(SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })).rejects.toThrow(
+        "task_handoff_not_confirmable",
+      )
       expect((await SessionTaskHandoff.get(proposed.id))?.target_session_id).toBeNull()
     }))
 
   test("rejects a canonical confirmation assignment whose plan differs from the proposal", () =>
     setup(async () => {
       const current = await source()
-      const proposed = await SessionTaskHandoff.propose({
+      const proposed = await offer({
         sourceID: current.session.id,
         messageID: current.messageID,
         title: "Canonical peer",
@@ -360,4 +394,169 @@ describe("SessionTaskHandoff", () => {
       )
       expect((await SessionTaskHandoff.get(proposed.id))?.target_session_id).toBeNull()
     }))
+
+  test("rejects a matching assignment created for a different action", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Action-bound peer",
+        body: "Action-bound body",
+        contextRefs: [],
+      })
+      const assignment = await SessionAssignment.apply({
+        actionID: "different_action",
+        assignment: { op: "handoff", target: "peer" },
+        messageID: current.messageID,
+        plan: proposed.body,
+        runID: "different_run",
+        sessionID: current.session.id,
+        title: proposed.title,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      await expect(SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })).rejects.toThrow(
+        "task_handoff_confirmation_invalid",
+      )
+      expect((await SessionTaskHandoff.get(proposed.id))?.target_session_id).toBeNull()
+    }))
+
+  test("requires a canonical confirmation assignment before creating a target", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Protected peer",
+        body: "Protected body",
+        contextRefs: [],
+      })
+      const bypass = SessionTaskHandoff.confirm as unknown as (id: string) => Promise<SessionTaskHandoff.Info>
+      await expect(bypass(proposed.id)).rejects.toThrow("task_handoff_confirmation_required")
+      expect((await SessionTaskHandoff.get(proposed.id))?.target_session_id).toBeNull()
+    }))
+
+  test("retains the handoff archive when its target task is deleted", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Archived peer",
+        body: "Archived body",
+        contextRefs: [],
+      })
+      const assignment = await approve({ handoff: proposed, source: current })
+      const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+      try {
+        const confirmed = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
+        Database.use((tx) =>
+          tx
+            .delete(SessionTaskTable)
+            .where(eq(SessionTaskTable.id, confirmed.target_task_id ?? ""))
+            .run(),
+        )
+        expect(await SessionTaskHandoff.get(proposed.id)).toMatchObject({
+          id: proposed.id,
+          target_task_id: confirmed.target_task_id,
+          status: "started",
+        })
+      } finally {
+        loop.mockRestore()
+      }
+    }))
+
+  test("revalidates target ownership after loading the target session", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Changed peer",
+        body: "Changed body",
+        contextRefs: [],
+      })
+      const assignment = await approve({ handoff: proposed, source: current })
+      const read = Session.get
+      const session = spyOn(Session, "get").mockImplementation((async (id: SessionID) => {
+        const result = await read(id)
+        Database.use((tx) => tx.delete(SessionTaskTable).where(eq(SessionTaskTable.session_id, id)).run())
+        return result
+      }) as never)
+      const enqueue = spyOn(SessionPrompt, "enqueue")
+      try {
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
+        expect(enqueue).toHaveBeenCalledTimes(0)
+        expect(await SessionTaskHandoff.get(proposed.id)).toMatchObject({
+          status: "failed",
+          error: "task_handoff_target_invalid",
+        })
+      } finally {
+        enqueue.mockRestore()
+        session.mockRestore()
+      }
+    }))
+
+  test("registers the fixed bootstrap with the prompt loop even when the target is busy", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Busy peer",
+        body: "Busy body",
+        contextRefs: [],
+      })
+      const assignment = await approve({ handoff: proposed, source: current })
+      const busy = spyOn(SessionPrompt, "busy").mockReturnValue(true)
+      const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+      try {
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => loop.mock.calls.length === 1)
+        expect(loop).toHaveBeenCalledTimes(1)
+        expect(busy).toHaveBeenCalledTimes(0)
+      } finally {
+        loop.mockRestore()
+        busy.mockRestore()
+      }
+    }))
+
+  test("does not expose handoffs outside the current project scope", async () => {
+    await using first = await tmpdir({ git: true })
+    await using second = await tmpdir({ git: true })
+    const saved = await Instance.provide({
+      directory: first.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_handoff_first"),
+          fn: async () => {
+            const current = await source()
+            return offer({
+              sourceID: current.session.id,
+              messageID: current.messageID,
+              title: "Scoped peer",
+              body: "Scoped body",
+              contextRefs: [],
+            })
+          },
+        }),
+    })
+    await Instance.provide({
+      directory: second.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_handoff_second"),
+          fn: async () => {
+            expect(await SessionTaskHandoff.get(saved.id)).toBeUndefined()
+            expect(await SessionTaskHandoff.cancel(saved.id)).toBeUndefined()
+            await expect(SessionTaskHandoff.confirm(saved.id, { assignmentID: "foreign" })).rejects.toThrow(
+              "task_handoff_not_found",
+            )
+            expect(await SessionTaskHandoff.scan()).toEqual([])
+          },
+        }),
+    })
+  })
 })

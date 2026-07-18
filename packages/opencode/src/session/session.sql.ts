@@ -282,10 +282,8 @@ export const TaskHandoffTable = sqliteTable(
       .references(() => SessionTable.id, { onDelete: "cascade" }),
     source_task_id: text().references(() => SessionTaskTable.id, { onDelete: "cascade" }),
     source_message_id: text().$type<MessageID>(),
-    target_session_id: text()
-      .$type<SessionID>()
-      .references(() => SessionTable.id),
-    target_task_id: text().references(() => SessionTaskTable.id),
+    target_session_id: text().$type<SessionID>(),
+    target_task_id: text(),
     title: text().notNull(),
     body: text().notNull(),
     body_hash: text().notNull(),
@@ -303,11 +301,6 @@ export const TaskHandoffTable = sqliteTable(
       columns: [table.source_session_id, table.source_task_id],
       foreignColumns: [SessionTaskTable.session_id, SessionTaskTable.id],
       name: "task_handoff_source_task_fk",
-    }).onDelete("cascade"),
-    foreignKey({
-      columns: [table.target_session_id, table.target_task_id],
-      foreignColumns: [SessionTaskTable.session_id, SessionTaskTable.id],
-      name: "task_handoff_target_task_fk",
     }).onDelete("cascade"),
     check(
       "task_handoff_target_pair_check",

@@ -14,7 +14,7 @@ import { AssignmentTable, SessionTaskTable, TaskHandoffTable, TaskRevisionTable 
 import { SessionTask } from "../../src/session/task"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { TaskFS } from "../../src/session/task-fs"
-import { Database, eq, sql } from "../../src/storage/db"
+import { Database, eq, inArray, sql } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -1792,7 +1792,7 @@ describe("session task", () => {
       expect((await SessionTask.get(session.id))?.revision.version).toBe(2)
     }))
 
-  test("rejects dangling and cross-task revision and handoff references", () =>
+  test("rejects source ownership drift while retaining target handoff snapshots", () =>
     setup(async () => {
       const a = await Session.create({})
       const b = await Session.create({})
@@ -1889,7 +1889,7 @@ describe("session task", () => {
             })
             .run(),
         ),
-      ).toThrow()
+      ).not.toThrow()
       expect(() =>
         Database.use((db) =>
           db
@@ -1910,8 +1910,14 @@ describe("session task", () => {
             })
             .run(),
         ),
-      ).toThrow()
+      ).not.toThrow()
 
+      Database.use((db) =>
+        db
+          .delete(TaskHandoffTable)
+          .where(inArray(TaskHandoffTable.id, ["handoff_target_mismatch", "handoff_target_missing"]))
+          .run(),
+      )
       await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
       await Session.remove(a.id)
       expect(await SessionTask.get(a.id)).toBeUndefined()

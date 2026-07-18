@@ -1651,7 +1651,10 @@ export namespace SessionPrompt {
         if (
           part.type === "text" &&
           input.metadata?.internal !== true &&
-          (part.metadata?.kind === "task_update_proposal" || part.metadata?.kind === "task_update_progress")
+          (part.metadata?.kind === "task_update_proposal" ||
+            part.metadata?.kind === "task_update_progress" ||
+            part.metadata?.kind === "task_handoff_proposal" ||
+            part.metadata?.kind === "task_handoff_started")
         ) {
           const metadata = { ...part.metadata }
           for (const key of [
@@ -1665,6 +1668,13 @@ export namespace SessionPrompt {
             "reusable_result_refs",
             "status",
             "error",
+            "handoff_id",
+            "target_session_id",
+            "target_task_id",
+            "title",
+            "body",
+            "body_hash",
+            "context_refs",
           ])
             delete metadata[key]
           return [{ ...part, metadata, messageID: info.id, sessionID: input.sessionID }]
