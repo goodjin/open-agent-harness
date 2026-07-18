@@ -177,9 +177,10 @@ export namespace SessionTaskHandoff {
         if (!message) throw new Conflict("task_handoff_source_message_invalid")
         const assignment = tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, input.assignmentID)).get()
         const replay = current.status === "started" || current.status === "confirmed" || current.status === "creating"
+        const retry = current.status === "failed"
         if (
           !assignment ||
-          assignment.status !== (replay ? "completed" : "running") ||
+          assignment.status !== (replay || retry ? "completed" : "running") ||
           assignment.source_type !== "confirm" ||
           assignment.session_id !== current.source_session_id ||
           assignment.source_session_id !== current.source_session_id ||
@@ -352,7 +353,7 @@ export namespace SessionTaskHandoff {
               error: null,
             })
             .run()
-        if (assignment) {
+        if (assignment.status === "running") {
           const consumed = tx
             .update(AssignmentTable)
             .set({ status: "completed", time_updated: now })

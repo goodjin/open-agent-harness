@@ -293,6 +293,65 @@ describe("SessionTaskHandoff", () => {
       }
     }))
 
+  test("retries a failed handoff with the same completed confirmation proof", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const current = await source(parent.id)
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Confirm retry peer",
+        body: "Confirm retry body",
+        contextRefs: [],
+      })
+      const assignment = await approve({ handoff: proposed, source: current })
+      const enqueue = SessionPrompt.enqueue
+      let calls = 0
+      const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async (
+        input: Parameters<typeof SessionPrompt.enqueue>[0],
+      ) => {
+        calls++
+        if (calls === 1) throw new Error("confirm retry rejected")
+        return enqueue(input)
+      }) as never)
+      const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+      try {
+        const first = await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
+        const before = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+
+        const [retry, replay] = await Promise.all([
+          SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
+          SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
+          SessionTaskHandoff.scan(),
+        ])
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
+        const after = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+
+        expect(retry.target_session_id).toBe(first.target_session_id)
+        expect(retry.target_task_id).toBe(first.target_task_id)
+        expect(replay.target_session_id).toBe(first.target_session_id)
+        expect(after?.id).toBe(before?.id)
+        expect(after?.payload.message_id).toBe(before?.payload.message_id)
+        expect(await Session.children(parent.id)).toHaveLength(2)
+      } finally {
+        write.mockRestore()
+        loop.mockRestore()
+      }
+    }))
+
   test("recovers an expired delivering row from its fixed message without enqueueing twice", () =>
     setup(async () => {
       const current = await source()
