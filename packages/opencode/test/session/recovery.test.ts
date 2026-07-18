@@ -363,6 +363,81 @@ describe("session recovery", () => {
     }
   })
 
+  test("abandons a pending bootstrap when its revision changes during message lookup", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const calls: unknown[] = []
+    let enter = () => {}
+    let release = () => {}
+    const entered = new Promise<void>((resolve) => (enter = resolve))
+    const wait = new Promise<void>((resolve) => (release = resolve))
+    const original = MessageV2.get
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls.push(input.metadata?.revision_id)
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_lookup_race"),
+        fn: async () => {
+          const data = await revision(tmp.path, "lookup_race")
+          const old = Database.use((db) =>
+            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
+          )
+          const lookup = spyOn(MessageV2, "get").mockImplementation((async (input: Parameters<typeof MessageV2.get>[0]) => {
+            if (input.messageID === old.payload.message_id) {
+              enter()
+              await wait
+            }
+            return original(input)
+          }) as never)
+          try {
+            const resume = SessionTaskRecovery.resume(data.session.id)
+            await entered
+            const next = await SessionTask.route({
+              sessionID: data.session.id,
+              messageID: data.messageID,
+              runID: "run_lookup_race_current",
+              assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+              actions: [],
+            })
+            if (next.type !== "update") throw new Error("current draft missing")
+            const task = await SessionTask.get(data.session.id)
+            if (!task) throw new Error("task missing")
+            await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+            Database.use((db) =>
+              db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.id, task.task.id)).run(),
+            )
+            release()
+            await resume
+
+            const rows = Database.use((db) =>
+              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
+            )
+            expect(calls).toEqual([])
+            expect(rows.find((row) => row.id === old.id)?.status).toBe("pending")
+            expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("pending")
+            expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+            expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+
+            expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+            const recovered = Database.use((db) =>
+              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
+            )
+            expect(calls).toEqual([next.revision.id])
+            expect(recovered.find((row) => row.id === old.id)?.status).toBe("pending")
+            expect(recovered.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
+            expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+          } finally {
+            lookup.mockRestore()
+          }
+        },
+      }) })
+    } finally {
+      release()
+      prompt.mockRestore()
+    }
+  })
+
   test("scan advances only task recovery rows from the current project directory", async () => {
     await using a = await tmpdir({ git: true })
     await using b = await tmpdir({ git: true })

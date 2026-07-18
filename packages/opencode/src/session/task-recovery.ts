@@ -1,4 +1,4 @@
-import { and, Database, eq, inArray } from "@/storage/db"
+import { and, Database, eq, exists, inArray } from "@/storage/db"
 import { Session } from "."
 import { SessionDelegation } from "./delegation"
 import { MessageV2 } from "./message-v2"
@@ -255,50 +255,115 @@ export namespace SessionTaskRecovery {
     )
   }
 
+  function scope(row: typeof SessionEventOutboxTable.$inferSelect) {
+    const task = typeof row.payload.task_id === "string" ? row.payload.task_id : ""
+    const revision = typeof row.payload.revision_id === "string" ? row.payload.revision_id : ""
+    if (!task || !revision) return
+    return and(
+      eq(SessionTaskTable.id, task),
+      eq(SessionTaskTable.session_id, row.session_id),
+      eq(SessionTaskTable.current_revision_id, revision),
+    )
+  }
+
+  function guard(
+    tx: Database.TxOrDb,
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    status: typeof SessionEventOutboxTable.$inferSelect.status,
+    updated?: number,
+  ) {
+    const current = scope(row)
+    if (!current) return
+    return and(
+      eq(SessionEventOutboxTable.id, row.id),
+      eq(SessionEventOutboxTable.session_id, row.session_id),
+      eq(SessionEventOutboxTable.payload, row.payload),
+      eq(SessionEventOutboxTable.status, status),
+      updated === undefined ? undefined : eq(SessionEventOutboxTable.updated_at, updated),
+      exists(tx.select({ id: SessionTaskTable.id }).from(SessionTaskTable).where(current)),
+    )
+  }
+
+  function valid(
+    row: typeof SessionEventOutboxTable.$inferSelect,
+    status: typeof SessionEventOutboxTable.$inferSelect.status,
+    updated?: number,
+  ) {
+    return Database.use((tx) => {
+      const where = guard(tx, row, status, updated)
+      if (!where) return false
+      return !!tx.select({ id: SessionEventOutboxTable.id }).from(SessionEventOutboxTable).where(where).get()
+    })
+  }
+
+  function retry(row: typeof SessionEventOutboxTable.$inferSelect, updated: number, err?: unknown) {
+    Database.use((tx) =>
+      tx
+        .update(SessionEventOutboxTable)
+        .set({
+          status: "pending",
+          error: err === undefined ? null : err instanceof Error ? err.message : String(err),
+          updated_at: Date.now(),
+        })
+        .where(
+          and(
+            eq(SessionEventOutboxTable.id, row.id),
+            eq(SessionEventOutboxTable.payload, row.payload),
+            eq(SessionEventOutboxTable.status, "delivering"),
+            eq(SessionEventOutboxTable.updated_at, updated),
+          ),
+        )
+        .run(),
+    )
+  }
+
   async function start(row: typeof SessionEventOutboxTable.$inferSelect): Promise<boolean> {
     const now = Date.now()
     const data = row.payload
     const message = typeof data.message_id === "string" ? MessageID.make(data.message_id) : MessageID.ascending()
+    if (!valid(row, row.status, row.updated_at)) return true
     const existing = await MessageV2.get({ sessionID: row.session_id, messageID: message }).catch(() => undefined)
     if (row.status === "delivering") {
       if (existing) {
-        Database.use((tx) =>
-          tx
-            .update(SessionEventOutboxTable)
+        Database.use((tx) => {
+          const where = guard(tx, row, "delivering", row.updated_at)
+          if (!where) return
+          tx.update(SessionEventOutboxTable)
             .set({ status: "delivered", delivered_at: now, acked_at: null, updated_at: now, error: null })
-            .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "delivering")))
-            .run(),
-        )
+            .where(where)
+            .run()
+        })
         return true
       }
       if (row.updated_at > now - 30_000) return true
-      const reset = Database.use((tx) =>
-        tx
-          .update(SessionEventOutboxTable)
-          .set({ status: "pending", updated_at: now })
-          .where(
-            and(
-              eq(SessionEventOutboxTable.id, row.id),
-              eq(SessionEventOutboxTable.status, "delivering"),
-              eq(SessionEventOutboxTable.updated_at, row.updated_at),
-            ),
-          )
-          .returning()
-          .get(),
-      )
+      const reset = Database.use((tx) => {
+        const where = guard(tx, row, "delivering", row.updated_at)
+        if (!where) return
+        return tx.update(SessionEventOutboxTable).set({ status: "pending", updated_at: now }).where(where).returning().get()
+      })
       return reset ? start(reset) : true
     }
     if (row.status !== "pending") return true
-    const claimed = Database.use((tx) =>
-      tx
+    const claimed = Database.use((tx) => {
+      const where = guard(tx, row, "pending", row.updated_at)
+      if (!where) return
+      return tx
         .update(SessionEventOutboxTable)
         .set({ status: "delivering", updated_at: now, error: null })
-        .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "pending")))
+        .where(where)
         .returning({ id: SessionEventOutboxTable.id })
-        .get(),
-    )
+        .get()
+    })
     if (!claimed) return true
+    if (!valid(row, "delivering", now)) {
+      retry(row, now)
+      return true
+    }
     const session = await Session.get(row.session_id)
+    if (!valid(row, "delivering", now)) {
+      retry(row, now)
+      return true
+    }
     await SessionPrompt.prompt({
       sessionID: row.session_id,
       messageID: message,
@@ -320,22 +385,22 @@ export namespace SessionTaskRecovery {
         },
       ],
     }).catch((err) => {
-      Database.use((tx) =>
-        tx
-          .update(SessionEventOutboxTable)
-          .set({ status: "pending", error: err instanceof Error ? err.message : String(err), updated_at: Date.now() })
-          .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "delivering")))
-          .run(),
-      )
-      throw err
+      const owned = valid(row, "delivering", now)
+      retry(row, now, err)
+      if (owned) throw err
     })
-    Database.use((tx) =>
-      tx
-        .update(SessionEventOutboxTable)
+    if (!valid(row, "delivering", now)) {
+      retry(row, now)
+      return true
+    }
+    Database.use((tx) => {
+      const where = guard(tx, row, "delivering", now)
+      if (!where) return
+      tx.update(SessionEventOutboxTable)
         .set({ status: "delivered", delivered_at: Date.now(), acked_at: null, updated_at: Date.now(), error: null })
-        .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "delivering")))
-        .run(),
-    )
+        .where(where)
+        .run()
+    })
     return true
   }
 }

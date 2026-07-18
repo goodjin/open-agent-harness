@@ -54,6 +54,8 @@ Task recovery startup scanning joins Task rows back to Session authority and fil
 
 Every bootstrap outbox lookup and state transition is also bound to the current Session Task and Revision identities. If a later Revision becomes active while an older Revision still has pending, delivering, delivered, or acked rows, recovery ignores those older rows and claims only the current Revision bootstrap. Lease recovery and fixed-message deduplication retain the same identity boundary.
 
+Bootstrap delivery revalidates that identity across each asynchronous message, Session, and prompt boundary. Outbox claim and delivered transitions include the current Task Revision as part of the same database condition; if the Revision changes mid-flight, recovery releases its own delivery lease back to pending without prompting, marking the old row delivered, or unblocking the current Task. A later recovery can then claim the new Revision bootstrap normally.
+
 Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, evidence expectations, risks, and handoff shape. A worker used as a design consultant is explicitly read-only for that assignment. Planner synthesis must separate evidence from inference, resolve conflicts, and request a focused follow-up when a material disagreement cannot be settled from available evidence.
 
 ## Package Agent Catalog
