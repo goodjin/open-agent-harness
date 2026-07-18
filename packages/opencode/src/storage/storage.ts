@@ -214,6 +214,65 @@ export namespace Storage {
     }
   }
 
+  export async function exists(key: string[]) {
+    const dir = await state().then((x) => x.dir)
+    return fs.stat(path.join(dir, ...key) + ".json").then(
+      (item) => item.isFile(),
+      () => false,
+    )
+  }
+
+  export async function locked<T>(key: string[], fn: () => Promise<T>) {
+    const root = await state().then((x) => x.dir)
+    const dir = path.join(root, ...key) + ".lock"
+    const owner = path.join(dir, "owner.json")
+    const end = Date.now() + 30_000
+    while (true) {
+      const made = await fs.mkdir(dir, { recursive: false }).then(
+        () => true,
+        (err: unknown) => {
+          if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return undefined
+          if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EEXIST") return false
+          throw err
+        },
+      )
+      if (made === undefined) {
+        await fs.mkdir(path.dirname(dir), { recursive: true })
+        continue
+      }
+      if (made) {
+        await Filesystem.writeJson(owner, { pid: process.pid, time: Date.now() })
+        try {
+          return await fn()
+        } finally {
+          await fs.rm(dir, { recursive: true, force: true })
+        }
+      }
+      const saved = await Filesystem.readJson<{ pid?: number; time?: number }>(owner).catch(() => undefined)
+      const age = await fs.stat(dir).then(
+        (item) => Date.now() - item.mtimeMs,
+        () => 0,
+      )
+      const alive =
+        saved?.pid &&
+        (() => {
+          try {
+            process.kill(saved.pid, 0)
+            return true
+          } catch {
+            return false
+          }
+        })()
+      const stale = saved?.time ? Date.now() - saved.time > 60_000 : age > 60_000
+      if ((!alive && !!saved) || stale) {
+        await fs.rm(dir, { recursive: true, force: true })
+        continue
+      }
+      if (Date.now() >= end) throw new Error(`Storage lock timeout: ${key.join("/")}`)
+      await Bun.sleep(10)
+    }
+  }
+
   async function withErrorHandling<T>(body: () => Promise<T>) {
     return body().catch((e) => {
       if (!(e instanceof Error)) throw e

@@ -109,9 +109,38 @@ export namespace SessionRuns {
     })
     .strict()
 
+  const Manifest = z
+    .object({
+      version: z.literal(1),
+      generation: z.string().min(1),
+      count: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+      runs: z.array(Migration).max(MIGRATION_LIMIT),
+    })
+    .strict()
+
+  const Generation = z
+    .object({
+      generation: z.string().min(1),
+      dirty: z.boolean(),
+    })
+    .strict()
+
   export async function store(sessionID: SessionID, run: AgentProtocol.Result) {
-    await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
-    await Storage.write(["session_protocol_run_index", sessionID, run.run_id], migrationIndex(run))
+    return Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
+      const generation = crypto.randomUUID()
+      const existed = await Storage.exists(["session_protocol_run", sessionID, run.run_id])
+      const cached = await healthy(sessionID)
+      await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: true })
+      await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
+      const index = migrationIndex(run)
+      await Storage.write(["session_protocol_run_index", sessionID, run.run_id], index)
+      const manifest = cached
+        ? update(cached, index, existed, generation)
+        : await rebuild(sessionID, generation)
+      await Storage.write(["session_protocol_run_manifest", sessionID], manifest)
+      await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: false })
+    })
   }
 
   export async function migrationCount(sessionID: SessionID) {
@@ -123,25 +152,74 @@ export namespace SessionRuns {
   }
 
   export async function migration(sessionID: SessionID, limit = MIGRATION_LIMIT) {
-    const keys = await Storage.list(["session_protocol_run", sessionID])
     const size = z.number().int().min(1).max(MIGRATION_LIMIT).parse(limit)
-    const edge = Math.ceil(size / 2)
-    const tail = size - edge
-    const picked =
-      keys.length <= size ? keys : [...keys.slice(0, edge), ...(tail ? keys.slice(-tail) : [])]
-    const runs = await Promise.all(picked.map((key) => indexed(sessionID, key.at(-1)!)))
+    const cached =
+      (await healthy(sessionID)) ??
+      (await Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
+        const found = await healthy(sessionID)
+        if (found) return found
+        const generation = crypto.randomUUID()
+        await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: true })
+        const manifest = await rebuild(sessionID, generation)
+        await Storage.write(["session_protocol_run_manifest", sessionID], manifest)
+        await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: false })
+        return manifest
+      }))
+    const runs = select(cached.runs, size)
     return {
-      count: keys.length,
-      truncated: keys.length > picked.length,
-      runs: runs
-        .map((run) => ({
-          run_id: run.run_id,
-          title: run.title ?? "Legacy task",
-          status: run.status,
-          time: run.time,
-        }))
-        .sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
+      count: cached.count,
+      truncated: cached.count > runs.length,
+      runs,
     }
+  }
+
+  async function healthy(sessionID: SessionID) {
+    const [manifest, generation] = await Promise.all([
+      Storage.read<unknown>(["session_protocol_run_manifest", sessionID])
+        .then((item) => Manifest.parse(item))
+        .catch(() => undefined),
+      Storage.read<unknown>(["session_protocol_run_generation", sessionID])
+        .then((item) => Generation.parse(item))
+        .catch(() => undefined),
+    ])
+    if (!manifest || !generation || generation.dirty) return
+    if (manifest.generation !== generation.generation) return
+    return manifest
+  }
+
+  async function rebuild(sessionID: SessionID, generation: string) {
+    const keys = await Storage.list(["session_protocol_run", sessionID])
+    const picked = select(keys, MIGRATION_LIMIT)
+    const runs = await Promise.all(picked.map((key) => indexed(sessionID, key.at(-1)!)))
+    return Manifest.parse({
+      version: 1,
+      generation,
+      count: keys.length,
+      truncated: keys.length > runs.length,
+      runs: runs.sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
+    })
+  }
+
+  function update(manifest: z.infer<typeof Manifest>, run: z.infer<typeof Migration>, existed: boolean, generation: string) {
+    const by = new Map(manifest.runs.map((item) => [item.run_id, item]))
+    by.set(run.run_id, run)
+    const count = manifest.count + (existed ? 0 : 1)
+    const runs = select([...by.values()].sort((a, b) => a.run_id.localeCompare(b.run_id)), MIGRATION_LIMIT)
+      .sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id))
+    return Manifest.parse({
+      version: 1,
+      generation,
+      count,
+      truncated: count > runs.length,
+      runs,
+    })
+  }
+
+  function select<T>(items: T[], limit: number) {
+    if (items.length <= limit) return items
+    const edge = Math.ceil(limit / 2)
+    const tail = limit - edge
+    return [...items.slice(0, edge), ...(tail ? items.slice(-tail) : [])]
   }
 
   async function indexed(sessionID: SessionID, runID: string) {

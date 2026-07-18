@@ -55,6 +55,8 @@ describe("session runs", () => {
             expect(indexed.runs.some((run) => run.run_id === "run_orphan")).toBe(false)
             const read = Storage.read
             const keys: string[][] = []
+            const list = spyOn(Storage, "list")
+            const probe = spyOn(Storage, "probe")
             const hook = spyOn(Storage, "read").mockImplementation(async (key) => {
               keys.push(key)
               return read(key)
@@ -65,13 +67,96 @@ describe("session runs", () => {
               expect(migration.count).toBe(101)
               expect(migration.truncated).toBe(true)
               expect(migration.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
-              expect(keys).toHaveLength(SessionRuns.MIGRATION_LIMIT * 2)
-              expect(keys.every((key) => key[0] === "session_protocol_run_index")).toBe(true)
+              expect(keys).toHaveLength(4)
+              expect(
+                keys.every(
+                  (key) =>
+                    key[0] === "session_protocol_run_manifest" ||
+                    key[0] === "session_protocol_run_generation",
+                ),
+              ).toBe(true)
               expect(keys.some((key) => key[0] === "session_protocol_run")).toBe(false)
               expect(keys.some((key) => key[0] === "session_protocol_run_outcome")).toBe(false)
+              expect(list).not.toHaveBeenCalled()
+              expect(probe).not.toHaveBeenCalled()
             } finally {
               hook.mockRestore()
+              list.mockRestore()
+              probe.mockRestore()
             }
+            await Storage.write(["session_protocol_run_manifest", session.id], { invalid: true })
+            expect((await SessionRuns.migration(session.id)).count).toBe(101)
+
+            const stale = await Storage.read<Record<string, unknown>>([
+              "session_protocol_run_manifest",
+              session.id,
+            ])
+            await Storage.write(["session_protocol_run_generation", session.id], {
+              generation: "stale-generation",
+              dirty: false,
+            })
+            expect((await SessionRuns.migration(session.id)).count).toBe(101)
+            expect(
+              await Storage.read(["session_protocol_run_manifest", session.id]),
+            ).not.toEqual(stale)
+
+            const crashed = result("run_migration_crashed")
+            await Storage.write(["session_protocol_run_generation", session.id], {
+              generation: "crashed-generation",
+              dirty: true,
+            })
+            await Storage.write(["session_protocol_run", session.id, crashed.run_id], crashed)
+            expect((await SessionRuns.migration(session.id)).count).toBe(102)
+
+            const stored = result("run_migration_stored")
+            await SessionRuns.store(session.id, stored)
+            const after = await SessionRuns.migration(session.id)
+            expect(after.count).toBe(103)
+            expect(after.runs.some((run) => run.run_id === stored.run_id)).toBe(true)
+
+            const same = "run_migration_same"
+            const start = path.join(tmp.path, "run-store-start")
+            const children = ["First committed title", "Second committed title"].map((title, index) =>
+              Bun.spawn(
+                [
+                  "bun",
+                  "-e",
+                  `
+                    console.log("RUN_STORE_READY")
+                    while (!(await Bun.file(process.env.RUN_START).exists())) await Bun.sleep(5)
+                    const { AgentProtocol } = await import("./src/protocol/schema.ts")
+                    const { SessionRuns } = await import("./src/session/runs.ts")
+                    await SessionRuns.store(process.env.RUN_SESSION, AgentProtocol.Result.parse(JSON.parse(process.env.RUN_VALUE)))
+                  `,
+                ],
+                {
+                  cwd: path.join(import.meta.dir, "../.."),
+                  env: {
+                    ...process.env,
+                    RUN_START: start,
+                    RUN_SESSION: session.id,
+                    RUN_VALUE: JSON.stringify({ ...result(same), title }),
+                  },
+                  stdout: "pipe",
+                  stderr: "inherit",
+                },
+              ),
+            )
+            const ready = await Promise.all(
+              children.map(async (child) => {
+                const reader = child.stdout.getReader()
+                const item = await reader.read()
+                reader.releaseLock()
+                return new TextDecoder().decode(item.value)
+              }),
+            )
+            expect(ready.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
+            await Bun.write(start, "go")
+            expect(await Promise.all(children.map((child) => child.exited))).toEqual([0, 0])
+            const main = await Storage.read<AgentProtocol.Result>(["session_protocol_run", session.id, same])
+            expect((await SessionRuns.migration(session.id)).runs).toContainEqual(
+              expect.objectContaining({ run_id: same, title: main.title }),
+            )
           },
         }),
     })
