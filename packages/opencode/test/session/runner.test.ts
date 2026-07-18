@@ -29,7 +29,7 @@ import { Storage } from "../../src/storage/storage"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionTask } from "../../src/session/task"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
-import { TaskHandoffTable } from "../../src/session/session.sql"
+import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { Database, eq } from "../../src/storage/db"
 
 afterEach(() => mock.restore())
@@ -779,7 +779,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner rejects multi-run legacy execution without migration confirmation", async () => {
+  test("protocol runner binds a legacy session task before executable actions", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -935,14 +935,6 @@ describe("SessionRunner", () => {
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
               const session = await Session.create({})
-              await Storage.write(
-                ["session_protocol_run", session.id, "run_runner_legacy_a"],
-                run("run_runner_legacy_a"),
-              )
-              await Storage.write(
-                ["session_protocol_run", session.id, "run_runner_legacy_b"],
-                run("run_runner_legacy_b"),
-              )
               await Session.setPermission({
                 sessionID: session.id,
                 permission: [{ permission: "*", pattern: "*", action: "allow" }],
@@ -982,48 +974,177 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              await expect(
-                runner.process({
-                  user,
-                  sessionID: session.id,
-                  model,
-                  agent: {
-                    name: "protocol-runner",
-                    runner: "protocol",
-                    entry: {
-                      primary: true,
-                      delegable: false,
-                      mentionable: true,
-                      default: false,
-                      hidden: false,
-                    },
-                    capability: {
-                      purpose: "protocol_orchestration",
-                      tags: [],
-                      cost: "low",
-                      writes: false,
-                    },
-                    permission: [{ permission: "*", pattern: "*", action: "allow" }],
-                    inheritPermissions: false,
-                  } as never,
-                  system: [],
-                  abort: new AbortController().signal,
-                  messages: [
-                    { role: "user", content: "old turn" },
-                    { role: "assistant", content: '[TOOL_CALL]\n{tool => "read"}\n[/TOOL_CALL]' },
-                    { role: "user", content: "inspect" },
-                  ],
-                  tools: {},
-                }),
-              ).rejects.toThrow("session_task_conflict")
-              expect(await SessionTask.get(session.id)).toBeUndefined()
-              expect(await Session.children(session.id)).toHaveLength(0)
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: {
+                  name: "protocol-runner",
+                  runner: "protocol",
+                  entry: {
+                    primary: true,
+                    delegable: false,
+                    mentionable: true,
+                    default: false,
+                    hidden: false,
+                  },
+                  capability: {
+                    purpose: "protocol_orchestration",
+                    tags: [],
+                    cost: "low",
+                    writes: false,
+                  },
+                  permission: [{ permission: "*", pattern: "*", action: "allow" }],
+                  inheritPermissions: false,
+                } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [
+                  { role: "user", content: "old turn" },
+                  { role: "assistant", content: '[TOOL_CALL]\n{tool => "read"}\n[/TOOL_CALL]' },
+                  { role: "user", content: "inspect" },
+                ],
+                tools: {},
+              })
+              const parts = await MessageV2.parts(assistant.id)
+              const sessionAfter = await Session.get(session.id)
+              const protocol = sessionAfter.dsl_context?.protocol as
+                | {
+                    runs?: {
+                      runID: string
+                      total: number
+                      actions: { id: string; status: string; output?: string }[]
+                    }[]
+                  }
+                | undefined
+
+              expect(result).toBe("stop")
+              expect(
+                parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context"),
+              ).toBe(true)
+              expect(
+                parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
+              ).toBe(false)
+              expect(parts.some((part) => part.type === "tool" && part.metadata?.protocol === true)).toBe(true)
+              expect(protocol?.runs?.[0]?.total).toBe(3)
+              expect(await SessionTask.current(session.id)).toMatchObject({ title: "Inspect", version: 1 })
+              const children = await Session.children(session.id)
+              expect(children).toHaveLength(1)
+              expect(await SessionTask.current(children[0]!.id)).toMatchObject({
+                title: "Delegate summary",
+                version: 1,
+              })
             },
           }),
       })
     } finally {
       hook.mockRestore()
       prompt.mockRestore()
+    }
+  })
+
+  test("protocol runner rejects ordinary execution for an unbound multi-run legacy session", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const stream = spyOn(LLM, "stream").mockImplementation(async () =>
+      packet(
+        {
+          version: "2",
+          items: [{ id: "inspect_legacy", kind: "tool", target: "read", args: { filePath: "package.json" } }],
+        },
+        "call_multi_run_legacy",
+      ),
+    )
+    let tools = 0
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await Storage.write(
+                ["session_protocol_run", session.id, "run_runner_legacy_a"],
+                run("run_runner_legacy_a"),
+              )
+              await Storage.write(
+                ["session_protocol_run", session.id, "run_runner_legacy_b"],
+                run("run_runner_legacy_b"),
+              )
+              const before = Database.use((db) => ({
+                tasks: db.select().from(SessionTaskTable).all().length,
+                revisions: db.select().from(TaskRevisionTable).all().length,
+              }))
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+              await expect(
+                runner.process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: { name: "protocol-runner", runner: "protocol" } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [{ role: "user", content: "inspect legacy session" }],
+                  tools: {},
+                  runtimeTools: {
+                    catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
+                    prompt: "",
+                    execute: async () => {
+                      tools++
+                      return { title: "read", output: "unexpected", metadata: {} }
+                    },
+                  } as never,
+                }),
+              ).rejects.toThrow("session_task_conflict")
+              expect(tools).toBe(0)
+              expect(await SessionTask.get(session.id)).toBeUndefined()
+              expect(await Session.children(session.id)).toHaveLength(0)
+              expect(
+                Database.use((db) => ({
+                  tasks: db.select().from(SessionTaskTable).all().length,
+                  revisions: db.select().from(TaskRevisionTable).all().length,
+                })),
+              ).toEqual(before)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
     }
   })
 
