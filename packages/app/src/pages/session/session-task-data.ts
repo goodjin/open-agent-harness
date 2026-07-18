@@ -2,6 +2,7 @@ import type {
   SessionTaskCurrentResponse,
   SessionTaskHistoryResponse,
   SessionTaskRevisionResponse,
+  SessionTaskSummary,
 } from "@open-agent-harness/sdk/v2/client"
 
 export type Current = SessionTaskCurrentResponse
@@ -10,6 +11,8 @@ export type Revision = SessionTaskRevisionResponse
 export type Status = Current["status"] | "unbound"
 export type Result = "recorded" | "fallback" | "missing"
 export type Request = "current" | "history" | "detail"
+export type Summary = SessionTaskSummary
+export type Badge = { sessionID: string; value?: Summary }
 
 const actions = {
   pending: "session.task.action.pending",
@@ -77,6 +80,21 @@ export const watch = (
 export const stamp = (value: number, locale: string) =>
   new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(value)
 
+export const compact = (task?: Current): Summary | undefined =>
+  task
+    ? {
+        id: task.id,
+        title: task.title,
+        version: task.version,
+        status: task.status,
+        completed_actions: task.progress.completed,
+        total_actions: task.progress.total,
+      }
+    : undefined
+
+export const choose = (sessionID: string | undefined, local: Badge | undefined, fallback?: Summary) =>
+  local && local.sessionID === sessionID ? local.value : fallback
+
 export const content = (task: Current | Revision) => (result(task) === "missing" ? undefined : task.result?.trim())
 
 export const progress = (task: Current | Revision) => {
@@ -136,6 +154,43 @@ export const requests = () => {
       )
   }
   return { cancel, reset, run }
+}
+
+export const single = (run: (sessionID: string) => Promise<unknown>, reset: () => void) => {
+  let active: { id: string; token: symbol; promise: Promise<void> } | undefined
+  let pending: string | undefined
+  const start = (id: string) => {
+    const token = Symbol()
+    const promise = Promise.resolve()
+      .then(() => run(id))
+      .then(() => {})
+      .finally(() => {
+        if (active?.token !== token) return
+        active = undefined
+        const next = pending
+        pending = undefined
+        if (next) void start(next)
+      })
+    active = { id, token, promise }
+    return promise
+  }
+  const refresh = (id: string) => {
+    if (!active) return start(id)
+    if (active.id === id) pending = id
+    return active.promise
+  }
+  const change = (id: string) => {
+    reset()
+    active = undefined
+    pending = undefined
+    return start(id)
+  }
+  const stop = () => {
+    reset()
+    active = undefined
+    pending = undefined
+  }
+  return { change, refresh, stop }
 }
 
 export const view = (task?: Current) => {

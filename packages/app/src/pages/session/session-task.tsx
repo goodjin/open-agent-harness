@@ -6,6 +6,7 @@ import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import {
   action as actionLabel,
+  compact,
   content,
   handoff as handoffLabel,
   initial,
@@ -13,6 +14,7 @@ import {
   refresh,
   requests,
   result,
+  single,
   stamp,
   view,
   watch,
@@ -62,7 +64,7 @@ const code = (err: unknown) => {
   return item.status ?? item.response?.status
 }
 
-export function SessionTask(props: { sessionID: string }) {
+export function SessionTask(props: { sessionID: string; onSummary?: (task: ReturnType<typeof compact>) => void }) {
   const sdk = useSDK()
   const language = useLanguage()
   const [state, setState] = createStore(initial())
@@ -75,10 +77,14 @@ export function SessionTask(props: { sessionID: string }) {
     return loader.run(
       "current",
       (signal) => sdk.client.session.task.current({ sessionID: id }, { signal }),
-      (res) => setState({ current: res.data, loading: { ...state.loading, current: false } }),
+      (res) => {
+        setState({ current: res.data, loading: { ...state.loading, current: false } })
+        props.onSummary?.(compact(res.data))
+      },
       (err) => {
         if (code(err) === 404) {
           setState({ current: undefined, loading: { ...state.loading, current: false } })
+          props.onSummary?.(undefined)
           return
         }
         setState("loading", "current", false)
@@ -86,6 +92,8 @@ export function SessionTask(props: { sessionID: string }) {
       },
     )
   }
+
+  const flight = single(load, loader.reset)
 
   const history = () => {
     setDrawer(true)
@@ -127,25 +135,24 @@ export function SessionTask(props: { sessionID: string }) {
     setState({ detail: undefined, loading: { ...state.loading, detail: false } })
     setState("error", "detail", undefined)
     setDrawer(false)
-    void load(props.sessionID)
+    void flight.refresh(props.sessionID)
   }
 
-  const bind = watch(sdk.event.on, (id) => void load(id))
+  const bind = watch(sdk.event.on, (id) => void flight.refresh(id))
 
   createEffect(() => {
     const id = props.sessionID
-    loader.reset()
     setDrawer(false)
     setState(initial())
     bind(id)
-    void load(id)
+    void flight.change(id)
   })
 
-  const poll = refresh(() => void load(props.sessionID))
+  const poll = refresh(() => void flight.refresh(props.sessionID))
   onCleanup(() => {
     poll()
     bind()
-    loader.reset()
+    flight.stop()
   })
 
   const shown = () => state.detail ?? state.current

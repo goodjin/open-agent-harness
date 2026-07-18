@@ -1,4 +1,4 @@
-import type { FileDiff, Project, UserMessage } from "@open-agent-harness/sdk/v2"
+import type { FileDiff, Project, SessionTaskSummary, UserMessage } from "@open-agent-harness/sdk/v2"
 import { useDialog } from "@open-agent-harness/ui/context/dialog"
 import {
   batch,
@@ -66,6 +66,7 @@ import { SessionLogTimeline } from "@/pages/session/session-log-timeline"
 import { syncSessionModel } from "@/pages/session/session-model-helpers"
 import { SessionSidePanel } from "@/pages/session/session-side-panel"
 import { SessionTask } from "@/pages/session/session-task"
+import { choose } from "@/pages/session/session-task-data"
 import { hasDelegationContext, hasDelegationTurn } from "@/pages/session/session-delegations"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { useSessionCommands } from "@/pages/session/use-session-commands"
@@ -507,9 +508,12 @@ export default function Page() {
   }
 
   const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const [latest, setLatest] = createSignal<{ sessionID: string; value?: SessionTaskSummary }>()
+  createEffect(on(() => params.id, () => setLatest(undefined)))
+  const summary = createMemo(() => choose(params.id, latest(), info()?.task))
   const badge = createMemo(() => {
-    const task = info()?.task
-    if (!task) return "session.task.status.unbound" as const
+    const item = summary()
+    if (!item) return "session.task.status.unbound" as const
     return {
       running: "session.task.status.running",
       waiting_user: "session.task.status.waitingUser",
@@ -517,7 +521,7 @@ export default function Page() {
       blocked: "session.task.status.blocked",
       completed: "session.task.status.completed",
       failed: "session.task.status.failed",
-    }[task.status]
+    }[item.status]
   })
   const status = createMemo(() => (params.id ? sync.data.session_status[params.id] : undefined))
   const resumable = createMemo(() => resumePrompt(status()))
@@ -1382,7 +1386,15 @@ export default function Page() {
             >
               <Match when={taskMode()}>
                 <Show when={params.id} keyed>
-                  {(id) => <SessionTask sessionID={id} />}
+                  {(id) => (
+                    <SessionTask
+                      sessionID={id}
+                      onSummary={(value) => {
+                        if (params.id !== id) return
+                        setLatest({ sessionID: id, value })
+                      }}
+                    />
+                  )}
                 </Show>
               </Match>
               <Match when={logMode()}>{logPanel()}</Match>

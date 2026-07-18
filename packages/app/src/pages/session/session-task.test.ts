@@ -2,7 +2,22 @@ import { describe, expect, test } from "bun:test"
 import type { SessionTaskCurrentResponse, SessionTaskRevisionResponse } from "@open-agent-harness/sdk/v2/client"
 import { dict as en } from "@/i18n/en"
 import { dict as zh } from "@/i18n/zh"
-import { action, content, handoff, initial, progress, refresh, requests, stamp, view, watch } from "./session-task-data"
+import {
+  action,
+  choose,
+  compact,
+  content,
+  handoff,
+  initial,
+  progress,
+  refresh,
+  requests,
+  single,
+  stamp,
+  view,
+  watch,
+  type Badge,
+} from "./session-task-data"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
   ({
@@ -202,6 +217,87 @@ describe("session task", () => {
     expect(cleared).toBe(true)
   })
 
+  test("does not starve a slow current request across poll and status refreshes", async () => {
+    const loader = requests()
+    const first = deferred<SessionTaskCurrentResponse>()
+    const second = deferred<SessionTaskCurrentResponse>()
+    const old = deferred<SessionTaskCurrentResponse>()
+    const next = deferred<SessionTaskCurrentResponse>()
+    const queues = { session_1: [first, second, old], session_2: [next] }
+    const signals: AbortSignal[] = []
+    let local: Badge | undefined
+    let tick = () => {}
+    let listener = (_event: { properties: { sessionID: string } }) => {}
+    let calls = 0
+    const load = (sessionID: string) =>
+      loader.run(
+        "current",
+        (signal) => {
+          calls++
+          signals.push(signal)
+          return queues[sessionID as keyof typeof queues].shift()!.promise
+        },
+        (value) => {
+          local = { sessionID, value: compact(value) }
+        },
+      )
+    const flight = single(load, loader.reset)
+    const poll = refresh(() => flight.refresh("session_1"), 25, {
+      set(fn) {
+        tick = fn
+        return 1
+      },
+      clear() {},
+    })
+    const bind = watch(
+      (_type, fn) => {
+        listener = fn
+        return () => {}
+      },
+      (sessionID) => flight.refresh(sessionID),
+    )
+
+    bind("session_1")
+    void flight.change("session_1")
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(choose("session_1", local)).toBeUndefined()
+    tick()
+    tick()
+    listener({ properties: { sessionID: "session_1" } })
+    await Promise.resolve()
+
+    expect(calls).toBe(1)
+    expect(signals[0]?.aborted).toBe(false)
+    first.resolve(task({ status: "running" }))
+    await Bun.sleep(0)
+    expect(choose("session_1", local)?.status).toBe("running")
+    expect(calls).toBe(2)
+    second.resolve(task({ status: "completed" }))
+    await Bun.sleep(0)
+    expect(choose("session_1", local)?.status).toBe("completed")
+    expect(
+      choose("session_1", { sessionID: "session_1", value: undefined }, compact(task({ status: "completed" }))),
+    ).toBeUndefined()
+
+    void flight.refresh("session_1")
+    await Promise.resolve()
+    await Promise.resolve()
+    const fallback = compact(task({ id: "task_2", session_id: "session_2", status: "waiting_user" }))
+    void flight.change("session_2")
+    expect(signals[2]?.aborted).toBe(true)
+    expect(choose("session_2", local, fallback)?.status).toBe("waiting_user")
+    old.resolve(task({ status: "failed" }))
+    next.resolve(task({ id: "task_2", session_id: "session_2", status: "running" }))
+    await Bun.sleep(0)
+    expect(calls).toBe(4)
+    expect(choose("session_2", local)?.status).toBe("running")
+
+    poll()
+    bind()
+    flight.stop()
+  })
+
   test("rebinds the mounted task listener when its session prop changes", () => {
     const listeners = new Set<(event: { properties: { sessionID: string } }) => void>()
     const calls: string[] = []
@@ -296,8 +392,15 @@ describe("session task", () => {
 
     expect(page).toContain('sessionView: "timeline" as "timeline" | "logs" | "task"')
     expect(page).toContain('language.t("session.tab.task")')
-    expect(page).toContain("<SessionTask sessionID={id} />")
+    expect(page).toContain("<SessionTask")
     expect(page).not.toContain('from "@/pages/session/session-runs"')
     expect(await Bun.file(new URL("session-runs.tsx", import.meta.url)).exists()).toBe(true)
+  })
+
+  test("wires current task summaries back to the session badge", async () => {
+    const page = await Bun.file(new URL("../session.tsx", import.meta.url)).text()
+    expect(page).toContain("onSummary")
+    expect(page).toContain("if (params.id !== id) return")
+    expect(page).toContain("choose(params.id, latest(), info()?.task)")
   })
 })

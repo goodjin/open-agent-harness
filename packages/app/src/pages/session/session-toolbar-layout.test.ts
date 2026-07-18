@@ -34,6 +34,6 @@ describe("session toolbar layout", () => {
 
     expect(page).toContain('sessionView: "timeline" as "timeline" | "logs" | "task"')
     expect(page).toContain('language.t("session.tab.task")')
-    expect(page).toContain("<SessionTask sessionID={id} />")
+    expect(page).toContain("<SessionTask")
   })
 })
