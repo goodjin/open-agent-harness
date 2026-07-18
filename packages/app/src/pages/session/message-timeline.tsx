@@ -1818,16 +1818,17 @@ export function MessageTimeline(props: {
                         )}
                       </Show>
                       <Show when={props.filter === "all"}>
-                        <For each={proposals()}>
+                        <Index each={proposals()}>
                           {(item) => (
                             <SessionTaskProposal
-                              value={item}
+                              value={item()}
+                              scope={sessionID() ?? ""}
                               confirm={decide}
                               discuss={props.onFocusComposer}
                               open={(target) => navigate(`/${params.dir}/session/${target}`)}
                             />
                           )}
-                        </For>
+                        </Index>
                         <For each={timelineConfirms()}>
                           {(item) => (
                             <SessionConfirmationCard

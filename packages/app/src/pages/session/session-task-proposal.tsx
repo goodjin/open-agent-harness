@@ -35,6 +35,8 @@ export type TaskProposal =
       title?: string
     })
 
+type Update = Extract<TaskProposal, { kind: "update" }>
+
 type Result = { status?: string; target_session_id?: string }
 type View = { id: string; status: Status; dismissed: boolean; target?: string; error?: string }
 
@@ -56,7 +58,7 @@ export function proposal(input: unknown, body?: string): TaskProposal | undefine
   if (!record(input) || input.type !== "text" || input.synthetic !== true || input.ignored !== true) return
   if (!record(input.metadata)) return
   const kind = text(input.metadata.kind)
-  if (kind === "task_update_proposal" || kind === "task_update_progress") {
+  if (kind === "task_update_proposal") {
     const id = text(input.metadata.proposal_id)
     const revision = text(input.metadata.draft_revision_id) ?? text(input.metadata.old_revision_id)
     if (!id || !revision) return
@@ -88,49 +90,84 @@ export function proposal(input: unknown, body?: string): TaskProposal | undefine
   }
 }
 
+const progress = (input: unknown, body?: string): Update | undefined => {
+  if (!record(input) || input.type !== "text" || input.synthetic !== true || input.ignored !== true) return
+  if (!record(input.metadata) || input.metadata.kind !== "task_update_progress") return
+  const id = text(input.metadata.proposal_id)
+  const revision = text(input.metadata.draft_revision_id) ?? text(input.metadata.old_revision_id)
+  if (!id || !revision) return
+  return {
+    kind: "update",
+    id,
+    revision,
+    body,
+    summary: text(input.metadata.difference_summary),
+    children: list(input.metadata.affected_child_ids),
+    refs: list(input.metadata.reusable_result_refs),
+    status: status(input.metadata.status, "update", "task_update_progress"),
+    error: text(input.metadata.error),
+  }
+}
+
 export function proposals(
   parts: unknown[],
   bodies: Map<string, string | undefined>,
   decisions = new Map<string, "pending" | "confirmed" | "cancelled">(),
 ) {
-  return Array.from(
-    parts
-      .flatMap((part) => {
-        const metadata = record(part) && record(part.metadata) ? part.metadata : undefined
-        const item = proposal(part, bodies.get(text(metadata?.proposal_id) ?? ""))
-        return item ? [item] : []
-      })
-      .reduce((map, item) => {
-        const key = item.kind === "handoff" ? item.handoff : item.id
-        const prev = map.get(key)
-        if (!prev || prev.kind !== item.kind) {
-          map.set(key, item)
-          return map
-        }
-        if (item.kind === "update" && prev.kind === "update") {
-          map.set(key, {
-            ...prev,
-            ...item,
-            body: item.body ?? prev.body,
-            summary: item.summary ?? prev.summary,
-            children: item.children.length ? item.children : prev.children,
-            refs: item.refs.length ? item.refs : prev.refs,
-          })
-          return map
-        }
-        if (item.kind === "handoff" && prev.kind === "handoff")
-          map.set(key, {
-            ...prev,
-            ...item,
-            id: prev.id.startsWith("handoff:") ? item.id : prev.id,
-            body: item.body ?? prev.body,
-            title: item.title ?? prev.title,
-            refs: item.refs.length ? item.refs : prev.refs,
-          })
+  const map = parts
+    .flatMap((part) => {
+      const metadata = record(part) && record(part.metadata) ? part.metadata : undefined
+      const item = proposal(part, bodies.get(text(metadata?.proposal_id) ?? ""))
+      return item ? [item] : []
+    })
+    .reduce((map, item) => {
+      const key = item.kind === "handoff" ? item.handoff : item.id
+      const prev = map.get(key)
+      if (!prev || prev.kind !== item.kind) {
+        map.set(key, item)
         return map
-      }, new Map<string, TaskProposal>())
-      .values(),
-  ).map((item) => {
+      }
+      if (item.kind === "update" && prev.kind === "update") {
+        map.set(key, {
+          ...prev,
+          ...item,
+          body: item.body ?? prev.body,
+          summary: item.summary ?? prev.summary,
+          children: item.children.length ? item.children : prev.children,
+          refs: item.refs.length ? item.refs : prev.refs,
+        })
+        return map
+      }
+      if (item.kind === "handoff" && prev.kind === "handoff")
+        map.set(key, {
+          ...prev,
+          ...item,
+          id: prev.id.startsWith("handoff:") ? item.id : prev.id,
+          body: item.body ?? prev.body,
+          title: item.title ?? prev.title,
+          refs: item.refs.length ? item.refs : prev.refs,
+        })
+      return map
+    }, new Map<string, TaskProposal>())
+  parts
+    .flatMap((part) => {
+      const metadata = record(part) && record(part.metadata) ? part.metadata : undefined
+      const item = progress(part, bodies.get(text(metadata?.proposal_id) ?? ""))
+      return item ? [item] : []
+    })
+    .forEach((item) => {
+      const prev = map.get(item.id)
+      if (!prev || prev.kind !== "update") return
+      map.set(item.id, {
+        ...prev,
+        ...item,
+        body: item.body ?? prev.body,
+        summary: item.summary ?? prev.summary,
+        children: item.children.length ? item.children : prev.children,
+        refs: item.refs.length ? item.refs : prev.refs,
+      })
+    })
+  return Array.from(map.values()).map((item) => {
     if (item.status !== "proposed") return item
     const decision = decisions.get(item.id)
     if (decision === "cancelled") return { ...item, status: "cancelled" as const }
@@ -140,12 +177,24 @@ export function proposals(
   })
 }
 
+export function proposalError(input: unknown, fallback: string) {
+  if (record(input) && record(input.data)) {
+    const message = text(input.data.message)
+    if (message) return message
+  }
+  if (input instanceof Error && input.message) return input.message
+  if (typeof input === "string" && input.length) return input
+  return fallback
+}
+
 export function proposalFlow(input: {
   send: (proposal: TaskProposal, action: "confirm" | "cancel") => Promise<Result>
   state: (view: View) => void
   focus: () => void
+  error?: (error: unknown) => string
 }) {
   let current: TaskProposal | undefined
+  let key: string | undefined
   let token = 0
   let busy = false
   let dismissed = false
@@ -172,10 +221,10 @@ export function proposalFlow(input: {
       (value) => ({ value }),
       (error: unknown) => ({ error }),
     )
-    if (mark !== token || current !== item) return
+    if (mark !== token) return
     busy = false
     if ("error" in result) {
-      emit({ status: "failed", error: result.error instanceof Error ? result.error.message : String(result.error) })
+      emit({ status: "failed", error: input.error?.(result.error) ?? proposalError(result.error, "Request failed") })
       return
     }
     const next =
@@ -186,8 +235,16 @@ export function proposalFlow(input: {
   }
 
   return {
-    change(item: TaskProposal) {
+    change(item: TaskProposal, scope = "") {
+      const next = `${scope}\u0000${item.id}`
+      if (key === next) {
+        current = item
+        if (busy || dismissed) return
+        emit()
+        return
+      }
       token++
+      key = next
       current = item
       busy = false
       dismissed = false
@@ -212,6 +269,7 @@ export function proposalFlow(input: {
 
 export function SessionTaskProposal(props: {
   value: TaskProposal
+  scope: string
   confirm: (proposal: TaskProposal, action: "confirm" | "cancel") => Promise<Result>
   discuss: () => void
   open: (target: string) => void
@@ -224,8 +282,13 @@ export function SessionTaskProposal(props: {
     target: props.value.target,
     error: props.value.error,
   })
-  const flow = proposalFlow({ send: props.confirm, state: setView, focus: props.discuss })
-  createEffect(() => flow.change(props.value))
+  const flow = proposalFlow({
+    send: props.confirm,
+    state: setView,
+    focus: props.discuss,
+    error: (error) => proposalError(error, language.t("common.requestFailed")),
+  })
+  createEffect(() => flow.change(props.value, props.scope))
   onCleanup(flow.stop)
   const key = () => `session.task.proposal.status.${view().status}` as const
   const label = () => language.t(key())
