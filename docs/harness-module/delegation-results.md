@@ -17,6 +17,8 @@
 
 没有可信 `SessionResult` 时，委派 Run 保持 `running` 且不展示结果。存在可信结果时，`failed` 映射为失败，`completed` 和 `partial` 映射为完成，其余可交付终态映射为阻塞。这个状态是委派 Run 的读取投影，不会回写或改写子会话 Runtime 状态。
 
+每个子会话只绑定一个顶层 Task。父 action 的 canonical assignment 创建子会话 Task v1；子会话自己的 protocol Run 追加到该 Revision，不会再创建第二个 Task。assignment、父会话、父 Run、action 和子会话任一定位信息不匹配时，Runtime 拒绝绑定或读取结果，避免把其他委派的内容写入当前 Task。
+
 ## 结果正文与 fallback
 
 不同 carrier 只读取各自约定的正文：
@@ -31,6 +33,14 @@
 当终态子会话没有合法 `ActionResult` 时，delegation finalization 可以从 transcript 生成 fallback summary。失败的 `ActionResult` tool part 会作为诊断证据加入生成上下文，用于区分“没有尝试交付”和“交付被拒绝”。诊断只暴露 action id、目标 action id、role、kind、status 等短字段；结果正文等字段以类型和长度表示，错误文本与 transcript 也有长度限制。
 
 canonical 结果先落库，再更新父、子会话的轻量投影。fallback 表示父会话已获得可用交付，不表示验证通过，也不改变子会话原有 Runtime 状态。UI 需要同时展示 Runtime 状态和 fallback 来源，不能把 fallback 标成 verifier passed。
+
+子会话 Task 的最终正文遵循同一来源边界：合法 `ActionResult` 使用 `ActionResult.result`，无法得到合法结果时才使用显式 `fallback_summary`。原始 tool failure、schema 诊断和被拒绝的提交保留在日志与诊断面，不会混入父会话收到的任务正文。
+
+## 修订时终止
+
+Task 修订确认后，Runtime 先把 Task 标记为 `revising`，停止旧 active Revision 范围内仍在运行的子会话，并保存 completed、partial、failed、fallback 与终止原因。旧 Revision 在停止期间仍是可读的当前版本；收口完成后，Runtime 在同一事务中归档旧 Revision、激活 draft Revision、切换当前指针。
+
+迟到的子结果只能落到原 assignment、Run、action 和 Revision 的诊断或归档范围，不能满足新 Revision 的 action，也不能覆盖新版本结果。历史 Revision 只读，不提供恢复执行入口。
 
 ## 内部协议 Run
 

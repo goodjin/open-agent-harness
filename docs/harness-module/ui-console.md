@@ -15,9 +15,19 @@ The detection function is shared by the composer affordance and submit path, so 
 
 ## Session Workspace Layout
 
-### Session Runs
+### Session Task
 
-Runs 页面按可执行任务包组织信息。父会话只在 Runtime 接受并开始执行至少一个 `agent`、`tool` 或 runtime action 的 DSL 包时创建 Run；普通对话、补充信息、`input`-only 和 `confirm`-only 包不创建。`confirm` 与可执行 action 同包时，要等确认通过、任务实际开始后才创建。父会话委派子会话时，子会话同步获得对应的委派 Run。
+会话主区域提供 Task tab。Page Feed 即使 Task tab 尚未挂载，也会按当前 session 读取 `GET /session/:sessionID/task`，用于顶部状态与任务页共享数据；session 切换、状态事件和定时刷新都经过同一有界请求通道，旧请求不能覆盖新会话。
+
+任务页按当前任务标题与版本、Task Markdown、执行进度与 action、最终结果、相关 Handoff 的顺序展示。结果只读当前 Revision 的可信来源；运行态显示进度，终态区分 recorded、fallback 和 missing。历史列表在用户点击后才加载，正文又在选中某个版本后单独加载。历史版本只读，不能恢复，也不会默认进入 Page Feed。
+
+多 Run 旧会话的 current API 返回 `legacy_multi_run`。Task tab 显示旧版会话 proposal 卡，只列 Run ID、标题和状态，并提示先整理、确认当前任务；UI 不把该响应当作 Current Task 读取 body 或 actions。确认沿用下一次可执行任务的 create/self assignment 证据链。确认前旧 Runs 只是只读快照，不进入 Revision action 图。
+
+Task Update 与 Handoff proposal 使用专用卡片展示确认、取消、失败和重试。Handoff 启动后，卡片通过 `target_session_id` 跳转到平级目标会话；来源会话继续保留状态、目标链接和结果查看入口。
+
+### Runs Compatibility API
+
+Runs API 是迁移期兼容接口，继续按可执行任务包提供内部执行记录；新 UI 和新 SDK 的主入口是 Task API。父会话只在 Runtime 接受并开始执行至少一个 `agent`、`tool` 或 runtime action 的 DSL 包时创建 Run；普通对话、补充信息、`input`-only 和 `confirm`-only 包不创建。`confirm` 与可执行 action 同包时，要等确认通过、任务实际开始后才创建。父会话委派子会话时，子会话同步获得对应的委派 Run。
 
 父 protocol Run 的 `summary` 来自 actions fan-in 后的模型综合结果。子会话委派 Run 的 `summary` 来自 canonical `ActionResult.result`，无法生成合法 ActionResult 时才展示 fallback。executor 生成的 action 状态摘要保留在 `execution_summary`；两者分别回答“交付了什么”和“执行过程如何收敛”，UI 不混用。
 

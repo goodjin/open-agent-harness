@@ -436,11 +436,11 @@ Runtime 在执行可执行 DSL 前校验 Session Task：
 
 ### 只有一个历史 Run
 
-首次打开任务页时可懒迁移为 Task v1。任务正文、action 和结果沿用可信 Run read model；缺少结果时继续显示“未记录最终结果”。
+首次读取当前任务时懒迁移为 Task v1。迁移使用稳定键 `legacy-task:<session-id>:<run-id>`，在一个事务内创建 Task、Revision v1 和当前指针；唯一索引与重放读取保证并发请求不会重复创建 Task 或 Revision。任务正文、action 和结果沿用可信 persisted Run read model；缺少结果时继续显示“未记录最终结果”。
 
 ### 存在多个历史 Run
 
-Runtime 不自动判断它们是否属于同一任务。会话标记为“旧版会话”，保留现有 Runs 兼容读取。
+Runtime 不自动判断它们是否属于同一任务。`GET /session/:sessionID/task` 返回 `legacy_multi_run` proposal，会话标记为“旧版会话”，保留现有 Runs 兼容读取。proposal 只包含只读 Run 快照，不带可恢复 action 图，也不写入 Task 或 Revision。
 
 该会话下次准备生成任务时，模型整理一个当前任务提议并请求一次迁移确认。确认后：
 
@@ -450,7 +450,15 @@ Runtime 不自动判断它们是否属于同一任务。会话标记为“旧版
 - 不恢复旧 Run；
 - 后续启用严格单任务规则。
 
+首个版本不增加独立的旧会话迁移确认接口。该会话下次准备执行任务时，沿用 create/self assignment 的现有确认链路；Runtime 只接受 canonical proposal、message、Run 和 action proof。确认后新 Revision 只包含新执行图，旧 Runs 不进入 workflow。
+
 新建会话直接使用新模型，不进入旧版兼容路径。
+
+### 已落地的读取边界
+
+Page Feed 负责当前 Task API 的会话级读取与刷新，Task tab 复用这份数据；未打开 Task tab 时也能更新顶部状态。历史列表与历史正文仍按用户操作懒加载，不进入默认 Feed。
+
+Current API 的 OpenAPI 与 JavaScript SDK 使用正常 Task 和 `legacy_multi_run` 的联合类型。前端先判别旧会话 proposal，再渲染 Task 正文、action 和结果，避免把迁移响应误当成 Current Task。
 
 ## 影响模块
 
