@@ -1699,7 +1699,19 @@ describe("session task endpoints", () => {
   test("confirms and cancels handoffs only through canonical assignment proof", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
-    const loop = spyOn(SessionPrompt, "loop").mockResolvedValue(undefined as never)
+    const gate = Promise.withResolvers<void>()
+    const entered = Promise.withResolvers<void>()
+    const runs: Promise<void>[] = []
+    const jobs: Promise<unknown>[] = []
+    const effect = spyOn(Database, "effect").mockImplementation((fn) => {
+      jobs.push(Promise.resolve().then(fn))
+    })
+    const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => {
+      entered.resolve()
+      const run = gate.promise
+      runs.push(run)
+      return run
+    }) as never)
     const enqueue = SessionPrompt.enqueue
     let attempts = 0
     const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async (
@@ -1708,6 +1720,18 @@ describe("session task endpoints", () => {
       attempts++
       if (attempts === 1) throw new Error("handoff enqueue failed")
       return enqueue(input)
+    }) as never)
+    const failed = Promise.withResolvers<void>()
+    const ready = Promise.withResolvers<void>()
+    const update = Session.updatePart
+    const part = spyOn(Session, "updatePart").mockImplementation((async (
+      input: Parameters<typeof Session.updatePart>[0],
+    ) => {
+      const saved = await update(input)
+      if (input.type !== "text" || input.metadata?.handoff_id === undefined) return saved
+      if (input.metadata.status === "failed") failed.resolve()
+      if (input.metadata.kind === "task_handoff_started" && input.metadata.status === "started") ready.resolve()
+      return saved
     }) as never)
     try {
       await Instance.provide({
@@ -1769,10 +1793,7 @@ describe("session task endpoints", () => {
               const body = (await confirmed.json()) as { target_session_id?: string; target_task_id?: string }
               expect(body.target_session_id).toBeString()
               expect(body.target_task_id).toBeString()
-              for (let count = 0; count < 100; count++) {
-                if ((await SessionTaskHandoff.get(handoff.id))?.status === "failed") break
-                await Bun.sleep(10)
-              }
+              await failed.promise
               expect(await SessionTaskHandoff.get(handoff.id)).toMatchObject({
                 id: handoff.id,
                 status: "failed",
@@ -1785,10 +1806,8 @@ describe("session task endpoints", () => {
               })
               expect(retried.status).toBe(200)
               expect(await retried.json()).toMatchObject({ status: "creating" })
-              for (let count = 0; count < 100; count++) {
-                if ((await SessionTaskHandoff.get(handoff.id))?.status === "started") break
-                await Bun.sleep(10)
-              }
+              await entered.promise
+              await ready.promise
               expect((await SessionTaskHandoff.get(handoff.id))?.status).toBe("started")
               const replay = await app.request(`/session/${session.id}/task/handoff/${handoff.id}/confirm`, {
                 method: "POST",
@@ -1798,6 +1817,78 @@ describe("session task endpoints", () => {
               expect(replay.status).toBe(200)
               expect(await replay.json()).toMatchObject({ status: "started" })
               expect((await SessionTaskHandoff.get(handoff.id))?.id).toBe(handoff.id)
+
+              const alternate = await SessionTaskHandoff.propose({
+                sourceID: session.id,
+                messageID,
+                runID: "run_handoff",
+                actionID: "confirm_handoff",
+                title: "Peer task",
+                body: "Peer body",
+                contextRefs: ["artifact:two"],
+              })
+              const count = Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all().length)
+              const mismatch = await app.request(
+                `/session/${session.id}/task/handoff/${alternate.id}/confirm`,
+                {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ proposal_id: "run_handoff:confirm_handoff", action: "confirm" }),
+                },
+              )
+              expect(mismatch.status).toBe(409)
+              expect(await SessionTaskHandoff.get(alternate.id)).toMatchObject({
+                status: "proposed",
+                target_session_id: null,
+                target_task_id: null,
+              })
+              expect(Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all())).toHaveLength(
+                count,
+              )
+
+              Database.use((db) =>
+                db
+                  .update(TaskHandoffTable)
+                  .set({ context_refs: ["artifact:tampered"] })
+                  .where(eq(TaskHandoffTable.id, handoff.id))
+                  .run(),
+              )
+              await expect(
+                SessionTaskConfirmation.respond({
+                  sessionID: session.id,
+                  proposalID: "run_handoff:confirm_handoff",
+                  handoffID: handoff.id,
+                  action: "confirm",
+                  op: "handoff",
+                }),
+              ).rejects.toBeInstanceOf(ConflictError)
+              Database.use((db) => {
+                db
+                  .update(TaskHandoffTable)
+                  .set({ context_refs: ["artifact:one"] })
+                  .where(eq(TaskHandoffTable.id, handoff.id))
+                  .run()
+                const proof = db
+                  .select()
+                  .from(TaskConfirmationTable)
+                  .where(eq(TaskConfirmationTable.proposal_id, "run_handoff:confirm_handoff"))
+                  .get()
+                if (!proof) throw new Error("confirmation proof missing")
+                db
+                  .update(TaskConfirmationTable)
+                  .set({ snapshot: { ...proof.snapshot, context_refs: ["artifact:tampered"] } })
+                  .where(eq(TaskConfirmationTable.id, proof.id))
+                  .run()
+              })
+              await expect(
+                SessionTaskConfirmation.respond({
+                  sessionID: session.id,
+                  proposalID: "run_handoff:confirm_handoff",
+                  handoffID: handoff.id,
+                  action: "confirm",
+                  op: "handoff",
+                }),
+              ).rejects.toBeInstanceOf(ConflictError)
 
               const messageID3 = await message(session.id)
               const started = await SessionTaskHandoff.propose({
@@ -1868,9 +1959,17 @@ describe("session task endpoints", () => {
           }),
       })
     } finally {
-      write.mockRestore()
-      loop.mockRestore()
-      prompt.mockRestore()
+      gate.resolve()
+      try {
+        await Promise.all(runs)
+        for (let index = 0; index < jobs.length; index++) await jobs[index]
+      } finally {
+        part.mockRestore()
+        write.mockRestore()
+        loop.mockRestore()
+        effect.mockRestore()
+        prompt.mockRestore()
+      }
     }
   })
 })

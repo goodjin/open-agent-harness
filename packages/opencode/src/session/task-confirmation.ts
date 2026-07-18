@@ -73,15 +73,20 @@ export namespace SessionTaskConfirmation {
     const title = text(item.action_title) ?? action
     if (!message || plan === undefined || !title)
       throw new ConflictError({ message: `Task proposal proof is incomplete: ${input.proposalID}` })
-    const snapshot = {
-      session_id: input.sessionID,
-      message_id: message,
-      run_id: run,
-      action_id: action,
-      title,
-      plan,
-      intent,
-    }
+    if (input.op === "update" && input.handoffID)
+      throw new ConflictError({ message: `Task update cannot use handoff proof: ${input.handoffID}` })
+    const handoff = input.op === "handoff" && input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
+    if (input.op === "handoff" && !handoff)
+      throw new NotFoundError({ message: `Task handoff not found: ${input.handoffID}` })
+    if (handoff && handoff.source_session_id !== input.sessionID)
+      throw new ForbiddenError({ message: `Task handoff does not belong to session: ${input.sessionID}` })
+    if (handoff && input.action === "cancel" && handoff.status !== "proposed" && handoff.status !== "cancelled")
+      throw new ConflictError({ message: `Task handoff is already ${handoff.status}: ${handoff.id}` })
+    if (handoff?.status === "cancelled" && input.action === "confirm")
+      throw new ConflictError({ message: `Task handoff is already cancelled: ${handoff.id}` })
+    if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
+      throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
+    const snapshot = snap(input.sessionID, item, handoff)
     const status = input.action === "confirm" ? "confirmed" : "cancelled"
     const durable = Database.use((db) =>
       db
@@ -110,23 +115,13 @@ export namespace SessionTaskConfirmation {
       actionID: action,
       snapshot,
       hash: digest(snapshot),
+      handoff,
       imported,
     })
     const proof = claimed.owner ? claimed.row : await settled(claimed.row)
     const beat = claimed.owner ? pulse(proof) : undefined
 
     try {
-      const handoff = input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
-      if (input.op === "handoff" && !handoff)
-        throw new NotFoundError({ message: `Task handoff not found: ${input.handoffID}` })
-      if (handoff && handoff.source_session_id !== input.sessionID)
-        throw new ForbiddenError({ message: `Task handoff does not belong to session: ${input.sessionID}` })
-      if (handoff && input.action === "cancel" && handoff.status !== "proposed" && handoff.status !== "cancelled")
-        throw new ConflictError({ message: `Task handoff is already ${handoff.status}: ${handoff.id}` })
-      if (handoff?.status === "cancelled" && input.action === "confirm")
-        throw new ConflictError({ message: `Task handoff is already cancelled: ${handoff.id}` })
-      if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
-        throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
       if (proof.status === "completed" || proof.status === "cancelled") {
         if (rec(proof.result)) {
           if (input.op === "handoff" && input.action === "confirm" && handoff) {
@@ -289,7 +284,11 @@ export namespace SessionTaskConfirmation {
     return typeof input === "string" ? input : undefined
   }
 
-  function snap(sessionID: SessionID, item: Record<string, unknown>) {
+  function snap(
+    sessionID: SessionID,
+    item: Record<string, unknown>,
+    handoff?: Pick<SessionTaskHandoff.Info, "id" | "context_refs">,
+  ) {
     const intent = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
     return {
       session_id: sessionID,
@@ -299,6 +298,7 @@ export namespace SessionTaskConfirmation {
       title: text(item.action_title) ?? text(item.action_id),
       plan: text(item.plan),
       intent,
+      ...(handoff ? { handoff_id: handoff.id, context_refs: handoff.context_refs } : {}),
     }
   }
 
@@ -483,6 +483,8 @@ export namespace SessionTaskConfirmation {
           )
           .get()
         if (!current) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        if (current.snapshot_hash !== proof.snapshot_hash || digest(current.snapshot) !== current.snapshot_hash)
+          throw new ConflictError({ message: `Task proposal proof changed: ${proof.proposal_id}` })
         const session = tx.select().from(SessionTable).where(eq(SessionTable.id, proof.session_id)).get()
         if (!session) throw new NotFoundError({ message: `Session not found: ${proof.session_id}` })
         const ctx = rec(session.dsl_context) ? session.dsl_context : {}
@@ -490,7 +492,17 @@ export namespace SessionTaskConfirmation {
         const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
         const next = vals.map((value) => {
           if (!rec(value) || `${value.run_id}:${value.action_id}` !== proof.proposal_id) return value
-          if (digest(snap(proof.session_id, value)) !== proof.snapshot_hash)
+          const handoff = proof.handoff_id
+            ? tx
+                .select({ id: TaskHandoffTable.id, context_refs: TaskHandoffTable.context_refs })
+                .from(TaskHandoffTable)
+                .where(eq(TaskHandoffTable.id, proof.handoff_id))
+                .get()
+            : undefined
+          if (
+            (proof.operation === "handoff" && !handoff) ||
+            digest(snap(proof.session_id, value, handoff)) !== proof.snapshot_hash
+          )
             throw new ConflictError({ message: `Task proposal proof changed: ${proof.proposal_id}` })
           return {
             ...value,
@@ -854,6 +866,7 @@ export namespace SessionTaskConfirmation {
     actionID: string
     snapshot: Record<string, unknown>
     hash: string
+    handoff?: Pick<SessionTaskHandoff.Info, "id" | "context_refs">
     imported?: Awaited<ReturnType<typeof legacy>>
   }) {
     return Database.transaction(
@@ -876,7 +889,11 @@ export namespace SessionTaskConfirmation {
         const proposal = vals.filter(
           (item) => rec(item) && item.run_id === input.run && item.action_id === input.actionID,
         )
-        if (proposal.length !== 1 || !rec(proposal[0]) || digest(snap(input.sessionID, proposal[0])) !== input.hash)
+        if (
+          proposal.length !== 1 ||
+          !rec(proposal[0]) ||
+          digest(snap(input.sessionID, proposal[0], input.handoff)) !== input.hash
+        )
           throw new ConflictError({ message: `Task proposal is not current: ${input.proposalID}` })
         if (input.imported) {
           const assignment = rec(proposal[0].assignment) ? text(proposal[0].assignment.id) : undefined
@@ -903,6 +920,8 @@ export namespace SessionTaskConfirmation {
             found.decision !== input.action ||
             found.operation !== input.op ||
             found.expected_revision_id !== (input.revisionID ?? null) ||
+            found.handoff_id !== (input.handoffID ?? null) ||
+            digest(found.snapshot) !== found.snapshot_hash ||
             found.snapshot_hash !== input.hash
           )
             throw new ConflictError({ message: `Task proposal decision conflicts: ${input.proposalID}` })
