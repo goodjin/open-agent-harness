@@ -16,6 +16,12 @@ export type Request = "current" | "history" | "detail"
 export type Summary = SessionTaskSummary
 export type Badge = { sessionID: string; value?: Summary }
 export type Feed = Badge & { current?: Response; loading: boolean; error?: string; ready: boolean }
+export type Presentation =
+  | { kind: "loading" }
+  | { kind: "error"; error: string }
+  | { kind: "unbound" }
+  | { kind: "legacy"; legacy: Legacy }
+  | { kind: "current"; current: Current }
 type Timers = { set: (fn: () => void, timeout: number) => unknown; clear: (id: unknown) => void }
 
 const actions = {
@@ -89,6 +95,16 @@ const historical = (task: Response): task is Legacy => "type" in task && task.ty
 export const migration = (task?: Response): Legacy | undefined => (task && historical(task) ? task : undefined)
 
 export const active = (task?: Response): Current | undefined => (task && !historical(task) ? task : undefined)
+
+export const present = (feed: Pick<Feed, "current" | "loading" | "error">): Presentation => {
+  if (feed.error) return { kind: "error", error: feed.error }
+  const legacy = migration(feed.current)
+  if (legacy) return { kind: "legacy", legacy }
+  const current = active(feed.current)
+  if (current) return { kind: "current", current }
+  if (feed.loading) return { kind: "loading" }
+  return { kind: "unbound" }
+}
 
 export const compact = (task?: Response): Summary | undefined => {
   const item = active(task)

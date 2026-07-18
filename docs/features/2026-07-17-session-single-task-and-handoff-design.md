@@ -454,6 +454,10 @@ Runtime 不自动判断它们是否属于同一任务。`GET /session/:sessionID
 
 `legacy_multi_run` 同时是领域写门禁。Task 绑定入口会重新读取 persisted Runs，不依赖页面是否请求过 proposal。无 canonical create/self proof 的可执行 package 直接返回 `session_task_conflict`，且不写 Task、Revision 或 action。确认与普通执行并发时，以调用进入绑定边界时的 Task 快照判断：确认前进入的普通执行保持拒绝；确认提交后到达的新 action 才能追加到当前 Revision。确认后新 Revision 只包含新执行图，旧 Runs 不进入 workflow。
 
+单 Run 旧会话由所有 Task admission 入口共享迁移，不要求先调用 current API。入口先用有界 key probe 区分 0、1、多个 Run；恰好一个时幂等创建 legacy Task v1，再把新 package 追加到该 Revision。若旧 Revision 已终止，新执行会重新激活它、清除过期结果，并保留旧 action 与 run ID。
+
+多 Run proposal 返回准确总数和最多 50 条首尾快照，超出时标记 `truncated`。快照只读取 Run ID、标题、状态和时间，不读取 outcome、结果或完整 action。写门禁最多探测两个 key，不构造 proposal read model，因此 Task 页每 5 秒轮询的响应体与 JSON 解析成本保持有界。
+
 新建会话直接使用新模型，不进入旧版兼容路径。
 
 ### 已落地的读取边界

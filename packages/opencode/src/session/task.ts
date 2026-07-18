@@ -187,6 +187,7 @@ export namespace SessionTask {
     .object({
       type: z.literal("legacy_multi_run"),
       count: z.number().int().min(2),
+      truncated: z.boolean(),
       proposal: z
         .object({
           status: z.literal("pending_confirmation"),
@@ -197,8 +198,6 @@ export namespace SessionTask {
                 run_id: RunID,
                 title: z.string().min(1),
                 status: z.enum(["running", "completed", "blocked", "failed"]),
-                result: z.string().optional(),
-                result_source: ResultSource.optional(),
                 time: z
                   .object({
                     started: z.number().int().nonnegative(),
@@ -355,7 +354,7 @@ export namespace SessionTask {
     legacy: { title: string; body: string }
     requiresAssignment?: boolean
   }) {
-    const unbound = !exists(input.sessionID)
+    const admitted = await admit(input.sessionID)
     const rows = await Promise.all(
       input.actionIDs.map((actionID) =>
         SessionAssignment.bySource({ sessionID: input.sessionID, runID: input.runID, actionID }),
@@ -399,7 +398,7 @@ export namespace SessionTask {
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
-    if (unbound && (await multiple(input.sessionID)) && (!sourced || op !== "create" || target !== "self"))
+    if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self"))
       throw new Conflict()
     if (assignment.status === "completed") {
       if (!sourced) throw new Conflict("session_task_assignment_not_current")
@@ -487,7 +486,7 @@ export namespace SessionTask {
 
   export async function route(raw: z.input<typeof Route>) {
     const input = Route.parse(raw)
-    if (!exists(input.sessionID) && (await multiple(input.sessionID))) throw new Conflict()
+    if ((await admit(input.sessionID)) === "multiple") throw new Conflict()
     return write(input)
   }
 
@@ -627,21 +626,45 @@ export namespace SessionTask {
             return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
           if (task.status === "revising" || task.status === "blocked")
             throw new Conflict("session_task_revision_frozen")
-          if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
+          const active =
+            current.status === "active"
+              ? current
+              : task.source_type === "legacy" && input.runID
+                ? tx
+                    .update(TaskRevisionTable)
+                    .set({
+                      status: "active",
+                      result: null,
+                      result_source: null,
+                      time_completed: null,
+                      terminal_status: null,
+                      result_status: null,
+                    })
+                    .where(
+                      and(
+                        eq(TaskRevisionTable.id, current.id),
+                        eq(TaskRevisionTable.task_id, task.id),
+                        inArray(TaskRevisionTable.status, ["completed", "failed"]),
+                      ),
+                    )
+                    .returning()
+                    .get()
+                : undefined
+          if (!active) throw new Conflict("session_task_revision_not_active")
           if (!input.runID)
-            return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
+            return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(active) }
           const actions = merge(
-            Array.isArray(current.workflow.actions) ? current.workflow.actions : [],
+            Array.isArray(active.workflow.actions) ? active.workflow.actions : [],
             tagged(input.actions, input.runID),
           )
-          const ids = runids(Workflow.parse(current.workflow))
+          const ids = runids(Workflow.parse(active.workflow))
           const run_ids = ids.includes(input.runID) ? ids : [...ids, input.runID]
           const revision = tx
             .update(TaskRevisionTable)
-            .set({ workflow: bounded({ ...Workflow.parse(current.workflow), actions, run_id: input.runID, run_ids }) })
+            .set({ workflow: bounded({ ...Workflow.parse(active.workflow), actions, run_id: input.runID, run_ids }) })
             .where(
               and(
-                eq(TaskRevisionTable.id, current.id),
+                eq(TaskRevisionTable.id, active.id),
                 eq(TaskRevisionTable.task_id, task.id),
                 eq(TaskRevisionTable.status, "active"),
               ),
@@ -651,8 +674,8 @@ export namespace SessionTask {
           if (!revision) throw new Conflict()
           const saved = tx
             .update(SessionTaskTable)
-            .set({ time_updated: now })
-            .where(and(eq(SessionTaskTable.id, task.id), eq(SessionTaskTable.current_revision_id, current.id)))
+            .set({ status: "running", time_updated: now })
+            .where(and(eq(SessionTaskTable.id, task.id), eq(SessionTaskTable.current_revision_id, active.id)))
             .returning()
             .get()
           if (!saved) throw new Conflict()
@@ -674,7 +697,7 @@ export namespace SessionTask {
     parentActionID: string
     messageID?: MessageID
   }) {
-    if (!exists(input.sessionID) && (await multiple(input.sessionID))) throw new Conflict()
+    if ((await admit(input.sessionID)) === "multiple") throw new Conflict()
     const assignment = await SessionAssignment.bySource({
       sessionID: input.parentSessionID,
       runID: input.parentRunID,
@@ -863,6 +886,13 @@ export namespace SessionTask {
 
   export async function create(raw: z.input<typeof Create>) {
     const input = Create.parse(raw)
+    const unbound = !exists(input.sessionID)
+    const admitted = await admit(input.sessionID)
+    if (admitted === "multiple") throw new Conflict()
+    if (unbound && admitted === "bound") {
+      const stored = await get(input.sessionID)
+      if (stored) return stored
+    }
     const now = Date.now()
     const task = `task_${randomUUID()}`
     const revision = `revision_${randomUUID()}`
@@ -1354,25 +1384,21 @@ export namespace SessionTask {
     const bound = await current(sessionID)
     if (bound) return bound
     const { SessionRuns } = await import("./runs")
-    const runs = await SessionRuns.persistedList(sessionID)
-    if (!runs.length) return
-    if (runs.length > 1)
+    const admitted = await admit(sessionID)
+    if (admitted === "empty") return
+    if (admitted === "multiple") {
+      const migration = await SessionRuns.migration(sessionID)
       return LegacyMigration.parse({
         type: "legacy_multi_run",
-        count: runs.length,
+        count: migration.count,
+        truncated: migration.truncated,
         proposal: {
           status: "pending_confirmation",
           session_id: sessionID,
-          runs: runs.map((run) => ({
-            run_id: run.run_id,
-            title: run.title ?? "Legacy task",
-            status: run.status,
-            ...(run.summary && run.summary_source ? { result: run.summary, result_source: run.summary_source } : {}),
-            time: run.time,
-          })),
+          runs: migration.runs,
         },
       })
-    await migrate(sessionID, runs[0]!)
+    }
     return current(sessionID)
   }
 
@@ -1468,10 +1494,14 @@ export namespace SessionTask {
 
   export async function legacy(sessionID: SessionID) {
     const { SessionRuns } = await import("./runs")
-    const runs = await SessionRuns.persistedList(sessionID)
-    if (!runs.length) return
-    if (runs.length > 1) return { type: "legacy_multi_run" as const, count: runs.length }
-    const run = runs[0]!
+    const state = await SessionRuns.migrationCount(sessionID)
+    if (!state.count) return
+    if (state.count > 1) {
+      const migration = await SessionRuns.migration(sessionID)
+      return { type: "legacy_multi_run" as const, count: migration.count }
+    }
+    const run = state.runID ? await SessionRuns.persisted(sessionID, state.runID) : undefined
+    if (!run) return
     const actions = workflow({ actions: tagged(run.actions, run.run_id) })
     const { SessionTaskHandoff } = await import("./task-handoff")
     return LegacyView.parse({
@@ -1937,9 +1967,16 @@ export namespace SessionTask {
     )
   }
 
-  async function multiple(sessionID: SessionID) {
+  async function admit(sessionID: SessionID) {
+    if (exists(sessionID)) return "bound" as const
     const { SessionRuns } = await import("./runs")
-    return (await SessionRuns.persistedList(sessionID)).length > 1
+    const state = await SessionRuns.migrationCount(sessionID)
+    if (state.count === 0) return "empty" as const
+    if (state.count > 1) return "multiple" as const
+    const run = state.runID ? await SessionRuns.persisted(sessionID, state.runID) : undefined
+    if (!run) return "empty" as const
+    await migrate(sessionID, run)
+    return "bound" as const
   }
 
   function hash(input: string) {

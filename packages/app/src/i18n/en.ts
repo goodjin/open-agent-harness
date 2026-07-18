@@ -670,6 +670,7 @@ export const dict = {
   "session.task.unbound.description": "The task will appear here after this session starts executable work.",
   "session.task.legacy.title": "Legacy session",
   "session.task.legacy.description": "Found {{count}} legacy Runs. Organize and confirm the current task first; these Runs remain read-only history until then.",
+  "session.task.legacy.truncated": "Showing {{count}} bounded snapshots from the beginning and end.",
   "session.task.status.unbound": "Unbound",
   "session.task.status.running": "Running",
   "session.task.status.waitingUser": "Waiting for user",

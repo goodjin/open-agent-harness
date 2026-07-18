@@ -238,4 +238,21 @@ export namespace Storage {
       return []
     }
   }
+
+  export async function probe(prefix: string[], limit: number) {
+    const size = Math.max(1, Math.floor(limit))
+    const dir = await state().then((x) => x.dir)
+    const found: string[][] = []
+    try {
+      const scan = await fs.opendir(path.join(dir, ...prefix))
+      for await (const item of scan) {
+        if (!item.isFile() || !item.name.endsWith(".json")) continue
+        found.push([...prefix, item.name.slice(0, -5)])
+        if (found.length === size) break
+      }
+      return found.sort()
+    } catch {
+      return []
+    }
+  }
 }

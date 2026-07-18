@@ -3311,6 +3311,123 @@ describe("session task", () => {
       expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(0)
     }))
 
+  test("admits one legacy run before appending an ordinary executable package", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const old = result("run_legacy_admit", [{ id: "legacy_action", title: "Legacy action", status: "completed" }])
+      await Storage.write(["session_protocol_run", session.id, old.run_id], old)
+      await SessionRuns.finish({
+        sessionID: session.id,
+        runID: old.run_id,
+        summary: "Legacy result",
+        messageID: "msg_legacy_admit",
+      })
+
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_after_legacy",
+        legacy: { title: "Unsafe new task", body: "Unsafe new body" },
+        actions: [{ id: "new_action" }],
+      })
+      const stored = await SessionTask.get(session.id)
+      expect(stored?.task).toMatchObject({ source_type: "legacy", title: old.title, status: "running" })
+      expect(stored?.revision).toMatchObject({
+        version: 1,
+        result: null,
+        result_source: null,
+        workflow: {
+          run_id: "run_after_legacy",
+          run_ids: [old.run_id, "run_after_legacy"],
+          actions: [{ id: "legacy_action", run_id: old.run_id }, { id: "new_action", run_id: "run_after_legacy" }],
+        },
+      })
+    }))
+
+  test("keeps open and execute admission idempotent for one legacy run", () =>
+    setup(async () => {
+      for (const mode of ["before", "concurrent"] as const) {
+        const session = await Session.create({})
+        const old = protocol(`run_legacy_${mode}`, `Legacy ${mode}`)
+        await Storage.write(["session_protocol_run", session.id, old.run_id], old)
+        const execute = () =>
+          SessionTask.route({
+            sessionID: session.id,
+            runID: `run_new_${mode}`,
+            legacy: { title: "Unsafe", body: "Unsafe" },
+            actions: [{ id: `new_${mode}` }],
+          })
+        if (mode === "before") {
+          await SessionTask.open(session.id)
+          await execute()
+        } else {
+          await Promise.all([SessionTask.open(session.id), execute()])
+        }
+        const stored = await SessionTask.get(session.id)
+        expect(stored?.revision.version).toBe(1)
+        expect(stored?.revision.workflow.run_ids).toEqual([old.run_id, `run_new_${mode}`])
+        expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(
+          mode === "before" ? 1 : 2,
+        )
+      }
+    }))
+
+  test("migrates a delegated child legacy run before rejecting its incompatible assignment", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const old = protocol("run_child_legacy", "Child legacy")
+      await Storage.write(["session_protocol_run", child.id, old.run_id], old)
+      const action = {
+        type: "action",
+        id: "delegate_after_legacy",
+        title: "Delegate after legacy",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "New delegated task" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "New delegated task",
+        runID: "run_parent_delegate",
+        sessionID: parent.id,
+      })
+      await expect(
+        SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: "run_parent_delegate",
+          parentActionID: action.id,
+        }),
+      ).rejects.toThrow("session_task_revision_not_active")
+      expect(await SessionTask.get(child.id)).toMatchObject({
+        task: { source_type: "legacy" },
+        revision: { workflow: { run_ids: [old.run_id] } },
+      })
+    }))
+
+  test("migrates one legacy run before resolving a direct replacement create", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const old = protocol("run_legacy_direct_create", "Legacy direct create")
+      await Storage.write(["session_protocol_run", session.id, old.run_id], old)
+      const created = await SessionTask.create({
+        sessionID: session.id,
+        title: "Replacement",
+        body: "Replacement",
+        source: { type: "user", messageID: MessageID.ascending() },
+      })
+      expect(created.task.source_type).toBe("legacy")
+      expect(await SessionTask.get(session.id)).toMatchObject({
+        task: { source_type: "legacy", title: old.title },
+        revision: { version: 1, workflow: { run_ids: [old.run_id] } },
+      })
+    }))
+
   test("rejects an ordinary executable package after opening a multi-run proposal", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -3332,6 +3449,8 @@ describe("session task", () => {
     setup(async () => {
       const session = await Session.create({})
       await legacyRuns(session.id, "unopened")
+      const migration = spyOn(SessionRuns, "migration")
+      const full = spyOn(SessionRuns, "persistedList")
       await expect(
         SessionTask.route({
           sessionID: session.id,
@@ -3341,6 +3460,8 @@ describe("session task", () => {
         }),
       ).rejects.toThrow("session_task_conflict")
       expect(await SessionTask.get(session.id)).toBeUndefined()
+      expect(migration).not.toHaveBeenCalled()
+      expect(full).not.toHaveBeenCalled()
     }))
 
   test("rejects update and handoff confirmations as the first multi-run migration", () =>

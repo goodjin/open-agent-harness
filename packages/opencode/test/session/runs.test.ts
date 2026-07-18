@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import { symlink } from "fs/promises"
 import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
@@ -19,6 +19,43 @@ import { Storage } from "../../src/storage/storage"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session runs", () => {
+  test("bounds legacy migration snapshots without reading outcomes", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_migration_projection"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Promise.all(
+              Array.from({ length: 101 }, (_, index) => {
+                const id = `run_migration_${index.toString().padStart(3, "0")}`
+                return Storage.write(["session_protocol_run", session.id, id], result(id))
+              }),
+            )
+            const read = Storage.read
+            const keys: string[][] = []
+            const hook = spyOn(Storage, "read").mockImplementation(async (key) => {
+              keys.push(key)
+              return read(key)
+            })
+            try {
+              const migration = await SessionRuns.migration(session.id)
+              expect(migration.count).toBe(101)
+              expect(migration.truncated).toBe(true)
+              expect(migration.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
+              expect(keys).toHaveLength(SessionRuns.MIGRATION_LIMIT)
+              expect(keys.every((key) => key[0] === "session_protocol_run")).toBe(true)
+              expect(keys.some((key) => key[0] === "session_protocol_run_outcome")).toBe(false)
+            } finally {
+              hook.mockRestore()
+            }
+          },
+        }),
+    })
+  })
+
   test("projects a running delegated run from its verified assignment", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({

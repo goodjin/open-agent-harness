@@ -1148,6 +1148,133 @@ describe("SessionRunner", () => {
     }
   })
 
+  test("protocol runner admits one legacy run before ordinary execution without a task read", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    let calls = 0
+    const stream = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      return packet(
+        calls === 1
+          ? {
+              version: "2",
+              items: [{ id: "inspect_after_legacy", kind: "tool", target: "read", args: { filePath: "package.json" } }],
+            }
+          : {
+              version: "2",
+              items: [
+                {
+                  id: "legacy_done",
+                  kind: "success",
+                  answer: "Legacy continuation completed.",
+                  summary: "New run completed.",
+                  changed_files: [],
+                },
+              ],
+            },
+        `call_single_run_legacy_${calls}`,
+      )
+    })
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const now = Date.now()
+              await Storage.write(["session_protocol_run", session.id, "run_runner_single_legacy"], {
+                ...run("run_runner_single_legacy"),
+                title: "Legacy runner task",
+                actions: [
+                  {
+                    id: "legacy_runner_action",
+                    title: "Legacy runner action",
+                    operation: "read",
+                    executor: { type: "tool", target: "read", capabilities: [] },
+                    input: { filePath: "legacy.md" },
+                    depends_on: [],
+                    status: "completed",
+                    summary: "Legacy action completed.",
+                    output: "legacy",
+                    tool_call_ids: [],
+                    duration_ms: 1,
+                    time: { started: now, completed: now + 1 },
+                  },
+                ],
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: now },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: now },
+              })) as MessageV2.Assistant
+              await SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              }).process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "continue the legacy task" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
+                  prompt: "",
+                  execute: async () => ({ title: "read", output: "new", metadata: {} }),
+                } as never,
+              })
+              const current = await SessionTask.current(session.id)
+              expect(current).toMatchObject({
+                title: "Legacy runner task",
+                version: 1,
+                actions: [
+                  { id: "legacy_runner_action", run_id: "run_runner_single_legacy" },
+                  { id: "inspect_after_legacy" },
+                ],
+              })
+              expect((await SessionTask.get(session.id))?.revision.workflow.run_ids).toEqual([
+                "run_runner_single_legacy",
+                expect.any(String),
+              ])
+              expect(current?.result).toBe("Legacy continuation completed.\n\nNew run completed.")
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+    }
+  })
+
   test("protocol runner rejects task conflict before confirm or executable callbacks", async () => {
     await using tmp = await tmpdir()
     const model = {

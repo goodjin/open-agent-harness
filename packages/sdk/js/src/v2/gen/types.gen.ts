@@ -2083,6 +2083,7 @@ export type ConflictError = {
 export type SessionTaskLegacyMigration = {
   type: "legacy_multi_run"
   count: number
+  truncated: boolean
   proposal: {
     status: "pending_confirmation"
     session_id: string
@@ -2090,8 +2091,6 @@ export type SessionTaskLegacyMigration = {
       run_id: string
       title: string
       status: "running" | "completed" | "blocked" | "failed"
-      result?: string
-      result_source?: "protocol" | "action_result" | "fallback_summary"
       time: {
         started: number
         completed?: number

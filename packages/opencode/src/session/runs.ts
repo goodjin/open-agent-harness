@@ -98,6 +98,49 @@ export namespace SessionRuns {
     })
     .passthrough()
 
+  export const MIGRATION_LIMIT = 50
+
+  const Migration = z
+    .object({
+      run_id: ID,
+      title: z.string().optional(),
+      status: z.enum(["running", "completed", "blocked", "failed"]),
+      time: AgentProtocol.Result.shape.time,
+    })
+    .passthrough()
+
+  export async function migrationCount(sessionID: SessionID) {
+    const keys = await Storage.probe(["session_protocol_run", sessionID], 2)
+    return {
+      count: keys.length,
+      runID: keys.length === 1 ? keys[0]!.at(-1) : undefined,
+    }
+  }
+
+  export async function migration(sessionID: SessionID, limit = MIGRATION_LIMIT) {
+    const keys = await Storage.list(["session_protocol_run", sessionID])
+    const size = z.number().int().min(1).max(MIGRATION_LIMIT).parse(limit)
+    const edge = Math.ceil(size / 2)
+    const tail = size - edge
+    const picked =
+      keys.length <= size ? keys : [...keys.slice(0, edge), ...(tail ? keys.slice(-tail) : [])]
+    const runs = await Promise.all(
+      picked.map((key) => Storage.read<unknown>(key).then((item) => Migration.parse(item))),
+    )
+    return {
+      count: keys.length,
+      truncated: keys.length > picked.length,
+      runs: runs
+        .map((run) => ({
+          run_id: run.run_id,
+          title: run.title ?? "Legacy task",
+          status: run.status,
+          time: run.time,
+        }))
+        .sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
+    }
+  }
+
   export async function list(sessionID: SessionID) {
     return all(sessionID, true, true)
   }

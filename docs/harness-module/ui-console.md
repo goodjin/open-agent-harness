@@ -23,6 +23,8 @@ The detection function is shared by the composer affordance and submit path, so 
 
 多 Run 旧会话的 current API 返回 `legacy_multi_run`。Task tab 显示旧版会话 proposal 卡，只列 Run ID、标题和状态，并提示先整理、确认当前任务；UI 不把该响应当作 Current Task 读取 body 或 actions。确认沿用下一次可执行任务的 canonical create/self assignment 证据链。确认前旧 Runs 只是只读快照，不进入 Revision action 图；即使用户从未打开 Task tab，领域绑定入口也会重新读取 persisted Runs 并拒绝未确认的可执行 package。
 
+Proposal 携带旧 Run 总数、`truncated` 标记和最多 50 条首尾快照。页面在截断时显示提示。单 Run 会在任一执行入口先迁移为 Task v1；是否提前打开 Task tab、或 current 请求与执行并发，不改变最终 Task 的 action 与 run ID 集合。
+
 Task Update 与 Handoff proposal 使用专用卡片展示确认、取消、失败和重试。Handoff 启动后，卡片通过 `target_session_id` 跳转到平级目标会话；来源会话继续保留状态、目标链接和结果查看入口。
 
 ### Runs Compatibility API

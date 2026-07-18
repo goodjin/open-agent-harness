@@ -12,6 +12,7 @@ import {
   initial,
   observe,
   progress,
+  present,
   refresh,
   requests,
   single,
@@ -21,6 +22,7 @@ import {
   type Badge,
   type Feed,
   type Current,
+  type Legacy,
 } from "./session-task-data"
 import { proposal, proposalError, proposalFlow, proposalIndex, proposals, type ProposalPart } from "./session-task-proposal"
 
@@ -67,6 +69,34 @@ const deferred = <T>() => {
 }
 
 describe("session task", () => {
+  test("presents normal, legacy, missing, and error feeds without crossing union fields", () => {
+    const current = task()
+    const legacy = {
+      type: "legacy_multi_run",
+      count: 2,
+      truncated: false,
+      proposal: {
+        status: "pending_confirmation",
+        session_id: "session_1",
+        runs: [
+          {
+            run_id: "run_old",
+            title: "Old run",
+            status: "completed",
+            time: { started: 1, completed: 2 },
+          },
+        ],
+      },
+    } as Legacy
+
+    expect(present({ current, loading: false })).toEqual({ kind: "current", current })
+    expect(present({ current: legacy, loading: false })).toEqual({ kind: "legacy", legacy })
+    expect(present({ loading: false })).toEqual({ kind: "unbound" })
+    expect(present({ loading: false, error: "404" })).toEqual({ kind: "error", error: "404" })
+    expect(present({ current: legacy, loading: false })).not.toHaveProperty("current")
+    expect(present({ current, loading: false })).not.toHaveProperty("legacy")
+  })
+
   const part = (metadata: Record<string, unknown>, value: Partial<ProposalPart> = {}): ProposalPart => ({
     type: "text",
     text: "runtime projection",

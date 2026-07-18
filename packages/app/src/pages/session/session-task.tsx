@@ -10,7 +10,7 @@ import {
   content,
   handoff as handoffLabel,
   initial,
-  migration,
+  present,
   progress as count,
   requests,
   result,
@@ -124,8 +124,16 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
   })
   onCleanup(loader.reset)
 
-  const legacy = () => migration(state.current)
-  const shown = () => state.detail ?? active(state.current)
+  const screen = () => present({ current: state.current, loading: state.loading.current, error: state.error.current })
+  const legacy = () => {
+    const item = screen()
+    return item.kind === "legacy" ? item.legacy : undefined
+  }
+  const shown = () => {
+    if (state.detail) return state.detail
+    const item = screen()
+    return item.kind === "current" ? item.current : undefined
+  }
   const actions = () => shown()?.actions ?? []
   const progress = () => (shown() ? count(shown()!) : { completed: 0, total: 0 })
   const outcome = () => {
@@ -180,6 +188,11 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
                     )}
                   </For>
                 </div>
+                <Show when={item().truncated}>
+                  <div class="mt-3 text-11-regular text-text-weak">
+                    {language.t("session.task.legacy.truncated", { count: item().proposal.runs.length })}
+                  </div>
+                </Show>
               </div>
             </div>
           )}

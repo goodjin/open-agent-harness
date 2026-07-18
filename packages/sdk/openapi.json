@@ -24437,6 +24437,9 @@
             "minimum": 2,
             "maximum": 9007199254740991
           },
+          "truncated": {
+            "type": "boolean"
+          },
           "proposal": {
             "type": "object",
             "properties": {
@@ -24468,17 +24471,6 @@
                         "completed",
                         "blocked",
                         "failed"
-                      ]
-                    },
-                    "result": {
-                      "type": "string"
-                    },
-                    "result_source": {
-                      "type": "string",
-                      "enum": [
-                        "protocol",
-                        "action_result",
-                        "fallback_summary"
                       ]
                     },
                     "time": {
@@ -24522,6 +24514,7 @@
         "required": [
           "type",
           "count",
+          "truncated",
           "proposal"
         ],
         "additionalProperties": false
