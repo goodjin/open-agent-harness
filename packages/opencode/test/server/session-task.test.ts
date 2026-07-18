@@ -10,12 +10,18 @@ import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionPrompt } from "../../src/session/prompt"
-import { MessageID, SessionID } from "../../src/session/schema"
+import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
 import { Database, eq } from "../../src/storage/db"
-import { AssignmentTable, SessionEventOutboxTable, TaskConfirmationTable } from "../../src/session/session.sql"
+import {
+  AssignmentTable,
+  SessionEventOutboxTable,
+  SessionTable,
+  SessionTaskTable,
+  TaskConfirmationTable,
+} from "../../src/session/session.sql"
 import { tmpdir } from "../fixture/fixture"
 
 afterEach(resetDatabase)
@@ -1047,6 +1053,125 @@ describe("session task endpoints", () => {
     prompt.mockRestore()
   })
 
+  test("fails closed for live Task questions with missing or duplicate protocol locators", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_live_locator"),
+          fn: async () => {
+            const cases = (["update", "handoff"] as const).flatMap((op) =>
+              (["missing", "duplicate"] as const).flatMap((mode) =>
+                (["reply", "reject"] as const).map((route) => ({ id: `${op}_${mode}_${route}`, op, mode, route })),
+              ),
+            )
+            const app = Server.Default()
+            for (const item of cases) {
+              const session = await Session.create({})
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: `run_${item.id}_old`,
+                legacy: { title: "Original", body: "Original" },
+                actions: [],
+              })
+              const messageID = await assistant(session.id)
+              const runID = `run_${item.id}`
+              const actionID = `confirm_${item.id}`
+              const handoff =
+                item.op === "handoff"
+                  ? await SessionTaskHandoff.propose({
+                      sourceID: session.id,
+                      messageID,
+                      runID,
+                      actionID,
+                      title: "Peer task",
+                      body: "Peer body",
+                      contextRefs: [],
+                    })
+                  : undefined
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID,
+                actionID,
+                title: "Live task",
+                plan: "Live task body",
+                op: item.op,
+                target: item.op === "update" ? "self" : "peer",
+              })
+              await evidence({
+                sessionID: session.id,
+                messageID,
+                actionID,
+                kind: "confirm",
+                assignment: { op: item.op, target: item.op === "update" ? "self" : "peer" },
+              })
+              await locate(session.id, runID, actionID, item.mode)
+              const asked = Question.askReply({
+                sessionID: session.id,
+                questions: [{ question: "Confirm?", header: "Confirm", options: [] }],
+                tool: { messageID, callID: `call_${actionID}` },
+              })
+              let settled = false
+              void asked.then(
+                () => (settled = true),
+                () => (settled = true),
+              )
+              while (!(await Question.list()).some((question) => question.sessionID === session.id)) await Bun.sleep(1)
+              const pending = (await Question.list()).find((question) => question.sessionID === session.id)
+              if (!pending) throw new Error("question missing")
+              const sessions = Database.use((db) => db.select().from(SessionTable).all()).length
+              const tasks = Database.use((db) => db.select().from(SessionTaskTable).all()).length
+              const res = await app.request(`/question/${pending.id}/${item.route}`, {
+                method: "POST",
+                ...(item.route === "reply"
+                  ? {
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+                    }
+                  : {}),
+              })
+              expect(res.status).toBe(409)
+              expect((await Question.list()).some((question) => question.id === pending.id)).toBe(true)
+              expect(settled).toBe(false)
+              expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(0)
+              expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(0)
+              expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(0)
+              expect(prompt).toHaveBeenCalledTimes(0)
+              expect(Database.use((db) => db.select().from(SessionTable).all())).toHaveLength(sessions)
+              expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(tasks)
+              if (handoff) expect(await SessionTaskHandoff.get(handoff.id)).toMatchObject({ status: "proposed" })
+              await Question.reject(pending.id)
+              await asked.catch(() => undefined)
+            }
+
+            const session = await Session.create({})
+            const messageID = await assistant(session.id)
+            await evidence({ sessionID: session.id, messageID, actionID: "input_live", kind: "input" })
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [{ question: "Choose", header: "Choose", options: [{ label: "A", description: "A" }] }],
+              tool: { messageID, callID: "call_input_live" },
+            })
+            while (!(await Question.list()).some((question) => question.sessionID === session.id)) await Bun.sleep(1)
+            const pending = (await Question.list()).find((question) => question.sessionID === session.id)
+            if (!pending) throw new Error("input question missing")
+            const res = await app.request(`/question/${pending.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["A"]] }),
+            })
+            expect(res.status).toBe(200)
+            expect((await asked).answers).toEqual([["A"]])
+            expect(prompt).toHaveBeenCalledTimes(0)
+          },
+        }),
+    })
+    prompt.mockRestore()
+  })
+
   test("imports only canonical legacy terminal confirmations without continuing", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
@@ -1410,6 +1535,86 @@ async function message(sessionID: SessionID) {
     mode: "",
   } as MessageV2.User)
   return id
+}
+
+async function assistant(sessionID: SessionID) {
+  const parentID = await message(sessionID)
+  const id = MessageID.ascending()
+  await Session.updateMessage({
+    id,
+    sessionID,
+    parentID,
+    role: "assistant",
+    mode: "protocol-runner",
+    agent: "protocol-runner",
+    path: { cwd: "/", root: "/" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ModelID.make("gpt-5.2"),
+    providerID: ProviderID.make("openai"),
+    time: { created: Date.now() },
+  } as MessageV2.Assistant)
+  return id
+}
+
+async function evidence(input: {
+  sessionID: SessionID
+  messageID: MessageID
+  actionID: string
+  kind: "confirm" | "input"
+  assignment?: { op: "update" | "handoff"; target: "self" | "peer" }
+}) {
+  const now = Date.now()
+  await Session.updatePart({
+    id: PartID.ascending(),
+    sessionID: input.sessionID,
+    messageID: input.messageID,
+    type: "tool",
+    callID: `protocol_${input.actionID}`,
+    tool: "AgentProtocolOutput",
+    state: {
+      status: "completed",
+      input: {
+        version: "2",
+        items: [
+          input.kind === "confirm"
+            ? {
+                id: input.actionID,
+                kind: "confirm",
+                prompt: "Confirm task",
+                plan: "Task plan",
+                depends: [],
+                result: { mode: "summary" },
+                assignment: input.assignment,
+              }
+            : { id: input.actionID, kind: "input", prompt: "Choose", mode: "select", options: ["A"] },
+        ],
+      },
+      output: "",
+      title: "Protocol",
+      metadata: {},
+      time: { start: now, end: now },
+    },
+  })
+}
+
+async function locate(sessionID: SessionID, runID: string, actionID: string, mode: "missing" | "duplicate") {
+  const session = await Session.get(sessionID)
+  const protocol = (session.dsl_context?.protocol ?? {}) as Record<string, unknown>
+  const confirmations = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  const found = confirmations.filter((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false
+    const value = item as Record<string, unknown>
+    return value.run_id === runID && value.action_id === actionID
+  })
+  const next =
+    mode === "missing"
+      ? confirmations.filter((item) => !found.includes(item))
+      : [...confirmations, ...(found[0] ? [{ ...(found[0] as Record<string, unknown>) }] : [])]
+  await Session.setDslContext({
+    sessionID,
+    dsl_context: { ...session.dsl_context, protocol: { ...protocol, confirmations: next } },
+  })
 }
 
 async function proposal(input: {

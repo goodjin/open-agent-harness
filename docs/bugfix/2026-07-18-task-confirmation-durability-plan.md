@@ -31,6 +31,9 @@ The claim owner starts a heartbeat immediately and keeps it active across Assign
 
 ## Verification
 
+- Live Question candidates whose assistant `AgentProtocolOutput` input identifies update/handoff fail closed with 409 when the DSL locator is missing or duplicated; reply and reject retain the pending Question and produce no Assignment, Handoff transition, outbox, or prompt continuation.
+- Tool-backed protocol input/select Questions remain on the generic Question path.
+
 - RED/GREEN route tests for the revision barrier, failed continuation, fixed identity, replay, and generated SDK surface.
 - Controlled lease and barrier tests across Assignment, Handoff, and live Question reply.
 - Public Question reply route tests proving live and restored Task confirmations enter the same confirmation service and fixed continuation outbox, while generic Questions keep their existing behavior.

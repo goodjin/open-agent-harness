@@ -12,6 +12,7 @@ import { SessionTaskConfirmation } from "@/session/task-confirmation"
 import { SessionTask } from "@/session/task"
 import { SessionTaskHandoff } from "@/session/task-handoff"
 import { ConflictError } from "@/storage/db"
+import { MessageV2 } from "@/session/message-v2"
 import { Storage } from "@/storage/storage"
 import { Log } from "@/util/log"
 import z from "zod"
@@ -260,6 +261,17 @@ async function task(input: {
   if (found.length !== 1 || !rec(found[0])) {
     if (parsed)
       throw new ConflictError({ message: `Protocol confirmation is not current: ${parsed.run}:${parsed.action}` })
+    const intents = found.flatMap((item) => {
+      if (!rec(item)) return []
+      const value = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
+      return [value]
+    })
+    const evidence = live && action ? await carrier(live.sessionID, live.tool?.messageID, action) : undefined
+    if (evidence) intents.push(evidence)
+    if (intents.some((item) => item.op === "update" || item.op === "handoff"))
+      throw new ConflictError({ message: `Task proposal locator is ambiguous: ${action}` })
+    if (intents.some((item) => "op" in item && (item.op !== "create" || (item.target && item.target !== "self"))))
+      throw new ConflictError({ message: `Task proposal evidence is invalid: ${action}` })
     return false
   }
   const item = found[0]
@@ -302,6 +314,21 @@ async function task(input: {
     handoffID: handoff?.id,
   })
   return true
+}
+
+async function carrier(sessionID: SessionID, messageID: MessageID | undefined, action: string) {
+  if (!messageID) return
+  const message = await MessageV2.get({ sessionID, messageID })
+  if (message.info.role !== "assistant") return
+  const items = message.parts.flatMap((part) => {
+    if (part.type !== "tool" || part.tool !== "AgentProtocolOutput" || part.state.status !== "completed") return []
+    const input = rec(part.state.input) ? part.state.input : {}
+    return Array.isArray(input.items) ? input.items : []
+  })
+  const found = items.filter((item) => rec(item) && item.id === action && item.kind === "confirm")
+  if (!found.length) return
+  if (found.length !== 1 || !rec(found[0])) return { op: "invalid" }
+  return rec(found[0].assignment) ? found[0].assignment : undefined
 }
 
 async function answer(input: { answers?: Question.Answer[]; reject?: boolean; requestID: QuestionID }) {
