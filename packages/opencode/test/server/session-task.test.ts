@@ -1184,15 +1184,14 @@ describe("session task endpoints", () => {
             for (const kind of ["user", "pending"] as const) {
               const session = await Session.create({})
               const messageID = kind === "user" ? await message(session.id) : await assistant(session.id)
-              if (kind === "pending")
-                await evidence({
-                  sessionID: session.id,
-                  messageID,
-                  actionID: `guard_${kind}`,
-                  kind: "confirm",
-                  assignment: { op: "update", target: "self" },
-                  status: "pending",
-                })
+              await evidence({
+                sessionID: session.id,
+                messageID,
+                actionID: `guard_${kind}`,
+                kind: "confirm",
+                assignment: { op: "update", target: "self" },
+                status: kind === "pending" ? "pending" : "completed",
+              })
               const asked = Question.askReply({
                 sessionID: session.id,
                 questions: [{ question: "Continue?", header: "Continue", options: [] }],
