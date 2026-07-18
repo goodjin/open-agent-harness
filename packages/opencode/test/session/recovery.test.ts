@@ -19,7 +19,7 @@ import { AgentProtocol } from "../../src/protocol/schema"
 import { SessionControlTool } from "../../src/tool/session-control"
 import type { Tool } from "../../src/tool/tool"
 import { Database, eq } from "../../src/storage/db"
-import { SessionEventOutboxTable } from "../../src/session/session.sql"
+import { SessionEventOutboxTable, SessionTaskTable } from "../../src/session/session.sql"
 import { Log } from "../../src/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -237,6 +237,130 @@ describe("session recovery", () => {
           })
         },
       }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("reconciles delivered bootstrap state for only the current blocked revision", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let calls = 0
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      calls++
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_delivered_reconcile"),
+        fn: async () => {
+          const delivered = await revision(tmp.path, "delivered_reconcile")
+          const acked = await revision(tmp.path, "acked_reconcile")
+          const stale = await revision(tmp.path, "stale_reconcile")
+          for (const [data, status] of [[delivered, "delivered"], [acked, "acked"]] as const) {
+            Database.use((db) => {
+              db.update(SessionEventOutboxTable)
+                .set({ status, delivered_at: Date.now(), acked_at: status === "acked" ? Date.now() : null })
+                .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                .run()
+              db.update(SessionTaskTable)
+                .set({ status: "blocked" })
+                .where(eq(SessionTaskTable.session_id, data.session.id))
+                .run()
+            })
+          }
+          Database.use((db) => {
+            const row = db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, stale.session.id)).get()!
+            db.update(SessionEventOutboxTable)
+              .set({ status: "delivered", delivered_at: Date.now(), payload: { ...row.payload, revision_id: stale.revision.previous_id } })
+              .where(eq(SessionEventOutboxTable.id, row.id))
+              .run()
+            db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.session_id, stale.session.id)).run()
+          })
+          const before = await Promise.all(
+            [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
+          )
+
+          expect(await SessionTaskRecovery.resume(delivered.session.id)).toBe(true)
+          expect((await SessionTask.get(delivered.session.id))?.task.status).toBe("running")
+          expect((await SessionTask.get(delivered.session.id))?.revision.id).toBe(delivered.revision.id)
+          expect(await SessionTaskRecovery.scan()).toContain(true)
+          expect((await SessionTask.get(acked.session.id))?.task.status).toBe("running")
+          expect((await SessionTask.get(acked.session.id))?.revision.id).toBe(acked.revision.id)
+          expect((await SessionTask.get(stale.session.id))?.task.status).toBe("blocked")
+          expect((await SessionTask.get(stale.session.id))?.revision.id).toBe(stale.revision.id)
+          const after = await Promise.all(
+            [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
+          )
+          expect(after.map((items) => items.length)).toEqual(before.map((items) => items.length))
+          expect(calls).toBe(0)
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("scan advances only task recovery rows from the current project directory", async () => {
+    await using a = await tmpdir({ git: true })
+    await using b = await tmpdir({ git: true })
+    let calls = 0
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      calls++
+      return undefined
+    }) as never)
+    try {
+      const foreign = await Instance.provide({ directory: b.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign"),
+        fn: async () => {
+          const parent = await Session.create({ agent: "default" })
+          const child = await Session.create({ parentID: parent.id, agent: "backend" })
+          const old = action("foreign_child", "delegate", "backend")
+          const first = await SessionTask.route({
+            sessionID: parent.id,
+            runID: "run_foreign_old",
+            legacy: { title: "Foreign old", body: "Foreign old" },
+            actions: [old],
+          })
+          if (first.type !== "execute") throw new Error("foreign task missing")
+          await SessionAssignment.delegate({
+            action: old,
+            childID: child.id,
+            messageID: MessageID.ascending(),
+            runID: "run_foreign_old",
+            sessionID: parent.id,
+          })
+          SessionStatus.set(child.id, { type: "running" })
+          const draft = await SessionTask.route({
+            sessionID: parent.id,
+            runID: "run_foreign_new",
+            assignment: { op: "update", target: "self", title: "Foreign new", body: "Foreign new" },
+            actions: [],
+          })
+          if (draft.type !== "update") throw new Error("foreign draft missing")
+          return { parent, child, revision: first.revision.id }
+        },
+      }) })
+
+      await Instance.provide({ directory: a.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_scan_current"),
+        fn: async () => {
+          const current = await revision(a.path, "scan_current")
+          expect(await SessionTaskRecovery.scan()).toContain(true)
+          expect((await SessionTask.get(current.session.id))?.task.status).toBe("running")
+          expect((await SessionTask.get(current.session.id))?.revision.id).toBe(current.revision.id)
+        },
+      }) })
+
+      await Instance.provide({ directory: b.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign_check"),
+        fn: async () => {
+          expect((await SessionTask.get(foreign.parent.id))?.task.status).toBe("revising")
+          expect((await SessionTask.get(foreign.parent.id))?.revision.id).toBe(foreign.revision)
+          expect(SessionStatus.get(foreign.child.id).type).toBe("running")
+          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, foreign.parent.id)).get())).toBeUndefined()
+        },
+      }) })
+      expect(calls).toBe(1)
     } finally {
       prompt.mockRestore()
     }

@@ -899,6 +899,10 @@ Expected: 远端 `dev` 包含全部提交，本地 `dev...origin/dev` 为 `0 0`�
 
 Critical 收口补充：stop、activate 或 bootstrap 任一步失败都由 `SessionTaskRecovery` 统一将 Task 置为 `blocked` 并写入幂等 progress error；启动扫描不得静默丢失该证据。已激活 Revision 的 bootstrap 可从 blocked 状态继续重试，成功投递后恢复为 `running`。`session_control` 的 stop/stop_all 仅在 `revising` 或 `blocked` 阶段开放，running/waiting_user 状态不能绕过 update confirm 停止 child。
 
+Bootstrap 状态对账补充：若进程在 outbox 已写 `delivered`/`acked`、Task blocked 尚未恢复 running 的窗口崩溃，resume/scan 只按当前 `session_id + task_id + revision_id` 的成功 outbox 对账恢复。旧 Revision 的成功记录不得解锁当前 Task，对账不得重复 prompt 或 message。
+
+启动扫描范围补充：Task recovery scan 必须通过 Session 关联同时匹配当前 `Instance.project.id` 和 `Instance.directory`。一个目录启动时不得读取、停止、激活或投递其他 project/directory 的 Task、child 或 outbox。
+
 ## 实施顺序和并行边界
 
 - Task 1-2 必须串行，先锁定数据库和 read model。

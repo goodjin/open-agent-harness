@@ -5,10 +5,11 @@ import { MessageV2 } from "./message-v2"
 import { SessionPrompt } from "./prompt"
 import { SessionResult } from "./result"
 import { MessageID, PartID, SessionID } from "./schema"
-import { SessionEventOutboxTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
+import { SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
 import { SessionStatus } from "./status"
 import { SessionTask } from "./task"
 import { Log } from "@/util/log"
+import { Instance } from "@/project/instance"
 
 export namespace SessionTaskRecovery {
   const log = Log.create({ service: "session.task-recovery" })
@@ -81,26 +82,19 @@ export namespace SessionTaskRecovery {
       } else if (stored.task.status === "revising") return false
     }
     const next = pending(sessionID)
-    if (!next) return bootstrapped(sessionID)
+    if (!next) {
+      const done = settled(sessionID, stored.task.id, stored.revision.id)
+      if (stored.task.status === "blocked" && done) unblock(sessionID, stored.task.id, stored.revision.id)
+      return done || bootstrapped(sessionID)
+    }
     await start(next)
     const sent = Database.use((tx) =>
       tx.select({ status: SessionEventOutboxTable.status }).from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, next.id)).get(),
     )
+    const task = typeof next.payload.task_id === "string" ? next.payload.task_id : ""
     const revision = typeof next.payload.revision_id === "string" ? next.payload.revision_id : ""
     if (sent?.status === "delivered" || sent?.status === "acked")
-      Database.use((tx) =>
-        tx
-          .update(SessionTaskTable)
-          .set({ status: "running", time_updated: Date.now() })
-          .where(
-            and(
-              eq(SessionTaskTable.session_id, sessionID),
-              eq(SessionTaskTable.status, "blocked"),
-              eq(SessionTaskTable.current_revision_id, revision),
-            ),
-          )
-          .run(),
-      )
+      unblock(sessionID, task, revision)
     return true
   }
 
@@ -123,7 +117,14 @@ export namespace SessionTaskRecovery {
       tx
         .select({ id: SessionTaskTable.session_id })
         .from(SessionTaskTable)
-        .where(inArray(SessionTaskTable.status, ["revising", "blocked", "running"]))
+        .innerJoin(SessionTable, eq(SessionTable.id, SessionTaskTable.session_id))
+        .where(
+          and(
+            inArray(SessionTaskTable.status, ["revising", "blocked", "running"]),
+            eq(SessionTable.project_id, Instance.project.id),
+            eq(SessionTable.directory, Instance.directory),
+          ),
+        )
         .all(),
     )
     return Promise.all(
@@ -213,6 +214,41 @@ export namespace SessionTaskRecovery {
           ),
         )
         .get(),
+    )
+  }
+
+  function settled(sessionID: SessionID, taskID: string, revisionID: string) {
+    return Database.use((tx) =>
+      tx
+        .select({ payload: SessionEventOutboxTable.payload })
+        .from(SessionEventOutboxTable)
+        .where(
+          and(
+            eq(SessionEventOutboxTable.session_id, sessionID),
+            eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
+            inArray(SessionEventOutboxTable.status, ["delivered", "acked"]),
+          ),
+        )
+        .all()
+        .some((row) => row.payload.task_id === taskID && row.payload.revision_id === revisionID),
+    )
+  }
+
+  function unblock(sessionID: SessionID, taskID: string, revisionID: string) {
+    if (!taskID || !revisionID) return
+    Database.use((tx) =>
+      tx
+        .update(SessionTaskTable)
+        .set({ status: "running", time_updated: Date.now() })
+        .where(
+          and(
+            eq(SessionTaskTable.id, taskID),
+            eq(SessionTaskTable.session_id, sessionID),
+            eq(SessionTaskTable.status, "blocked"),
+            eq(SessionTaskTable.current_revision_id, revisionID),
+          ),
+        )
+        .run(),
     )
   }
 
