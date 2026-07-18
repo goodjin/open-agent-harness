@@ -779,7 +779,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner binds a legacy session task before executable actions", async () => {
+  test("protocol runner rejects multi-run legacy execution without migration confirmation", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -935,6 +935,14 @@ describe("SessionRunner", () => {
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
               const session = await Session.create({})
+              await Storage.write(
+                ["session_protocol_run", session.id, "run_runner_legacy_a"],
+                run("run_runner_legacy_a"),
+              )
+              await Storage.write(
+                ["session_protocol_run", session.id, "run_runner_legacy_b"],
+                run("run_runner_legacy_b"),
+              )
               await Session.setPermission({
                 sessionID: session.id,
                 permission: [{ permission: "*", pattern: "*", action: "allow" }],
@@ -974,66 +982,42 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              const result = await runner.process({
-                user,
-                sessionID: session.id,
-                model,
-                agent: {
-                  name: "protocol-runner",
-                  runner: "protocol",
-                  entry: {
-                    primary: true,
-                    delegable: false,
-                    mentionable: true,
-                    default: false,
-                    hidden: false,
-                  },
-                  capability: {
-                    purpose: "protocol_orchestration",
-                    tags: [],
-                    cost: "low",
-                    writes: false,
-                  },
-                  permission: [{ permission: "*", pattern: "*", action: "allow" }],
-                  inheritPermissions: false,
-                } as never,
-                system: [],
-                abort: new AbortController().signal,
-                messages: [
-                  { role: "user", content: "old turn" },
-                  { role: "assistant", content: '[TOOL_CALL]\n{tool => "read"}\n[/TOOL_CALL]' },
-                  { role: "user", content: "inspect" },
-                ],
-                tools: {},
-              })
-              const parts = await MessageV2.parts(assistant.id)
-              const sessionAfter = await Session.get(session.id)
-              const protocol = sessionAfter.dsl_context?.protocol as
-                | {
-                    runs?: {
-                      runID: string
-                      total: number
-                      actions: { id: string; status: string; output?: string }[]
-                    }[]
-                  }
-                | undefined
-
-              expect(result).toBe("stop")
-              expect(
-                parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_context"),
-              ).toBe(true)
-              expect(
-                parts.some((part) => part.type === "text" && part.text.includes("agent-protocol") && !part.ignored),
-              ).toBe(false)
-              expect(parts.some((part) => part.type === "tool" && part.metadata?.protocol === true)).toBe(true)
-              expect(protocol?.runs?.[0]?.total).toBe(3)
-              expect(await SessionTask.current(session.id)).toMatchObject({ title: "Inspect", version: 1 })
-              const children = await Session.children(session.id)
-              expect(children).toHaveLength(1)
-              expect(await SessionTask.current(children[0]!.id)).toMatchObject({
-                title: "Delegate summary",
-                version: 1,
-              })
+              await expect(
+                runner.process({
+                  user,
+                  sessionID: session.id,
+                  model,
+                  agent: {
+                    name: "protocol-runner",
+                    runner: "protocol",
+                    entry: {
+                      primary: true,
+                      delegable: false,
+                      mentionable: true,
+                      default: false,
+                      hidden: false,
+                    },
+                    capability: {
+                      purpose: "protocol_orchestration",
+                      tags: [],
+                      cost: "low",
+                      writes: false,
+                    },
+                    permission: [{ permission: "*", pattern: "*", action: "allow" }],
+                    inheritPermissions: false,
+                  } as never,
+                  system: [],
+                  abort: new AbortController().signal,
+                  messages: [
+                    { role: "user", content: "old turn" },
+                    { role: "assistant", content: '[TOOL_CALL]\n{tool => "read"}\n[/TOOL_CALL]' },
+                    { role: "user", content: "inspect" },
+                  ],
+                  tools: {},
+                }),
+              ).rejects.toThrow("session_task_conflict")
+              expect(await SessionTask.get(session.id)).toBeUndefined()
+              expect(await Session.children(session.id)).toHaveLength(0)
             },
           }),
       })

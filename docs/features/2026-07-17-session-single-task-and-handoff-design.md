@@ -450,7 +450,9 @@ Runtime 不自动判断它们是否属于同一任务。`GET /session/:sessionID
 - 不恢复旧 Run；
 - 后续启用严格单任务规则。
 
-首个版本不增加独立的旧会话迁移确认接口。该会话下次准备执行任务时，沿用 create/self assignment 的现有确认链路；Runtime 只接受 canonical proposal、message、Run 和 action proof。确认后新 Revision 只包含新执行图，旧 Runs 不进入 workflow。
+首个版本不增加独立的旧会话迁移确认接口。该会话下次准备执行任务时，沿用 create/self assignment 的现有确认链路；Runtime 只接受与当前 package 精确关联的 canonical proposal、message、Run 和 action proof。update、handoff、继承的旧确认和 delegation assignment 都不能完成首次迁移。
+
+`legacy_multi_run` 同时是领域写门禁。Task 绑定入口会重新读取 persisted Runs，不依赖页面是否请求过 proposal。无 canonical create/self proof 的可执行 package 直接返回 `session_task_conflict`，且不写 Task、Revision 或 action。确认与普通执行并发时，以调用进入绑定边界时的 Task 快照判断：确认前进入的普通执行保持拒绝；确认提交后到达的新 action 才能追加到当前 Revision。确认后新 Revision 只包含新执行图，旧 Runs 不进入 workflow。
 
 新建会话直接使用新模型，不进入旧版兼容路径。
 

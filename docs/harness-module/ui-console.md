@@ -21,7 +21,7 @@ The detection function is shared by the composer affordance and submit path, so 
 
 任务页按当前任务标题与版本、Task Markdown、执行进度与 action、最终结果、相关 Handoff 的顺序展示。结果只读当前 Revision 的可信来源；运行态显示进度，终态区分 recorded、fallback 和 missing。历史列表在用户点击后才加载，正文又在选中某个版本后单独加载。历史版本只读，不能恢复，也不会默认进入 Page Feed。
 
-多 Run 旧会话的 current API 返回 `legacy_multi_run`。Task tab 显示旧版会话 proposal 卡，只列 Run ID、标题和状态，并提示先整理、确认当前任务；UI 不把该响应当作 Current Task 读取 body 或 actions。确认沿用下一次可执行任务的 create/self assignment 证据链。确认前旧 Runs 只是只读快照，不进入 Revision action 图。
+多 Run 旧会话的 current API 返回 `legacy_multi_run`。Task tab 显示旧版会话 proposal 卡，只列 Run ID、标题和状态，并提示先整理、确认当前任务；UI 不把该响应当作 Current Task 读取 body 或 actions。确认沿用下一次可执行任务的 canonical create/self assignment 证据链。确认前旧 Runs 只是只读快照，不进入 Revision action 图；即使用户从未打开 Task tab，领域绑定入口也会重新读取 persisted Runs 并拒绝未确认的可执行 package。
 
 Task Update 与 Handoff proposal 使用专用卡片展示确认、取消、失败和重试。Handoff 启动后，卡片通过 `target_session_id` 跳转到平级目标会话；来源会话继续保留状态、目标链接和结果查看入口。
 

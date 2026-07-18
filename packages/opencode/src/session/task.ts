@@ -355,6 +355,7 @@ export namespace SessionTask {
     legacy: { title: string; body: string }
     requiresAssignment?: boolean
   }) {
+    const unbound = !exists(input.sessionID)
     const rows = await Promise.all(
       input.actionIDs.map((actionID) =>
         SessionAssignment.bySource({ sessionID: input.sessionID, runID: input.runID, actionID }),
@@ -398,6 +399,8 @@ export namespace SessionTask {
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
+    if (unbound && (await multiple(input.sessionID)) && (!sourced || op !== "create" || target !== "self"))
+      throw new Conflict()
     if (assignment.status === "completed") {
       if (!sourced) throw new Conflict("session_task_assignment_not_current")
       if (op === "handoff") {
@@ -483,7 +486,9 @@ export namespace SessionTask {
   }
 
   export async function route(raw: z.input<typeof Route>) {
-    return write(raw)
+    const input = Route.parse(raw)
+    if (!exists(input.sessionID) && (await multiple(input.sessionID))) throw new Conflict()
+    return write(input)
   }
 
   function write(raw: z.input<typeof Route>, assignmentID?: string) {
@@ -669,6 +674,7 @@ export namespace SessionTask {
     parentActionID: string
     messageID?: MessageID
   }) {
+    if (!exists(input.sessionID) && (await multiple(input.sessionID))) throw new Conflict()
     const assignment = await SessionAssignment.bySource({
       sessionID: input.parentSessionID,
       runID: input.parentRunID,
@@ -1918,6 +1924,22 @@ export namespace SessionTask {
       if (constraint(err) || locked(err)) throw new Conflict()
       throw err
     }
+  }
+
+  function exists(sessionID: SessionID) {
+    return Database.use(
+      (db) =>
+        !!db
+          .select({ id: SessionTaskTable.id })
+          .from(SessionTaskTable)
+          .where(eq(SessionTaskTable.session_id, sessionID))
+          .get(),
+    )
+  }
+
+  async function multiple(sessionID: SessionID) {
+    const { SessionRuns } = await import("./runs")
+    return (await SessionRuns.persistedList(sessionID)).length > 1
   }
 
   function hash(input: string) {

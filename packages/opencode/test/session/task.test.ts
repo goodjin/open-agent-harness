@@ -448,6 +448,41 @@ describe("session task", () => {
       ).rejects.toThrow("session_task_delegation_assignment_missing")
     }))
 
+  test("does not let a delegated assignment bypass a multi-run migration confirmation", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const action = {
+        type: "action",
+        id: "delegate_legacy_child",
+        title: "Delegated legacy child",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "Delegated plan" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Delegated plan",
+        runID: "run_delegate_legacy",
+        sessionID: parent.id,
+      })
+      await legacyRuns(child.id, "delegated")
+      await expect(
+        SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: "run_delegate_legacy",
+          parentActionID: action.id,
+        }),
+      ).rejects.toThrow("session_task_conflict")
+      expect(await SessionTask.get(child.id)).toBeUndefined()
+    }))
+
   test("routes update to a draft and handoff away from source execution", () =>
     setup(async () => {
       const empty = await Session.create({})
@@ -1017,14 +1052,6 @@ describe("session task", () => {
   test("binds a legacy rev assignment as create only for a session without a task", () =>
     setup(async () => {
       const session = await Session.create({})
-      await Storage.write(["session_protocol_run", session.id, "run_legacy_history_a"],
-        protocol("run_legacy_history_a", "Legacy history A"))
-      await Storage.write(["session_protocol_run", session.id, "run_legacy_history_b"],
-        protocol("run_legacy_history_b", "Legacy history B"))
-      expect(await SessionTask.open(session.id)).toMatchObject({
-        type: "legacy_multi_run",
-        proposal: { status: "pending_confirmation" },
-      })
       const action = {
         type: "action",
         id: "legacy_confirm",
@@ -1062,13 +1089,6 @@ describe("session task", () => {
         title: "Legacy canonical title",
         body: "Legacy canonical plan",
       })
-      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
-        run_id: "run_legacy_execute",
-        run_ids: ["run_legacy_execute"],
-      })
-      expect(JSON.stringify((await SessionTask.get(session.id))?.revision.workflow)).not.toContain(
-        "run_legacy_history",
-      )
     }))
 
   test("rejects a legacy rev confirm assignment when the session already has a task", () =>
@@ -3290,7 +3310,143 @@ describe("session task", () => {
       expect(await SessionTask.get(session.id)).toBeUndefined()
       expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(0)
     }))
+
+  test("rejects an ordinary executable package after opening a multi-run proposal", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await legacyRuns(session.id, "opened")
+      expect(await SessionTask.open(session.id)).toMatchObject({ type: "legacy_multi_run" })
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_legacy_opened_new",
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          actions: [{ id: "unsafe" }],
+        }),
+      ).rejects.toThrow("session_task_conflict")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+      expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(0)
+    }))
+
+  test("rejects an ordinary executable package without first opening the multi-run proposal", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await legacyRuns(session.id, "unopened")
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_legacy_unopened_new",
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          actions: [{ id: "unsafe" }],
+        }),
+      ).rejects.toThrow("session_task_conflict")
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+    }))
+
+  test("rejects update and handoff confirmations as the first multi-run migration", () =>
+    setup(async () => {
+      for (const op of ["update", "handoff"] as const) {
+        const session = await Session.create({})
+        await legacyRuns(session.id, op)
+        const proof = await confirmation(session.id, `legacy_${op}`, op, op === "update" ? "self" : "peer")
+        await expect(
+          SessionTask.confirmed({
+            sessionID: session.id,
+            runID: proof.source_run_id!,
+            actionIDs: [proof.source_action_id!],
+            actions: [{ id: `new_${op}` }],
+            legacy: { title: "Unsafe", body: "Unsafe" },
+            requiresAssignment: true,
+          }),
+        ).rejects.toBeInstanceOf(SessionTask.Conflict)
+        expect(await SessionTask.get(session.id)).toBeUndefined()
+      }
+    }))
+
+  test("lets only a confirmed create win a multi-run migration race", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await legacyRuns(session.id, "race")
+      const proof = await confirmation(session.id, "legacy_race", "create", "self")
+      const results = await Promise.allSettled([
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_legacy_race_ordinary",
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          actions: [{ id: "ordinary" }],
+        }),
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: proof.source_run_id!,
+          actionIDs: [proof.source_action_id!],
+          actions: [{ id: "confirmed" }],
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          requiresAssignment: true,
+        }),
+      ])
+      expect(results[0]?.status).toBe("rejected")
+      expect(results[1]?.status).toBe("fulfilled")
+      expect(await SessionTask.current(session.id)).toMatchObject({ title: "legacy_race", version: 1 })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: proof.source_run_id,
+        run_ids: [proof.source_run_id],
+      })
+      expect(JSON.stringify((await SessionTask.get(session.id))?.revision.workflow)).not.toContain(
+        "run_legacy_race_old",
+      )
+      expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(1)
+      expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(1)
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_legacy_race_followup",
+        legacy: { title: "Ignored", body: "Ignored" },
+        actions: [{ id: "followup" }],
+      })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
+        run_id: "run_legacy_race_followup",
+        run_ids: [proof.source_run_id, "run_legacy_race_followup"],
+      })
+    }))
 })
+
+async function legacyRuns(sessionID: SessionID, key: string) {
+  await Storage.write(
+    ["session_protocol_run", sessionID, `run_legacy_${key}_old_a`],
+    protocol(`run_legacy_${key}_old_a`, "Legacy A"),
+  )
+  await Storage.write(
+    ["session_protocol_run", sessionID, `run_legacy_${key}_old_b`],
+    protocol(`run_legacy_${key}_old_b`, "Legacy B"),
+  )
+}
+
+async function confirmation(
+  sessionID: SessionID,
+  id: string,
+  op: "create" | "update" | "handoff",
+  target: "self" | "peer",
+) {
+  const action = {
+    type: "action",
+    id,
+    title: id,
+    operation: "confirm",
+    executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+    input: { assignment: { op, target } },
+    depends_on: [],
+    context_refs: [],
+    result_policy: "summary",
+  } as AgentProtocol.Action
+  const saved = await SessionAssignment.confirm({
+    action,
+    messageID: MessageID.ascending(),
+    plan: `${id} plan`,
+    runID: `run_${id}`,
+    sessionID,
+  })
+  if (!saved) throw new Error("confirmation assignment missing")
+  return saved
+}
 
 function protocol(id: string, title: string) {
   return AgentProtocol.Result.parse({
