@@ -141,7 +141,7 @@ export namespace SessionTaskRecovery {
         Database.use((tx) =>
           tx
             .update(SessionEventOutboxTable)
-            .set({ status: "delivered", delivered_at: now, acked_at: now, updated_at: now, error: null })
+            .set({ status: "delivered", delivered_at: now, acked_at: null, updated_at: now, error: null })
             .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "delivering")))
             .run(),
         )
@@ -208,7 +208,7 @@ export namespace SessionTaskRecovery {
     Database.use((tx) =>
       tx
         .update(SessionEventOutboxTable)
-        .set({ status: "delivered", delivered_at: Date.now(), acked_at: Date.now(), updated_at: Date.now(), error: null })
+        .set({ status: "delivered", delivered_at: Date.now(), acked_at: null, updated_at: Date.now(), error: null })
         .where(and(eq(SessionEventOutboxTable.id, row.id), eq(SessionEventOutboxTable.status, "delivering")))
         .run(),
     )

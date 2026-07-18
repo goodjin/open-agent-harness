@@ -111,6 +111,8 @@ describe("session recovery", () => {
           await resumes
           const row = Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get())
           expect(row?.status).toBe("delivered")
+          expect(row?.delivered_at).toBeNumber()
+          expect(row?.acked_at).toBeNull()
         },
       }) })
     } finally {
@@ -163,6 +165,76 @@ describe("session recovery", () => {
           Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivered", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, delivered.row.id)).run())
           await SessionTaskRecovery.resume(delivered.session.id)
           expect(calls).toBe(1)
+
+          const acked = await seed("acked")
+          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "acked", acked_at: Date.now(), updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, acked.row.id)).run())
+          await SessionTaskRecovery.resume(acked.session.id)
+          expect(calls).toBe(1)
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("reconstructs direct revision stop from canonical assignment rows after restart", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_canonical_stop"),
+        fn: async () => {
+          const parent = await Session.create({ agent: "default" })
+          const old = action("canonical_child", "delegate", "backend")
+          const first = await SessionTask.route({
+            sessionID: parent.id,
+            runID: "run_canonical_old",
+            legacy: { title: "Old", body: "Old" },
+            actions: [old],
+          })
+          if (first.type !== "execute") throw new Error("task missing")
+          const child = await Session.create({ parentID: parent.id, agent: "backend" })
+          const msg = MessageID.ascending()
+          await SessionAssignment.delegate({ action: old, childID: child.id, messageID: msg, runID: "run_canonical_old", sessionID: parent.id })
+          await SessionDelegation.assign({
+            action: old,
+            agent: "backend",
+            childID: child.id,
+            messageID: msg,
+            parentAgent: "default",
+            runID: "run_canonical_old",
+            sessionID: parent.id,
+          })
+          SessionStatus.set(child.id, { type: "running" })
+
+          const saved = await Session.get(child.id)
+          const protocol = (saved.dsl_context?.protocol ?? {}) as Record<string, unknown>
+          const delegation = protocol.delegation as Record<string, unknown>
+          await Session.setDslContext({
+            sessionID: child.id,
+            dsl_context: { ...saved.dsl_context, protocol: { ...protocol, delegation: { ...delegation, action_id: "forged_action" } } },
+          })
+          const root = await Session.get(parent.id)
+          const parentProtocol = (root.dsl_context?.protocol ?? {}) as Record<string, unknown>
+          await Session.setDslContext({
+            sessionID: parent.id,
+            dsl_context: { ...root.dsl_context, protocol: { ...parentProtocol, pending_delegations: {} } },
+          })
+
+          const draft = await SessionTask.route({
+            sessionID: parent.id,
+            runID: "run_canonical_new",
+            assignment: { op: "update", target: "self", title: "New", body: "New" },
+            actions: [],
+          })
+          if (draft.type !== "update") throw new Error("draft missing")
+          await SessionTaskRecovery.resume(parent.id)
+
+          expect((await SessionTask.get(parent.id))?.revision.id).toBe(draft.revision.id)
+          const results = await SessionResult.listForParent(parent.id)
+          expect(results).toHaveLength(1)
+          expect(results[0]?.action_id).toBe(old.id)
+          expect(results[0]?.action_id).not.toBe("forged_action")
         },
       }) })
     } finally {

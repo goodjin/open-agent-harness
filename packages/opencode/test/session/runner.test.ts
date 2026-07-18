@@ -1271,8 +1271,11 @@ describe("SessionRunner", () => {
     } : { version: "2", items: [{ id: "answer", kind: "answer", message: "Revision accepted." }] }, `call_update_${calls}`))
     const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
     const bootstraps: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    let release = () => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
     const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
       bootstraps.push(input)
+      if (input.metadata?.source === "task_revision_bootstrap") await gate
       return undefined
     }) as never)
     try {
@@ -1293,8 +1296,12 @@ describe("SessionRunner", () => {
           await poll(async () => (await Question.list()).length > 0)
           const question = (await Question.list())[0]!
           await Question.reply({ requestID: question.id, answers: [["Confirm"]], response: "confirm" })
+          const unblocked = await Promise.race([result.then(() => true), Bun.sleep(100).then(() => false)])
+          release()
           await result
 
+          expect(unblocked).toBe(true)
+          await poll(async () => (await SessionTask.current(session.id))?.title === "Revised task")
           expect((await SessionTask.current(session.id))?.title).toBe("Revised task")
           expect(bootstraps.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
           const messages = await MessageV2.filterCompacted(MessageV2.stream(session.id))

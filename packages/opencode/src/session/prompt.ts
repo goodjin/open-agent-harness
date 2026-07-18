@@ -1654,7 +1654,19 @@ export namespace SessionPrompt {
           (part.metadata?.kind === "task_update_proposal" || part.metadata?.kind === "task_update_progress")
         ) {
           const metadata = { ...part.metadata }
-          delete metadata.kind
+          for (const key of [
+            "kind",
+            "proposal_id",
+            "assignment_id",
+            "draft_revision_id",
+            "old_revision_id",
+            "difference_summary",
+            "affected_child_ids",
+            "reusable_result_refs",
+            "status",
+            "error",
+          ])
+            delete metadata[key]
           return [{ ...part, metadata, messageID: info.id, sessionID: input.sessionID }]
         }
         if (part.type === "file") {

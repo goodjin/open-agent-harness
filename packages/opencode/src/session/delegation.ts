@@ -1738,11 +1738,8 @@ export namespace SessionDelegation {
       ? (
           await Promise.all(
             opts.childIDs.map(async (id) => {
-              const hit = pending.find((entry) => entry.id === id)
-              if (hit) return hit
               const child = await Session.get(id)
-              const saved = assignment(child)
-              if (saved?.run_id === runID && saved.parent_session_id === parentID) return { id, item: saved }
+              if (child.parentID !== parentID) return
               const row = Database.use((tx) =>
                 tx
                   .select()
@@ -1763,23 +1760,24 @@ export namespace SessionDelegation {
                 !row.source_message_id
               )
                 return
+              const item: Item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: runID,
+                action_id: row.source_action_id,
+                action_title: row.title,
+                parent_session_id: parentID,
+                parent_message_id: row.source_message_id,
+                parent_agent: parent.agent,
+                child_session_id: id,
+                agent: child.agent ?? row.target,
+                result_policy: "summary",
+                result_tool: ActionResult.TOOL,
+                created_at: row.time_created,
+              }
               return {
                 id,
-                item: {
-                  type: "agent.delegation.assignment" as const,
-                  version: "1" as const,
-                  run_id: runID,
-                  action_id: row.source_action_id,
-                  action_title: row.title,
-                  parent_session_id: parentID,
-                  parent_message_id: row.source_message_id,
-                  parent_agent: parent.agent,
-                  child_session_id: id,
-                  agent: child.agent ?? row.target,
-                  result_policy: "summary",
-                  result_tool: ActionResult.TOOL,
-                  created_at: row.time_created,
-                },
+                item,
               }
             }),
           )

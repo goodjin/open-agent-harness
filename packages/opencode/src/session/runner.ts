@@ -36,6 +36,7 @@ import { SessionRuns } from "./runs"
 import { SessionTask } from "./task"
 import { SessionTaskRecovery } from "./task-recovery"
 import { DelegatedTask } from "./delegated-task"
+import { Database } from "@/storage/db"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -1569,28 +1570,30 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
-      await SessionTaskRecovery.resume(input.sessionID).catch(async (err) => {
-        SessionTaskRecovery.block(input.sessionID)
-        await Session.updatePart({
-          id: PartID.ascending(),
-          messageID: input.messageID,
-          sessionID: input.sessionID,
-          type: "text",
-          text: "Task revision shutdown is blocked.",
-          synthetic: true,
-          ignored: true,
-          metadata: {
-            kind: "task_update_progress",
-            proposal_id: `${input.runID}:${confirms[0]?.id ?? "update"}`,
-            draft_revision_id: result.revision.id,
-            old_revision_id: result.revision.previous_id,
-            status: "blocked",
-            error: err instanceof Error ? err.message : String(err),
-          },
-          time: { start: Date.now(), end: Date.now() },
-        })
-        throw err
-      })
+      Database.effect(() =>
+        SessionTaskRecovery.resume(input.sessionID).catch(async (err) => {
+          SessionTaskRecovery.block(input.sessionID)
+          await Session.updatePart({
+            id: PartID.ascending(),
+            messageID: input.messageID,
+            sessionID: input.sessionID,
+            type: "text",
+            text: "Task revision shutdown is blocked.",
+            synthetic: true,
+            ignored: true,
+            metadata: {
+              kind: "task_update_progress",
+              proposal_id: `${input.runID}:${confirms[0]?.id ?? "update"}`,
+              draft_revision_id: result.revision.id,
+              old_revision_id: result.revision.previous_id,
+              status: "blocked",
+              error: err instanceof Error ? err.message : String(err),
+            },
+            time: { start: Date.now(), end: Date.now() },
+          })
+          log.warn("task revision recovery blocked", { err, sessionID: input.sessionID })
+        }),
+      )
     }
     return result
   }

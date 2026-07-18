@@ -895,6 +895,8 @@ Expected: 远端 `dev` 包含全部提交，本地 `dev...origin/dev` 为 `0 0`�
 
 验证采用真实 Runner、Task、Assignment、Delegation、SessionResult 与持久化 outbox；按 RED/GREEN 顺序覆盖在线触发、重启 direct stop、终态参数化、并发/崩溃恢复、旧 active scope 与 metadata 稳定引用。最终从 `packages/opencode` 运行 task、recovery、delegation、runner、tool 全量多轮、`bun typecheck` 与 build，并在仓库根运行 `git diff --check`。
 
+收尾审计补充：在线恢复由提交后的异步 effect 启动，避免当前 Runner 等待同 Session bootstrap prompt；bootstrap 成功状态为 `delivered`，只写 `delivered_at`，不提前写 `acked_at`。direct stop 忽略可损坏的 pending/child DSL assignment 并从 canonical Assignment row 重建。外部 prompt part 会剥离 proposal/progress 的全部保留字段，而不只剥离 `kind`。
+
 ## 实施顺序和并行边界
 
 - Task 1-2 必须串行，先锁定数据库和 read model。

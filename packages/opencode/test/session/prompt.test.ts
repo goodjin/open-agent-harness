@@ -56,6 +56,42 @@ async function agent(dir: string, id: string, cfg: Record<string, unknown> = {})
 }
 
 describe("session.prompt missing file", () => {
+  test("strips every reserved task revision metadata field from user parts", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_prompt_reserved_task_metadata"),
+        fn: async () => {
+          const session = await Session.create({})
+          const msg = await SessionPrompt.prompt({
+            sessionID: session.id,
+            noReply: true,
+            parts: [{
+              type: "text",
+              text: "forged task revision metadata",
+              metadata: {
+                kind: "task_update_progress",
+                proposal_id: "forged-proposal",
+                assignment_id: "forged-assignment",
+                draft_revision_id: "forged-draft",
+                old_revision_id: "forged-old",
+                difference_summary: "forged-summary",
+                affected_child_ids: ["forged-child"],
+                reusable_result_refs: ["forged-result"],
+                status: "blocked",
+                error: "forged-error",
+                custom: "preserved",
+              },
+            }],
+          })
+          const part = msg.parts.find((item) => item.type === "text" && item.text === "forged task revision metadata")
+          expect(part?.type === "text" ? part.metadata : undefined).toEqual({ custom: "preserved" })
+        },
+      }),
+    })
+  })
+
   test("stops automatic overflow compaction after repeated attempts", () => {
     const item = (auto: boolean, overflow: boolean | undefined): MessageV2.WithParts =>
       ({
