@@ -344,24 +344,25 @@ export namespace SessionTaskRecovery {
       return reset ? start(reset) : true
     }
     if (row.status !== "pending") return true
+    const stamp = Date.now()
     const claimed = Database.use((tx) => {
       const where = guard(tx, row, "pending", row.updated_at)
       if (!where) return
       return tx
         .update(SessionEventOutboxTable)
-        .set({ status: "delivering", updated_at: now, error: null })
+        .set({ status: "delivering", updated_at: stamp, error: null })
         .where(where)
         .returning({ id: SessionEventOutboxTable.id })
         .get()
     })
     if (!claimed) return true
-    if (!valid(row, "delivering", now)) {
-      retry(row, now)
+    if (!valid(row, "delivering", stamp)) {
+      retry(row, stamp)
       return true
     }
     const session = await Session.get(row.session_id)
-    if (!valid(row, "delivering", now)) {
-      retry(row, now)
+    if (!valid(row, "delivering", stamp)) {
+      retry(row, stamp)
       return true
     }
     await SessionPrompt.prompt({
@@ -385,16 +386,16 @@ export namespace SessionTaskRecovery {
         },
       ],
     }).catch((err) => {
-      const owned = valid(row, "delivering", now)
-      retry(row, now, err)
+      const owned = valid(row, "delivering", stamp)
+      retry(row, stamp, err)
       if (owned) throw err
     })
-    if (!valid(row, "delivering", now)) {
-      retry(row, now)
+    if (!valid(row, "delivering", stamp)) {
+      retry(row, stamp)
       return true
     }
     Database.use((tx) => {
-      const where = guard(tx, row, "delivering", now)
+      const where = guard(tx, row, "delivering", stamp)
       if (!where) return
       tx.update(SessionEventOutboxTable)
         .set({ status: "delivered", delivered_at: Date.now(), acked_at: null, updated_at: Date.now(), error: null })

@@ -56,6 +56,8 @@ Every bootstrap outbox lookup and state transition is also bound to the current 
 
 Bootstrap delivery revalidates that identity across each asynchronous message, Session, and prompt boundary. Outbox claim and delivered transitions include the current Task Revision as part of the same database condition; if the Revision changes mid-flight, recovery releases its own delivery lease back to pending without prompting, marking the old row delivered, or unblocking the current Task. A later recovery can then claim the new Revision bootstrap normally.
 
+Revision activation and bootstrap claim form a database-level mutex around the irreversible prompt boundary. Activation runs in an immediate transaction and its current-Revision CAS rejects a live `delivering` bootstrap lease; the transaction rolls back and returns a retryable conflict. Once that prompt is delivered, activation can retry the same draft. Pending, delivered, acked, and expired delivery leases do not block activation. If activation commits first, the bootstrap claim's current-Revision guard prevents the archived Revision from entering delivery.
+
 Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, evidence expectations, risks, and handoff shape. A worker used as a design consultant is explicitly read-only for that assignment. Planner synthesis must separate evidence from inference, resolve conflicts, and request a focused follow-up when a material disagreement cannot be settled from available evidence.
 
 ## Package Agent Catalog

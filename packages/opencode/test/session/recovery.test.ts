@@ -438,6 +438,118 @@ describe("session recovery", () => {
     }
   })
 
+  test("serializes revision activation behind a live bootstrap prompt lease", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const calls: unknown[] = []
+    let blocked: unknown
+    let enter = () => {}
+    let release = () => {}
+    const entered = new Promise<void>((resolve) => (enter = resolve))
+    const wait = new Promise<void>((resolve) => (release = resolve))
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls.push(input.metadata?.revision_id)
+      await Session.updateMessage({
+        id: input.messageID!,
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)
+      if (input.metadata?.revision_id !== blocked) return undefined
+      enter()
+      await wait
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_prompt_race"),
+        fn: async () => {
+          const data = await revision(tmp.path, "prompt_race")
+          blocked = data.revision.id
+          const old = Database.use((db) =>
+            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
+          )
+          const resume = SessionTaskRecovery.resume(data.session.id)
+          await entered
+          expect((await MessageV2.get({ sessionID: data.session.id, messageID: MessageID.make(String(old.payload.message_id)) })).info.id)
+            .toBe(MessageID.make(String(old.payload.message_id)))
+          const next = await SessionTask.route({
+            sessionID: data.session.id,
+            messageID: data.messageID,
+            runID: "run_prompt_race_current",
+            assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+            actions: [],
+          })
+          if (next.type !== "update") throw new Error("current draft missing")
+          const task = await SessionTask.get(data.session.id)
+          if (!task) throw new Error("task missing")
+          try {
+            await expect(SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true }))
+              .rejects.toThrow("task_revision_bootstrap_delivering")
+          } finally {
+            release()
+            await resume
+          }
+
+          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
+          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, old.id)).get())?.status)
+            .toBe("delivered")
+
+          await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+          expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+          expect(calls).toEqual([data.revision.id, next.revision.id])
+          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+          expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+        },
+      }) })
+    } finally {
+      release()
+      prompt.mockRestore()
+    }
+  })
+
+  test("allows revision activation without a live bootstrap delivery lease", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+      workspaceID: WorkspaceID.make("wrk_task_revision_lease_states"),
+      fn: async () => {
+        for (const [label, status] of [["pending", "pending"], ["delivered", "delivered"], ["expired", "delivering"]] as const) {
+          const data = await revision(tmp.path, `lease_state_${label}`)
+          const row = Database.use((db) =>
+            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
+          )
+          Database.use((db) =>
+            db.update(SessionEventOutboxTable)
+              .set({
+                status,
+                updated_at: status === "delivering" ? Date.now() - 31_000 : Date.now(),
+                delivered_at: status === "delivered" ? Date.now() : null,
+              })
+              .where(eq(SessionEventOutboxTable.id, row.id))
+              .run(),
+          )
+          const next = await SessionTask.route({
+            sessionID: data.session.id,
+            messageID: data.messageID,
+            runID: `run_lease_state_${label}`,
+            assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+            actions: [],
+          })
+          if (next.type !== "update") throw new Error("current draft missing")
+          const task = await SessionTask.get(data.session.id)
+          if (!task) throw new Error("task missing")
+
+          await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+
+          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+        }
+      },
+    }) })
+  })
+
   test("scan advances only task recovery rows from the current project directory", async () => {
     await using a = await tmpdir({ git: true })
     await using b = await tmpdir({ git: true })

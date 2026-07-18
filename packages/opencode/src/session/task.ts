@@ -2,7 +2,7 @@ import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
 import z from "zod"
 import { AgentProtocol } from "@/protocol/schema"
-import { and, Database, desc, eq, inArray, max } from "@/storage/db"
+import { and, Database, desc, eq, gt, inArray, max, notExists } from "@/storage/db"
 import { MessageID, SessionID } from "./schema"
 import { AssignmentTable, SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
 import type { SessionRuns } from "./runs"
@@ -1025,6 +1025,18 @@ export namespace SessionTask {
             next.previous_id !== task.current_revision_id
           )
             throw new Conflict()
+          const lease = tx
+            .select({ id: SessionEventOutboxTable.id })
+            .from(SessionEventOutboxTable)
+            .where(
+              and(
+                eq(SessionEventOutboxTable.session_id, task.session_id),
+                eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
+                eq(SessionEventOutboxTable.dedupe_key, `task_revision_bootstrap:${task.current_revision_id}`),
+                eq(SessionEventOutboxTable.status, "delivering"),
+                gt(SessionEventOutboxTable.updated_at, now - 30_000),
+              ),
+            )
           const archived = tx
             .update(TaskRevisionTable)
             .set({ status: "archived", time_archived: now, archive_reason: next.reason ?? "Task revised" })
@@ -1058,11 +1070,15 @@ export namespace SessionTask {
               and(
                 eq(SessionTaskTable.id, input.taskID),
                 eq(SessionTaskTable.current_revision_id, task.current_revision_id),
+                notExists(lease),
               ),
             )
             .returning({ id: SessionTaskTable.id })
             .get()
-          if (!updated) throw new Conflict()
+          if (!updated) {
+            if (lease.get()) throw new Conflict("task_revision_bootstrap_delivering")
+            throw new Conflict()
+          }
           if (input.bootstrap) {
             const key = `task_revision_bootstrap:${revision.id}`
             const found = tx
