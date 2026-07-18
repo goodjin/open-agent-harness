@@ -467,13 +467,22 @@ export namespace SessionDelegation {
     runID: string
     sessionID: SessionID
   }) {
-    if (input.childIDs.length === 0) return []
-    await close(input.sessionID, input.runID, {
+    return (await stopScoped(input)).results
+  }
+
+  export async function stopScoped(input: {
+    childIDs: SessionID[]
+    reason?: string
+    runID: string
+    sessionID: SessionID
+  }) {
+    if (input.childIDs.length === 0) return { results: [], stopped: [] as SessionID[] }
+    const stopped = await close(input.sessionID, input.runID, {
       childIDs: input.childIDs,
       mode: "terminate_with_result",
       reason: input.reason,
     })
-    return query({ sessionID: input.sessionID })
+    return { results: await query({ sessionID: input.sessionID }), stopped }
   }
 
   export async function fallbackPreview(input: { sessionID: SessionID }) {
@@ -1728,6 +1737,7 @@ export namespace SessionDelegation {
   }
 
   async function close(parentID: SessionID, runID: string, opts?: CloseOpts) {
+    const changed: SessionID[] = []
     const parent = await Session.get(parentID)
     const protocol = object(object(parent.dsl_context).protocol)
     const mode = opts?.mode
@@ -1837,12 +1847,15 @@ export namespace SessionDelegation {
         if (!stopdone(status)) {
           const { SessionPrompt } = await import("./prompt")
           const reason = opts?.reason
-          SessionPrompt.cancel(entry.id)
-          SessionStatus.set(
-            entry.id,
-            { type: "user_completed", message: reason ?? "Terminated by user after collecting current result." },
-            { reason: reason ?? "User terminated delegated child session and collected current result." },
-          )
+          if (!stopdone(SessionStatus.get(entry.id))) {
+            SessionPrompt.cancel(entry.id)
+            SessionStatus.set(
+              entry.id,
+              { type: "user_completed", message: reason ?? "Terminated by user after collecting current result." },
+              { reason: reason ?? "User terminated delegated child session and collected current result." },
+            )
+            changed.push(entry.id)
+          }
         }
       }
       const sum =
@@ -1879,6 +1892,7 @@ export namespace SessionDelegation {
       await store(entry.id, entry.item, body)
       await notified(entry.id, entry.item)
     }
+    return changed
   }
 
   async function existing(sessionID: SessionID, item: Item): Promise<Result | undefined> {

@@ -68,13 +68,15 @@ export namespace SessionTaskRecovery {
       if (draft) {
         owner.revision = draft.id
         const scope = await SessionTask.scope(sessionID)
+        const stopped: SessionID[] = []
         for (const [run, rows] of Map.groupBy(scope, (item) => item.run_id)) {
-          await SessionDelegation.stop({
+          const result = await SessionDelegation.stopScoped({
             sessionID,
             runID: run,
             childIDs: rows.map((item) => item.session_id),
             reason: "Stopped for confirmed task revision.",
           })
+          stopped.push(...result.stopped)
         }
         const results = await SessionResult.listForParent(sessionID)
         if (
@@ -95,7 +97,7 @@ export namespace SessionTaskRecovery {
             taskID: stored.task.id,
             revisionID: draft.id,
             bootstrap: true,
-            stopped: scope.length,
+            stopped: stopped.length,
           })
         } catch (err) {
           if (err instanceof SessionTask.Conflict && advanced(sessionID, stored.task.id, draft.id)) return true

@@ -1219,6 +1219,8 @@ export namespace SessionTask {
           terminal_status: TaskRevisionTable.terminal_status,
           stopped_child_count: TaskRevisionTable.stopped_child_count,
           result_status: TaskRevisionTable.result_status,
+          result: TaskRevisionTable.result,
+          result_source: TaskRevisionTable.result_source,
           time_created: TaskRevisionTable.time_created,
           time_archived: TaskRevisionTable.time_archived,
         })
@@ -1226,8 +1228,9 @@ export namespace SessionTask {
         .where(and(eq(TaskRevisionTable.task_id, task.id), eq(TaskRevisionTable.status, "archived")))
         .orderBy(desc(TaskRevisionTable.version))
         .all()
-        .map((item) =>
-          History.parse({
+        .map((item) => {
+          const status = archiveResult(item)
+          return History.parse({
             id: item.id,
             version: item.version,
             status: item.status,
@@ -1236,16 +1239,13 @@ export namespace SessionTask {
             archive_reason: item.archive_reason,
             ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
             ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
-            result: {
-              present: item.result_status !== null,
-              ...(item.result_status === null ? {} : { status: item.result_status }),
-            },
+            result: status ? { present: true, status } : { present: false },
             time: {
               created: item.time_created,
               ...(item.time_archived === null ? {} : { archived: item.time_archived }),
             },
-          }),
-        ),
+          })
+        }),
     )
   }
 
@@ -1311,6 +1311,7 @@ export namespace SessionTask {
     if (!row) return
     const item = Revision.parse(row.revision)
     const saved = result(item.result, item.result_source)
+    const classified = archiveResult(item)
     const { SessionTaskHandoff } = await import("./task-handoff")
     return RevisionView.parse({
       id: item.id,
@@ -1322,7 +1323,7 @@ export namespace SessionTask {
       workflow: { ...item.workflow, actions: workflow(item.workflow) },
       actions: workflow(item.workflow),
       ...saved,
-      ...(item.result_status === null ? {} : { result_status: item.result_status }),
+      ...(classified ? { result_status: classified } : {}),
       ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
       ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
       reason: item.reason,
@@ -1474,15 +1475,37 @@ export namespace SessionTask {
         : rows.length > 0 || saved.result
           ? ("completed" as const)
           : undefined
+    const progress = {
+      completed:
+        (flow.compact?.completed ?? 0) +
+        actions.filter((item) => item.status === "completed" || item.status === "skipped").length,
+      total: (flow.compact?.total ?? 0) + actions.length,
+    }
     const terminal =
       actions.some((item) => item.status === "failed") || resultStatus === "failed"
         ? ("failed" as const)
         : actions.some((item) => item.status === "blocked" || item.status === "pending" || item.status === "running")
           ? ("blocked" as const)
-          : actions.length > 0 || resultStatus === "completed"
-            ? ("completed" as const)
-            : ("blocked" as const)
+          : progress.total > 0
+            ? progress.completed >= progress.total
+              ? ("completed" as const)
+              : ("blocked" as const)
+            : resultStatus === "completed"
+              ? ("completed" as const)
+              : ("blocked" as const)
     return { terminal, result: resultStatus }
+  }
+
+  function archiveResult(item: {
+    result: string | null
+    result_source: string | null
+    result_status: string | null
+  }) {
+    const stored = ArchiveResult.safeParse(item.result_status)
+    if (stored.success) return stored.data
+    const saved = result(item.result, item.result_source)
+    if (!saved.result) return
+    return saved.result_source === "fallback_summary" ? ("partial" as const) : ("completed" as const)
   }
 
   function workflow(value: Workflow) {

@@ -368,4 +368,4 @@ Session tree projection treats `session.model` as the visible execution identity
 
 ### Task 归档读取契约
 
-归档 Task metadata 保存可信终态分类、已停止的 scoped child 数量、结果存在性/等级与归档原因；迁移前记录的 nullable 字段保持 unknown，不从日志或缺失数据猜测。版本快照在相同 metadata 之外返回不可变 body、workflow 与可信结果。Current、归档 Revision 和单 Run legacy 视图按 source/target Task 或 Session 归属查询规范化 Handoff 摘要，不暴露 Handoff body 与 context refs。
+归档 Task metadata 保存可信终态分类、本轮实际从非终态停止的 scoped child 数量、结果存在性/等级与归档原因；迁移前记录的 nullable 字段保持 unknown，不从日志或缺失数据猜测。旧归档仅在非空结果同时具有 `protocol`、`action_result` 或 `fallback_summary` 来源时兼容推导结果等级。终态分类与 live progress 共用 compact 加显式 action 的完成口径，显式 failed/blocked 证据优先。版本快照在相同 metadata 之外返回不可变 body、workflow 与可信结果。Current、归档 Revision 和单 Run legacy 视图按 source/target Task 或 Session 归属查询规范化 Handoff 摘要，不暴露 Handoff body 与 context refs。

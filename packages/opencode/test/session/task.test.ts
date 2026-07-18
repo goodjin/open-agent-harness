@@ -2245,6 +2245,80 @@ describe("session task", () => {
       expect(archived?.result).toEqual({ present: false })
     }))
 
+  test("classifies trusted results from archived rows created before result metadata", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Legacy archive",
+        body: "# Legacy archive\n",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+
+      const cases = [
+        { result: "Protocol result", source: "protocol", expected: { present: true, status: "completed" } },
+        { result: "Fallback result", source: "fallback_summary", expected: { present: true, status: "partial" } },
+        { result: "Untrusted result", source: null, expected: { present: false } },
+        { result: null, source: null, expected: { present: false } },
+      ] as const
+      for (const item of cases) {
+        Database.use((db) =>
+          db
+            .update(TaskRevisionTable)
+            .set({ result: item.result, result_source: item.source, result_status: null })
+            .where(eq(TaskRevisionTable.id, first.revision.id))
+            .run(),
+        )
+        expect((await SessionTask.history(session.id))[0]?.result).toEqual(item.expected)
+        const revision = await SessionTask.revision(session.id, 1)
+        expect(revision?.result_status).toBe("status" in item.expected ? item.expected.status : undefined)
+        expect(revision?.result).toBe(item.expected.present && item.result ? item.result : undefined)
+      }
+    }))
+
+  test("derives archived terminal status from compact-only progress", () =>
+    setup(async () => {
+      for (const item of [
+        { compact: { runs: 3, completed: 4, total: 4 }, actions: [], expected: "completed" },
+        { compact: { runs: 3, completed: 3, total: 4 }, actions: [], expected: "blocked" },
+        {
+          compact: { runs: 3, completed: 4, total: 4 },
+          actions: result("run_compact_failed", [{ id: "failed", title: "Failed", status: "failed" }]).actions,
+          expected: "failed",
+        },
+        {
+          compact: { runs: 3, completed: 4, total: 4 },
+          actions: result("run_compact_blocked", [{ id: "blocked", title: "Blocked", status: "blocked" }]).actions,
+          expected: "blocked",
+        },
+      ] as const) {
+        const session = await Session.create({})
+        const first = await SessionTask.create({
+          sessionID: session.id,
+          title: "Compact archive",
+          body: "# Compact archive\n",
+          source: { type: "user" },
+        })
+        Database.use((db) =>
+          db
+            .update(TaskRevisionTable)
+            .set({
+              workflow: {
+                actions: item.actions.map((action) => ({ ...action, run_id: "run_compact_priority" })),
+                compact: item.compact,
+              },
+            })
+            .where(eq(TaskRevisionTable.id, first.revision.id))
+            .run(),
+        )
+        const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
+        await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+        expect((await SessionTask.history(session.id))[0]?.terminal_status).toBe(item.expected)
+      }
+    }))
+
   test("does not reuse a result from an archived revision", () =>
     setup(async () => {
       const session = await Session.create({})

@@ -1248,7 +1248,7 @@ describe("session recovery", () => {
               expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
               expect(await SessionTask.revision(parent.id, 1)).toMatchObject({
                 terminal_status: "blocked",
-                stopped_child_count: 5,
+                stopped_child_count: 2,
                 result_status: "partial",
               })
               expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
@@ -1278,6 +1278,7 @@ describe("session recovery", () => {
               ).toHaveLength(5)
               expect(bootstraps).toBe(1)
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
+              expect((await SessionTask.revision(parent.id, 1))?.stopped_child_count).toBe(2)
               expect(await SessionTaskRecovery.scan()).toEqual([])
               expect((await SessionResult.listForParent(parent.id)).map((item) => item.id).sort()).toEqual(ids)
               expect(calls.filter((item) => item.agent === "summary")).toHaveLength(summaries)

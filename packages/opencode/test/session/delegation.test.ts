@@ -2953,12 +2953,23 @@ describe("SessionDelegation", () => {
             )
             SessionStatus.set(child.id, { type: "running" })
 
-            await SessionDelegation.stop({
+            const stopped = await SessionDelegation.stopScoped({
               childIDs: [child.id],
               runID: "run_revision_stop_reason",
               sessionID: parent.id,
               reason: "Stopped for confirmed task revision.",
             })
+            expect(stopped.stopped).toEqual([child.id])
+            expect(
+              (
+                await SessionDelegation.stopScoped({
+                  childIDs: [child.id],
+                  runID: "run_revision_stop_reason",
+                  sessionID: parent.id,
+                  reason: "Stopped for confirmed task revision.",
+                })
+              ).stopped,
+            ).toEqual([])
 
             expect(SessionStatus.get(child.id)).toEqual({
               type: "user_completed",

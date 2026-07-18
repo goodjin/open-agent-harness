@@ -56,3 +56,11 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 - `packages/app` 单元测试：487 passed；typecheck：通过。
 - `packages/app` 本地 smoke：Chromium 1 passed，覆盖 Vite 编译、应用启动与项目 Session 渲染。
 - 旧归档空 metadata、legacy handoff、可信结果正文、compact/skipped 进度和异步竞态均有回归测试。
+
+## 复审补充约束
+
+- `stopped_child_count` 只统计本轮 `stop` 实际把非终态 child 转为停止终态的数量；既有终态、已有结果与重复恢复不计入。
+- 旧归档 `result_status = null` 时，History 与 Revision 都从可信 `result_source` 和非空正文推导兼容分类；无可信来源的旧文本保持未记录。
+- 归档终态复用 live progress 口径：`workflow.compact` 与显式 actions 共同计算完成度，显式 failed/blocked 证据优先。
+
+复审回归覆盖 130 项 Task/Recovery/Delegation/API 测试；app Task 定向测试、双端 typecheck、SDK 一致性、迁移检查与 Chromium smoke 均通过。
