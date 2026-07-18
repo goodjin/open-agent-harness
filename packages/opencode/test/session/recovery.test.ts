@@ -34,7 +34,9 @@ describe("session recovery", () => {
   test("activates a confirmed task update once and starts it from durable bootstrap", async () => {
     await using tmp = await tmpdir({ git: true })
     const calls: Parameters<typeof SessionPrompt.prompt>[0][] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation(((input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation(((
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls.push(input)
       return Promise.resolve(undefined)
     }) as never)
@@ -84,37 +86,68 @@ describe("session recovery", () => {
     let calls = 0
     let release = () => {}
     const wait = new Promise<void>((resolve) => (release = resolve))
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls++
       await wait
       await Session.updateMessage({
-        id: input.messageID!, sessionID: input.sessionID, role: "user", time: { created: Date.now() }, agent: input.agent ?? "default",
-        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "",
+        id: input.messageID!,
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
       } as MessageV2.User)
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_claim"),
-        fn: async () => {
-          const session = await Session.create({ agent: "default" })
-          const first = await SessionTask.route({ sessionID: session.id, runID: "run_claim_old", legacy: { title: "Old", body: "Old" }, actions: [] })
-          if (first.type !== "execute") throw new Error("task missing")
-          const draft = await SessionTask.route({ sessionID: session.id, runID: "run_claim_new", assignment: { op: "update", target: "self", title: "New", body: "New" }, actions: [] })
-          if (draft.type !== "update") throw new Error("draft missing")
-          await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_claim"),
+            fn: async () => {
+              const session = await Session.create({ agent: "default" })
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_claim_old",
+                legacy: { title: "Old", body: "Old" },
+                actions: [],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              const draft = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_claim_new",
+                assignment: { op: "update", target: "self", title: "New", body: "New" },
+                actions: [],
+              })
+              if (draft.type !== "update") throw new Error("draft missing")
+              await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
 
-          const resumes = Promise.all([SessionTaskRecovery.resume(session.id), SessionTaskRecovery.resume(session.id)])
-          await Bun.sleep(20)
-          expect(calls).toBe(1)
-          release()
-          await resumes
-          const row = Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get())
-          expect(row?.status).toBe("delivered")
-          expect(row?.delivered_at).toBeNumber()
-          expect(row?.acked_at).toBeNull()
-        },
-      }) })
+              const resumes = Promise.all([
+                SessionTaskRecovery.resume(session.id),
+                SessionTaskRecovery.resume(session.id),
+              ])
+              await Bun.sleep(20)
+              expect(calls).toBe(1)
+              release()
+              await resumes
+              const row = Database.use((db) =>
+                db
+                  .select()
+                  .from(SessionEventOutboxTable)
+                  .where(eq(SessionEventOutboxTable.session_id, session.id))
+                  .get(),
+              )
+              expect(row?.status).toBe("delivered")
+              expect(row?.delivered_at).toBeNumber()
+              expect(row?.acked_at).toBeNull()
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -141,7 +174,9 @@ describe("session recovery", () => {
       await gate
       return rows
     }) as never)
-    const activation = spyOn(SessionTask, "activate").mockImplementation((async (input: Parameters<typeof SessionTask.activate>[0]) => {
+    const activation = spyOn(SessionTask, "activate").mockImplementation((async (
+      input: Parameters<typeof SessionTask.activate>[0],
+    ) => {
       try {
         return await activate(input)
       } catch (err) {
@@ -155,53 +190,67 @@ describe("session recovery", () => {
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_resume_race"),
-        fn: async () => {
-          const session = await Session.create({ agent: "default" })
-          const first = await SessionTask.route({
-            sessionID: session.id,
-            runID: "run_resume_race_old",
-            legacy: { title: "Old", body: "Old" },
-            actions: [],
-          })
-          if (first.type !== "execute") throw new Error("task missing")
-          const draft = await SessionTask.route({
-            sessionID: session.id,
-            runID: "run_resume_race_new",
-            assignment: { op: "update", target: "self", title: "New", body: "New" },
-            actions: [],
-          })
-          if (draft.type !== "update") throw new Error("draft missing")
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_resume_race"),
+            fn: async () => {
+              const session = await Session.create({ agent: "default" })
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_resume_race_old",
+                legacy: { title: "Old", body: "Old" },
+                actions: [],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              const draft = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_resume_race_new",
+                assignment: { op: "update", target: "self", title: "New", body: "New" },
+                actions: [],
+              })
+              if (draft.type !== "update") throw new Error("draft missing")
 
-          const runs = [SessionTaskRecovery.resume(session.id), SessionTaskRecovery.resume(session.id)]
-          await synced
-          release()
-          await caught
-          let delivered = false
-          for (let index = 0; index < 100; index++) {
-            const row = Database.use((db) =>
-              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get(),
-            )
-            if (row?.status === "delivered") {
-              delivered = true
-              break
-            }
-            await Bun.sleep(1)
-          }
-          expect(delivered).toBe(true)
-          resume()
-          const settled = await Promise.allSettled(runs)
+              const runs = [SessionTaskRecovery.resume(session.id), SessionTaskRecovery.resume(session.id)]
+              await synced
+              release()
+              await caught
+              let delivered = false
+              for (let index = 0; index < 100; index++) {
+                const row = Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, session.id))
+                    .get(),
+                )
+                if (row?.status === "delivered") {
+                  delivered = true
+                  break
+                }
+                await Bun.sleep(1)
+              }
+              expect(delivered).toBe(true)
+              resume()
+              const settled = await Promise.allSettled(runs)
 
-          expect(settled.map((item) => item.status)).toEqual(["fulfilled", "fulfilled"])
-          expect((await SessionTask.get(session.id))?.revision.id).toBe(draft.revision.id)
-          expect((await SessionTask.get(session.id))?.task.status).toBe("running")
-          expect(calls).toBe(1)
-          expect(Database.use((db) =>
-            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).all(),
-          )).toHaveLength(1)
-        },
-      }) })
+              expect(settled.map((item) => item.status)).toEqual(["fulfilled", "fulfilled"])
+              expect((await SessionTask.get(session.id))?.revision.id).toBe(draft.revision.id)
+              expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+              expect(calls).toBe(1)
+              expect(
+                Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, session.id))
+                    .all(),
+                ),
+              ).toHaveLength(1)
+            },
+          }),
+      })
     } finally {
       release()
       resume()
@@ -214,55 +263,140 @@ describe("session recovery", () => {
   test("recovers bootstrap delivery leases without duplicate prompts", async () => {
     await using tmp = await tmpdir({ git: true })
     let calls = 0
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls++
-      await Session.updateMessage({ id: input.messageID!, sessionID: input.sessionID, role: "user", time: { created: Date.now() }, agent: input.agent ?? "default", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)
+      await Session.updateMessage({
+        id: input.messageID!,
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "default",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
+      } as MessageV2.User)
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_lease"),
-        fn: async () => {
-          const seed = async (label: string) => {
-            const session = await Session.create({ agent: "default" })
-            const first = await SessionTask.route({ sessionID: session.id, runID: `${label}_old`, legacy: { title: "Old", body: "Old" }, actions: [] })
-            if (first.type !== "execute") throw new Error("task missing")
-            const draft = await SessionTask.route({ sessionID: session.id, runID: `${label}_new`, assignment: { op: "update", target: "self", title: "New", body: "New" }, actions: [] })
-            if (draft.type !== "update") throw new Error("draft missing")
-            await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
-            return { session, row: Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get())! }
-          }
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_lease"),
+            fn: async () => {
+              const seed = async (label: string) => {
+                const session = await Session.create({ agent: "default" })
+                const first = await SessionTask.route({
+                  sessionID: session.id,
+                  runID: `${label}_old`,
+                  legacy: { title: "Old", body: "Old" },
+                  actions: [],
+                })
+                if (first.type !== "execute") throw new Error("task missing")
+                const draft = await SessionTask.route({
+                  sessionID: session.id,
+                  runID: `${label}_new`,
+                  assignment: { op: "update", target: "self", title: "New", body: "New" },
+                  actions: [],
+                })
+                if (draft.type !== "update") throw new Error("draft missing")
+                await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
+                return {
+                  session,
+                  row: Database.use((db) =>
+                    db
+                      .select()
+                      .from(SessionEventOutboxTable)
+                      .where(eq(SessionEventOutboxTable.session_id, session.id))
+                      .get(),
+                  )!,
+                }
+              }
 
-          const fresh = await seed("fresh")
-          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, fresh.row.id)).run())
-          await SessionTaskRecovery.resume(fresh.session.id)
-          expect(calls).toBe(0)
-          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, fresh.row.id)).get())?.status).toBe("delivering")
+              const fresh = await seed("fresh")
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({ status: "delivering", updated_at: Date.now() })
+                  .where(eq(SessionEventOutboxTable.id, fresh.row.id))
+                  .run(),
+              )
+              await SessionTaskRecovery.resume(fresh.session.id)
+              expect(calls).toBe(0)
+              expect(
+                Database.use((db) =>
+                  db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, fresh.row.id)).get(),
+                )?.status,
+              ).toBe("delivering")
 
-          const stale = await seed("stale")
-          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() - 31_000 }).where(eq(SessionEventOutboxTable.id, stale.row.id)).run())
-          await SessionTaskRecovery.resume(stale.session.id)
-          expect(calls).toBe(1)
-          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, stale.row.id)).get())?.status).toBe("delivered")
+              const stale = await seed("stale")
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({ status: "delivering", updated_at: Date.now() - 31_000 })
+                  .where(eq(SessionEventOutboxTable.id, stale.row.id))
+                  .run(),
+              )
+              await SessionTaskRecovery.resume(stale.session.id)
+              expect(calls).toBe(1)
+              expect(
+                Database.use((db) =>
+                  db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, stale.row.id)).get(),
+                )?.status,
+              ).toBe("delivered")
 
-          const saved = await seed("saved")
-          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivering", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, saved.row.id)).run())
-          await Session.updateMessage({ id: MessageID.make(String(saved.row.payload.message_id)), sessionID: saved.session.id, role: "user", time: { created: Date.now() }, agent: "default", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "" } as MessageV2.User)
-          await SessionTaskRecovery.resume(saved.session.id)
-          expect(calls).toBe(1)
-          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, saved.row.id)).get())?.status).toBe("delivered")
+              const saved = await seed("saved")
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({ status: "delivering", updated_at: Date.now() })
+                  .where(eq(SessionEventOutboxTable.id, saved.row.id))
+                  .run(),
+              )
+              await Session.updateMessage({
+                id: MessageID.make(String(saved.row.payload.message_id)),
+                sessionID: saved.session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "default",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)
+              await SessionTaskRecovery.resume(saved.session.id)
+              expect(calls).toBe(1)
+              expect(
+                Database.use((db) =>
+                  db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, saved.row.id)).get(),
+                )?.status,
+              ).toBe("delivered")
 
-          const delivered = await seed("delivered")
-          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "delivered", updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, delivered.row.id)).run())
-          await SessionTaskRecovery.resume(delivered.session.id)
-          expect(calls).toBe(1)
+              const delivered = await seed("delivered")
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({ status: "delivered", updated_at: Date.now() })
+                  .where(eq(SessionEventOutboxTable.id, delivered.row.id))
+                  .run(),
+              )
+              await SessionTaskRecovery.resume(delivered.session.id)
+              expect(calls).toBe(1)
 
-          const acked = await seed("acked")
-          Database.use((db) => db.update(SessionEventOutboxTable).set({ status: "acked", acked_at: Date.now(), updated_at: Date.now() }).where(eq(SessionEventOutboxTable.id, acked.row.id)).run())
-          await SessionTaskRecovery.resume(acked.session.id)
-          expect(calls).toBe(1)
-        },
-      }) })
+              const acked = await seed("acked")
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({ status: "acked", acked_at: Date.now(), updated_at: Date.now() })
+                  .where(eq(SessionEventOutboxTable.id, acked.row.id))
+                  .run(),
+              )
+              await SessionTaskRecovery.resume(acked.session.id)
+              expect(calls).toBe(1)
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -276,31 +410,43 @@ describe("session recovery", () => {
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_prompt_failure"),
-        fn: async () => {
-          const data = await revision(tmp.path, "prompt_failure")
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_prompt_failure"),
+            fn: async () => {
+              const data = await revision(tmp.path, "prompt_failure")
 
-          await expect(SessionTaskRecovery.resume(data.session.id)).rejects.toThrow("bootstrap rejected")
+              await expect(SessionTaskRecovery.resume(data.session.id)).rejects.toThrow("bootstrap rejected")
 
-          expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
-          const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
-          const progress = msg.parts.find((part) => part.type === "text" && part.metadata?.kind === "task_update_progress")
-          expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
-            kind: "task_update_progress",
-            status: "blocked",
-            error: "bootstrap rejected",
-            draft_revision_id: data.revision.id,
-          })
+              expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+              const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
+              const progress = msg.parts.find(
+                (part) => part.type === "text" && part.metadata?.kind === "task_update_progress",
+              )
+              expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
+                kind: "task_update_progress",
+                status: "blocked",
+                error: "bootstrap rejected",
+                draft_revision_id: data.revision.id,
+              })
 
-          rejected = false
-          expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
-          expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
-          const row = Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get())
-          expect(row?.status).toBe("delivered")
-          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
-        },
-      }) })
+              rejected = false
+              expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+              expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+              const row = Database.use((db) =>
+                db
+                  .select()
+                  .from(SessionEventOutboxTable)
+                  .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                  .get(),
+              )
+              expect(row?.status).toBe("delivered")
+              expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -310,24 +456,30 @@ describe("session recovery", () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockRejectedValue(new Error("scan bootstrap rejected"))
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_scan_failure"),
-        fn: async () => {
-          const data = await revision(tmp.path, "scan_failure")
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_scan_failure"),
+            fn: async () => {
+              const data = await revision(tmp.path, "scan_failure")
 
-          expect(await SessionTaskRecovery.scan()).toEqual([false])
+              expect(await SessionTaskRecovery.scan()).toEqual([false])
 
-          expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
-          const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
-          const progress = msg.parts.find((part) => part.type === "text" && part.metadata?.kind === "task_update_progress")
-          expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
-            kind: "task_update_progress",
-            status: "blocked",
-            error: "scan bootstrap rejected",
-            draft_revision_id: data.revision.id,
-          })
-        },
-      }) })
+              expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+              const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
+              const progress = msg.parts.find(
+                (part) => part.type === "text" && part.metadata?.kind === "task_update_progress",
+              )
+              expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
+                kind: "task_update_progress",
+                status: "blocked",
+                error: "scan bootstrap rejected",
+                draft_revision_id: data.revision.id,
+              })
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -341,51 +493,69 @@ describe("session recovery", () => {
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_delivered_reconcile"),
-        fn: async () => {
-          const delivered = await revision(tmp.path, "delivered_reconcile")
-          const acked = await revision(tmp.path, "acked_reconcile")
-          const stale = await revision(tmp.path, "stale_reconcile")
-          for (const [data, status] of [[delivered, "delivered"], [acked, "acked"]] as const) {
-            Database.use((db) => {
-              db.update(SessionEventOutboxTable)
-                .set({ status, delivered_at: Date.now(), acked_at: status === "acked" ? Date.now() : null })
-                .where(eq(SessionEventOutboxTable.session_id, data.session.id))
-                .run()
-              db.update(SessionTaskTable)
-                .set({ status: "blocked" })
-                .where(eq(SessionTaskTable.session_id, data.session.id))
-                .run()
-            })
-          }
-          Database.use((db) => {
-            const row = db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, stale.session.id)).get()!
-            db.update(SessionEventOutboxTable)
-              .set({ status: "delivered", delivered_at: Date.now(), payload: { ...row.payload, revision_id: stale.revision.previous_id } })
-              .where(eq(SessionEventOutboxTable.id, row.id))
-              .run()
-            db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.session_id, stale.session.id)).run()
-          })
-          const before = await Promise.all(
-            [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
-          )
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_delivered_reconcile"),
+            fn: async () => {
+              const delivered = await revision(tmp.path, "delivered_reconcile")
+              const acked = await revision(tmp.path, "acked_reconcile")
+              const stale = await revision(tmp.path, "stale_reconcile")
+              for (const [data, status] of [
+                [delivered, "delivered"],
+                [acked, "acked"],
+              ] as const) {
+                Database.use((db) => {
+                  db.update(SessionEventOutboxTable)
+                    .set({ status, delivered_at: Date.now(), acked_at: status === "acked" ? Date.now() : null })
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .run()
+                  db.update(SessionTaskTable)
+                    .set({ status: "blocked" })
+                    .where(eq(SessionTaskTable.session_id, data.session.id))
+                    .run()
+                })
+              }
+              Database.use((db) => {
+                const row = db
+                  .select()
+                  .from(SessionEventOutboxTable)
+                  .where(eq(SessionEventOutboxTable.session_id, stale.session.id))
+                  .get()!
+                db.update(SessionEventOutboxTable)
+                  .set({
+                    status: "delivered",
+                    delivered_at: Date.now(),
+                    payload: { ...row.payload, revision_id: stale.revision.previous_id },
+                  })
+                  .where(eq(SessionEventOutboxTable.id, row.id))
+                  .run()
+                db.update(SessionTaskTable)
+                  .set({ status: "blocked" })
+                  .where(eq(SessionTaskTable.session_id, stale.session.id))
+                  .run()
+              })
+              const before = await Promise.all(
+                [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
+              )
 
-          expect(await SessionTaskRecovery.resume(delivered.session.id)).toBe(true)
-          expect((await SessionTask.get(delivered.session.id))?.task.status).toBe("running")
-          expect((await SessionTask.get(delivered.session.id))?.revision.id).toBe(delivered.revision.id)
-          expect(await SessionTaskRecovery.scan()).toContain(true)
-          expect((await SessionTask.get(acked.session.id))?.task.status).toBe("running")
-          expect((await SessionTask.get(acked.session.id))?.revision.id).toBe(acked.revision.id)
-          expect((await SessionTask.get(stale.session.id))?.task.status).toBe("blocked")
-          expect((await SessionTask.get(stale.session.id))?.revision.id).toBe(stale.revision.id)
-          const after = await Promise.all(
-            [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
-          )
-          expect(after.map((items) => items.length)).toEqual(before.map((items) => items.length))
-          expect(calls).toBe(0)
-        },
-      }) })
+              expect(await SessionTaskRecovery.resume(delivered.session.id)).toBe(true)
+              expect((await SessionTask.get(delivered.session.id))?.task.status).toBe("running")
+              expect((await SessionTask.get(delivered.session.id))?.revision.id).toBe(delivered.revision.id)
+              expect(await SessionTaskRecovery.scan()).toContain(true)
+              expect((await SessionTask.get(acked.session.id))?.task.status).toBe("running")
+              expect((await SessionTask.get(acked.session.id))?.revision.id).toBe(acked.revision.id)
+              expect((await SessionTask.get(stale.session.id))?.task.status).toBe("blocked")
+              expect((await SessionTask.get(stale.session.id))?.revision.id).toBe(stale.revision.id)
+              const after = await Promise.all(
+                [delivered, acked, stale].map((data) => MessageV2.filterCompacted(MessageV2.stream(data.session.id))),
+              )
+              expect(after.map((items) => items.length)).toEqual(before.map((items) => items.length))
+              expect(calls).toBe(0)
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -394,61 +564,76 @@ describe("session recovery", () => {
   test("claims only the current revision bootstrap when older outbox rows remain", async () => {
     await using tmp = await tmpdir({ git: true })
     const calls: { sessionID: SessionID; revisionID: unknown }[] = []
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls.push({ sessionID: input.sessionID, revisionID: input.metadata?.revision_id })
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_current_outbox"),
-        fn: async () => {
-          for (const [index, status] of (["pending", "delivering", "delivered"] as const).entries()) {
-            const data = await revision(tmp.path, `old_outbox_${status}`)
-            const old = Database.use((db) =>
-              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
-            )
-            const next = await SessionTask.route({
-              sessionID: data.session.id,
-              messageID: data.messageID,
-              runID: `run_current_outbox_${status}`,
-              assignment: { op: "update", target: "self", title: "Newest", body: "Newest" },
-              actions: [],
-            })
-            if (next.type !== "update") throw new Error("newest draft missing")
-            const task = await SessionTask.get(data.session.id)
-            if (!task) throw new Error("task missing")
-            await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
-            Database.use((db) => {
-              db.update(SessionEventOutboxTable)
-                .set({
-                  status,
-                  updated_at: Date.now(),
-                  delivered_at: status === "delivered" ? Date.now() : null,
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_current_outbox"),
+            fn: async () => {
+              for (const [index, status] of (["pending", "delivering", "delivered"] as const).entries()) {
+                const data = await revision(tmp.path, `old_outbox_${status}`)
+                const old = Database.use(
+                  (db) =>
+                    db
+                      .select()
+                      .from(SessionEventOutboxTable)
+                      .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                      .get()!,
+                )
+                const next = await SessionTask.route({
+                  sessionID: data.session.id,
+                  messageID: data.messageID,
+                  runID: `run_current_outbox_${status}`,
+                  assignment: { op: "update", target: "self", title: "Newest", body: "Newest" },
+                  actions: [],
                 })
-                .where(eq(SessionEventOutboxTable.id, old.id))
-                .run()
-              db.update(SessionTaskTable)
-                .set({ status: "blocked" })
-                .where(eq(SessionTaskTable.session_id, data.session.id))
-                .run()
-            })
+                if (next.type !== "update") throw new Error("newest draft missing")
+                const task = await SessionTask.get(data.session.id)
+                if (!task) throw new Error("task missing")
+                await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+                Database.use((db) => {
+                  db.update(SessionEventOutboxTable)
+                    .set({
+                      status,
+                      updated_at: Date.now(),
+                      delivered_at: status === "delivered" ? Date.now() : null,
+                    })
+                    .where(eq(SessionEventOutboxTable.id, old.id))
+                    .run()
+                  db.update(SessionTaskTable)
+                    .set({ status: "blocked" })
+                    .where(eq(SessionTaskTable.session_id, data.session.id))
+                    .run()
+                })
 
-            expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+                expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
 
-            const rows = Database.use((db) =>
-              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
-            )
-            expect(rows.find((row) => row.id === old.id)?.status).toBe(status)
-            expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
-            expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
-            expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
-            expect(calls.filter((call) => call.sessionID === data.session.id)).toEqual([
-              { sessionID: data.session.id, revisionID: next.revision.id },
-            ])
-            expect(calls).toHaveLength(index + 1)
-          }
-        },
-      }) })
+                const rows = Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .all(),
+                )
+                expect(rows.find((row) => row.id === old.id)?.status).toBe(status)
+                expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
+                expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+                expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+                expect(calls.filter((call) => call.sessionID === data.session.id)).toEqual([
+                  { sessionID: data.session.id, revisionID: next.revision.id },
+                ])
+                expect(calls).toHaveLength(index + 1)
+              }
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -462,67 +647,92 @@ describe("session recovery", () => {
     const entered = new Promise<void>((resolve) => (enter = resolve))
     const wait = new Promise<void>((resolve) => (release = resolve))
     const original = MessageV2.get
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls.push(input.metadata?.revision_id)
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_lookup_race"),
-        fn: async () => {
-          const data = await revision(tmp.path, "lookup_race")
-          const old = Database.use((db) =>
-            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
-          )
-          const lookup = spyOn(MessageV2, "get").mockImplementation((async (input: Parameters<typeof MessageV2.get>[0]) => {
-            if (input.messageID === old.payload.message_id) {
-              enter()
-              await wait
-            }
-            return original(input)
-          }) as never)
-          try {
-            const resume = SessionTaskRecovery.resume(data.session.id)
-            await entered
-            const next = await SessionTask.route({
-              sessionID: data.session.id,
-              messageID: data.messageID,
-              runID: "run_lookup_race_current",
-              assignment: { op: "update", target: "self", title: "Current", body: "Current" },
-              actions: [],
-            })
-            if (next.type !== "update") throw new Error("current draft missing")
-            const task = await SessionTask.get(data.session.id)
-            if (!task) throw new Error("task missing")
-            await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
-            Database.use((db) =>
-              db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.id, task.task.id)).run(),
-            )
-            release()
-            await resume
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_lookup_race"),
+            fn: async () => {
+              const data = await revision(tmp.path, "lookup_race")
+              const old = Database.use(
+                (db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .get()!,
+              )
+              const lookup = spyOn(MessageV2, "get").mockImplementation((async (
+                input: Parameters<typeof MessageV2.get>[0],
+              ) => {
+                if (input.messageID === old.payload.message_id) {
+                  enter()
+                  await wait
+                }
+                return original(input)
+              }) as never)
+              try {
+                const resume = SessionTaskRecovery.resume(data.session.id)
+                await entered
+                const next = await SessionTask.route({
+                  sessionID: data.session.id,
+                  messageID: data.messageID,
+                  runID: "run_lookup_race_current",
+                  assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+                  actions: [],
+                })
+                if (next.type !== "update") throw new Error("current draft missing")
+                const task = await SessionTask.get(data.session.id)
+                if (!task) throw new Error("task missing")
+                await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+                Database.use((db) =>
+                  db
+                    .update(SessionTaskTable)
+                    .set({ status: "blocked" })
+                    .where(eq(SessionTaskTable.id, task.task.id))
+                    .run(),
+                )
+                release()
+                await resume
 
-            const rows = Database.use((db) =>
-              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
-            )
-            expect(calls).toEqual([])
-            expect(rows.find((row) => row.id === old.id)?.status).toBe("pending")
-            expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("pending")
-            expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
-            expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+                const rows = Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .all(),
+                )
+                expect(calls).toEqual([])
+                expect(rows.find((row) => row.id === old.id)?.status).toBe("pending")
+                expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("pending")
+                expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+                expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
 
-            expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
-            const recovered = Database.use((db) =>
-              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
-            )
-            expect(calls).toEqual([next.revision.id])
-            expect(recovered.find((row) => row.id === old.id)?.status).toBe("pending")
-            expect(recovered.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
-            expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
-          } finally {
-            lookup.mockRestore()
-          }
-        },
-      }) })
+                expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+                const recovered = Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .all(),
+                )
+                expect(calls).toEqual([next.revision.id])
+                expect(recovered.find((row) => row.id === old.id)?.status).toBe("pending")
+                expect(recovered.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
+                expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+              } finally {
+                lookup.mockRestore()
+              }
+            },
+          }),
+      })
     } finally {
       release()
       prompt.mockRestore()
@@ -537,7 +747,9 @@ describe("session recovery", () => {
     let release = () => {}
     const entered = new Promise<void>((resolve) => (enter = resolve))
     const wait = new Promise<void>((resolve) => (release = resolve))
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       calls.push(input.metadata?.revision_id)
       await Session.updateMessage({
         id: input.messageID!,
@@ -555,47 +767,66 @@ describe("session recovery", () => {
       return undefined
     }) as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_prompt_race"),
-        fn: async () => {
-          const data = await revision(tmp.path, "prompt_race")
-          blocked = data.revision.id
-          const old = Database.use((db) =>
-            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
-          )
-          const resume = SessionTaskRecovery.resume(data.session.id)
-          await entered
-          expect((await MessageV2.get({ sessionID: data.session.id, messageID: MessageID.make(String(old.payload.message_id)) })).info.id)
-            .toBe(MessageID.make(String(old.payload.message_id)))
-          const next = await SessionTask.route({
-            sessionID: data.session.id,
-            messageID: data.messageID,
-            runID: "run_prompt_race_current",
-            assignment: { op: "update", target: "self", title: "Current", body: "Current" },
-            actions: [],
-          })
-          if (next.type !== "update") throw new Error("current draft missing")
-          const task = await SessionTask.get(data.session.id)
-          if (!task) throw new Error("task missing")
-          try {
-            await expect(SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true }))
-              .rejects.toThrow("task_revision_bootstrap_delivering")
-          } finally {
-            release()
-            await resume
-          }
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_prompt_race"),
+            fn: async () => {
+              const data = await revision(tmp.path, "prompt_race")
+              blocked = data.revision.id
+              const old = Database.use(
+                (db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .get()!,
+              )
+              const resume = SessionTaskRecovery.resume(data.session.id)
+              await entered
+              expect(
+                (
+                  await MessageV2.get({
+                    sessionID: data.session.id,
+                    messageID: MessageID.make(String(old.payload.message_id)),
+                  })
+                ).info.id,
+              ).toBe(MessageID.make(String(old.payload.message_id)))
+              const next = await SessionTask.route({
+                sessionID: data.session.id,
+                messageID: data.messageID,
+                runID: "run_prompt_race_current",
+                assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+                actions: [],
+              })
+              if (next.type !== "update") throw new Error("current draft missing")
+              const task = await SessionTask.get(data.session.id)
+              if (!task) throw new Error("task missing")
+              try {
+                await expect(
+                  SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true }),
+                ).rejects.toThrow("task_revision_bootstrap_delivering")
+              } finally {
+                release()
+                await resume
+              }
 
-          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
-          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, old.id)).get())?.status)
-            .toBe("delivered")
+              expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
+              expect(
+                Database.use((db) =>
+                  db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, old.id)).get(),
+                )?.status,
+              ).toBe("delivered")
 
-          await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
-          expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
-          expect(calls).toEqual([data.revision.id, next.revision.id])
-          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
-          expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
-        },
-      }) })
+              await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+              expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+              expect(calls).toEqual([data.revision.id, next.revision.id])
+              expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+              expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+            },
+          }),
+      })
     } finally {
       release()
       prompt.mockRestore()
@@ -604,41 +835,55 @@ describe("session recovery", () => {
 
   test("allows revision activation without a live bootstrap delivery lease", async () => {
     await using tmp = await tmpdir({ git: true })
-    await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-      workspaceID: WorkspaceID.make("wrk_task_revision_lease_states"),
-      fn: async () => {
-        for (const [label, status] of [["pending", "pending"], ["delivered", "delivered"], ["expired", "delivering"]] as const) {
-          const data = await revision(tmp.path, `lease_state_${label}`)
-          const row = Database.use((db) =>
-            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
-          )
-          Database.use((db) =>
-            db.update(SessionEventOutboxTable)
-              .set({
-                status,
-                updated_at: status === "delivering" ? Date.now() - 31_000 : Date.now(),
-                delivered_at: status === "delivered" ? Date.now() : null,
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_task_revision_lease_states"),
+          fn: async () => {
+            for (const [label, status] of [
+              ["pending", "pending"],
+              ["delivered", "delivered"],
+              ["expired", "delivering"],
+            ] as const) {
+              const data = await revision(tmp.path, `lease_state_${label}`)
+              const row = Database.use(
+                (db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, data.session.id))
+                    .get()!,
+              )
+              Database.use((db) =>
+                db
+                  .update(SessionEventOutboxTable)
+                  .set({
+                    status,
+                    updated_at: status === "delivering" ? Date.now() - 31_000 : Date.now(),
+                    delivered_at: status === "delivered" ? Date.now() : null,
+                  })
+                  .where(eq(SessionEventOutboxTable.id, row.id))
+                  .run(),
+              )
+              const next = await SessionTask.route({
+                sessionID: data.session.id,
+                messageID: data.messageID,
+                runID: `run_lease_state_${label}`,
+                assignment: { op: "update", target: "self", title: "Current", body: "Current" },
+                actions: [],
               })
-              .where(eq(SessionEventOutboxTable.id, row.id))
-              .run(),
-          )
-          const next = await SessionTask.route({
-            sessionID: data.session.id,
-            messageID: data.messageID,
-            runID: `run_lease_state_${label}`,
-            assignment: { op: "update", target: "self", title: "Current", body: "Current" },
-            actions: [],
-          })
-          if (next.type !== "update") throw new Error("current draft missing")
-          const task = await SessionTask.get(data.session.id)
-          if (!task) throw new Error("task missing")
+              if (next.type !== "update") throw new Error("current draft missing")
+              const task = await SessionTask.get(data.session.id)
+              if (!task) throw new Error("task missing")
 
-          await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+              await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
 
-          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
-        }
-      },
-    }) })
+              expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+            }
+          },
+        }),
+    })
   })
 
   test("scans only recoverable tasks with bounded concurrency", async () => {
@@ -649,40 +894,44 @@ describe("session recovery", () => {
     const get = SessionTask.get
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_scan_limit"),
-        fn: async () => {
-          const candidates = await Promise.all(
-            Array.from({ length: 6 }, (_, index) => revision(tmp.path, `scan_limit_${index}`)),
-          )
-          const ordinary = await Session.create({ agent: "default" })
-          const task = await SessionTask.route({
-            sessionID: ordinary.id,
-            runID: "run_scan_limit_ordinary",
-            legacy: { title: "Ordinary", body: "Ordinary" },
-            actions: [],
-          })
-          if (task.type !== "execute") throw new Error("ordinary task missing")
-          const lookup = spyOn(SessionTask, "get").mockImplementation((async (sessionID: SessionID) => {
-            calls.push(sessionID)
-            active++
-            peak = Math.max(peak, active)
-            await Bun.sleep(20)
-            try {
-              return await get(sessionID)
-            } finally {
-              active--
-            }
-          }) as never)
-          try {
-            expect(await SessionTaskRecovery.scan()).toHaveLength(candidates.length)
-            expect(calls).not.toContain(ordinary.id)
-            expect(peak).toBeLessThanOrEqual(4)
-          } finally {
-            lookup.mockRestore()
-          }
-        },
-      }) })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_scan_limit"),
+            fn: async () => {
+              const candidates = await Promise.all(
+                Array.from({ length: 6 }, (_, index) => revision(tmp.path, `scan_limit_${index}`)),
+              )
+              const ordinary = await Session.create({ agent: "default" })
+              const task = await SessionTask.route({
+                sessionID: ordinary.id,
+                runID: "run_scan_limit_ordinary",
+                legacy: { title: "Ordinary", body: "Ordinary" },
+                actions: [],
+              })
+              if (task.type !== "execute") throw new Error("ordinary task missing")
+              const lookup = spyOn(SessionTask, "get").mockImplementation((async (sessionID: SessionID) => {
+                calls.push(sessionID)
+                active++
+                peak = Math.max(peak, active)
+                await Bun.sleep(20)
+                try {
+                  return await get(sessionID)
+                } finally {
+                  active--
+                }
+              }) as never)
+              try {
+                expect(await SessionTaskRecovery.scan()).toHaveLength(candidates.length)
+                expect(calls).not.toContain(ordinary.id)
+                expect(peak).toBeLessThanOrEqual(4)
+              } finally {
+                lookup.mockRestore()
+              }
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -697,57 +946,77 @@ describe("session recovery", () => {
       return undefined
     }) as never)
     try {
-      const foreign = await Instance.provide({ directory: b.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign"),
-        fn: async () => {
-          const parent = await Session.create({ agent: "default" })
-          const child = await Session.create({ parentID: parent.id, agent: "backend" })
-          const old = action("foreign_child", "delegate", "backend")
-          const first = await SessionTask.route({
-            sessionID: parent.id,
-            runID: "run_foreign_old",
-            legacy: { title: "Foreign old", body: "Foreign old" },
-            actions: [old],
-          })
-          if (first.type !== "execute") throw new Error("foreign task missing")
-          await SessionAssignment.delegate({
-            action: old,
-            childID: child.id,
-            messageID: MessageID.ascending(),
-            runID: "run_foreign_old",
-            sessionID: parent.id,
-          })
-          SessionStatus.set(child.id, { type: "running" })
-          const draft = await SessionTask.route({
-            sessionID: parent.id,
-            runID: "run_foreign_new",
-            assignment: { op: "update", target: "self", title: "Foreign new", body: "Foreign new" },
-            actions: [],
-          })
-          if (draft.type !== "update") throw new Error("foreign draft missing")
-          return { parent, child, revision: first.revision.id }
-        },
-      }) })
+      const foreign = await Instance.provide({
+        directory: b.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign"),
+            fn: async () => {
+              const parent = await Session.create({ agent: "default" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const old = action("foreign_child", "delegate", "backend")
+              const first = await SessionTask.route({
+                sessionID: parent.id,
+                runID: "run_foreign_old",
+                legacy: { title: "Foreign old", body: "Foreign old" },
+                actions: [old],
+              })
+              if (first.type !== "execute") throw new Error("foreign task missing")
+              await SessionAssignment.delegate({
+                action: old,
+                childID: child.id,
+                messageID: MessageID.ascending(),
+                runID: "run_foreign_old",
+                sessionID: parent.id,
+              })
+              SessionStatus.set(child.id, { type: "running" })
+              const draft = await SessionTask.route({
+                sessionID: parent.id,
+                runID: "run_foreign_new",
+                assignment: { op: "update", target: "self", title: "Foreign new", body: "Foreign new" },
+                actions: [],
+              })
+              if (draft.type !== "update") throw new Error("foreign draft missing")
+              return { parent, child, revision: first.revision.id }
+            },
+          }),
+      })
 
-      await Instance.provide({ directory: a.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_scan_current"),
-        fn: async () => {
-          const current = await revision(a.path, "scan_current")
-          expect(await SessionTaskRecovery.scan()).toContain(true)
-          expect((await SessionTask.get(current.session.id))?.task.status).toBe("running")
-          expect((await SessionTask.get(current.session.id))?.revision.id).toBe(current.revision.id)
-        },
-      }) })
+      await Instance.provide({
+        directory: a.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_scan_current"),
+            fn: async () => {
+              const current = await revision(a.path, "scan_current")
+              expect(await SessionTaskRecovery.scan()).toContain(true)
+              expect((await SessionTask.get(current.session.id))?.task.status).toBe("running")
+              expect((await SessionTask.get(current.session.id))?.revision.id).toBe(current.revision.id)
+            },
+          }),
+      })
 
-      await Instance.provide({ directory: b.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign_check"),
-        fn: async () => {
-          expect((await SessionTask.get(foreign.parent.id))?.task.status).toBe("revising")
-          expect((await SessionTask.get(foreign.parent.id))?.revision.id).toBe(foreign.revision)
-          expect(SessionStatus.get(foreign.child.id).type).toBe("running")
-          expect(Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, foreign.parent.id)).get())).toBeUndefined()
-        },
-      }) })
+      await Instance.provide({
+        directory: b.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_scan_foreign_check"),
+            fn: async () => {
+              expect((await SessionTask.get(foreign.parent.id))?.task.status).toBe("revising")
+              expect((await SessionTask.get(foreign.parent.id))?.revision.id).toBe(foreign.revision)
+              expect(SessionStatus.get(foreign.child.id).type).toBe("running")
+              expect(
+                Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.session_id, foreign.parent.id))
+                    .get(),
+                ),
+              ).toBeUndefined()
+            },
+          }),
+      })
       expect(calls).toBe(1)
     } finally {
       prompt.mockRestore()
@@ -758,62 +1027,75 @@ describe("session recovery", () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
     try {
-      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
-        workspaceID: WorkspaceID.make("wrk_task_revision_canonical_stop"),
-        fn: async () => {
-          const parent = await Session.create({ agent: "default" })
-          const old = action("canonical_child", "delegate", "backend")
-          const first = await SessionTask.route({
-            sessionID: parent.id,
-            runID: "run_canonical_old",
-            legacy: { title: "Old", body: "Old" },
-            actions: [old],
-          })
-          if (first.type !== "execute") throw new Error("task missing")
-          const child = await Session.create({ parentID: parent.id, agent: "backend" })
-          const msg = MessageID.ascending()
-          await SessionAssignment.delegate({ action: old, childID: child.id, messageID: msg, runID: "run_canonical_old", sessionID: parent.id })
-          await SessionDelegation.assign({
-            action: old,
-            agent: "backend",
-            childID: child.id,
-            messageID: msg,
-            parentAgent: "default",
-            runID: "run_canonical_old",
-            sessionID: parent.id,
-          })
-          SessionStatus.set(child.id, { type: "running" })
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_revision_canonical_stop"),
+            fn: async () => {
+              const parent = await Session.create({ agent: "default" })
+              const old = action("canonical_child", "delegate", "backend")
+              const first = await SessionTask.route({
+                sessionID: parent.id,
+                runID: "run_canonical_old",
+                legacy: { title: "Old", body: "Old" },
+                actions: [old],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const msg = MessageID.ascending()
+              await SessionAssignment.delegate({
+                action: old,
+                childID: child.id,
+                messageID: msg,
+                runID: "run_canonical_old",
+                sessionID: parent.id,
+              })
+              await SessionDelegation.assign({
+                action: old,
+                agent: "backend",
+                childID: child.id,
+                messageID: msg,
+                parentAgent: "default",
+                runID: "run_canonical_old",
+                sessionID: parent.id,
+              })
+              SessionStatus.set(child.id, { type: "running" })
 
-          const saved = await Session.get(child.id)
-          const protocol = (saved.dsl_context?.protocol ?? {}) as Record<string, unknown>
-          const delegation = protocol.delegation as Record<string, unknown>
-          await Session.setDslContext({
-            sessionID: child.id,
-            dsl_context: { ...saved.dsl_context, protocol: { ...protocol, delegation: { ...delegation, action_id: "forged_action" } } },
-          })
-          const root = await Session.get(parent.id)
-          const parentProtocol = (root.dsl_context?.protocol ?? {}) as Record<string, unknown>
-          await Session.setDslContext({
-            sessionID: parent.id,
-            dsl_context: { ...root.dsl_context, protocol: { ...parentProtocol, pending_delegations: {} } },
-          })
+              const saved = await Session.get(child.id)
+              const protocol = (saved.dsl_context?.protocol ?? {}) as Record<string, unknown>
+              const delegation = protocol.delegation as Record<string, unknown>
+              await Session.setDslContext({
+                sessionID: child.id,
+                dsl_context: {
+                  ...saved.dsl_context,
+                  protocol: { ...protocol, delegation: { ...delegation, action_id: "forged_action" } },
+                },
+              })
+              const root = await Session.get(parent.id)
+              const parentProtocol = (root.dsl_context?.protocol ?? {}) as Record<string, unknown>
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { ...root.dsl_context, protocol: { ...parentProtocol, pending_delegations: {} } },
+              })
 
-          const draft = await SessionTask.route({
-            sessionID: parent.id,
-            runID: "run_canonical_new",
-            assignment: { op: "update", target: "self", title: "New", body: "New" },
-            actions: [],
-          })
-          if (draft.type !== "update") throw new Error("draft missing")
-          await SessionTaskRecovery.resume(parent.id)
+              const draft = await SessionTask.route({
+                sessionID: parent.id,
+                runID: "run_canonical_new",
+                assignment: { op: "update", target: "self", title: "New", body: "New" },
+                actions: [],
+              })
+              if (draft.type !== "update") throw new Error("draft missing")
+              await SessionTaskRecovery.resume(parent.id)
 
-          expect((await SessionTask.get(parent.id))?.revision.id).toBe(draft.revision.id)
-          const results = await SessionResult.listForParent(parent.id)
-          expect(results).toHaveLength(1)
-          expect(results[0]?.action_id).toBe(old.id)
-          expect(results[0]?.action_id).not.toBe("forged_action")
-        },
-      }) })
+              expect((await SessionTask.get(parent.id))?.revision.id).toBe(draft.revision.id)
+              const results = await SessionResult.listForParent(parent.id)
+              expect(results).toHaveLength(1)
+              expect(results[0]?.action_id).toBe(old.id)
+              expect(results[0]?.action_id).not.toBe("forged_action")
+            },
+          }),
+      })
     } finally {
       prompt.mockRestore()
     }
@@ -964,6 +1246,11 @@ describe("session recovery", () => {
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
               expect((await SessionTask.get(parent.id))?.task.status).toBe("running")
               expect((await SessionTask.get(parent.id))?.revision.id).toBe(update.revision.id)
+              expect(await SessionTask.revision(parent.id, 1)).toMatchObject({
+                terminal_status: "blocked",
+                stopped_child_count: 5,
+                result_status: "partial",
+              })
               expect(SessionStatus.get(children[0]!.id).type).toBe("user_completed")
               expect(SessionStatus.get(children[1]!.id).type).toBe("completed")
               expect(SessionStatus.get(children[2]!.id).type).toBe("completed")
@@ -986,7 +1273,9 @@ describe("session recovery", () => {
               const ids = results.map((item) => item.id).sort()
               const summaries = calls.filter((item) => item.agent === "summary").length
               const bootstraps = calls.filter((item) => item.metadata?.source === "task_revision_bootstrap").length
-              expect(results.filter((item) => children.some((child) => child.id === item.child_session_id))).toHaveLength(5)
+              expect(
+                results.filter((item) => children.some((child) => child.id === item.child_session_id)),
+              ).toHaveLength(5)
               expect(bootstraps).toBe(1)
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
               expect(await SessionTaskRecovery.scan()).toEqual([])

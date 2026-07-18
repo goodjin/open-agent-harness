@@ -24,6 +24,8 @@ type OutboxKind = "parent_handoff" | "task_revision_bootstrap" | "task_handoff" 
 type TaskStatus = "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
 type TaskSource = "user" | "delegation" | "handoff" | "legacy"
 type RevisionStatus = "draft" | "active" | "completed" | "failed" | "archived"
+type RevisionTerminal = "completed" | "blocked" | "failed"
+type RevisionResult = "completed" | "partial" | "failed"
 type HandoffStatus = "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
 
 export const SessionTable = sqliteTable(
@@ -293,6 +295,9 @@ export const TaskRevisionTable = sqliteTable(
     time_completed: integer(),
     time_archived: integer(),
     archive_reason: text(),
+    terminal_status: text().$type<RevisionTerminal>(),
+    stopped_child_count: integer(),
+    result_status: text().$type<RevisionResult>(),
   },
   (table) => [
     uniqueIndex("task_revision_task_version_unique_idx").on(table.task_id, table.version),

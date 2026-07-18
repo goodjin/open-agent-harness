@@ -4,7 +4,14 @@ import z from "zod"
 import { AgentProtocol } from "@/protocol/schema"
 import { and, Database, desc, eq, gt, inArray, max, notExists } from "@/storage/db"
 import { MessageID, SessionID } from "./schema"
-import { AssignmentTable, SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskRevisionTable } from "./session.sql"
+import {
+  AssignmentTable,
+  SessionEventOutboxTable,
+  SessionResultTable,
+  SessionTable,
+  SessionTaskTable,
+  TaskRevisionTable,
+} from "./session.sql"
 import type { SessionRuns } from "./runs"
 import { TaskDocuments } from "./task-documents"
 import { SessionAssignment } from "./assignment"
@@ -28,12 +35,16 @@ export namespace SessionTask {
         runID: RunID.optional(),
       })
       .strict(),
-    z.object({ type: z.literal("handoff"), handoffID: z.string().min(1), sourceSessionID: SessionID.zod.optional() }).strict(),
+    z
+      .object({ type: z.literal("handoff"), handoffID: z.string().min(1), sourceSessionID: SessionID.zod.optional() })
+      .strict(),
     z.object({ type: z.literal("legacy"), runID: z.string().min(1).optional() }).strict(),
   ])
   export type Source = z.infer<typeof Source>
   export const RevisionStatus = z.enum(["draft", "active", "completed", "failed", "archived"])
   export type RevisionStatus = z.infer<typeof RevisionStatus>
+  export const TerminalStatus = z.enum(["completed", "blocked", "failed"])
+  export const ArchiveResult = z.enum(["completed", "partial", "failed"])
   export const Workflow = z
     .object({
       actions: z.array(z.unknown()),
@@ -96,6 +107,9 @@ export namespace SessionTask {
       time_completed: z.number().int().nonnegative().nullable(),
       time_archived: z.number().int().nonnegative().nullable(),
       archive_reason: z.string().nullable(),
+      terminal_status: TerminalStatus.nullable(),
+      stopped_child_count: z.number().int().nonnegative().nullable(),
+      result_status: ArchiveResult.nullable(),
     })
     .strict()
   export type Revision = z.infer<typeof Revision>
@@ -109,6 +123,17 @@ export namespace SessionTask {
       title: z.string().min(1),
       status: z.enum(["proposed", "confirmed", "creating", "started", "failed", "cancelled"]),
       target_session_id: SessionID.zod.optional(),
+      target_task_id: z.string().min(1).optional(),
+      source_session_id: SessionID.zod,
+      source_task_id: z.string().min(1).optional(),
+      error: z.string().optional(),
+      time: z
+        .object({
+          created: z.number().int().nonnegative(),
+          confirmed: z.number().int().nonnegative().optional(),
+          completed: z.number().int().nonnegative().optional(),
+        })
+        .strict(),
     })
     .strict()
   export const View = z
@@ -156,6 +181,9 @@ export namespace SessionTask {
       title: z.string().min(1),
       reason: z.string().nullable(),
       archive_reason: z.string().nullable(),
+      terminal_status: TerminalStatus.optional(),
+      stopped_child_count: z.number().int().nonnegative().optional(),
+      result: z.object({ present: z.boolean(), status: ArchiveResult.optional() }).strict(),
       time: z
         .object({ created: z.number().int().nonnegative(), archived: z.number().int().nonnegative().optional() })
         .strict(),
@@ -174,6 +202,12 @@ export namespace SessionTask {
       actions: z.array(TaskAction),
       result: z.string().optional(),
       result_source: ResultSource.optional(),
+      result_status: ArchiveResult.optional(),
+      terminal_status: TerminalStatus.optional(),
+      stopped_child_count: z.number().int().nonnegative().optional(),
+      reason: z.string().nullable(),
+      archive_reason: z.string().nullable(),
+      handoffs: z.array(HandoffSummary),
       time: z
         .object({
           created: z.number().int().nonnegative(),
@@ -204,7 +238,12 @@ export namespace SessionTask {
     })
     .strict()
   const Activate = z
-    .object({ taskID: z.string().min(1), revisionID: z.string().min(1), bootstrap: z.boolean().optional() })
+    .object({
+      taskID: z.string().min(1),
+      revisionID: z.string().min(1),
+      bootstrap: z.boolean().optional(),
+      stopped: z.number().int().nonnegative().optional().default(0),
+    })
     .strict()
   const Route = z
     .object({
@@ -280,7 +319,8 @@ export namespace SessionTask {
       ),
     )
     const sourced = rows.findLast((item) => item !== undefined)
-    const inherited = sourced || input.requiresAssignment ? undefined : await SessionAssignment.unique(input.sessionID, "confirm")
+    const inherited =
+      sourced || input.requiresAssignment ? undefined : await SessionAssignment.unique(input.sessionID, "confirm")
     if (inherited === null) throw new Conflict("session_task_assignment_source_conflict")
     const assignment = sourced ?? inherited
     if (!assignment && input.requiresAssignment) throw new Conflict("session_task_assignment_source_conflict")
@@ -302,8 +342,7 @@ export namespace SessionTask {
       throw new Conflict("session_task_assignment_source_conflict")
     const sourceRun = assignment.source_run_id
     const sourceAction = assignment.source_action_id
-    if (!sourceRun || !sourceAction)
-      throw new Conflict("session_task_assignment_source_conflict")
+    if (!sourceRun || !sourceAction) throw new Conflict("session_task_assignment_source_conflict")
     const content = await SessionAssignment.content(assignment.id)
     const body = content && typeof content === "object" && !Array.isArray(content) ? content : {}
     const legacy = assignment.content_ref.split("/").at(-1)?.startsWith("rev-") === true
@@ -316,8 +355,7 @@ export namespace SessionTask {
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
     const plan = "plan" in body ? body.plan : undefined
-    if (typeof plan !== "string")
-      throw new Conflict("session_task_assignment_content_invalid")
+    if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
     if (assignment.status === "completed") {
       if (!sourced) throw new Conflict("session_task_assignment_not_current")
       if (op === "handoff") {
@@ -341,8 +379,7 @@ export namespace SessionTask {
           actionIDs: [sourceAction],
           source: "confirm" as const,
         }
-        if (!SessionAssignment.withCurrent(tx, locator))
-          throw new Conflict("session_task_assignment_not_current")
+        if (!SessionAssignment.withCurrent(tx, locator)) throw new Conflict("session_task_assignment_not_current")
         const saved = write(
           {
             sessionID: input.sessionID,
@@ -353,8 +390,7 @@ export namespace SessionTask {
           },
           assignment.id,
         )
-        if (!SessionAssignment.withCurrent(tx, locator))
-          throw new Conflict("session_task_assignment_not_current")
+        if (!SessionAssignment.withCurrent(tx, locator)) throw new Conflict("session_task_assignment_not_current")
         if (op !== "handoff" && !SessionAssignment.consume(tx, locator))
           throw new Conflict("session_task_assignment_not_current")
         return saved
@@ -459,6 +495,9 @@ export namespace SessionTask {
                 time_completed: null,
                 time_archived: null,
                 archive_reason: null,
+                terminal_status: null,
+                stopped_child_count: null,
+                result_status: null,
               })
               .run()
             tx.update(SessionTaskTable).set({ current_revision_id: revision }).where(eq(SessionTaskTable.id, id)).run()
@@ -605,8 +644,7 @@ export namespace SessionTask {
           .from(SessionTable)
           .where(eq(SessionTable.id, input.sessionID))
           .get()
-        if (child?.parent_id !== input.parentSessionID)
-          throw new Conflict("session_task_delegation_parent_conflict")
+        if (child?.parent_id !== input.parentSessionID) throw new Conflict("session_task_delegation_parent_conflict")
         const locator = {
           assignment,
           sessionID: input.sessionID,
@@ -664,8 +702,7 @@ export namespace SessionTask {
       (tx) => {
         const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get()
         if (!task?.current_revision_id) throw new Conflict("session_task_missing")
-        if (task.status !== "running" && task.status !== "waiting_user")
-          throw new Conflict("session_task_stale_run")
+        if (task.status !== "running" && task.status !== "waiting_user") throw new Conflict("session_task_stale_run")
         const revision = tx
           .select()
           .from(TaskRevisionTable)
@@ -1042,6 +1079,13 @@ export namespace SessionTask {
             next.previous_id !== task.current_revision_id
           )
             throw new Conflict()
+          const previous = tx
+            .select()
+            .from(TaskRevisionTable)
+            .where(and(eq(TaskRevisionTable.id, task.current_revision_id), eq(TaskRevisionTable.task_id, input.taskID)))
+            .get()
+          if (!previous) throw new Conflict()
+          const meta = archive(tx, task.session_id, previous)
           const lease = tx
             .select({ id: SessionEventOutboxTable.id })
             .from(SessionEventOutboxTable)
@@ -1056,7 +1100,14 @@ export namespace SessionTask {
             )
           const archived = tx
             .update(TaskRevisionTable)
-            .set({ status: "archived", time_archived: now, archive_reason: next.reason ?? "Task revised" })
+            .set({
+              status: "archived",
+              time_archived: now,
+              archive_reason: next.reason ?? "Task revised",
+              terminal_status: meta.terminal,
+              stopped_child_count: input.stopped,
+              result_status: meta.result,
+            })
             .where(
               and(
                 eq(TaskRevisionTable.id, task.current_revision_id),
@@ -1165,6 +1216,9 @@ export namespace SessionTask {
           title: TaskRevisionTable.title,
           reason: TaskRevisionTable.reason,
           archive_reason: TaskRevisionTable.archive_reason,
+          terminal_status: TaskRevisionTable.terminal_status,
+          stopped_child_count: TaskRevisionTable.stopped_child_count,
+          result_status: TaskRevisionTable.result_status,
           time_created: TaskRevisionTable.time_created,
           time_archived: TaskRevisionTable.time_archived,
         })
@@ -1180,6 +1234,12 @@ export namespace SessionTask {
             title: item.title,
             reason: item.reason,
             archive_reason: item.archive_reason,
+            ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
+            ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
+            result: {
+              present: item.result_status !== null,
+              ...(item.result_status === null ? {} : { status: item.result_status }),
+            },
             time: {
               created: item.time_created,
               ...(item.time_archived === null ? {} : { archived: item.time_archived }),
@@ -1194,10 +1254,13 @@ export namespace SessionTask {
     if (!stored) return
     const { SessionRuns } = await import("./runs")
     const source = stored.task.source_ref
-    const parent = stored.task.source_type === "delegation" && typeof source.runID === "string" ? source.runID : undefined
+    const parent =
+      stored.task.source_type === "delegation" && typeof source.runID === "string" ? source.runID : undefined
     const ids = parent ? [parent] : runids(stored.revision.workflow)
     const recent = ids.slice(-50)
-    const runs = await Promise.all(recent.map((runID) => SessionRuns.persisted(sessionID, runID).catch(() => undefined)))
+    const runs = await Promise.all(
+      recent.map((runID) => SessionRuns.persisted(sessionID, runID).catch(() => undefined)),
+    )
     const trusted = parent ? valid(stored.task, runs[0]) : undefined
     const merged = runs.reduce<unknown[]>(
       (all, run, index) => (run ? merge(all, tagged(run.actions, recent[index]!)) : all),
@@ -1209,6 +1272,7 @@ export namespace SessionTask {
         ? result(trusted.summary, trusted.summary_source)
         : {}
       : result(stored.revision.result, stored.revision.result_source)
+    const { SessionTaskHandoff } = await import("./task-handoff")
     return View.parse({
       id: stored.task.id,
       session_id: stored.task.session_id,
@@ -1224,7 +1288,7 @@ export namespace SessionTask {
       },
       actions,
       ...output,
-      handoffs: [],
+      handoffs: SessionTaskHandoff.summaries({ tasks: [stored.task.id], sessionID }),
       time: {
         created: stored.task.time_created,
         updated: stored.task.time_updated,
@@ -1247,6 +1311,7 @@ export namespace SessionTask {
     if (!row) return
     const item = Revision.parse(row.revision)
     const saved = result(item.result, item.result_source)
+    const { SessionTaskHandoff } = await import("./task-handoff")
     return RevisionView.parse({
       id: item.id,
       session_id: row.task.session_id,
@@ -1257,6 +1322,12 @@ export namespace SessionTask {
       workflow: { ...item.workflow, actions: workflow(item.workflow) },
       actions: workflow(item.workflow),
       ...saved,
+      ...(item.result_status === null ? {} : { result_status: item.result_status }),
+      ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
+      ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
+      reason: item.reason,
+      archive_reason: item.archive_reason,
+      handoffs: SessionTaskHandoff.summaries({ tasks: [row.task.id], sessionID }),
       time: {
         created: item.time_created,
         ...(item.time_activated === null ? {} : { activated: item.time_activated }),
@@ -1304,13 +1375,14 @@ export namespace SessionTask {
   }
 
   export function owns(sessionID: SessionID, revisionID: string) {
-    return Database.use((db) =>
-      !!db
-        .select({ id: TaskRevisionTable.id })
-        .from(TaskRevisionTable)
-        .innerJoin(SessionTaskTable, eq(SessionTaskTable.id, TaskRevisionTable.task_id))
-        .where(and(eq(SessionTaskTable.session_id, sessionID), eq(TaskRevisionTable.id, revisionID)))
-        .get(),
+    return Database.use(
+      (db) =>
+        !!db
+          .select({ id: TaskRevisionTable.id })
+          .from(TaskRevisionTable)
+          .innerJoin(SessionTaskTable, eq(SessionTaskTable.id, TaskRevisionTable.task_id))
+          .where(and(eq(SessionTaskTable.session_id, sessionID), eq(TaskRevisionTable.id, revisionID)))
+          .get(),
     )
   }
 
@@ -1321,6 +1393,7 @@ export namespace SessionTask {
     if (runs.length > 1) return { type: "legacy_multi_run" as const, count: runs.length }
     const run = runs[0]!
     const actions = workflow({ actions: tagged(run.actions, run.run_id) })
+    const { SessionTaskHandoff } = await import("./task-handoff")
     return LegacyView.parse({
       type: "legacy_task",
       id: run.run_id,
@@ -1335,7 +1408,7 @@ export namespace SessionTask {
       },
       actions,
       ...(run.summary && run.summary_source ? { result: run.summary, result_source: run.summary_source } : {}),
-      handoffs: [],
+      handoffs: SessionTaskHandoff.summaries({ sessionID }),
       time: {
         created: run.time.started,
         updated: run.time.completed ?? run.time.started,
@@ -1370,6 +1443,46 @@ export namespace SessionTask {
     const parsed = ResultSource.safeParse(source)
     if (!body || !parsed.success) return {}
     return { result: body, result_source: parsed.data }
+  }
+
+  function archive(tx: Database.TxOrDb, sessionID: SessionID, revision: typeof TaskRevisionTable.$inferSelect) {
+    const flow = Workflow.parse(revision.workflow)
+    const actions = workflow(flow)
+    const keys = new Set(
+      flow.actions.flatMap((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+        const item = raw as { id?: unknown; run_id?: unknown }
+        if (typeof item.id !== "string" || typeof item.run_id !== "string") return []
+        return [`${item.run_id}:${item.id}`]
+      }),
+    )
+    const rows = tx
+      .select({
+        run: SessionResultTable.run_id,
+        action: SessionResultTable.action_id,
+        status: SessionResultTable.status,
+      })
+      .from(SessionResultTable)
+      .where(eq(SessionResultTable.parent_session_id, sessionID))
+      .all()
+      .filter((item) => item.run && item.action && keys.has(`${item.run}:${item.action}`))
+    const saved = result(revision.result, revision.result_source)
+    const resultStatus = rows.some((item) => item.status === "failed")
+      ? ("failed" as const)
+      : rows.some((item) => item.status !== "completed") || saved.result_source === "fallback_summary"
+        ? ("partial" as const)
+        : rows.length > 0 || saved.result
+          ? ("completed" as const)
+          : undefined
+    const terminal =
+      actions.some((item) => item.status === "failed") || resultStatus === "failed"
+        ? ("failed" as const)
+        : actions.some((item) => item.status === "blocked" || item.status === "pending" || item.status === "running")
+          ? ("blocked" as const)
+          : actions.length > 0 || resultStatus === "completed"
+            ? ("completed" as const)
+            : ("blocked" as const)
+    return { terminal, result: resultStatus }
   }
 
   function workflow(value: Workflow) {

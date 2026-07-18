@@ -32,6 +32,45 @@ export namespace SessionTaskHandoff {
 
   export type Info = typeof TaskHandoffTable.$inferSelect
 
+  export function summaries(input: { tasks?: string[]; sessionID?: SessionID }) {
+    if (!input.tasks?.length && !input.sessionID) return []
+    const tasks = input.tasks ?? []
+    const task = tasks.length
+      ? or(inArray(TaskHandoffTable.source_task_id, tasks), inArray(TaskHandoffTable.target_task_id, tasks))
+      : undefined
+    const session = input.sessionID
+      ? or(
+          eq(TaskHandoffTable.source_session_id, input.sessionID),
+          eq(TaskHandoffTable.target_session_id, input.sessionID),
+        )
+      : undefined
+    const where = task && session ? and(task, session) : (task ?? session)
+    if (!where) return []
+    return Database.use((db) =>
+      db
+        .select()
+        .from(TaskHandoffTable)
+        .where(where)
+        .orderBy(TaskHandoffTable.time_created)
+        .all()
+        .map((item) => ({
+          id: item.id,
+          title: item.title,
+          status: item.status,
+          source_session_id: item.source_session_id,
+          ...(item.source_task_id === null ? {} : { source_task_id: item.source_task_id }),
+          ...(item.target_session_id === null ? {} : { target_session_id: item.target_session_id }),
+          ...(item.target_task_id === null ? {} : { target_task_id: item.target_task_id }),
+          ...(item.error === null ? {} : { error: item.error }),
+          time: {
+            created: item.time_created,
+            ...(item.time_confirmed === null ? {} : { confirmed: item.time_confirmed }),
+            ...(item.time_completed === null ? {} : { completed: item.time_completed }),
+          },
+        })),
+    )
+  }
+
   export async function get(id: string) {
     return Database.use(
       (tx) =>

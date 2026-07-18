@@ -19,20 +19,21 @@ export namespace SessionTaskRecovery {
     const task = owner.task
     const current = owner.current
     if (!task || !current) return false
-    return Database.use((tx) =>
-      !!tx
-        .update(SessionTaskTable)
-        .set({ status: "blocked", time_updated: Date.now() })
-        .where(
-          and(
-            eq(SessionTaskTable.id, task),
-            eq(SessionTaskTable.session_id, sessionID),
-            eq(SessionTaskTable.current_revision_id, current),
-            inArray(SessionTaskTable.status, ["revising", "blocked", "running"]),
-          ),
-        )
-        .returning({ id: SessionTaskTable.id })
-        .get(),
+    return Database.use(
+      (tx) =>
+        !!tx
+          .update(SessionTaskTable)
+          .set({ status: "blocked", time_updated: Date.now() })
+          .where(
+            and(
+              eq(SessionTaskTable.id, task),
+              eq(SessionTaskTable.session_id, sessionID),
+              eq(SessionTaskTable.current_revision_id, current),
+              inArray(SessionTaskTable.status, ["revising", "blocked", "running"]),
+            ),
+          )
+          .returning({ id: SessionTaskTable.id })
+          .get(),
     )
   }
 
@@ -90,7 +91,12 @@ export namespace SessionTaskRecovery {
         )
           return true
         try {
-          await SessionTask.activate({ taskID: stored.task.id, revisionID: draft.id, bootstrap: true })
+          await SessionTask.activate({
+            taskID: stored.task.id,
+            revisionID: draft.id,
+            bootstrap: true,
+            stopped: scope.length,
+          })
         } catch (err) {
           if (err instanceof SessionTask.Conflict && advanced(sessionID, stored.task.id, draft.id)) return true
           throw err
@@ -108,31 +114,35 @@ export namespace SessionTaskRecovery {
     }
     await start(next)
     const sent = Database.use((tx) =>
-      tx.select({ status: SessionEventOutboxTable.status }).from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, next.id)).get(),
+      tx
+        .select({ status: SessionEventOutboxTable.status })
+        .from(SessionEventOutboxTable)
+        .where(eq(SessionEventOutboxTable.id, next.id))
+        .get(),
     )
     const task = typeof next.payload.task_id === "string" ? next.payload.task_id : ""
     const revision = typeof next.payload.revision_id === "string" ? next.payload.revision_id : ""
-    if (sent?.status === "delivered" || sent?.status === "acked")
-      unblock(sessionID, task, revision)
+    if (sent?.status === "delivered" || sent?.status === "acked") unblock(sessionID, task, revision)
     return true
   }
 
   function advanced(sessionID: SessionID, taskID: string, revisionID: string) {
-    return Database.use((tx) =>
-      !!tx
-        .select({ id: SessionTaskTable.id })
-        .from(SessionTaskTable)
-        .innerJoin(TaskRevisionTable, eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id))
-        .where(
-          and(
-            eq(SessionTaskTable.id, taskID),
-            eq(SessionTaskTable.session_id, sessionID),
-            eq(SessionTaskTable.current_revision_id, revisionID),
-            eq(TaskRevisionTable.task_id, taskID),
-            eq(TaskRevisionTable.status, "active"),
-          ),
-        )
-        .get(),
+    return Database.use(
+      (tx) =>
+        !!tx
+          .select({ id: SessionTaskTable.id })
+          .from(SessionTaskTable)
+          .innerJoin(TaskRevisionTable, eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id))
+          .where(
+            and(
+              eq(SessionTaskTable.id, taskID),
+              eq(SessionTaskTable.session_id, sessionID),
+              eq(SessionTaskTable.current_revision_id, revisionID),
+              eq(TaskRevisionTable.task_id, taskID),
+              eq(TaskRevisionTable.status, "active"),
+            ),
+          )
+          .get(),
     )
   }
 
@@ -208,12 +218,7 @@ export namespace SessionTaskRecovery {
       tx
         .select()
         .from(TaskRevisionTable)
-        .where(
-          and(
-            eq(TaskRevisionTable.id, id),
-            eq(TaskRevisionTable.task_id, task),
-          ),
-        )
+        .where(and(eq(TaskRevisionTable.id, id), eq(TaskRevisionTable.task_id, task)))
         .get(),
     )
     if (!revision) return
@@ -244,7 +249,7 @@ export namespace SessionTaskRecovery {
         status: "blocked",
         error: err instanceof Error ? err.message : String(err),
       },
-      time: { start: prev?.type === "text" ? prev.time?.start ?? now : now, end: now },
+      time: { start: prev?.type === "text" ? (prev.time?.start ?? now) : now, end: now },
     })
   }
 
@@ -266,18 +271,19 @@ export namespace SessionTaskRecovery {
   }
 
   function bootstrapped(sessionID: SessionID, taskID: string, revisionID: string) {
-    return Database.use((tx) =>
-      !!tx
-        .select({ payload: SessionEventOutboxTable.payload })
-        .from(SessionEventOutboxTable)
-        .where(
-          and(
-            eq(SessionEventOutboxTable.session_id, sessionID),
-            eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
-          ),
-        )
-        .all()
-        .find((row) => row.payload.task_id === taskID && row.payload.revision_id === revisionID),
+    return Database.use(
+      (tx) =>
+        !!tx
+          .select({ payload: SessionEventOutboxTable.payload })
+          .from(SessionEventOutboxTable)
+          .where(
+            and(
+              eq(SessionEventOutboxTable.session_id, sessionID),
+              eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
+            ),
+          )
+          .all()
+          .find((row) => row.payload.task_id === taskID && row.payload.revision_id === revisionID),
     )
   }
 
@@ -400,7 +406,12 @@ export namespace SessionTaskRecovery {
       const reset = Database.use((tx) => {
         const where = guard(tx, row, "delivering", row.updated_at)
         if (!where) return
-        return tx.update(SessionEventOutboxTable).set({ status: "pending", updated_at: now }).where(where).returning().get()
+        return tx
+          .update(SessionEventOutboxTable)
+          .set({ status: "pending", updated_at: now })
+          .where(where)
+          .returning()
+          .get()
       })
       return reset ? start(reset) : true
     }

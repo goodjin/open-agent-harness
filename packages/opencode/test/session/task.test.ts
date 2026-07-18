@@ -374,7 +374,9 @@ describe("session task", () => {
               input: { assignment: { op, target: op === "handoff" ? "peer" : "self" } },
             },
           ]),
-        ).rejects.toThrow(op === "handoff" ? "task_handoff_requires_bound_source" : "session_task_update_requires_bound_source")
+        ).rejects.toThrow(
+          op === "handoff" ? "task_handoff_requires_bound_source" : "session_task_update_requires_bound_source",
+        )
       }
       await expect(
         SessionTask.preflight(empty.id, [
@@ -457,7 +459,17 @@ describe("session task", () => {
   test("keeps revision shutdown scope limited to the frozen active workflow", () =>
     setup(async () => {
       const session = await Session.create({})
-      const old = { type: "action", id: "old_child", title: "Old child", operation: "delegate", executor: { type: "agent", target: "backend", capabilities: [] }, input: {}, depends_on: [], context_refs: [], result_policy: "summary" } as AgentProtocol.Action
+      const old = {
+        type: "action",
+        id: "old_child",
+        title: "Old child",
+        operation: "delegate",
+        executor: { type: "agent", target: "backend", capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
       const next = { ...old, id: "draft_child", title: "Draft child" }
       await SessionTask.route({
         sessionID: session.id,
@@ -467,8 +479,20 @@ describe("session task", () => {
       })
       const oldSession = await Session.create({ parentID: session.id })
       const draftSession = await Session.create({ parentID: session.id })
-      await SessionAssignment.delegate({ action: old, childID: oldSession.id, messageID: MessageID.ascending(), runID: "run_scope_old", sessionID: session.id })
-      await SessionAssignment.delegate({ action: next, childID: draftSession.id, messageID: MessageID.ascending(), runID: "run_scope_new", sessionID: session.id })
+      await SessionAssignment.delegate({
+        action: old,
+        childID: oldSession.id,
+        messageID: MessageID.ascending(),
+        runID: "run_scope_old",
+        sessionID: session.id,
+      })
+      await SessionAssignment.delegate({
+        action: next,
+        childID: draftSession.id,
+        messageID: MessageID.ascending(),
+        runID: "run_scope_new",
+        sessionID: session.id,
+      })
       await SessionTask.route({
         sessionID: session.id,
         runID: "run_scope_new",
@@ -632,9 +656,8 @@ describe("session task", () => {
         SessionTask.sync({
           sessionID: session.id,
           runID: "run_bound_000",
-          actions: result("run_bound_000", [
-            { id: "action_bound_000", title: "action_bound_000", status: "completed" },
-          ]).actions,
+          actions: result("run_bound_000", [{ id: "action_bound_000", title: "action_bound_000", status: "completed" }])
+            .actions,
         }),
       ).rejects.toThrow("session_task_stale_run")
     }))
@@ -725,7 +748,10 @@ describe("session task", () => {
       })
       if (bound.type !== "execute") throw new Error("task binding missing")
       Database.transaction((tx) => {
-        tx.update(TaskRevisionTable).set({ status: "archived" }).where(eq(TaskRevisionTable.id, bound.revision.id)).run()
+        tx.update(TaskRevisionTable)
+          .set({ status: "archived" })
+          .where(eq(TaskRevisionTable.id, bound.revision.id))
+          .run()
         tx.update(SessionTaskTable).set({ status: "failed" }).where(eq(SessionTaskTable.id, bound.task.id)).run()
       })
       const terminal = JSON.stringify(await SessionTask.get(archived.id))
@@ -733,9 +759,7 @@ describe("session task", () => {
         SessionTask.sync({
           sessionID: archived.id,
           runID: "run_sync_archived",
-          actions: result("run_sync_archived", [
-            { id: "archived", title: "Archived", status: "completed" },
-          ]).actions,
+          actions: result("run_sync_archived", [{ id: "archived", title: "Archived", status: "completed" }]).actions,
         }),
       ).rejects.toThrow("session_task_stale_run")
       expect(JSON.stringify(await SessionTask.get(archived.id))).toBe(terminal)
@@ -1322,7 +1346,7 @@ describe("session task", () => {
       expect(first.result.revision.workflow.assignment_id).toBe(first.assignment.id)
       expect(old.type === "replay" ? old.revision.id : undefined).toBe(first.result.revision.id)
       expect(again.type === "replay" ? again.revision.id : undefined).toBe(first.result.revision.id)
-      expect((await SessionTask.revision(session.id, 3))).toBeUndefined()
+      expect(await SessionTask.revision(session.id, 3)).toBeUndefined()
 
       Database.use((tx) =>
         [first.result.revision].forEach((revision) => {
@@ -1401,7 +1425,7 @@ describe("session task", () => {
       expect(old.revision.workflow.actions).not.toContainEqual({ id: "must_not_execute" })
       expect(current.revision.workflow.actions).not.toContainEqual({ id: "must_not_execute" })
       expect((await SessionTask.get(session.id))?.revision.id).toBe(second.result.revision.id)
-      expect((await SessionTask.revision(session.id, 3))).toBeUndefined()
+      expect(await SessionTask.revision(session.id, 3)).toBeUndefined()
 
       const other = await Session.create({})
       const foreign = await SessionTask.route({
@@ -2205,8 +2229,20 @@ describe("session task", () => {
       expect((await SessionTask.history(session.id))[0]).toMatchObject({ version: 1, status: "archived" })
       expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("body")
       expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("workflow")
-      expect((await SessionTask.history(session.id))[0]).not.toHaveProperty("result")
+      expect((await SessionTask.history(session.id))[0]?.result).toEqual({ present: false })
       expect((await SessionTask.revision(session.id, 1))?.body).toContain("Original task")
+
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ terminal_status: null, stopped_child_count: null, result_status: null })
+          .where(eq(TaskRevisionTable.id, first.revision.id))
+          .run(),
+      )
+      const archived = (await SessionTask.history(session.id))[0]
+      expect(archived).not.toHaveProperty("terminal_status")
+      expect(archived).not.toHaveProperty("stopped_child_count")
+      expect(archived?.result).toEqual({ present: false })
     }))
 
   test("does not reuse a result from an archived revision", () =>
@@ -2553,13 +2589,40 @@ describe("session task", () => {
         summary: "Legacy result",
         messageID: "msg_legacy",
       })
+      Database.use((db) =>
+        db
+          .insert(TaskHandoffTable)
+          .values({
+            id: "handoff_legacy_view",
+            source_session_id: session.id,
+            source_task_id: null,
+            target_session_id: null,
+            target_task_id: null,
+            title: "Legacy handoff",
+            body: "Legacy handoff body",
+            body_hash: "a".repeat(64),
+            context_refs: [],
+            status: "failed",
+            dedupe_key: "handoff_legacy_view",
+            error: "Legacy target failed",
+            time_created: 10,
+          })
+          .run(),
+      )
       expect(await SessionTask.legacy(session.id)).toMatchObject({
         type: "legacy_task",
         version: 1,
         title: "Legacy task",
         result: "Legacy result",
         result_source: "protocol",
-        handoffs: [],
+        handoffs: [
+          {
+            id: "handoff_legacy_view",
+            source_session_id: session.id,
+            status: "failed",
+            error: "Legacy target failed",
+          },
+        ],
         time: {
           created: run.time.started,
           updated: run.time.completed,
@@ -2595,10 +2658,7 @@ function protocol(id: string, title: string) {
   })
 }
 
-function result(
-  id: string,
-  actions: { id: string; title: string; status: "completed" | "failed" | "blocked" }[],
-) {
+function result(id: string, actions: { id: string; title: string; status: "completed" | "failed" | "blocked" }[]) {
   const now = Date.now()
   return AgentProtocol.Result.parse({
     type: "agent.protocol.result",

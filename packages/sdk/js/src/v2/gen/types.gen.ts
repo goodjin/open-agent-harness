@@ -5458,6 +5458,15 @@ export type SessionTaskCurrentResponses = {
       title: string
       status: "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
       target_session_id?: string
+      target_task_id?: string
+      source_session_id: string
+      source_task_id?: string
+      error?: string
+      time: {
+        created: number
+        confirmed?: number
+        completed?: number
+      }
     }>
     time: {
       created: number
@@ -5508,6 +5517,12 @@ export type SessionTaskHistoryResponses = {
     title: string
     reason: string | null
     archive_reason: string | null
+    terminal_status?: "completed" | "blocked" | "failed"
+    stopped_child_count?: number
+    result: {
+      present: boolean
+      status?: "completed" | "partial" | "failed"
+    }
     time: {
       created: number
       archived?: number
@@ -5637,6 +5652,26 @@ export type SessionTaskRevisionResponses = {
     }>
     result?: string
     result_source?: "protocol" | "action_result" | "fallback_summary"
+    result_status?: "completed" | "partial" | "failed"
+    terminal_status?: "completed" | "blocked" | "failed"
+    stopped_child_count?: number
+    reason: string | null
+    archive_reason: string | null
+    handoffs: Array<{
+      id: string
+      title: string
+      status: "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
+      target_session_id?: string
+      target_task_id?: string
+      source_session_id: string
+      source_task_id?: string
+      error?: string
+      time: {
+        created: number
+        confirmed?: number
+        completed?: number
+      }
+    }>
     time: {
       created: number
       activated?: number

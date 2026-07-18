@@ -21,7 +21,9 @@ import {
   SessionEventOutboxTable,
   SessionTable,
   SessionTaskTable,
+  TaskHandoffTable,
   TaskConfirmationTable,
+  TaskRevisionTable,
 } from "../../src/session/session.sql"
 import { tmpdir } from "../fixture/fixture"
 
@@ -131,13 +133,52 @@ describe("session task endpoints", () => {
               actions: [action("old_done", "completed")],
             })
             if (first.type !== "execute") throw new Error("task missing")
+            Database.use((db) => {
+              db.update(TaskRevisionTable)
+                .set({
+                  workflow: {
+                    actions: [
+                      {
+                        ...action("old_done", "completed"),
+                        run_id: "run_task_old",
+                      },
+                    ],
+                    run_id: "run_task_old",
+                    run_ids: ["run_task_old"],
+                  },
+                  result: "Archived fallback result",
+                  result_source: "fallback_summary",
+                })
+                .where(eq(TaskRevisionTable.id, first.revision.id))
+                .run()
+              db.insert(TaskHandoffTable)
+                .values({
+                  id: "handoff_task_reads",
+                  source_session_id: session.id,
+                  source_task_id: first.task.id,
+                  source_message_id: null,
+                  target_session_id: null,
+                  target_task_id: null,
+                  title: "Related handoff",
+                  body: "Related handoff body",
+                  body_hash: "a".repeat(64),
+                  context_refs: [],
+                  status: "failed",
+                  dedupe_key: "handoff_task_reads",
+                  error: "Target creation failed",
+                  time_created: 10,
+                  time_confirmed: 11,
+                  time_completed: 12,
+                })
+                .run()
+            })
             const draft = await SessionTask.draft({
               taskID: first.task.id,
               title: "Revised",
               body: "Revised body",
               reason: "Change scope",
             })
-            await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+            await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id, stopped: 2 })
             const app = Server.Default()
 
             const current = await app.request(`/session/${session.id}/task`)
@@ -148,16 +189,35 @@ describe("session task endpoints", () => {
               title: "Revised",
               version: 2,
               body: "Revised body",
+              handoffs: [
+                {
+                  id: "handoff_task_reads",
+                  title: "Related handoff",
+                  status: "failed",
+                  source_session_id: session.id,
+                  source_task_id: first.task.id,
+                  error: "Target creation failed",
+                  time: { created: 10, confirmed: 11, completed: 12 },
+                },
+              ],
             })
 
             const history = await app.request(`/session/${session.id}/task/history`)
             expect(history.status).toBe(200)
             const items = (await history.json()) as Record<string, unknown>[]
             expect(items).toHaveLength(1)
-            expect(items[0]).toMatchObject({ version: 1, status: "archived", title: "Original" })
+            expect(items[0]).toMatchObject({
+              version: 1,
+              status: "archived",
+              terminal_status: "completed",
+              title: "Original",
+              stopped_child_count: 2,
+              archive_reason: "Change scope",
+              result: { present: true, status: "partial" },
+            })
             expect(items[0]).not.toHaveProperty("body")
             expect(items[0]).not.toHaveProperty("workflow")
-            expect(items[0]).not.toHaveProperty("result")
+            expect(typeof items[0]?.result).not.toBe("string")
 
             const archived = await app.request(`/session/${session.id}/task/revisions/1`)
             expect(archived.status).toBe(200)
@@ -165,7 +225,18 @@ describe("session task endpoints", () => {
               session_id: session.id,
               version: 1,
               status: "archived",
+              terminal_status: "completed",
+              stopped_child_count: 2,
+              result_status: "partial",
+              archive_reason: "Change scope",
               body: "Original body",
+              result: "Archived fallback result",
+              handoffs: [
+                {
+                  id: "handoff_task_reads",
+                  status: "failed",
+                },
+              ],
             })
           },
         }),

@@ -3865,12 +3865,53 @@
                           "target_session_id": {
                             "type": "string",
                             "pattern": "^ses.*"
+                          },
+                          "target_task_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "source_session_id": {
+                            "type": "string",
+                            "pattern": "^ses.*"
+                          },
+                          "source_task_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "object",
+                            "properties": {
+                              "created": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "confirmed": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "completed": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "created"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [
                           "id",
                           "title",
-                          "status"
+                          "status",
+                          "source_session_id",
+                          "time"
                         ],
                         "additionalProperties": false
                       }
@@ -4029,6 +4070,39 @@
                           }
                         ]
                       },
+                      "terminal_status": {
+                        "type": "string",
+                        "enum": [
+                          "completed",
+                          "blocked",
+                          "failed"
+                        ]
+                      },
+                      "stopped_child_count": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "result": {
+                        "type": "object",
+                        "properties": {
+                          "present": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "completed",
+                              "partial",
+                              "failed"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "present"
+                        ],
+                        "additionalProperties": false
+                      },
                       "time": {
                         "type": "object",
                         "properties": {
@@ -4056,6 +4130,7 @@
                       "title",
                       "reason",
                       "archive_reason",
+                      "result",
                       "time"
                     ],
                     "additionalProperties": false
@@ -4573,6 +4648,125 @@
                         "fallback_summary"
                       ]
                     },
+                    "result_status": {
+                      "type": "string",
+                      "enum": [
+                        "completed",
+                        "partial",
+                        "failed"
+                      ]
+                    },
+                    "terminal_status": {
+                      "type": "string",
+                      "enum": [
+                        "completed",
+                        "blocked",
+                        "failed"
+                      ]
+                    },
+                    "stopped_child_count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "archive_reason": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "handoffs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "title": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "proposed",
+                              "confirmed",
+                              "creating",
+                              "started",
+                              "failed",
+                              "cancelled"
+                            ]
+                          },
+                          "target_session_id": {
+                            "type": "string",
+                            "pattern": "^ses.*"
+                          },
+                          "target_task_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "source_session_id": {
+                            "type": "string",
+                            "pattern": "^ses.*"
+                          },
+                          "source_task_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "object",
+                            "properties": {
+                              "created": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "confirmed": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              "completed": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "created"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "status",
+                          "source_session_id",
+                          "time"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
                     "time": {
                       "type": "object",
                       "properties": {
@@ -4612,6 +4806,9 @@
                     "body",
                     "workflow",
                     "actions",
+                    "reason",
+                    "archive_reason",
+                    "handoffs",
                     "time"
                   ],
                   "additionalProperties": false

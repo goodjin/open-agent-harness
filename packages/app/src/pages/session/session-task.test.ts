@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import type { SessionTaskCurrentResponse } from "@open-agent-harness/sdk/v2/client"
-import { initial, view } from "./session-task-data"
+import type { SessionTaskCurrentResponse, SessionTaskRevisionResponse } from "@open-agent-harness/sdk/v2/client"
+import { dict as en } from "@/i18n/en"
+import { dict as zh } from "@/i18n/zh"
+import { action, content, handoff, initial, progress, requests, view } from "./session-task-data"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
   ({
@@ -16,6 +18,33 @@ const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
     time: { created: 1, updated: 2 },
     ...value,
   }) as SessionTaskCurrentResponse
+
+const revision = (value: Partial<SessionTaskRevisionResponse> = {}) =>
+  ({
+    id: "revision_1",
+    session_id: "session_1",
+    title: "Archived task",
+    version: 1,
+    status: "archived",
+    body: "# Archived",
+    workflow: { actions: [], compact: { runs: 2, completed: 3, total: 4 } },
+    actions: [],
+    handoffs: [],
+    reason: null,
+    archive_reason: "Revised",
+    time: { created: 1, archived: 2 },
+    ...value,
+  }) as SessionTaskRevisionResponse
+
+const deferred = <T>() => {
+  let resolve = (_value: T) => {}
+  let reject = (_error: unknown) => {}
+  const promise = new Promise<T>((ok, fail) => {
+    resolve = ok
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
 
 describe("session task", () => {
   test("maps unbound and active task statuses", () => {
@@ -44,6 +73,99 @@ describe("session task", () => {
     expect(view(task({ status: "completed", result_source: "fallback_summary" }))).toMatchObject({
       result: "missing",
     })
+    expect(content(task({ status: "completed", result: "Unattributed" }))).toBeUndefined()
+    expect(content(task({ status: "completed", result: "Trusted", result_source: "protocol" }))).toBe("Trusted")
+  })
+
+  test("uses completed plus skipped actions and compact history progress", () => {
+    expect(
+      progress(
+        revision({
+          actions: [{ status: "completed" }, { status: "skipped" }, { status: "failed" }] as never,
+        }),
+      ),
+    ).toEqual({ completed: 5, total: 7 })
+    expect(progress(task({ progress: { completed: 4, total: 9 } }))).toEqual({ completed: 4, total: 9 })
+  })
+
+  test("maps action and handoff statuses to bilingual labels", () => {
+    expect(en[action("skipped")]).toBe("Skipped")
+    expect(zh[action("skipped")]).toBe("已跳过")
+    expect(en[handoff("failed")]).toBe("Failed")
+    expect(zh[handoff("failed")]).toBe("失败")
+  })
+
+  test("drops every old session request after reset", async () => {
+    const loader = requests()
+    const values: string[] = []
+    const current = deferred<string>()
+    const history = deferred<string>()
+    const detail = deferred<string>()
+    const signals: AbortSignal[] = []
+    const pending = [
+      loader.run(
+        "current",
+        (signal) => (signals.push(signal), current.promise),
+        (value) => values.push(value),
+      ),
+      loader.run(
+        "history",
+        (signal) => (signals.push(signal), history.promise),
+        (value) => values.push(value),
+      ),
+      loader.run(
+        "detail",
+        (signal) => (signals.push(signal), detail.promise),
+        (value) => values.push(value),
+      ),
+    ]
+
+    loader.reset()
+    current.resolve("old current")
+    history.resolve("old history")
+    detail.resolve("old detail")
+    await Promise.all(pending)
+
+    expect(signals.every((signal) => signal.aborted)).toBe(true)
+    expect(values).toEqual([])
+  })
+
+  test("keeps only the latest repeated current and revision request", async () => {
+    const loader = requests()
+    const values: string[] = []
+    const first = deferred<string>()
+    const second = deferred<string>()
+    const old = loader.run(
+      "current",
+      () => first.promise,
+      (value) => values.push(value),
+    )
+    const fresh = loader.run(
+      "current",
+      () => second.promise,
+      (value) => values.push(value),
+    )
+    first.resolve("old current")
+    second.resolve("new current")
+    await Promise.all([old, fresh])
+
+    const v1 = deferred<string>()
+    const v2 = deferred<string>()
+    const oldRevision = loader.run(
+      "detail",
+      () => v1.promise,
+      (value) => values.push(value),
+    )
+    const newRevision = loader.run(
+      "detail",
+      () => v2.promise,
+      (value) => values.push(value),
+    )
+    v2.resolve("revision 2")
+    v1.resolve("revision 1")
+    await Promise.all([oldRevision, newRevision])
+
+    expect(values).toEqual(["new current", "revision 2"])
   })
 
   test("starts with current, history, and revision state cleared", () => {
@@ -62,7 +184,6 @@ describe("session task", () => {
     expect(src).toContain("sdk.client.session.task.current")
     expect(src).toContain("sdk.client.session.task.history")
     expect(src).toContain("sdk.client.session.task.revision")
-    expect(src).toContain("AbortController")
     expect(src).toContain("createEffect")
     expect(src).toContain("onClick={() => void history()}")
     expect(src).toContain("onClick={() => void revision(item.version)}")
@@ -82,6 +203,15 @@ describe("session task", () => {
     expect(progress).toBeLessThan(result)
     expect(result).toBeLessThan(handoff)
     expect(src).toContain('language.t("session.task.return")')
+    expect(src).toContain('language.t("session.task.archived"')
+    expect(src).toContain("when={text()}")
+    expect(src).not.toContain("when={task().result}")
+    expect(src).toContain("item.stopped_child_count")
+    expect(src).toContain("item.result.status")
+    expect(src).toContain("item.target_session_id")
+    expect(src).toContain("item.error")
+    expect(src).toContain('aria-live="polite"')
+    expect(src).toContain('role="alert"')
     expect(src).not.toContain("resume")
   })
 
