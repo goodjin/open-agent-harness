@@ -300,6 +300,69 @@ describe("session recovery", () => {
     }
   })
 
+  test("claims only the current revision bootstrap when older outbox rows remain", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const calls: { sessionID: SessionID; revisionID: unknown }[] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+      calls.push({ sessionID: input.sessionID, revisionID: input.metadata?.revision_id })
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_current_outbox"),
+        fn: async () => {
+          for (const [index, status] of (["pending", "delivering", "delivered"] as const).entries()) {
+            const data = await revision(tmp.path, `old_outbox_${status}`)
+            const old = Database.use((db) =>
+              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get()!,
+            )
+            const next = await SessionTask.route({
+              sessionID: data.session.id,
+              messageID: data.messageID,
+              runID: `run_current_outbox_${status}`,
+              assignment: { op: "update", target: "self", title: "Newest", body: "Newest" },
+              actions: [],
+            })
+            if (next.type !== "update") throw new Error("newest draft missing")
+            const task = await SessionTask.get(data.session.id)
+            if (!task) throw new Error("task missing")
+            await SessionTask.activate({ taskID: task.task.id, revisionID: next.revision.id, bootstrap: true })
+            Database.use((db) => {
+              db.update(SessionEventOutboxTable)
+                .set({
+                  status,
+                  updated_at: Date.now(),
+                  delivered_at: status === "delivered" ? Date.now() : null,
+                })
+                .where(eq(SessionEventOutboxTable.id, old.id))
+                .run()
+              db.update(SessionTaskTable)
+                .set({ status: "blocked" })
+                .where(eq(SessionTaskTable.session_id, data.session.id))
+                .run()
+            })
+
+            expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+
+            const rows = Database.use((db) =>
+              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).all(),
+            )
+            expect(rows.find((row) => row.id === old.id)?.status).toBe(status)
+            expect(rows.find((row) => row.payload.revision_id === next.revision.id)?.status).toBe("delivered")
+            expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+            expect((await SessionTask.get(data.session.id))?.revision.id).toBe(next.revision.id)
+            expect(calls.filter((call) => call.sessionID === data.session.id)).toEqual([
+              { sessionID: data.session.id, revisionID: next.revision.id },
+            ])
+            expect(calls).toHaveLength(index + 1)
+          }
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("scan advances only task recovery rows from the current project directory", async () => {
     await using a = await tmpdir({ git: true })
     await using b = await tmpdir({ git: true })

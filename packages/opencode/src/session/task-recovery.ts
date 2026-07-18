@@ -38,8 +38,7 @@ export namespace SessionTaskRecovery {
 
   async function run(sessionID: SessionID) {
     const stored = await SessionTask.get(sessionID)
-    const outbox = pending(sessionID)
-    if (!stored) return outbox ? start(outbox) : false
+    if (!stored) return false
     if (stored.task.status === "revising" || stored.task.status === "blocked") {
       const draft = Database.use((tx) =>
         tx
@@ -81,11 +80,13 @@ export namespace SessionTaskRecovery {
         await SessionTask.activate({ taskID: stored.task.id, revisionID: draft.id, bootstrap: true })
       } else if (stored.task.status === "revising") return false
     }
-    const next = pending(sessionID)
+    const current = await SessionTask.get(sessionID)
+    if (!current) return false
+    const next = pending(sessionID, current.task.id, current.revision.id)
     if (!next) {
-      const done = settled(sessionID, stored.task.id, stored.revision.id)
-      if (stored.task.status === "blocked" && done) unblock(sessionID, stored.task.id, stored.revision.id)
-      return done || bootstrapped(sessionID)
+      const done = settled(sessionID, current.task.id, current.revision.id)
+      if (current.task.status === "blocked" && done) unblock(sessionID, current.task.id, current.revision.id)
+      return done || bootstrapped(sessionID, current.task.id, current.revision.id)
     }
     await start(next)
     const sent = Database.use((tx) =>
@@ -186,7 +187,7 @@ export namespace SessionTaskRecovery {
     })
   }
 
-  function pending(sessionID: SessionID) {
+  function pending(sessionID: SessionID, taskID: string, revisionID: string) {
     return Database.use((tx) =>
       tx
         .select()
@@ -198,14 +199,15 @@ export namespace SessionTaskRecovery {
             inArray(SessionEventOutboxTable.status, ["pending", "delivering"]),
           ),
         )
-        .get(),
+        .all()
+        .find((row) => row.payload.task_id === taskID && row.payload.revision_id === revisionID),
     )
   }
 
-  function bootstrapped(sessionID: SessionID) {
+  function bootstrapped(sessionID: SessionID, taskID: string, revisionID: string) {
     return Database.use((tx) =>
       !!tx
-        .select({ id: SessionEventOutboxTable.id })
+        .select({ payload: SessionEventOutboxTable.payload })
         .from(SessionEventOutboxTable)
         .where(
           and(
@@ -213,7 +215,8 @@ export namespace SessionTaskRecovery {
             eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
           ),
         )
-        .get(),
+        .all()
+        .find((row) => row.payload.task_id === taskID && row.payload.revision_id === revisionID),
     )
   }
 

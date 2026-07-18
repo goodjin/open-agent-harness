@@ -903,6 +903,8 @@ Bootstrap 状态对账补充：若进程在 outbox 已写 `delivered`/`acked`、
 
 启动扫描范围补充：Task recovery scan 必须通过 Session 关联同时匹配当前 `Instance.project.id` 和 `Instance.directory`。一个目录启动时不得读取、停止、激活或投递其他 project/directory 的 Task、child 或 outbox。
 
+多 Revision outbox 补充：pending claim、delivering lease、fixed-message 恢复、delivered/acked 对账都必须绑定当前 `session_id + task_id + current_revision_id`。旧 Revision 残留的 pending、delivering 或 delivered 行不得被 claim、投递、阻塞或解锁当前 Revision。
+
 ## 实施顺序和并行边界
 
 - Task 1-2 必须串行，先锁定数据库和 read model。

@@ -52,6 +52,8 @@ Confirmed Task updates now freeze the old active Revision by moving the Task to 
 
 Task recovery startup scanning joins Task rows back to Session authority and filters by both current `Instance.project.id` and exact `Instance.directory`. Bootstrapping one directory therefore cannot stop children, activate revisions, change outboxes, or run prompts for another project or worktree directory that happens to share the database.
 
+Every bootstrap outbox lookup and state transition is also bound to the current Session Task and Revision identities. If a later Revision becomes active while an older Revision still has pending, delivering, delivered, or acked rows, recovery ignores those older rows and claims only the current Revision bootstrap. Lease recovery and fixed-message deduplication retain the same identity boundary.
+
 Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, evidence expectations, risks, and handoff shape. A worker used as a design consultant is explicitly read-only for that assignment. Planner synthesis must separate evidence from inference, resolve conflicts, and request a focused follow-up when a material disagreement cannot be settled from available evidence.
 
 ## Package Agent Catalog
