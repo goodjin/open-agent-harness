@@ -24,7 +24,7 @@ import { Log } from "../../util/log"
 import { PermissionNext } from "@/permission/next"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { ConflictError, ForbiddenError, NotFoundError } from "@/storage/db"
+import { ForbiddenError, NotFoundError } from "@/storage/db"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Instance } from "@/project/instance"
@@ -879,11 +879,8 @@ export const SessionRoutes = lazy(() =>
         await Session.get(params.sessionID)
         const task = await SessionTask.get(params.sessionID)
         if (!task) throw new NotFoundError({ message: `Task not found for session: ${params.sessionID}` })
-        if (task.revision.id !== body.revision_id) {
-          if (!SessionTask.owns(params.sessionID, body.revision_id))
-            throw new ForbiddenError({ message: `Task revision does not belong to session: ${params.sessionID}` })
-          throw new ConflictError({ message: `Task revision is no longer current: ${body.revision_id}` })
-        }
+        if (!SessionTask.owns(params.sessionID, body.revision_id))
+          throw new ForbiddenError({ message: `Task revision does not belong to session: ${params.sessionID}` })
         return c.json({
           ...(await SessionTaskConfirmation.respond({
             sessionID: params.sessionID,

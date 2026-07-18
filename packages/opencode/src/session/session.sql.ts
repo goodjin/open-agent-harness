@@ -208,7 +208,11 @@ export const AssignmentTable = sqliteTable(
   (table) => [
     index("assignment_session_status_idx").on(table.session_id, table.status),
     index("assignment_parent_idx").on(table.parent_id),
-    index("assignment_source_idx").on(table.source_session_id, table.source_run_id, table.source_action_id),
+    uniqueIndex("assignment_source_unique_idx").on(
+      table.source_session_id,
+      table.source_run_id,
+      table.source_action_id,
+    ),
   ],
 )
 
@@ -228,6 +232,12 @@ export const TaskConfirmationTable = sqliteTable(
     handoff_id: text(),
     assignment_id: text(),
     message_id: text().$type<MessageID>().notNull(),
+    owner_token: text(),
+    generation: integer().notNull().default(1),
+    lease_until: integer().notNull(),
+    snapshot: text({ mode: "json" }).$type<Record<string, unknown>>(),
+    snapshot_hash: text(),
+    result: text({ mode: "json" }).$type<Record<string, unknown>>(),
     error: text(),
     time_created: integer().notNull(),
     time_updated: integer().notNull(),

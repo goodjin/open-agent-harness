@@ -15,9 +15,9 @@ Close the Task API revision TOCTOU, cross-process confirmation idempotency, dura
 
 ## State Machine
 
-`pending -> claimed -> continuation_pending -> completed | cancelled`
+`pending -> claimed(owner token, generation, lease) -> continuation_pending -> completed | cancelled`
 
-Only the transaction that wins `pending -> claimed` may create or reuse the canonical Assignment and Handoff proof. A current Revision mismatch returns 409 before Assignment, continuation, or protocol state changes. A fixed proposal-derived continuation message and outbox dedupe key make retries and recovery reuse one delivery. Terminal state is written only after live reply delivery or durable continuation delivery is accepted.
+Only the transaction that wins `pending -> claimed` may create or reuse the canonical Assignment and Handoff proof. Reclaim increments the generation and replaces the owner token; every later Assignment, Handoff, outbox, and terminal transition checks that fence. The first claim stores an immutable canonical proposal snapshot and hash. A current Revision mismatch returns 409 before Assignment, continuation, or protocol state changes, while a matching terminal replay remains readable after the Task advances. A fixed proposal-derived continuation message and outbox dedupe key make retries and recovery reuse one delivery. Outbox delivery uses its own fenced `delivering` lease. Terminal state is written only after live reply delivery or durable continuation delivery is accepted. Assignment source locators are database-unique because Runtime treats source Session, Run, and action as one immutable identity.
 
 ## Affected Modules
 

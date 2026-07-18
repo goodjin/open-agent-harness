@@ -13,7 +13,8 @@ import { MessageID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import type { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
-import { Database } from "../../src/storage/db"
+import { Database, eq } from "../../src/storage/db"
+import { AssignmentTable, SessionEventOutboxTable, TaskConfirmationTable } from "../../src/session/session.sql"
 import { tmpdir } from "../fixture/fixture"
 
 afterEach(resetDatabase)
@@ -25,18 +26,38 @@ describe("session task endpoints", () => {
       directory: tmp.path,
       fn: async () => {
         const session = await Session.create({})
+        const task = await SessionTask.route({
+          sessionID: session.id,
+          runID: "run_process_old",
+          legacy: { title: "Original", body: "Original" },
+          actions: [],
+        })
+        if (task.type !== "execute") throw new Error("task missing")
+        const messageID = await message(session.id)
+        await proposal({
+          sessionID: session.id,
+          messageID,
+          runID: "run_process",
+          actionID: "confirm_process",
+          title: "Process",
+          plan: "Process body",
+          op: "update",
+          target: "self",
+        })
         const code = [
-          'import { Database } from "bun:sqlite"',
-          "const db = new Database(process.env.DB)",
-          'db.run("PRAGMA busy_timeout = 5000")',
-          'db.run("BEGIN IMMEDIATE")',
-          'const result = db.run(`INSERT OR IGNORE INTO task_confirmation (id, session_id, proposal_id, operation, decision, status, expected_revision_id, handoff_id, assignment_id, message_id, error, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, ?, ?)`, [`confirmation_${process.pid}`, process.env.SESSION, "run_process:confirm", "handoff", "confirm", "claimed", `msg_${process.pid}`, Date.now(), Date.now()])',
-          'db.run("COMMIT")',
-          "console.log(result.changes)",
+          'import { spyOn } from "bun:test"',
+          'import { Instance } from "./src/project/instance"',
+          'import { SessionPrompt } from "./src/session/prompt"',
+          'import { SessionTaskConfirmation } from "./src/session/task-confirmation"',
+          'const prompt = spyOn(SessionPrompt, "prompt").mockImplementation(async () => { await Bun.sleep(200); return undefined })',
+          'const result = await Instance.provide({ directory: process.env.DIR, fn: () => SessionTaskConfirmation.respond({ sessionID: process.env.SESSION, proposalID: "run_process:confirm_process", revisionID: process.env.REVISION, action: "confirm", op: "update" }) })',
+          "console.log(JSON.stringify({ result, calls: prompt.mock.calls.length }))",
+          "process.exit(0)",
         ].join("\n")
         const children = [0, 1].map(() =>
           Bun.spawn(["bun", "-e", code], {
-            env: { ...process.env, DB: Database.Path, SESSION: session.id },
+            cwd: import.meta.dir.replace(/\/test\/server$/, ""),
+            env: { ...process.env, DIR: tmp.path, SESSION: session.id, REVISION: task.revision.id },
             stdout: "pipe",
             stderr: "pipe",
           }),
@@ -44,13 +65,19 @@ describe("session task endpoints", () => {
         const results = await Promise.all(
           children.map(async (child) => ({
             code: await child.exited,
-            out: Number((await new Response(child.stdout).text()).trim()),
+            out: JSON.parse((await new Response(child.stdout).text()).trim()) as {
+              result: { assignment_id?: string }
+              calls: number
+            },
             err: await new Response(child.stderr).text(),
           })),
         )
         expect(results.map((item) => item.code)).toEqual([0, 0])
-        expect(results.map((item) => item.out).sort()).toEqual([0, 1])
-        expect(results.map((item) => item.err)).toEqual(["", ""])
+        expect(results[0]?.out.result.assignment_id).toBe(results[1]?.out.result.assignment_id)
+        expect(results.reduce((sum, item) => sum + item.out.calls, 0)).toBe(1)
+        expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(1)
+        expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(1)
+        expect(results.every((item) => !item.err.includes("ERROR"))).toBe(true)
       },
     })
   })
@@ -375,6 +402,11 @@ describe("session task endpoints", () => {
               })
               expect(failed.status).toBe(409)
               const first = prompt.mock.calls.at(-1)?.[0]?.messageID
+              await rewrite(session.id, "run_retry", "confirm_retry", { plan: "Tampered body" })
+              const blocked = prompt.mock.calls.length
+              expect(await SessionTaskConfirmation.scan()).toEqual([false])
+              expect(prompt.mock.calls.length).toBe(blocked)
+              await rewrite(session.id, "run_retry", "confirm_retry", { plan: "Retry body" })
               expect(await SessionTaskConfirmation.scan()).toContain(true)
               expect(prompt.mock.calls.at(-1)?.[0]?.messageID).toBe(first)
               const calls = prompt.mock.calls.length
@@ -389,6 +421,26 @@ describe("session task endpoints", () => {
               })
               expect(retried.status).toBe(200)
               expect(prompt.mock.calls.length).toBe(calls)
+
+              const advanced = await SessionTask.draft({
+                taskID: current.task.id,
+                title: "Advanced",
+                body: "Advanced body",
+              })
+              await SessionTask.activate({ taskID: current.task.id, revisionID: advanced.id })
+              const before = prompt.mock.calls.length
+              const replay = await app.request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  proposal_id: "run_update:confirm_update",
+                  revision_id: current.revision.id,
+                  action: "confirm",
+                }),
+              })
+              expect(replay.status).toBe(200)
+              expect(await replay.json()).toMatchObject({ assignment_id: replies[0].assignment_id })
+              expect(prompt.mock.calls.length).toBe(before)
             },
           }),
       })
@@ -456,6 +508,88 @@ describe("session task endpoints", () => {
               expect(ctx.confirmations?.[0]?.status).toBe("pending")
             } finally {
               gate.mockRestore()
+              prompt.mockRestore()
+            }
+          },
+        }),
+    })
+  })
+
+  test("fences an expired confirmation owner behind a new generation", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_confirmation_fence"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_fence_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_fence",
+              actionID: "confirm_fence",
+              title: "Fence",
+              plan: "Fence body",
+              op: "update",
+              target: "self",
+            })
+            const original = SessionAssignment.apply
+            let unblock = () => {}
+            let enter = () => {}
+            const blocked = new Promise<void>((resolve) => (unblock = resolve))
+            const entered = new Promise<void>((resolve) => (enter = resolve))
+            let count = 0
+            const apply = spyOn(SessionAssignment, "apply").mockImplementation(async (input) => {
+              count++
+              if (count === 1) {
+                enter()
+                await blocked
+              }
+              return original(input)
+            })
+            const body = JSON.stringify({
+              proposal_id: "run_fence:confirm_fence",
+              revision_id: task.revision.id,
+              action: "confirm",
+            })
+            try {
+              const first = Server.Default().request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body,
+              })
+              await entered
+              Database.use((db) =>
+                db
+                  .update(TaskConfirmationTable)
+                  .set({ lease_until: 0 })
+                  .where(eq(TaskConfirmationTable.proposal_id, "run_fence:confirm_fence"))
+                  .run(),
+              )
+              const second = await Server.Default().request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body,
+              })
+              unblock()
+              expect(second.status).toBe(200)
+              expect((await first).status).toBe(409)
+              expect(prompt).toHaveBeenCalledTimes(1)
+              expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(1)
+              expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(1)
+            } finally {
+              unblock()
+              apply.mockRestore()
               prompt.mockRestore()
             }
           },
@@ -670,6 +804,27 @@ async function proposal(input: {
             updated_at: Date.now(),
           },
         ],
+      },
+    },
+  })
+}
+
+async function rewrite(sessionID: SessionID, runID: string, actionID: string, patch: Record<string, unknown>) {
+  const session = await Session.get(sessionID)
+  const protocol = (session.dsl_context?.protocol ?? {}) as Record<string, unknown>
+  const confirmations = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  await Session.setDslContext({
+    sessionID,
+    dsl_context: {
+      ...session.dsl_context,
+      protocol: {
+        ...protocol,
+        confirmations: confirmations.map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return item
+          const value = item as Record<string, unknown>
+          if (value.run_id !== runID || value.action_id !== actionID) return item
+          return { ...value, ...patch }
+        }),
       },
     },
   })

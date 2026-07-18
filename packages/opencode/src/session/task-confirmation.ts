@@ -1,6 +1,19 @@
 import { Question } from "@/question"
 import { Instance } from "@/project/instance"
-import { and, ConflictError, Database, eq, ForbiddenError, inArray, lt, ne, NotFoundError, or } from "@/storage/db"
+import {
+  and,
+  ConflictError,
+  Database,
+  eq,
+  ForbiddenError,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  NotFoundError,
+  or,
+} from "@/storage/db"
 import { Storage } from "@/storage/storage"
 import { Log } from "@/util/log"
 import { Session } from "."
@@ -50,6 +63,15 @@ export namespace SessionTaskConfirmation {
     const title = text(item.action_title) ?? action
     if (!message || plan === undefined || !title)
       throw new ConflictError({ message: `Task proposal proof is incomplete: ${input.proposalID}` })
+    const snapshot = {
+      session_id: input.sessionID,
+      message_id: message,
+      run_id: run,
+      action_id: action,
+      title,
+      plan,
+      intent,
+    }
     const claimed = claim({
       sessionID: input.sessionID,
       proposalID: input.proposalID,
@@ -59,7 +81,8 @@ export namespace SessionTaskConfirmation {
       handoffID: input.handoffID,
       run,
       actionID: action,
-      snapshot: JSON.stringify(item),
+      snapshot,
+      hash: digest(snapshot),
     })
     const proof = claimed.owner ? claimed.row : await settled(claimed.row)
 
@@ -75,7 +98,11 @@ export namespace SessionTaskConfirmation {
     if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
       throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
     const status = input.action === "confirm" ? "confirmed" : "cancelled"
-    if (item.status === status || proof.status === "completed" || proof.status === "cancelled") {
+    if (proof.status === "completed" || proof.status === "cancelled") {
+      if (rec(proof.result)) return proof.result
+      throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
+    }
+    if (item.status === status) {
       const saved = proof.assignment_id ?? (rec(item.assignment) ? text(item.assignment.id) : undefined)
       return {
         proposal_id: input.proposalID,
@@ -87,6 +114,7 @@ export namespace SessionTaskConfirmation {
       }
     }
 
+    fence(proof)
     const assignment = proof.assignment_id
       ? await SessionAssignment.get(proof.assignment_id)
       : input.action === "confirm"
@@ -104,14 +132,24 @@ export namespace SessionTaskConfirmation {
         : undefined
     if (input.action === "confirm" && !assignment)
       throw new ConflictError({ message: `Task proposal assignment is invalid: ${input.proposalID}` })
+    fence(proof)
     if (assignment && !proof.assignment_id)
       Database.use((db) =>
         db
           .update(TaskConfirmationTable)
           .set({ assignment_id: assignment.id, status: "continuation_pending", time_updated: Date.now() })
-          .where(eq(TaskConfirmationTable.id, proof.id))
-          .run(),
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
+          .returning({ id: TaskConfirmationTable.id })
+          .get(),
       )
+    fence(proof)
     const transfer =
       assignment && handoff
         ? await safe(SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id }))
@@ -120,26 +158,7 @@ export namespace SessionTaskConfirmation {
           : undefined
     if (input.action === "cancel" && handoff && transfer?.status !== "cancelled")
       throw new ConflictError({ message: `Task handoff could not be cancelled: ${handoff.id}` })
-    const now = Date.now()
-    const next = vals.map((value) => {
-      if (!rec(value) || value.run_id !== run || value.action_id !== action) return value
-      return {
-        ...value,
-        assignment: assignment
-          ? {
-              id: assignment.id,
-              session_id: assignment.session_id,
-              status: assignment.status,
-              content_ref: assignment.content_ref,
-              content_version: assignment.content_version,
-            }
-          : value.assignment,
-        response: input.action,
-        status,
-        updated_at: now,
-      }
-    })
-
+    fence(proof)
     const live = (await Question.list()).find(
       (request) =>
         request.sessionID === input.sessionID &&
@@ -153,20 +172,8 @@ export namespace SessionTaskConfirmation {
         response: input.action,
       })
     if (!live) await deliver(proof, input.sessionID, run, action, input.action)
-    const saved = next.find((value) => rec(value) && value.run_id === run && value.action_id === action)
-    if (saved) await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
-    await Session.setDslContext({
-      sessionID: input.sessionID,
-      dsl_context: { ...ctx, protocol: { ...protocol, confirmations: next } },
-    })
-    Database.use((db) =>
-      db
-        .update(TaskConfirmationTable)
-        .set({ status: input.action === "confirm" ? "completed" : "cancelled", error: null, time_updated: Date.now() })
-        .where(eq(TaskConfirmationTable.id, proof.id))
-        .run(),
-    )
-    return {
+    fence(proof)
+    const result = {
       proposal_id: input.proposalID,
       action: input.action,
       assignment_id: assignment?.id,
@@ -174,6 +181,9 @@ export namespace SessionTaskConfirmation {
       target_session_id: transfer?.target_session_id ?? undefined,
       target_task_id: transfer?.target_task_id ?? undefined,
     }
+    const saved = complete(proof, result, status, assignment)
+    await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
+    return result
   }
 
   export async function scan() {
@@ -225,6 +235,34 @@ export namespace SessionTaskConfirmation {
     return typeof input === "string" ? input : undefined
   }
 
+  function snap(sessionID: SessionID, item: Record<string, unknown>) {
+    const intent = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
+    return {
+      session_id: sessionID,
+      message_id: text(item.message_id),
+      run_id: text(item.run_id),
+      action_id: text(item.action_id),
+      title: text(item.action_title) ?? text(item.action_id),
+      plan: text(item.plan),
+      intent,
+    }
+  }
+
+  function digest(input: unknown) {
+    return new Bun.CryptoHasher("sha256").update(canonical(input)).digest("hex")
+  }
+
+  function canonical(input: unknown): string {
+    if (Array.isArray(input)) return `[${input.map(canonical).join(",")}]`
+    if (rec(input))
+      return `{${Object.keys(input)
+        .filter((key) => input[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(input[key])}`)
+        .join(",")}}`
+    return JSON.stringify(input)
+  }
+
   function owner(sessionID: SessionID, run: string, action: string) {
     return Database.transaction(
       (db) =>
@@ -259,6 +297,125 @@ export namespace SessionTaskConfirmation {
     }
   }
 
+  function fence(proof: typeof TaskConfirmationTable.$inferSelect) {
+    const valid = Database.use((db) =>
+      db
+        .select({ id: TaskConfirmationTable.id })
+        .from(TaskConfirmationTable)
+        .where(
+          and(
+            eq(TaskConfirmationTable.id, proof.id),
+            owned(proof.owner_token),
+            eq(TaskConfirmationTable.generation, proof.generation),
+            gt(TaskConfirmationTable.lease_until, Date.now()),
+          ),
+        )
+        .get(),
+    )
+    if (!valid) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+  }
+
+  function renew(proof: typeof TaskConfirmationTable.$inferSelect) {
+    return Database.use(
+      (db) =>
+        !!db
+          .update(TaskConfirmationTable)
+          .set({ lease_until: Date.now() + 30_000, time_updated: Date.now() })
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
+          .returning({ id: TaskConfirmationTable.id })
+          .get(),
+    )
+  }
+
+  function owned(token: string | null) {
+    return token === null ? isNull(TaskConfirmationTable.owner_token) : eq(TaskConfirmationTable.owner_token, token)
+  }
+
+  function complete(
+    proof: typeof TaskConfirmationTable.$inferSelect,
+    result: Record<string, unknown>,
+    status: "confirmed" | "cancelled",
+    assignment?: SessionAssignment.Info,
+  ) {
+    return Database.transaction(
+      (tx) => {
+        const current = tx
+          .select()
+          .from(TaskConfirmationTable)
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
+          .get()
+        if (!current) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        const session = tx.select().from(SessionTable).where(eq(SessionTable.id, proof.session_id)).get()
+        if (!session) throw new NotFoundError({ message: `Session not found: ${proof.session_id}` })
+        const ctx = rec(session.dsl_context) ? session.dsl_context : {}
+        const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+        const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+        const next = vals.map((value) => {
+          if (!rec(value) || `${value.run_id}:${value.action_id}` !== proof.proposal_id) return value
+          if (digest(snap(proof.session_id, value)) !== proof.snapshot_hash)
+            throw new ConflictError({ message: `Task proposal proof changed: ${proof.proposal_id}` })
+          return {
+            ...value,
+            assignment: assignment
+              ? {
+                  id: assignment.id,
+                  session_id: assignment.session_id,
+                  status: assignment.status,
+                  content_ref: assignment.content_ref,
+                  content_version: assignment.content_version,
+                }
+              : value.assignment,
+            response: current.decision,
+            status,
+            updated_at: Date.now(),
+          }
+        })
+        const saved = next.find((value) => rec(value) && `${value.run_id}:${value.action_id}` === proof.proposal_id)
+        if (!rec(saved)) throw new ConflictError({ message: `Task proposal is not current: ${proof.proposal_id}` })
+        tx.update(SessionTable)
+          .set({ dsl_context: { ...ctx, protocol: { ...protocol, confirmations: next } } })
+          .where(eq(SessionTable.id, proof.session_id))
+          .run()
+        const committed = tx
+          .update(TaskConfirmationTable)
+          .set({
+            status: current.decision === "confirm" ? "completed" : "cancelled",
+            result,
+            error: null,
+            lease_until: 0,
+            time_updated: Date.now(),
+          })
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
+          .returning({ id: TaskConfirmationTable.id })
+          .get()
+        if (!committed) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        return saved
+      },
+      { behavior: "immediate" },
+    )
+  }
+
   async function deliver(
     proof: typeof TaskConfirmationTable.$inferSelect,
     sessionID: SessionID,
@@ -268,39 +425,74 @@ export namespace SessionTaskConfirmation {
   ) {
     const key = `task_confirmation:${proof.id}`
     const now = Date.now()
-    Database.transaction(
+    const lease = now + 30_000
+    const payload = {
+      confirmation_id: proof.id,
+      message_id: proof.message_id,
+      run_id: run,
+      action_id: action,
+      decision,
+      owner_token: proof.owner_token,
+      generation: proof.generation,
+      lease_until: lease,
+    }
+    const outbox = Database.transaction(
       (tx) => {
+        const valid = tx
+          .select({ id: TaskConfirmationTable.id })
+          .from(TaskConfirmationTable)
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, now),
+            ),
+          )
+          .get()
+        if (!valid) return
         const found = tx.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.dedupe_key, key)).get()
-        if (found) return
-        tx.insert(SessionEventOutboxTable)
+        if (found?.status === "delivered" || found?.status === "acked") return found
+        if (found) {
+          const meta = rec(found.payload) ? found.payload : {}
+          if (found.status === "delivering" && typeof meta.lease_until === "number" && meta.lease_until >= now) return
+          return tx
+            .update(SessionEventOutboxTable)
+            .set({ status: "delivering", payload, updated_at: now, error: null })
+            .where(and(eq(SessionEventOutboxTable.id, found.id), eq(SessionEventOutboxTable.status, found.status)))
+            .returning()
+            .get()
+        }
+        return tx
+          .insert(SessionEventOutboxTable)
           .values({
             id: `outbox_${proof.id}`,
             session_id: sessionID,
             target_session_id: sessionID,
             kind: "task_confirmation",
             dedupe_key: key,
-            status: "pending",
-            payload: {
-              confirmation_id: proof.id,
-              message_id: proof.message_id,
-              run_id: run,
-              action_id: action,
-              decision,
-            },
+            status: "delivering",
+            payload,
             created_at: now,
             updated_at: now,
             delivered_at: null,
             acked_at: null,
             error: null,
           })
-          .run()
+          .returning()
+          .get()
       },
       { behavior: "immediate" },
     )
-    const outbox = Database.use((db) =>
-      db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.dedupe_key, key)).get(),
-    )
     if (outbox?.status === "delivered" || outbox?.status === "acked") return
+    if (!outbox) throw new ConflictError({ message: `Task continuation is already leased: ${proof.id}` })
+    let lost = false
+    let meta = outbox.payload
+    const beat = setInterval(() => {
+      const next = extend(outbox.id, meta)
+      if (!renew(proof) || !next) lost = true
+      if (next) meta = next
+    }, 10_000)
     try {
       const existing = await MessageV2.get({ sessionID, messageID: proof.message_id }).catch(() => undefined)
       if (existing) await SessionPrompt.loop({ sessionID, messageID: proof.message_id })
@@ -319,27 +511,92 @@ export namespace SessionTaskConfirmation {
             },
           ],
         })
-      Database.use((db) =>
-        db
-          .update(SessionEventOutboxTable)
-          .set({ status: "delivered", delivered_at: Date.now(), updated_at: Date.now(), error: null })
-          .where(eq(SessionEventOutboxTable.dedupe_key, key))
-          .run(),
+      clearInterval(beat)
+      const next = extend(outbox.id, meta)
+      if (lost || !renew(proof) || !next)
+        throw new ConflictError({ message: `Task continuation lease was lost: ${proof.id}` })
+      meta = next
+      const delivered = Database.transaction(
+        (db) => {
+          const valid = db
+            .select({ id: TaskConfirmationTable.id })
+            .from(TaskConfirmationTable)
+            .where(
+              and(
+                eq(TaskConfirmationTable.id, proof.id),
+                owned(proof.owner_token),
+                eq(TaskConfirmationTable.generation, proof.generation),
+                gt(TaskConfirmationTable.lease_until, Date.now()),
+              ),
+            )
+            .get()
+          if (!valid) return
+          return db
+            .update(SessionEventOutboxTable)
+            .set({ status: "delivered", delivered_at: Date.now(), updated_at: Date.now(), error: null })
+            .where(
+              and(
+                eq(SessionEventOutboxTable.id, outbox.id),
+                eq(SessionEventOutboxTable.status, "delivering"),
+                eq(SessionEventOutboxTable.payload, meta),
+              ),
+            )
+            .returning({ id: SessionEventOutboxTable.id })
+            .get()
+        },
+        { behavior: "immediate" },
       )
+      fence(proof)
+      if (!delivered) throw new ConflictError({ message: `Task continuation lease was lost: ${proof.id}` })
     } catch (err) {
+      clearInterval(beat)
       const message = err instanceof Error ? err.message : String(err)
       Database.use((db) => {
         db.update(SessionEventOutboxTable)
           .set({ status: "failed", error: message, updated_at: Date.now() })
-          .where(eq(SessionEventOutboxTable.dedupe_key, key))
+          .where(
+            and(
+              eq(SessionEventOutboxTable.id, outbox.id),
+              eq(SessionEventOutboxTable.status, "delivering"),
+              eq(SessionEventOutboxTable.payload, meta),
+            ),
+          )
           .run()
         db.update(TaskConfirmationTable)
           .set({ status: "failed", error: message, time_updated: Date.now() })
-          .where(eq(TaskConfirmationTable.id, proof.id))
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
           .run()
       })
       throw new ConflictError({ message: `Task continuation failed: ${message}` })
     }
+  }
+
+  function extend(id: string, payload: unknown) {
+    if (!rec(payload)) return
+    const next = { ...payload, lease_until: Date.now() + 30_000 }
+    const saved = Database.use(
+      (db) =>
+        db
+          .update(SessionEventOutboxTable)
+          .set({ payload: next, updated_at: Date.now() })
+          .where(
+            and(
+              eq(SessionEventOutboxTable.id, id),
+              eq(SessionEventOutboxTable.status, "delivering"),
+              eq(SessionEventOutboxTable.payload, payload),
+            ),
+          )
+          .returning({ id: SessionEventOutboxTable.id })
+          .get(),
+    )
+    return saved ? next : undefined
   }
 
   function claim(input: {
@@ -351,7 +608,8 @@ export namespace SessionTaskConfirmation {
     handoffID?: string
     run: string
     actionID: string
-    snapshot: string
+    snapshot: Record<string, unknown>
+    hash: string
   }) {
     return Database.transaction(
       (tx) => {
@@ -373,18 +631,8 @@ export namespace SessionTaskConfirmation {
         const proposal = vals.filter(
           (item) => rec(item) && item.run_id === input.run && item.action_id === input.actionID,
         )
-        if (proposal.length !== 1 || JSON.stringify(proposal[0]) !== input.snapshot)
+        if (proposal.length !== 1 || !rec(proposal[0]) || digest(snap(input.sessionID, proposal[0])) !== input.hash)
           throw new ConflictError({ message: `Task proposal is not current: ${input.proposalID}` })
-        if (input.op === "update") {
-          const task = tx
-            .select({ revision: SessionTaskTable.current_revision_id })
-            .from(SessionTaskTable)
-            .where(eq(SessionTaskTable.session_id, input.sessionID))
-            .get()
-          if (!task) throw new NotFoundError({ message: `Task not found for session: ${input.sessionID}` })
-          if (!input.revisionID || task.revision !== input.revisionID)
-            throw new ConflictError({ message: `Task revision is no longer current: ${input.revisionID}` })
-        }
         const found = tx
           .select()
           .from(TaskConfirmationTable)
@@ -399,25 +647,61 @@ export namespace SessionTaskConfirmation {
           if (
             found.decision !== input.action ||
             found.operation !== input.op ||
-            found.expected_revision_id !== (input.revisionID ?? null)
+            found.expected_revision_id !== (input.revisionID ?? null) ||
+            found.snapshot_hash !== input.hash
           )
             throw new ConflictError({ message: `Task proposal decision conflicts: ${input.proposalID}` })
+          if (found.status === "completed" || found.status === "cancelled") return { row: found, owner: false }
+          if (input.op === "update") {
+            const task = tx
+              .select({ revision: SessionTaskTable.current_revision_id })
+              .from(SessionTaskTable)
+              .where(eq(SessionTaskTable.session_id, input.sessionID))
+              .get()
+            if (!task || task.revision !== input.revisionID)
+              throw new ConflictError({ message: `Task revision is no longer current: ${input.revisionID}` })
+          }
           if (
             found.status === "failed" ||
-            ((found.status === "claimed" || found.status === "continuation_pending") &&
-              found.time_updated < Date.now() - 30_000)
+            ((found.status === "claimed" || found.status === "continuation_pending") && found.lease_until < Date.now())
           ) {
+            const token = crypto.randomUUID()
             const saved = tx
               .update(TaskConfirmationTable)
-              .set({ status: "claimed", error: null, time_updated: Date.now() })
-              .where(and(eq(TaskConfirmationTable.id, found.id), eq(TaskConfirmationTable.status, found.status)))
+              .set({
+                status: "claimed",
+                owner_token: token,
+                generation: found.generation + 1,
+                lease_until: Date.now() + 30_000,
+                error: null,
+                time_updated: Date.now(),
+              })
+              .where(
+                and(
+                  eq(TaskConfirmationTable.id, found.id),
+                  eq(TaskConfirmationTable.status, found.status),
+                  eq(TaskConfirmationTable.generation, found.generation),
+                  owned(found.owner_token),
+                ),
+              )
               .returning()
               .get()
             if (saved) return { row: saved, owner: true }
           }
           return { row: found, owner: false }
         }
+        if (input.op === "update") {
+          const task = tx
+            .select({ revision: SessionTaskTable.current_revision_id })
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.session_id, input.sessionID))
+            .get()
+          if (!task) throw new NotFoundError({ message: `Task not found for session: ${input.sessionID}` })
+          if (!input.revisionID || task.revision !== input.revisionID)
+            throw new ConflictError({ message: `Task revision is no longer current: ${input.revisionID}` })
+        }
         const now = Date.now()
+        const token = crypto.randomUUID()
         return {
           row: tx
             .insert(TaskConfirmationTable)
@@ -434,6 +718,12 @@ export namespace SessionTaskConfirmation {
               message_id: MessageID.make(
                 `msg_${new Bun.CryptoHasher("sha256").update(`continuation:${input.sessionID}:${input.proposalID}`).digest("hex").slice(0, 26)}`,
               ),
+              owner_token: token,
+              generation: 1,
+              lease_until: now + 30_000,
+              snapshot: input.snapshot,
+              snapshot_hash: input.hash,
+              result: null,
               error: null,
               time_created: now,
               time_updated: now,

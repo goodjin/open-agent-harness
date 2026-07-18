@@ -80,21 +80,24 @@ export namespace SessionAssignment {
     })
     if (prev) return prev
     const current = op === "update" ? await active(session.id) : undefined
-    return put({
-      id: current?.id,
-      parentID: current?.parent_id,
-      sessionID: session.id,
-      source: "confirm",
-      sourceSessionID: input.sessionID,
-      sourceMessageID: input.messageID,
-      sourceRunID: input.runID,
-      sourceActionID: input.actionID,
-      target,
-      title: input.title,
-      status: current?.status ?? "running",
-      plan: input.plan,
-      assignment: { op, target },
-    })
+    return reuse(
+      put({
+        id: current?.id,
+        parentID: current?.parent_id,
+        sessionID: session.id,
+        source: "confirm",
+        sourceSessionID: input.sessionID,
+        sourceMessageID: input.messageID,
+        sourceRunID: input.runID,
+        sourceActionID: input.actionID,
+        target,
+        title: input.title,
+        status: current?.status ?? "running",
+        plan: input.plan,
+        assignment: { op, target },
+      }),
+      { sessionID: input.sessionID, runID: input.runID, actionID: input.actionID },
+    )
   }
 
   export async function delegate(input: {
@@ -106,10 +109,13 @@ export namespace SessionAssignment {
     sessionID: SessionID
   }) {
     const task = Database.use((tx) =>
-      tx.select({ status: SessionTaskTable.status }).from(SessionTaskTable).where(eq(SessionTaskTable.session_id, input.sessionID)).get(),
+      tx
+        .select({ status: SessionTaskTable.status })
+        .from(SessionTaskTable)
+        .where(eq(SessionTaskTable.session_id, input.sessionID))
+        .get(),
     )
-    if (task?.status === "revising" || task?.status === "blocked")
-      throw new Conflict("session_task_revision_frozen")
+    if (task?.status === "revising" || task?.status === "blocked") throw new Conflict("session_task_revision_frozen")
     const prev = await bySource({
       sessionID: input.sessionID,
       runID: input.runID,
@@ -118,19 +124,22 @@ export namespace SessionAssignment {
     if (prev) return prev
     const parent = await active(input.sessionID)
     const data = object(input.action.input)
-    return put({
-      parentID: parent?.id,
-      sessionID: input.childID,
-      source: "delegation",
-      sourceSessionID: input.sessionID,
-      sourceMessageID: input.messageID,
-      sourceRunID: input.runID,
-      sourceActionID: input.action.id,
-      target: input.action.executor.target,
-      title: input.action.title,
-      status: "running",
-      plan: input.plan ?? text(data.prompt) ?? input.action.title,
-    })
+    return reuse(
+      put({
+        parentID: parent?.id,
+        sessionID: input.childID,
+        source: "delegation",
+        sourceSessionID: input.sessionID,
+        sourceMessageID: input.messageID,
+        sourceRunID: input.runID,
+        sourceActionID: input.action.id,
+        target: input.action.executor.target,
+        title: input.action.title,
+        status: "running",
+        plan: input.plan ?? text(data.prompt) ?? input.action.title,
+      }),
+      { sessionID: input.sessionID, runID: input.runID, actionID: input.action.id },
+    )
   }
 
   export async function active(sessionID: SessionID) {
@@ -209,9 +218,7 @@ export namespace SessionAssignment {
         const row = tx
           .update(AssignmentTable)
           .set({ status: "failed", time_updated: Date.now() })
-          .where(
-            and(eq(AssignmentTable.id, id), inArray(AssignmentTable.status, ["pending", "running"])),
-          )
+          .where(and(eq(AssignmentTable.id, id), inArray(AssignmentTable.status, ["pending", "running"])))
           .returning()
           .get()
         if (!row) throw new Conflict()
@@ -236,7 +243,9 @@ export namespace SessionAssignment {
     const active = tx
       .select()
       .from(AssignmentTable)
-      .where(and(eq(AssignmentTable.session_id, input.sessionID), inArray(AssignmentTable.status, ["pending", "running"])))
+      .where(
+        and(eq(AssignmentTable.session_id, input.sessionID), inArray(AssignmentTable.status, ["pending", "running"])),
+      )
       .orderBy(desc(AssignmentTable.time_updated))
       .get()
     if (!row || active?.id !== row.id) return
@@ -255,10 +264,7 @@ export namespace SessionAssignment {
     return item
   }
 
-  export function consume(
-    tx: Database.TxOrDb,
-    input: Parameters<typeof withCurrent>[1],
-  ) {
+  export function consume(tx: Database.TxOrDb, input: Parameters<typeof withCurrent>[1]) {
     const current = withCurrent(tx, input)
     if (!current) return
     const row = tx
@@ -372,12 +378,16 @@ export namespace SessionAssignment {
         const active = tx
           .select({ id: AssignmentTable.id })
           .from(AssignmentTable)
-          .where(and(eq(AssignmentTable.session_id, input.sessionID), inArray(AssignmentTable.status, ["pending", "running"])))
+          .where(
+            and(
+              eq(AssignmentTable.session_id, input.sessionID),
+              inArray(AssignmentTable.status, ["pending", "running"]),
+            ),
+          )
           .orderBy(desc(AssignmentTable.time_updated))
           .get()
         if (active)
-          tx
-            .update(AssignmentTable)
+          tx.update(AssignmentTable)
             .set({ status: "superseded", time_updated: now })
             .where(eq(AssignmentTable.id, active.id))
             .run()
@@ -387,13 +397,27 @@ export namespace SessionAssignment {
     )
   }
 
+  async function reuse(value: Promise<Info>, source: { sessionID: SessionID; runID: string; actionID: string }) {
+    return value.catch(async (err) => {
+      const found = await bySource(source)
+      if (found) return found
+      throw err
+    })
+  }
+
   async function targetSession(input: { op: "create" | "update"; parentID: SessionID; target: string }) {
     if (input.target === "self") {
       const row = Database.use((tx) => tx.select().from(SessionTable).where(eq(SessionTable.id, input.parentID)).get())
       if (!row) throw new Error(`Session not found: ${input.parentID}`)
       return { id: row.id, parent_id: row.parent_id ?? undefined }
     }
-    const row = Database.use((tx) => tx.select().from(SessionTable).where(eq(SessionTable.id, input.target as SessionID)).get())
+    const row = Database.use((tx) =>
+      tx
+        .select()
+        .from(SessionTable)
+        .where(eq(SessionTable.id, input.target as SessionID))
+        .get(),
+    )
     if (!row) throw new Error(`Assignment target session not found: ${input.target}`)
     if (row.parent_id !== input.parentID) {
       throw new Error(`Assignment target ${input.target} is not a direct child of ${input.parentID}`)
