@@ -69,3 +69,4 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 
 - Revision stop 使用 `(revision_id, child_session_id)` 唯一账本，stop 前写 `planned`，仅在本 Revision canonical stop marker 可确认后写 `applied`；归档从 applied 行计数。
 - 旧 `action_result` 不由 migration 猜测 completed。读取时仅以唯一 workflow run/action identity 匹配 canonical `session_result.status`；无法唯一确认时保留结果存在性，但不返回等级。
+- canonical 匹配同时要求 `session_result.carrier = action_result`；相同 run/action identity 的 fallback、synthetic 或 agent protocol carrier 不能提供结果等级。

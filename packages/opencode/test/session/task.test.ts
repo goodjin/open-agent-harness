@@ -2269,10 +2269,13 @@ describe("session task", () => {
       const cases = [
         { result: "Protocol result", source: "protocol", canonical: undefined, expected: { present: true, status: "completed" } },
         { result: "Fallback result", source: "fallback_summary", canonical: undefined, expected: { present: true, status: "partial" } },
-        { result: "Action completed", source: "action_result", canonical: "completed", expected: { present: true, status: "completed" } },
-        { result: "Action failed", source: "action_result", canonical: "failed", expected: { present: true, status: "failed" } },
-        { result: "Action aborted", source: "action_result", canonical: "aborted", expected: { present: true, status: "failed" } },
-        { result: "Action ambiguous", source: "action_result", canonical: "ambiguous", expected: { present: true } },
+        { result: "Action completed", source: "action_result", canonical: "completed", carrier: "action_result", expected: { present: true, status: "completed" } },
+        { result: "Action failed", source: "action_result", canonical: "failed", carrier: "action_result", expected: { present: true, status: "failed" } },
+        { result: "Action aborted", source: "action_result", canonical: "aborted", carrier: "action_result", expected: { present: true, status: "failed" } },
+        { result: "Action ambiguous", source: "action_result", canonical: "ambiguous", carrier: "action_result", expected: { present: true } },
+        { result: "Fallback carrier", source: "action_result", canonical: "completed", carrier: "fallback_summary", expected: { present: true } },
+        { result: "Synthetic carrier", source: "action_result", canonical: "completed", carrier: "synthetic", expected: { present: true } },
+        { result: "Protocol carrier", source: "action_result", canonical: "completed", carrier: "agent_protocol_output", expected: { present: true } },
         { result: "Action unknown", source: "action_result", canonical: undefined, expected: { present: true } },
         { result: "Untrusted result", source: null, canonical: undefined, expected: { present: false } },
         { result: null, source: null, canonical: undefined, expected: { present: false } },
@@ -2285,7 +2288,7 @@ describe("session task", () => {
             db.insert(SessionResultTable)
               .values(statuses.map((status, index) => ({
                 id: `result_${item.canonical}_${index}`,
-                carrier: "action_result" as const,
+                carrier: ("carrier" in item ? item.carrier : "action_result") as never,
                 status: status as never,
                 satisfying: status === "completed",
                 session_id: session.id,

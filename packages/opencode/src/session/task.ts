@@ -1523,9 +1523,19 @@ export namespace SessionTask {
     if (keys.size !== 1) return
     const rows = Database.use((tx) =>
       tx
-        .select({ run: SessionResultTable.run_id, action: SessionResultTable.action_id, status: SessionResultTable.status })
+        .select({
+          carrier: SessionResultTable.carrier,
+          run: SessionResultTable.run_id,
+          action: SessionResultTable.action_id,
+          status: SessionResultTable.status,
+        })
         .from(SessionResultTable)
-        .where(eq(SessionResultTable.parent_session_id, sessionID))
+        .where(
+          and(
+            eq(SessionResultTable.parent_session_id, sessionID),
+            eq(SessionResultTable.carrier, "action_result"),
+          ),
+        )
         .all()
         .filter((row) => row.run && row.action && keys.has(`${row.run}:${row.action}`)),
     )
