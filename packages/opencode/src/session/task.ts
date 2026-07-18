@@ -18,6 +18,16 @@ import { SessionAssignment } from "./assignment"
 import { SessionStatus } from "./status"
 import { SessionResult } from "./result"
 
+export function locators(rows: { run: string; action: string; child: SessionID }[]) {
+  const groups = Map.groupBy(rows, (item) => `${item.run}:${item.action}`)
+  return {
+    ambiguous: [...groups.values()].some((items) => items.length !== 1),
+    values: new Map(
+      [...groups].flatMap(([key, items]) => (items.length === 1 ? [[key, items[0]!.child] as const] : [])),
+    ),
+  }
+}
+
 export namespace SessionTask {
   export const Status = z.enum(["running", "waiting_user", "revising", "blocked", "completed", "failed"])
   export type Status = z.infer<typeof Status>
@@ -1454,16 +1464,13 @@ export namespace SessionTask {
   function archive(tx: Database.TxOrDb, sessionID: SessionID, revision: typeof TaskRevisionTable.$inferSelect) {
     const flow = Workflow.parse(revision.workflow)
     const actions = workflow(flow)
-    const parents = flow.assignment_id ? new Set([flow.assignment_id]) : new Set<string>()
     const keys = new Set(
-      flow.actions.flatMap((raw) => {
-        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
-        const item = raw as { id?: unknown; run_id?: unknown }
-        if (typeof item.id !== "string" || typeof item.run_id !== "string") return []
-        return [`${item.run_id}:${item.id}`]
-      }),
+      actions
+        .filter((item) => item.executor.type === "agent")
+        .map((item) => `${item.run_id}:${item.id}`),
     )
-    const assigned = tx
+    const runs = new Set([...(flow.run_ids ?? []), ...(flow.run_id ? [flow.run_id] : [])])
+    const scoped = tx
       .select({
         parent: AssignmentTable.parent_id,
         child: AssignmentTable.session_id,
@@ -1480,9 +1487,12 @@ export namespace SessionTask {
       .all()
       .filter((item): item is typeof item & { run: string; action: string } => {
         if (!item.run || !item.action) return false
-        return keys.has(`${item.run}:${item.action}`) || (!!item.parent && parents.has(item.parent))
+        const key = `${item.run}:${item.action}`
+        if (!flow.assignment_id) return item.parent === null && keys.has(key)
+        if (actions.length > 0) return item.parent === flow.assignment_id && keys.has(key)
+        return (item.parent === flow.assignment_id || item.parent === null) && runs.has(item.run)
       })
-    const locators = new Map(assigned.map((item) => [`${item.run}:${item.action}`, item.child]))
+    const located = locators(scoped)
     const rows = tx
       .select({
         run: SessionResultTable.run_id,
@@ -1498,14 +1508,17 @@ export namespace SessionTask {
           item.run &&
           item.action &&
           item.child &&
-          locators.get(`${item.run}:${item.action}`) === item.child,
+          located.values.get(`${item.run}:${item.action}`) === item.child,
       )
     const saved = result(revision.result, revision.result_source)
+    const expected = actions.length > 0 ? keys : new Set(located.values.keys())
     const complete =
-      assigned.length === 0 ||
-      assigned.every((item) =>
-        rows.some((row) => row.child === item.child && row.run === item.run && row.action === item.action),
-      )
+      !located.ambiguous &&
+      [...expected].every((key) => {
+        const child = located.values.get(key)
+        if (!child) return false
+        return rows.some((row) => row.child === child && `${row.run}:${row.action}` === key)
+      })
     const resultStatus = rows.some((item) => item.status === "failed")
       ? ("failed" as const)
       : !complete
@@ -1537,7 +1550,7 @@ export namespace SessionTask {
               : ("blocked" as const)
             : resultStatus === "completed"
               ? ("completed" as const)
-              : assigned.length > 0 && resultStatus === "partial"
+              : expected.size > 0 && resultStatus === "partial"
                 ? ("completed" as const)
                 : ("blocked" as const)
     return { terminal, result: resultStatus }

@@ -78,3 +78,4 @@ Task8 首版把单任务入口接入 Session 主区域，但归档版本缺少�
 - 归档 Revision 缺少 `result_status` 时不展示原始结果正文；当前 Task 的可信 `action_result` 保持可展示。
 - Handoff source/target Task 外键查询增加索引与独立迁移；日期格式显式使用当前语言 locale。
 - UI 回归从源码断言补充为可控 timer、同组件 Session 切换时的事件过滤/退订/重绑、locale 与异步请求竞态的行为测试。
+- 新归档的 delegation 完整性按 Revision parent、workflow run/action、Assignment child 四个维度同时限定；显式 workflow 中的 agent action 缺少唯一 Assignment 或结果时保持 blocked。另一 Revision 的 parent、同 parent 的额外 key 和重复 locator 都不参与；无 actions 的旧 Revision 仅以已记录 run 和 null/current parent 走兼容路径，tool action 不进入 delegation 完整性检查。

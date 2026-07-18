@@ -9,7 +9,7 @@ import { AgentProtocol } from "../../src/protocol/schema"
 import { Session } from "../../src/session"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionAssignment } from "../../src/session/assignment"
-import { MessageID } from "../../src/session/schema"
+import { MessageID, SessionID } from "../../src/session/schema"
 import {
   AssignmentTable,
   SessionResultTable,
@@ -17,7 +17,7 @@ import {
   TaskHandoffTable,
   TaskRevisionTable,
 } from "../../src/session/session.sql"
-import { SessionTask } from "../../src/session/task"
+import { locators, SessionTask } from "../../src/session/task"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { TaskFS } from "../../src/session/task-fs"
 import { Database, eq, inArray, sql } from "../../src/storage/db"
@@ -41,6 +41,86 @@ async function setup(fn: () => Promise<void>) {
         fn,
       }),
   })
+}
+
+async function scoped(input: {
+  id: string
+  root: string
+  locators: readonly { run: string; action: string; parent: string }[]
+}) {
+  const session = await Session.create({})
+  const first = await SessionTask.create({
+    sessionID: session.id,
+    title: input.id,
+    body: `# ${input.id}\n`,
+    source: { type: "user" },
+  })
+  const run = `run_${input.id}`
+  const action = `action_${input.id}`
+  const children = await Promise.all(input.locators.map(() => Session.create({ parentID: session.id })))
+  const assignments = await Promise.all(
+    input.locators.map((item, index) => {
+      const planned = {
+        type: "action",
+        id: item.action,
+        title: item.action,
+        operation: "delegate",
+        executor: { type: "agent", target: "backend", capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      return SessionAssignment.delegate({
+        action: planned,
+        childID: children[index]!.id,
+        messageID: MessageID.ascending(),
+        runID: item.run,
+        sessionID: session.id,
+      })
+    }),
+  )
+  Database.use((db) => {
+    db.update(TaskRevisionTable)
+      .set({
+        workflow: {
+          assignment_id: input.root,
+          actions: result(run, [{ id: action, title: action, status: "completed" }]).actions.map((item) => ({
+            ...item,
+            executor: { type: "agent", target: "backend", capabilities: [] },
+            run_id: run,
+          })),
+        },
+      })
+      .where(eq(TaskRevisionTable.id, first.revision.id))
+      .run()
+    input.locators.forEach((item, index) => {
+      db.update(AssignmentTable)
+        .set({ parent_id: item.parent })
+        .where(eq(AssignmentTable.id, assignments[index]!.id))
+        .run()
+      db.insert(SessionResultTable)
+        .values({
+          id: `result_scope_${input.id}_${index}`,
+          carrier: "action_result",
+          status: "completed",
+          satisfying: true,
+          session_id: children[index]!.id,
+          parent_session_id: session.id,
+          child_session_id: children[index]!.id,
+          run_id: item.run,
+          action_id: item.action,
+          target_action_id: null,
+          raw_ref: `scope/${input.id}/${index}`,
+          summary: "Scoped result",
+          created_at: Date.now(),
+        })
+        .run()
+    })
+  })
+  const draft = await SessionTask.draft({ taskID: first.task.id, title: "Current", body: "# Current\n" })
+  await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+  return SessionTask.revision(session.id, 1)
 }
 
 async function legacy(input: {
@@ -2537,7 +2617,11 @@ describe("session task", () => {
             .set({
               workflow: {
                 actions: result(run, input.actions.map((item) => ({ ...item, title: item.id }))).actions.map(
-                  (action) => ({ ...action, run_id: run }),
+                  (action) => ({
+                    ...action,
+                    executor: { type: "agent", target: "backend", capabilities: [] },
+                    run_id: run,
+                  }),
                 ),
               },
             })
@@ -2654,6 +2738,54 @@ describe("session task", () => {
         }),
       ).toMatchObject({ terminal_status: "blocked", result_status: "partial" })
     }))
+
+  for (const item of [
+    {
+      title: "blocks a completed delegated action without an assignment locator",
+      id: "missing_locator",
+      root: "assignment_scope_current",
+      locators: [],
+    },
+    {
+      title: "ignores the same workflow key owned by another revision parent",
+      id: "foreign_parent",
+      root: "assignment_scope_current",
+      locators: [
+        {
+          run: "run_foreign_parent",
+          action: "action_foreign_parent",
+          parent: "assignment_scope_other",
+        },
+      ],
+    },
+    {
+      title: "ignores an assignment under the current parent when its key is outside the workflow",
+      id: "foreign_key",
+      root: "assignment_scope_current",
+      locators: [
+        {
+          run: "run_foreign_key_other",
+          action: "action_foreign_key_other",
+          parent: "assignment_scope_current",
+        },
+      ],
+    },
+  ] as const) {
+    test(item.title, () =>
+      setup(async () => {
+        expect(await scoped(item)).toMatchObject({ terminal_status: "blocked" })
+      }),
+    )
+  }
+
+  test("rejects duplicate assignment locators instead of trusting map overwrite", () => {
+    const found = locators([
+      { run: "run_duplicate_locator", action: "action_duplicate_locator", child: SessionID.make("ses_first") },
+      { run: "run_duplicate_locator", action: "action_duplicate_locator", child: SessionID.make("ses_second") },
+    ])
+    expect(found.ambiguous).toBe(true)
+    expect(found.values.size).toBe(0)
+  })
 
   test("does not reuse a result from an archived revision", () =>
     setup(async () => {
