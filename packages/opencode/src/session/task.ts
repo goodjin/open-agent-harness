@@ -134,6 +134,18 @@ export namespace SessionTask {
     })
     .strict()
   export type View = z.infer<typeof View>
+  export const Summary = z
+    .object({
+      id: z.string().min(1),
+      title: z.string().min(1),
+      version: z.number().int().positive(),
+      status: Status,
+      completed_actions: z.number().int().nonnegative(),
+      total_actions: z.number().int().nonnegative(),
+    })
+    .strict()
+    .meta({ ref: "SessionTaskSummary" })
+  export type Summary = z.infer<typeof Summary>
   export const LegacyView = View.extend({ type: z.literal("legacy_task") }).strict()
   export type LegacyView = z.infer<typeof LegacyView>
   export const History = z
@@ -1252,6 +1264,54 @@ export namespace SessionTask {
         ...(item.time_archived === null ? {} : { archived: item.time_archived }),
       },
     })
+  }
+
+  export function summaries(ids: SessionID[]) {
+    if (ids.length === 0) return new Map<SessionID, Summary>()
+    const rows = Database.use((db) =>
+      db
+        .select({ task: SessionTaskTable, revision: TaskRevisionTable })
+        .from(SessionTaskTable)
+        .innerJoin(
+          TaskRevisionTable,
+          and(
+            eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id),
+            eq(TaskRevisionTable.task_id, SessionTaskTable.id),
+          ),
+        )
+        .where(inArray(SessionTaskTable.session_id, ids))
+        .all(),
+    )
+    return new Map(
+      rows.map((row) => {
+        const flow = Workflow.parse(row.revision.workflow)
+        const actions = workflow(flow)
+        return [
+          row.task.session_id,
+          Summary.parse({
+            id: row.task.id,
+            title: row.revision.title,
+            version: row.revision.version,
+            status: row.task.status,
+            completed_actions:
+              (flow.compact?.completed ?? 0) +
+              actions.filter((item) => item.status === "completed" || item.status === "skipped").length,
+            total_actions: (flow.compact?.total ?? 0) + actions.length,
+          }),
+        ]
+      }),
+    )
+  }
+
+  export function owns(sessionID: SessionID, revisionID: string) {
+    return Database.use((db) =>
+      !!db
+        .select({ id: TaskRevisionTable.id })
+        .from(TaskRevisionTable)
+        .innerJoin(SessionTaskTable, eq(SessionTaskTable.id, TaskRevisionTable.task_id))
+        .where(and(eq(SessionTaskTable.session_id, sessionID), eq(TaskRevisionTable.id, revisionID)))
+        .get(),
+    )
   }
 
   export async function legacy(sessionID: SessionID) {

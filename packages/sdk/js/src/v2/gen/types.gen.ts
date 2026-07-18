@@ -1045,6 +1045,15 @@ export type EventTodoUpdated = {
   }
 }
 
+export type SessionTaskSummary = {
+  id: string
+  title: string
+  version: number
+  status: "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
+  completed_actions: number
+  total_actions: number
+}
+
 export type Session = {
   id: string
   slug: string
@@ -1084,6 +1093,7 @@ export type Session = {
   dsl_context?: {
     [key: string]: unknown
   }
+  task?: SessionTaskSummary
 }
 
 export type EventSessionCreated = {
@@ -2024,6 +2034,7 @@ export type GlobalSession = {
   dsl_context?: {
     [key: string]: unknown
   }
+  task?: SessionTaskSummary
   project: ProjectSummary | null
 }
 
@@ -2046,6 +2057,7 @@ export type SessionTreeNode = {
     model_id: string
   }
   status: SessionStatus
+  task?: SessionTaskSummary
   stats: {
     messages: number
     tokens_input: number
@@ -2066,6 +2078,16 @@ export type ConflictError = {
   data: {
     message: string
   }
+}
+
+export type SessionTaskConfirmation = {
+  proposal_id: string
+  revision_id?: string
+  action: "confirm" | "cancel"
+  assignment_id?: string
+  status?: string
+  target_session_id?: string
+  target_task_id?: string
 }
 
 export type TextPartInput = {
@@ -5351,6 +5373,372 @@ export type SessionProtocolTraceResponses = {
 }
 
 export type SessionProtocolTraceResponse = SessionProtocolTraceResponses[keyof SessionProtocolTraceResponses]
+
+export type SessionTaskData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/task"
+}
+
+export type SessionTaskErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTaskError = SessionTaskErrors[keyof SessionTaskErrors]
+
+export type SessionTaskResponses = {
+  /**
+   * Current task
+   */
+  200: {
+    id: string
+    session_id: string
+    title: string
+    version: number
+    status: "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
+    body: string
+    progress: {
+      completed: number
+      total: number
+    }
+    actions: Array<{
+      id: string
+      title: string
+      operation: string
+      executor: {
+        type: "tool" | "agent" | "runtime" | "human"
+        target?: string
+        capabilities?: Array<string>
+      }
+      input?: {
+        [key: string]: unknown
+      }
+      depends_on?: Array<string>
+      verification?: {
+        role?: "test" | "review"
+        worker?: string
+        required?: boolean
+        reason?: string
+        system?: boolean
+        allow_skip_on_no_change?: boolean
+      }
+      status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+      summary?: string
+      output?: string
+      error?: string
+      sessionID?: string
+      tool_call_ids?: Array<string>
+      duration_ms?: number
+      time: {
+        started: number
+        completed?: number
+      }
+      run_id: string
+    }>
+    result?: string
+    result_source?: "protocol" | "action_result" | "fallback_summary"
+    handoffs: Array<{
+      id: string
+      title: string
+      status: "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
+      target_session_id?: string
+    }>
+    time: {
+      created: number
+      updated: number
+      completed?: number
+    }
+  }
+}
+
+export type SessionTaskResponse = SessionTaskResponses[keyof SessionTaskResponses]
+
+export type SessionTaskHistoryData = {
+  body?: never
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/task/history"
+}
+
+export type SessionTaskHistoryErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTaskHistoryError = SessionTaskHistoryErrors[keyof SessionTaskHistoryErrors]
+
+export type SessionTaskHistoryResponses = {
+  /**
+   * Task history
+   */
+  200: Array<{
+    id: string
+    version: number
+    status: "archived"
+    title: string
+    reason: string | null
+    archive_reason: string | null
+    time: {
+      created: number
+      archived?: number
+    }
+  }>
+}
+
+export type SessionTaskHistoryResponse = SessionTaskHistoryResponses[keyof SessionTaskHistoryResponses]
+
+export type SessionTaskRevisionData = {
+  body?: never
+  path: {
+    sessionID: string
+    version: number
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/task/revisions/{version}"
+}
+
+export type SessionTaskRevisionErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+}
+
+export type SessionTaskRevisionError = SessionTaskRevisionErrors[keyof SessionTaskRevisionErrors]
+
+export type SessionTaskRevisionResponses = {
+  /**
+   * Task revision
+   */
+  200: {
+    id: string
+    session_id: string
+    title: string
+    version: number
+    status: "draft" | "active" | "completed" | "failed" | "archived"
+    body: string
+    workflow: {
+      actions: Array<{
+        id: string
+        title: string
+        operation: string
+        executor: {
+          type: "tool" | "agent" | "runtime" | "human"
+          target?: string
+          capabilities?: Array<string>
+        }
+        input?: {
+          [key: string]: unknown
+        }
+        depends_on?: Array<string>
+        verification?: {
+          role?: "test" | "review"
+          worker?: string
+          required?: boolean
+          reason?: string
+          system?: boolean
+          allow_skip_on_no_change?: boolean
+        }
+        status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+        summary?: string
+        output?: string
+        error?: string
+        sessionID?: string
+        tool_call_ids?: Array<string>
+        duration_ms?: number
+        time: {
+          started: number
+          completed?: number
+        }
+        run_id: string
+      }>
+      assignment_id?: string
+      run_id?: string
+      run_ids?: Array<string>
+      compact?: {
+        runs: number
+        completed: number
+        total: number
+      }
+    }
+    actions: Array<{
+      id: string
+      title: string
+      operation: string
+      executor: {
+        type: "tool" | "agent" | "runtime" | "human"
+        target?: string
+        capabilities?: Array<string>
+      }
+      input?: {
+        [key: string]: unknown
+      }
+      depends_on?: Array<string>
+      verification?: {
+        role?: "test" | "review"
+        worker?: string
+        required?: boolean
+        reason?: string
+        system?: boolean
+        allow_skip_on_no_change?: boolean
+      }
+      status: "pending" | "running" | "completed" | "blocked" | "failed" | "skipped"
+      summary?: string
+      output?: string
+      error?: string
+      sessionID?: string
+      tool_call_ids?: Array<string>
+      duration_ms?: number
+      time: {
+        started: number
+        completed?: number
+      }
+      run_id: string
+    }>
+    result?: string
+    result_source?: "protocol" | "action_result" | "fallback_summary"
+    time: {
+      created: number
+      activated?: number
+      completed?: number
+      archived?: number
+    }
+  }
+}
+
+export type SessionTaskRevisionResponse = SessionTaskRevisionResponses[keyof SessionTaskRevisionResponses]
+
+export type SessionTaskUpdateConfirmData = {
+  body?: {
+    proposal_id: string
+    revision_id: string
+    action: "confirm" | "cancel"
+  }
+  path: {
+    sessionID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/task/update/confirm"
+}
+
+export type SessionTaskUpdateConfirmErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
+}
+
+export type SessionTaskUpdateConfirmError = SessionTaskUpdateConfirmErrors[keyof SessionTaskUpdateConfirmErrors]
+
+export type SessionTaskUpdateConfirmResponses = {
+  /**
+   * Task update confirmation
+   */
+  200: SessionTaskConfirmation
+}
+
+export type SessionTaskUpdateConfirmResponse =
+  SessionTaskUpdateConfirmResponses[keyof SessionTaskUpdateConfirmResponses]
+
+export type SessionTaskHandoffConfirmData = {
+  body?: {
+    proposal_id: string
+    action: "confirm" | "cancel"
+  }
+  path: {
+    sessionID: string
+    handoffID: string
+  }
+  query?: {
+    directory?: string
+  }
+  url: "/session/{sessionID}/task/handoff/{handoffID}/confirm"
+}
+
+export type SessionTaskHandoffConfirmErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * Forbidden
+   */
+  403: ForbiddenError
+  /**
+   * Not found
+   */
+  404: NotFoundError
+  /**
+   * Conflict
+   */
+  409: ConflictError
+}
+
+export type SessionTaskHandoffConfirmError = SessionTaskHandoffConfirmErrors[keyof SessionTaskHandoffConfirmErrors]
+
+export type SessionTaskHandoffConfirmResponses = {
+  /**
+   * Task handoff confirmation
+   */
+  200: SessionTaskConfirmation
+}
+
+export type SessionTaskHandoffConfirmResponse =
+  SessionTaskHandoffConfirmResponses[keyof SessionTaskHandoffConfirmResponses]
 
 export type SessionDeleteData = {
   body?: never

@@ -276,6 +276,16 @@ import type {
   SessionStatusUserCompletedResponses,
   SessionSummarizeErrors,
   SessionSummarizeResponses,
+  SessionTaskErrors,
+  SessionTaskHandoffConfirmErrors,
+  SessionTaskHandoffConfirmResponses,
+  SessionTaskHistoryErrors,
+  SessionTaskHistoryResponses,
+  SessionTaskResponses,
+  SessionTaskRevisionErrors,
+  SessionTaskRevisionResponses,
+  SessionTaskUpdateConfirmErrors,
+  SessionTaskUpdateConfirmResponses,
   SessionTodoErrors,
   SessionTodoResponses,
   SessionTreeAbortErrors,
@@ -1865,6 +1875,166 @@ export class Protocol extends HeyApiClient {
   }
 }
 
+export class Update extends HeyApiClient {
+  /**
+   * Confirm or cancel a task update
+   */
+  public confirm<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      proposal_id?: string
+      revision_id?: string
+      action?: "confirm" | "cancel"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "proposal_id" },
+            { in: "body", key: "revision_id" },
+            { in: "body", key: "action" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionTaskUpdateConfirmResponses,
+      SessionTaskUpdateConfirmErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/task/update/confirm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Handoff extends HeyApiClient {
+  /**
+   * Confirm or cancel a task handoff
+   */
+  public confirm<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      handoffID: string
+      directory?: string
+      proposal_id?: string
+      action?: "confirm" | "cancel"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "handoffID" },
+            { in: "query", key: "directory" },
+            { in: "body", key: "proposal_id" },
+            { in: "body", key: "action" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionTaskHandoffConfirmResponses,
+      SessionTaskHandoffConfirmErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/task/handoff/{handoffID}/confirm",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
+export class Task extends HeyApiClient {
+  /**
+   * List archived task revisions
+   */
+  public history<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTaskHistoryResponses, SessionTaskHistoryErrors, ThrowOnError>({
+      url: "/session/{sessionID}/task/history",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get a task revision
+   */
+  public revision<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      version: number
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "path", key: "version" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTaskRevisionResponses, SessionTaskRevisionErrors, ThrowOnError>({
+      url: "/session/{sessionID}/task/revisions/{version}",
+      ...options,
+      ...params,
+    })
+  }
+
+  private _update?: Update
+  get update(): Update {
+    return (this._update ??= new Update({ client: this.client }))
+  }
+
+  private _handoff?: Handoff
+  get handoff(): Handoff {
+    return (this._handoff ??= new Handoff({ client: this.client }))
+  }
+}
+
 export class Delegations extends HeyApiClient {
   /**
    * Submit delegated child results
@@ -2400,6 +2570,34 @@ export class Session3 extends HeyApiClient {
     )
     return (options?.client ?? this.client).get<SessionLogResponses, SessionLogErrors, ThrowOnError>({
       url: "/session/{sessionID}/log",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get the current session task
+   */
+  public task<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionTaskResponses, SessionTaskErrors, ThrowOnError>({
+      url: "/session/{sessionID}/task",
       ...options,
       ...params,
     })
@@ -3541,6 +3739,11 @@ export class Session3 extends HeyApiClient {
   private _protocol?: Protocol
   get protocol(): Protocol {
     return (this._protocol ??= new Protocol({ client: this.client }))
+  }
+
+  private _task?: Task
+  get task2(): Task {
+    return (this._task ??= new Task({ client: this.client }))
   }
 
   private _delegations?: Delegations

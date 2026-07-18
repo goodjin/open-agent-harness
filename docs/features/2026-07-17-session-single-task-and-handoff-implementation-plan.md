@@ -635,6 +635,8 @@ git commit -m "feat(session): hand off new tasks to peer sessions"
 
 ## Task 7：增加 Task API、OpenAPI 和 SDK
 
+实现校正：确认接口只接受服务端可定位的 `proposal_id`、当前 `revision_id` 或路径中的 `handoffID`，以及 `confirm/cancel` 动作。服务端从 `dsl_context.protocol.confirmations` 恢复不可变的 action、plan、message 和 assignment intent，生成规范 `Assignment`；Handoff 还必须用该 Assignment 通过来源 Session、message、正文哈希和去重键校验。客户端不得提交目标 Session、目标 Task 或 Assignment ID。Update 确认恢复当前 Runner；Handoff 确认通过 outbox 启动服务端创建的平级 Session。
+
 **Files:**
 - Modify: `packages/opencode/src/session/index.ts`
 - Modify: `packages/opencode/src/server/routes/session.ts`

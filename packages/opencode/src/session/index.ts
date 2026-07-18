@@ -49,6 +49,7 @@ import { Global } from "@/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/util/iife"
 import { Metrics } from "@/observability/metrics"
+import { SessionTask } from "./task"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -200,6 +201,7 @@ export namespace Session {
         })
         .optional(),
       dsl_context: z.record(z.string(), z.unknown()).optional(),
+      task: SessionTask.Summary.optional(),
     })
     .meta({
       ref: "Session",
@@ -220,6 +222,7 @@ export namespace Session {
         })
         .optional(),
       status: SessionStatus.Info,
+      task: SessionTask.Summary.optional(),
       stats: z.object({
         messages: z.number(),
         tokens_input: z.number(),
@@ -748,6 +751,7 @@ export namespace Session {
     const root = await get(rootID)
     const rows = [root, ...(await descendants(rootID))]
     const ids = rows.map((item) => item.id)
+    const tasks = SessionTask.summaries(ids)
     const stats = new Map<
       SessionID,
       {
@@ -804,6 +808,7 @@ export namespace Session {
               }
             : undefined,
         status: SessionStatus.get(item.id),
+        task: tasks.get(item.id),
         stats: {
           messages: stat.messages,
           tokens_input: stat.tokens_input,

@@ -14,6 +14,9 @@ import { SessionSummary } from "@/session/summary"
 import { SessionDelegation } from "@/session/delegation"
 import { SessionTimeline } from "../../session/timeline"
 import { SessionRuns } from "../../session/runs"
+import { SessionTask } from "../../session/task"
+import { SessionTaskHandoff } from "../../session/task-handoff"
+import { SessionTaskConfirmation } from "../../session/task-confirmation"
 import { Todo } from "../../session/todo"
 import { Agent } from "../../agent/agent"
 import { Snapshot } from "@/snapshot"
@@ -21,7 +24,7 @@ import { Log } from "../../util/log"
 import { PermissionNext } from "@/permission/next"
 import { PermissionID } from "@/permission/schema"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { ForbiddenError, NotFoundError } from "@/storage/db"
+import { ConflictError, ForbiddenError, NotFoundError } from "@/storage/db"
 import { errors } from "../error"
 import { lazy } from "../../util/lazy"
 import { Instance } from "@/project/instance"
@@ -169,6 +172,19 @@ const TreeBatch = z.object({
   ids: SessionID.zod.array().min(1),
 })
 
+const Confirmation = z
+  .object({
+    proposal_id: z.string().min(3),
+    revision_id: z.string().min(1).optional(),
+    action: z.enum(["confirm", "cancel"]),
+    assignment_id: z.string().min(1).optional(),
+    status: z.string().optional(),
+    target_session_id: SessionID.zod.optional(),
+    target_task_id: z.string().min(1).optional(),
+  })
+  .strict()
+  .meta({ ref: "SessionTaskConfirmation" })
+
 function command(input: {
   source: z.infer<typeof CommandSource>
   source_session?: SessionID
@@ -261,7 +277,8 @@ export const SessionRoutes = lazy(() =>
         })) {
           sessions.push(slim(session))
         }
-        return c.json(sessions)
+        const tasks = SessionTask.summaries(sessions.map((session) => session.id))
+        return c.json(sessions.map((session) => ({ ...session, task: tasks.get(session.id) })))
       },
     )
     .get(
@@ -759,6 +776,164 @@ export const SessionRoutes = lazy(() =>
         const params = c.req.valid("param")
         await Session.get(params.sessionID)
         return c.json((await SessionLog.protocolTrace({ sessionID: params.sessionID, runID: params.runID })) ?? null)
+      },
+    )
+    .get(
+      "/:sessionID/task",
+      describeRoute({
+        summary: "Get the current session task",
+        tags: ["Session"],
+        operationId: "session.task",
+        responses: {
+          200: {
+            description: "Current task",
+            content: { "application/json": { schema: resolver(SessionTask.View) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        const task = await SessionTask.current(sessionID)
+        if (!task) throw new NotFoundError({ message: `Task not found for session: ${sessionID}` })
+        return c.json(task)
+      },
+    )
+    .get(
+      "/:sessionID/task/history",
+      describeRoute({
+        summary: "List archived task revisions",
+        tags: ["Session"],
+        operationId: "session.task.history",
+        responses: {
+          200: {
+            description: "Task history",
+            content: { "application/json": { schema: resolver(SessionTask.History.array()) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      async (c) => {
+        const sessionID = c.req.valid("param").sessionID
+        await Session.get(sessionID)
+        if (!(await SessionTask.get(sessionID)))
+          throw new NotFoundError({ message: `Task not found for session: ${sessionID}` })
+        return c.json(await SessionTask.history(sessionID))
+      },
+    )
+    .get(
+      "/:sessionID/task/revisions/:version",
+      describeRoute({
+        summary: "Get a task revision",
+        tags: ["Session"],
+        operationId: "session.task.revision",
+        responses: {
+          200: {
+            description: "Task revision",
+            content: { "application/json": { schema: resolver(SessionTask.RevisionView) } },
+          },
+          ...errors(400, 403, 404),
+        },
+      }),
+      validator(
+        "param",
+        z.object({ sessionID: SessionID.zod, version: z.coerce.number().int().positive() }),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        await Session.get(params.sessionID)
+        const revision = await SessionTask.revision(params.sessionID, params.version)
+        if (!revision)
+          throw new NotFoundError({ message: `Task revision not found: ${params.sessionID}/v${params.version}` })
+        return c.json(revision)
+      },
+    )
+    .post(
+      "/:sessionID/task/update/confirm",
+      describeRoute({
+        summary: "Confirm or cancel a task update",
+        tags: ["Session"],
+        operationId: "session.task.update.confirm",
+        responses: {
+          200: {
+            description: "Task update confirmation",
+            content: { "application/json": { schema: resolver(Confirmation) } },
+          },
+          ...errors(400, 403, 404, 409),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod })),
+      validator(
+        "json",
+        z
+          .object({
+            proposal_id: z.string().min(3),
+            revision_id: z.string().min(1),
+            action: z.enum(["confirm", "cancel"]),
+          })
+          .strict(),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+        await Session.get(params.sessionID)
+        const task = await SessionTask.get(params.sessionID)
+        if (!task) throw new NotFoundError({ message: `Task not found for session: ${params.sessionID}` })
+        if (task.revision.id !== body.revision_id) {
+          if (!SessionTask.owns(params.sessionID, body.revision_id))
+            throw new ForbiddenError({ message: `Task revision does not belong to session: ${params.sessionID}` })
+          throw new ConflictError({ message: `Task revision is no longer current: ${body.revision_id}` })
+        }
+        return c.json({
+          ...(await SessionTaskConfirmation.respond({
+            sessionID: params.sessionID,
+            proposalID: body.proposal_id,
+            action: body.action,
+            op: "update",
+          })),
+          revision_id: body.revision_id,
+        })
+      },
+    )
+    .post(
+      "/:sessionID/task/handoff/:handoffID/confirm",
+      describeRoute({
+        summary: "Confirm or cancel a task handoff",
+        tags: ["Session"],
+        operationId: "session.task.handoff.confirm",
+        responses: {
+          200: {
+            description: "Task handoff confirmation",
+            content: { "application/json": { schema: resolver(Confirmation) } },
+          },
+          ...errors(400, 403, 404, 409),
+        },
+      }),
+      validator("param", z.object({ sessionID: SessionID.zod, handoffID: z.string().min(1) })),
+      validator(
+        "json",
+        z.object({ proposal_id: z.string().min(3), action: z.enum(["confirm", "cancel"]) }).strict(),
+      ),
+      async (c) => {
+        const params = c.req.valid("param")
+        const body = c.req.valid("json")
+        await Session.get(params.sessionID)
+        const handoff = await SessionTaskHandoff.get(params.handoffID)
+        if (!handoff) throw new NotFoundError({ message: `Task handoff not found: ${params.handoffID}` })
+        if (handoff.source_session_id !== params.sessionID)
+          throw new ForbiddenError({ message: `Task handoff does not belong to session: ${params.sessionID}` })
+        return c.json(
+          await SessionTaskConfirmation.respond({
+            sessionID: params.sessionID,
+            proposalID: body.proposal_id,
+            action: body.action,
+            op: "handoff",
+            handoffID: handoff.id,
+          }),
+        )
       },
     )
     .get(
