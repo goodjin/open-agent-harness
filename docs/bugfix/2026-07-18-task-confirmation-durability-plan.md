@@ -33,6 +33,8 @@ The claim owner starts a heartbeat immediately and keeps it active across Assign
 
 - RED/GREEN route tests for the revision barrier, failed continuation, fixed identity, replay, and generated SDK surface.
 - Controlled lease and barrier tests across Assignment, Handoff, and live Question reply.
+- Public Question reply route tests proving live and restored Task confirmations enter the same confirmation service and fixed continuation outbox, while generic Questions keep their existing behavior.
+- Legacy terminal import tests proving only canonical confirmed/cancelled DSL state becomes a durable terminal confirmation without a new continuation.
 - Real Bun child-process contention test against one SQLite database.
 - Task API, recovery, assignment, Runs and tree regressions.
 - Migration check, typecheck, SDK check/typecheck/build, agent manifest build, and diff check.

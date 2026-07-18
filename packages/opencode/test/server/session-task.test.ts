@@ -920,6 +920,326 @@ describe("session task endpoints", () => {
     })
   })
 
+  test("routes live and restored Task questions through one durable confirmation service", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let prompts = 0
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      prompts++
+      if (prompts === 2) throw new Error("restored route crashed")
+      return undefined as never
+    }) as unknown as typeof SessionPrompt.prompt)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_question_route"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_question_route_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_question_live",
+              actionID: "confirm_question_live",
+              title: "Live question",
+              plan: "Live question body",
+              op: "update",
+              target: "self",
+            })
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [{ question: "Confirm?", header: "Confirm", options: [] }],
+              tool: { messageID, callID: "call_confirm_question_live" },
+            })
+            while (!(await Question.list()).length) await Bun.sleep(1)
+            const live = (await Question.list())[0]
+            if (!live) throw new Error("live question missing")
+            const app = Server.Default()
+            const first = await app.request(`/question/${live.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+            })
+            expect(first.status).toBe(200)
+            expect((await asked).rerouted).toBe(true)
+
+            const messageID2 = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID2,
+              runID: "run_question_restored",
+              actionID: "confirm_question_restored",
+              title: "Restored question",
+              plan: "Restored question body",
+              op: "update",
+              target: "self",
+            })
+            const listed = (await (await app.request("/question")).json()) as { id: string }[]
+            const second = await app.request(`/question/${listed[0]?.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+            })
+            expect(second.status).toBe(409)
+            expect(await SessionTaskConfirmation.scan()).toEqual([true])
+            const replay = await app.request(`/question/${listed[0]?.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+            })
+            expect(replay.status).toBe(200)
+            const rows = Database.use((db) => db.select().from(TaskConfirmationTable).all())
+            expect(rows).toHaveLength(2)
+            expect(rows.every((row) => row.status === "completed")).toBe(true)
+            const outbox = Database.use((db) => db.select().from(SessionEventOutboxTable).all()).filter(
+              (row) => row.kind === "task_confirmation",
+            )
+            expect(outbox).toHaveLength(2)
+            expect(outbox.every((row) => row.status === "delivered")).toBe(true)
+            expect(prompt).toHaveBeenCalledTimes(3)
+
+            const messageID3 = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID3,
+              runID: "run_question_reject",
+              actionID: "confirm_question_reject",
+              title: "Rejected question",
+              plan: "Rejected question body",
+              op: "update",
+              target: "self",
+            })
+            const cancellable = (await (await app.request("/question")).json()) as { id: string }[]
+            const cancelled = await app.request(`/question/${cancellable[0]?.id}/reject`, { method: "POST" })
+            expect(cancelled.status).toBe(200)
+            expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(3)
+            expect(prompt).toHaveBeenCalledTimes(4)
+
+            const messageID4 = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID4,
+              runID: "run_question_tampered",
+              actionID: "confirm_question_tampered",
+              title: "Tampered question",
+              plan: "Tampered question body",
+              op: "handoff",
+              target: "peer",
+            })
+            const pending = (await (await app.request("/question")).json()) as { id: string }[]
+            const rejected = await app.request(`/question/${pending[0]?.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+            })
+            expect(rejected.status).toBe(409)
+            expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(3)
+          },
+        }),
+    })
+    prompt.mockRestore()
+  })
+
+  test("imports only canonical legacy terminal confirmations without continuing", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_legacy_terminal"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_legacy_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_legacy_done",
+              actionID: "confirm_legacy_done",
+              title: "Legacy done",
+              plan: "Legacy done body",
+              op: "update",
+              target: "self",
+            })
+            const assignment = await SessionAssignment.apply({
+              actionID: "confirm_legacy_done",
+              assignment: { op: "update", target: "self" },
+              messageID,
+              plan: "Legacy done body",
+              runID: "run_legacy_done",
+              sessionID: session.id,
+              title: "Legacy done",
+            })
+            if (!assignment) throw new Error("assignment missing")
+            await rewrite(session.id, "run_legacy_done", "confirm_legacy_done", {
+              status: "confirmed",
+              response: "confirm",
+              assignment: {
+                id: assignment.id,
+                session_id: assignment.session_id,
+                status: assignment.status,
+                content_ref: assignment.content_ref,
+                content_version: assignment.content_version,
+              },
+            })
+            const input = {
+              sessionID: session.id,
+              proposalID: "run_legacy_done:confirm_legacy_done",
+              revisionID: task.revision.id,
+              action: "confirm" as const,
+              op: "update" as const,
+            }
+            const first = await SessionTaskConfirmation.respond(input)
+            const second = await SessionTaskConfirmation.respond(input)
+            expect(second).toEqual(first)
+            expect(first.assignment_id).toBe(assignment.id)
+            const row = Database.use((db) => db.select().from(TaskConfirmationTable).get())
+            expect(row).toMatchObject({ status: "completed", lease_until: 0, result: first })
+            expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(0)
+            expect(prompt).not.toHaveBeenCalled()
+
+            const messageID2 = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID2,
+              runID: "run_legacy_bad",
+              actionID: "confirm_legacy_bad",
+              title: "Legacy bad",
+              plan: "Legacy bad body",
+              op: "update",
+              target: "self",
+            })
+            await rewrite(session.id, "run_legacy_bad", "confirm_legacy_bad", {
+              status: "confirmed",
+              response: "confirm",
+            })
+            await expect(
+              SessionTaskConfirmation.respond({
+                sessionID: session.id,
+                proposalID: "run_legacy_bad:confirm_legacy_bad",
+                revisionID: task.revision.id,
+                action: "confirm",
+                op: "update",
+              }),
+            ).rejects.toThrow()
+            expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(1)
+
+            const messageID3 = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID3,
+              runID: "run_legacy_cancel",
+              actionID: "confirm_legacy_cancel",
+              title: "Legacy cancel",
+              plan: "Legacy cancel body",
+              op: "update",
+              target: "self",
+            })
+            await rewrite(session.id, "run_legacy_cancel", "confirm_legacy_cancel", {
+              status: "cancelled",
+              response: "cancel",
+            })
+            const cancelled = await SessionTaskConfirmation.respond({
+              sessionID: session.id,
+              proposalID: "run_legacy_cancel:confirm_legacy_cancel",
+              revisionID: task.revision.id,
+              action: "cancel",
+              op: "update",
+            })
+            expect(cancelled).toMatchObject({
+              action: "cancel",
+              proposal_id: "run_legacy_cancel:confirm_legacy_cancel",
+            })
+            expect(
+              Database.use((db) => db.select().from(TaskConfirmationTable).all()).map((item) => item.status),
+            ).toEqual(["completed", "cancelled"])
+            expect(await SessionTaskConfirmation.scan()).toEqual([])
+
+            const messageID4 = await message(session.id)
+            const firstHandoff = await SessionTaskHandoff.propose({
+              sourceID: session.id,
+              messageID: messageID4,
+              runID: "run_legacy_handoff",
+              actionID: "confirm_legacy_handoff",
+              title: "Legacy handoff",
+              body: "Legacy handoff body",
+              contextRefs: [],
+            })
+            const otherHandoff = await SessionTaskHandoff.propose({
+              sourceID: session.id,
+              messageID: messageID4,
+              runID: "run_legacy_other",
+              actionID: "confirm_legacy_other",
+              title: "Legacy handoff",
+              body: "Legacy handoff body",
+              contextRefs: [],
+            })
+            await proposal({
+              sessionID: session.id,
+              messageID: messageID4,
+              runID: "run_legacy_handoff",
+              actionID: "confirm_legacy_handoff",
+              title: "Legacy handoff",
+              plan: "Legacy handoff body",
+              op: "handoff",
+              target: "peer",
+            })
+            const firstProof = await SessionAssignment.apply({
+              actionID: "confirm_legacy_handoff",
+              assignment: { op: "handoff", target: "peer" },
+              messageID: messageID4,
+              plan: "Legacy handoff body",
+              runID: "run_legacy_handoff",
+              sessionID: session.id,
+              title: "Legacy handoff",
+            })
+            const otherProof = await SessionAssignment.apply({
+              actionID: "confirm_legacy_other",
+              assignment: { op: "handoff", target: "peer" },
+              messageID: messageID4,
+              plan: "Legacy handoff body",
+              runID: "run_legacy_other",
+              sessionID: session.id,
+              title: "Legacy handoff",
+            })
+            if (!firstProof || !otherProof) throw new Error("handoff assignment missing")
+            await SessionTaskHandoff.confirm(otherHandoff.id, { assignmentID: otherProof.id })
+            await rewrite(session.id, "run_legacy_handoff", "confirm_legacy_handoff", {
+              status: "confirmed",
+              response: "confirm",
+              assignment: { id: firstProof.id },
+            })
+            await expect(
+              SessionTaskConfirmation.respond({
+                sessionID: session.id,
+                proposalID: "run_legacy_handoff:confirm_legacy_handoff",
+                handoffID: otherHandoff.id,
+                action: "confirm",
+                op: "handoff",
+              }),
+            ).rejects.toThrow()
+            expect((await SessionTaskHandoff.get(firstHandoff.id))?.status).toBe("proposed")
+            expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(2)
+          },
+        }),
+    })
+    prompt.mockRestore()
+  })
+
   test("confirms and cancels handoffs only through canonical assignment proof", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)

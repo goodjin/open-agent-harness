@@ -8,6 +8,10 @@ import { Session } from "@/session"
 import { SessionPrompt } from "@/session/prompt"
 import { MessageID, SessionID } from "@/session/schema"
 import { SessionAssignment } from "@/session/assignment"
+import { SessionTaskConfirmation } from "@/session/task-confirmation"
+import { SessionTask } from "@/session/task"
+import { SessionTaskHandoff } from "@/session/task-handoff"
+import { ConflictError } from "@/storage/db"
 import { Storage } from "@/storage/storage"
 import { Log } from "@/util/log"
 import z from "zod"
@@ -234,11 +238,73 @@ async function confirm(input: {
   return true
 }
 
-async function answer(input: {
+async function task(input: {
   answers?: Question.Answer[]
-  reject?: boolean
   requestID: QuestionID
+  response?: Question.Reply["response"]
 }) {
+  const parsed = parse(input.requestID)
+  const live = parsed ? undefined : (await Question.list()).find((item) => item.id === input.requestID)
+  const action = live?.tool?.callID.startsWith("call_") ? live.tool.callID.slice(5) : undefined
+  const sessionID = parsed?.sessionID ?? live?.sessionID
+  if (!sessionID) return false
+  const session = await Session.get(sessionID)
+  const ctx = rec(session.dsl_context) ? session.dsl_context : {}
+  const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+  const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  const found = vals.filter((item) => {
+    if (!rec(item)) return false
+    if (parsed) return item.run_id === parsed.run && item.action_id === parsed.action
+    return item.action_id === action && item.message_id === live?.tool?.messageID
+  })
+  if (found.length !== 1 || !rec(found[0])) {
+    if (parsed)
+      throw new ConflictError({ message: `Protocol confirmation is not current: ${parsed.run}:${parsed.action}` })
+    return false
+  }
+  const item = found[0]
+  const intent = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
+  if (intent.op !== "update" && intent.op !== "handoff") {
+    if (intent.op === "create" && intent.target === "self") return false
+    if (rec(item.assignment_intent) || "op" in intent)
+      throw new ConflictError({ message: `Task proposal intent is invalid: ${item.run_id}:${item.action_id}` })
+    return false
+  }
+  const run = text(item.run_id)
+  const id = text(item.action_id)
+  if (!run || !id) throw new ConflictError({ message: "Task proposal identity is invalid" })
+  const decision =
+    input.response === "cancel" || input.answers?.flat().some((part) => /^cancel$/i.test(part.trim()))
+      ? "cancel"
+      : "confirm"
+  const current = intent.op === "update" ? await SessionTask.get(sessionID) : undefined
+  if (intent.op === "update" && !current)
+    throw new ConflictError({ message: `Task proposal has no current Task: ${run}:${id}` })
+  const handoff =
+    intent.op === "handoff"
+      ? SessionTaskHandoff.locate({
+          sourceID: sessionID,
+          messageID: MessageID.make(String(item.message_id)),
+          runID: run,
+          actionID: id,
+          title: text(item.action_title) ?? id,
+          body: text(item.plan) ?? "",
+        })
+      : undefined
+  if (intent.op === "handoff" && !handoff)
+    throw new ConflictError({ message: `Task proposal has no canonical Handoff: ${run}:${id}` })
+  await SessionTaskConfirmation.respond({
+    sessionID,
+    proposalID: `${run}:${id}`,
+    action: decision,
+    op: intent.op,
+    revisionID: current?.revision.id,
+    handoffID: handoff?.id,
+  })
+  return true
+}
+
+async function answer(input: { answers?: Question.Answer[]; reject?: boolean; requestID: QuestionID }) {
   const key = iparse(input.requestID)
   if (!key) return false
   const session = await Session.get(key.sessionID)
@@ -413,6 +479,9 @@ export const QuestionRoutes = lazy(() =>
         if (await answer({ requestID: params.requestID, answers: json.answers })) {
           return c.json(true)
         }
+        if (await task({ requestID: params.requestID, answers: json.answers, response: json.response })) {
+          return c.json(true)
+        }
         if (await confirm({ requestID: params.requestID, answers: json.answers, response: json.response })) {
           return c.json(true)
         }
@@ -451,6 +520,7 @@ export const QuestionRoutes = lazy(() =>
       async (c) => {
         const params = c.req.valid("param")
         if (await answer({ requestID: params.requestID, reject: true })) return c.json(true)
+        if (await task({ requestID: params.requestID, response: "cancel" })) return c.json(true)
         if (await confirm({ requestID: params.requestID, reject: true })) return c.json(true)
         await Question.reject(params.requestID)
         return c.json(true)

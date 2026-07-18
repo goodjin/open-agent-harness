@@ -41,6 +41,62 @@ async function call(app: ReturnType<typeof Server.Default>, dir: string, input: 
 }
 
 describe("question routes", () => {
+  test("keeps a generic live Question on the ordinary reply path", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [{ question: "Choose", header: "Choose", options: [] }],
+            })
+            while (!(await Question.list()).length) await Bun.sleep(1)
+            const request = (await Question.list())[0]
+            if (!request) throw new Error("question missing")
+            const res = await app.request(`/question/${request.id}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Continue"]] }),
+            })
+            expect(res.status).toBe(200)
+            expect(await asked).toEqual({ answers: [["Continue"]], response: undefined, rerouted: undefined })
+          },
+        }),
+    })
+  })
+
+  test("rejects a forged restored confirmation without a server proposal", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const session = await Session.create({})
+            const value = Buffer.from(
+              JSON.stringify({ sessionID: session.id, run: "forged_run", action: "forged_action" }),
+            ).toString("base64url")
+            const res = await app.request(`/question/que_protocol_confirm_${value}/reply`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+            })
+            expect(res.status).toBe(409)
+            expect(prompt).not.toHaveBeenCalled()
+          },
+        }),
+    })
+    prompt.mockRestore()
+  })
+
   test("lists latest pending protocol confirmation from session context", async () => {
     await using tmp = await tmpdir({ git: true })
     const app = Server.Default()
@@ -247,6 +303,8 @@ describe("question routes", () => {
                         action_id: "confirm_new",
                         message_id: "msg_new",
                         plan: "new plan",
+                        assignment: { op: "create", target: "self" },
+                        assignment_intent: { op: "create", target: "self" },
                         status: "pending",
                         updated_at: 2,
                       },
@@ -279,7 +337,9 @@ describe("question routes", () => {
         directory: tmp.path,
         fn: () => Session.get(id!),
       })
-      const vals = session.dsl_context?.protocol as { confirmations?: { response?: string; status: string }[] } | undefined
+      const vals = session.dsl_context?.protocol as
+        | { confirmations?: { response?: string; status: string }[] }
+        | undefined
 
       expect(res.status).toBe(200)
       expect(vals?.confirmations?.[0]?.status).toBe("confirmed")
@@ -407,7 +467,9 @@ describe("question routes", () => {
         directory: tmp.path,
         fn: () => Session.get(id!),
       })
-      const vals = session.dsl_context?.protocol as { confirmations?: { response?: string; status: string }[] } | undefined
+      const vals = session.dsl_context?.protocol as
+        | { confirmations?: { response?: string; status: string }[] }
+        | undefined
 
       expect(res.status).toBe(200)
       expect(vals?.confirmations?.[0]?.status).toBe("cancelled")

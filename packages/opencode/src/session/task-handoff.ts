@@ -50,6 +50,41 @@ export namespace SessionTaskHandoff {
     )
   }
 
+  export function locate(input: {
+    sourceID: SessionID
+    messageID: MessageID
+    runID: string
+    actionID: string
+    title: string
+    body: string
+  }) {
+    return Database.use((db) =>
+      db
+        .select()
+        .from(TaskHandoffTable)
+        .where(
+          and(
+            eq(TaskHandoffTable.source_session_id, input.sourceID),
+            eq(TaskHandoffTable.source_message_id, input.messageID),
+          ),
+        )
+        .all()
+        .find(
+          (row) =>
+            row.dedupe_key ===
+            dedupe({
+              sourceID: input.sourceID,
+              messageID: input.messageID,
+              runID: input.runID,
+              actionID: input.actionID,
+              title: input.title,
+              body: input.body,
+              contextRefs: row.context_refs,
+            }),
+        ),
+    )
+  }
+
   export async function propose(input: {
     sourceID: SessionID
     messageID: MessageID

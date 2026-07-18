@@ -23,7 +23,14 @@ import { SessionTaskHandoff } from "./task-handoff"
 import { MessageV2 } from "./message-v2"
 import { MessageID, SessionID } from "./schema"
 import { SessionPrompt } from "./prompt"
-import { SessionEventOutboxTable, SessionTable, SessionTaskTable, TaskConfirmationTable } from "./session.sql"
+import {
+  AssignmentTable,
+  SessionEventOutboxTable,
+  SessionTable,
+  SessionTaskTable,
+  TaskConfirmationTable,
+  TaskHandoffTable,
+} from "./session.sql"
 
 export namespace SessionTaskConfirmation {
   const log = Log.create({ service: "session.task-confirmation" })
@@ -73,6 +80,23 @@ export namespace SessionTaskConfirmation {
       plan,
       intent,
     }
+    const status = input.action === "confirm" ? "confirmed" : "cancelled"
+    const durable = Database.use((db) =>
+      db
+        .select({ id: TaskConfirmationTable.id })
+        .from(TaskConfirmationTable)
+        .where(
+          and(
+            eq(TaskConfirmationTable.session_id, input.sessionID),
+            eq(TaskConfirmationTable.proposal_id, input.proposalID),
+          ),
+        )
+        .get(),
+    )
+    const imported =
+      !durable && item.status === status
+        ? await legacy(input, item, snapshot, run, action, title, plan, message)
+        : undefined
     const claimed = claim({
       sessionID: input.sessionID,
       proposalID: input.proposalID,
@@ -84,6 +108,7 @@ export namespace SessionTaskConfirmation {
       actionID: action,
       snapshot,
       hash: digest(snapshot),
+      imported,
     })
     const proof = claimed.owner ? claimed.row : await settled(claimed.row)
     const beat = claimed.owner ? pulse(proof) : undefined
@@ -100,7 +125,6 @@ export namespace SessionTaskConfirmation {
         throw new ConflictError({ message: `Task handoff is already cancelled: ${handoff.id}` })
       if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
         throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
-      const status = input.action === "confirm" ? "confirmed" : "cancelled"
       if (proof.status === "completed" || proof.status === "cancelled") {
         if (rec(proof.result)) return proof.result
         throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
@@ -689,6 +713,89 @@ export namespace SessionTaskConfirmation {
     )
   }
 
+  async function legacy(
+    input: Parameters<typeof respond>[0],
+    item: Record<string, unknown>,
+    snapshot: Record<string, unknown>,
+    run: string,
+    action: string,
+    title: string,
+    plan: string,
+    message: string,
+  ) {
+    const response = item.response
+    if (response !== input.action)
+      throw new ConflictError({ message: `Task terminal decision proof is invalid: ${input.proposalID}` })
+    const intent = rec(snapshot.intent) ? snapshot.intent : {}
+    const proof = await SessionAssignment.bySource({ sessionID: input.sessionID, runID: run, actionID: action })
+    const assignment = input.action === "confirm" ? proof : undefined
+    const saved = rec(item.assignment) ? text(item.assignment.id) : undefined
+    if (input.action === "cancel" && (proof || saved))
+      throw new ConflictError({ message: `Task cancelled assignment proof is invalid: ${input.proposalID}` })
+    if (input.action === "confirm") {
+      const content = assignment ? await SessionAssignment.content(assignment.id) : undefined
+      const body = rec(content) ? content : {}
+      const route = rec(body.assignment) ? body.assignment : {}
+      const source = rec(body.source) ? body.source : {}
+      if (
+        !assignment ||
+        saved !== assignment.id ||
+        assignment.source_type !== "confirm" ||
+        assignment.source_session_id !== input.sessionID ||
+        assignment.source_message_id !== message ||
+        assignment.source_run_id !== run ||
+        assignment.source_action_id !== action ||
+        assignment.title !== title ||
+        assignment.target !== intent.target ||
+        body.plan !== plan ||
+        route.op !== intent.op ||
+        route.target !== intent.target ||
+        source.session_id !== input.sessionID ||
+        source.message_id !== message ||
+        source.run_id !== run ||
+        source.action_id !== action
+      )
+        throw new ConflictError({ message: `Task terminal assignment proof is invalid: ${input.proposalID}` })
+    }
+    const canonical =
+      input.op === "handoff"
+        ? SessionTaskHandoff.locate({
+            sourceID: input.sessionID,
+            messageID: MessageID.make(message),
+            runID: run,
+            actionID: action,
+            title,
+            body: plan,
+          })
+        : undefined
+    const handoff =
+      input.op === "handoff" && input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
+    if (
+      input.op === "handoff" &&
+      (!canonical ||
+        !handoff ||
+        canonical.id !== handoff.id ||
+        handoff.source_session_id !== input.sessionID ||
+        handoff.source_message_id !== message ||
+        (input.action === "confirm"
+          ? !["confirmed", "creating", "started"].includes(handoff.status)
+          : handoff.status !== "cancelled"))
+    )
+      throw new ConflictError({ message: `Task terminal handoff proof is invalid: ${input.proposalID}` })
+    return {
+      assignment,
+      handoff,
+      result: {
+        proposal_id: input.proposalID,
+        action: input.action,
+        assignment_id: assignment?.id,
+        status: handoff?.status,
+        target_session_id: handoff?.target_session_id ?? undefined,
+        target_task_id: handoff?.target_task_id ?? undefined,
+      },
+    }
+  }
+
   function claim(input: {
     sessionID: SessionID
     proposalID: string
@@ -700,6 +807,7 @@ export namespace SessionTaskConfirmation {
     actionID: string
     snapshot: Record<string, unknown>
     hash: string
+    imported?: Awaited<ReturnType<typeof legacy>>
   }) {
     return Database.transaction(
       (tx) => {
@@ -723,6 +831,16 @@ export namespace SessionTaskConfirmation {
         )
         if (proposal.length !== 1 || !rec(proposal[0]) || digest(snap(input.sessionID, proposal[0])) !== input.hash)
           throw new ConflictError({ message: `Task proposal is not current: ${input.proposalID}` })
+        if (input.imported) {
+          const assignment = rec(proposal[0].assignment) ? text(proposal[0].assignment.id) : undefined
+          const status = input.action === "confirm" ? "confirmed" : "cancelled"
+          if (
+            proposal[0].status !== status ||
+            proposal[0].response !== input.action ||
+            assignment !== input.imported.assignment?.id
+          )
+            throw new ConflictError({ message: `Task terminal proof changed: ${input.proposalID}` })
+        }
         const found = tx
           .select()
           .from(TaskConfirmationTable)
@@ -780,7 +898,7 @@ export namespace SessionTaskConfirmation {
           }
           return { row: found, owner: false }
         }
-        if (input.op === "update") {
+        if (input.op === "update" && !input.imported) {
           const task = tx
             .select({ revision: SessionTaskTable.current_revision_id })
             .from(SessionTaskTable)
@@ -792,6 +910,70 @@ export namespace SessionTaskConfirmation {
         }
         const now = Date.now()
         const token = crypto.randomUUID()
+        if (input.imported) {
+          const assignment = input.imported.assignment
+            ? tx.select().from(AssignmentTable).where(eq(AssignmentTable.id, input.imported.assignment.id)).get()
+            : undefined
+          if (
+            input.imported.assignment &&
+            (!assignment ||
+              assignment.source_session_id !== input.sessionID ||
+              assignment.source_run_id !== input.run ||
+              assignment.source_action_id !== input.actionID ||
+              assignment.content_ref !== input.imported.assignment.content_ref ||
+              assignment.content_hash !== input.imported.assignment.content_hash ||
+              assignment.content_version !== input.imported.assignment.content_version)
+          )
+            throw new ConflictError({ message: `Task assignment proof changed: ${input.proposalID}` })
+          const handoff = input.imported.handoff
+            ? tx.select().from(TaskHandoffTable).where(eq(TaskHandoffTable.id, input.imported.handoff.id)).get()
+            : undefined
+          if (
+            input.imported.handoff &&
+            (!handoff ||
+              handoff.source_session_id !== input.imported.handoff.source_session_id ||
+              handoff.source_message_id !== input.imported.handoff.source_message_id ||
+              handoff.dedupe_key !== input.imported.handoff.dedupe_key ||
+              handoff.title !== input.imported.handoff.title ||
+              handoff.body !== input.imported.handoff.body ||
+              handoff.body_hash !== input.imported.handoff.body_hash ||
+              JSON.stringify(handoff.context_refs) !== JSON.stringify(input.imported.handoff.context_refs) ||
+              handoff.status !== input.imported.handoff.status ||
+              handoff.target_session_id !== input.imported.handoff.target_session_id ||
+              handoff.target_task_id !== input.imported.handoff.target_task_id)
+          )
+            throw new ConflictError({ message: `Task handoff proof changed: ${input.proposalID}` })
+          return {
+            row: tx
+              .insert(TaskConfirmationTable)
+              .values({
+                id: `confirmation_${new Bun.CryptoHasher("sha256").update(`${input.sessionID}:${input.proposalID}`).digest("hex").slice(0, 24)}`,
+                session_id: input.sessionID,
+                proposal_id: input.proposalID,
+                operation: input.op,
+                decision: input.action,
+                status: input.action === "confirm" ? "completed" : "cancelled",
+                expected_revision_id: input.revisionID ?? null,
+                handoff_id: input.handoffID ?? null,
+                assignment_id: input.imported.assignment?.id ?? null,
+                message_id: MessageID.make(
+                  `msg_${new Bun.CryptoHasher("sha256").update(`continuation:${input.sessionID}:${input.proposalID}`).digest("hex").slice(0, 26)}`,
+                ),
+                owner_token: token,
+                generation: 1,
+                lease_until: 0,
+                snapshot: input.snapshot,
+                snapshot_hash: input.hash,
+                result: input.imported.result,
+                error: null,
+                time_created: now,
+                time_updated: now,
+              })
+              .returning()
+              .get(),
+            owner: false,
+          }
+        }
         return {
           row: tx
             .insert(TaskConfirmationTable)
