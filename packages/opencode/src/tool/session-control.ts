@@ -14,11 +14,14 @@ export const SessionControlTool = Tool.define("session_control", {
   description: "List or stop only child sessions in the current task revision update scope.",
   parameters,
   async execute(input, ctx) {
+    const task = await SessionTask.get(ctx.sessionID)
     const scope = await SessionTask.scope(ctx.sessionID)
     const ids =
       input.action === "stop" ? input.session_ids.map((item) => SessionID.make(item)) : scope.map((item) => item.session_id)
     const allowed = new Set(scope.map((item) => item.session_id))
     if (ids.some((id) => !allowed.has(id))) throw new SessionTask.Conflict("session_control_scope_violation")
+    if (input.action !== "list" && task?.task.status !== "revising" && task?.task.status !== "blocked")
+      throw new SessionTask.Conflict("session_control_revision_required")
     const selected = scope.filter((item) => ids.includes(item.session_id))
     if (input.action !== "list") {
       const runs = Map.groupBy(selected, (item) => item.run_id)

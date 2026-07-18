@@ -897,6 +897,8 @@ Expected: 远端 `dev` 包含全部提交，本地 `dev...origin/dev` 为 `0 0`�
 
 收尾审计补充：在线恢复由提交后的异步 effect 启动，避免当前 Runner 等待同 Session bootstrap prompt；bootstrap 成功状态为 `delivered`，只写 `delivered_at`，不提前写 `acked_at`。direct stop 忽略可损坏的 pending/child DSL assignment 并从 canonical Assignment row 重建。外部 prompt part 会剥离 proposal/progress 的全部保留字段，而不只剥离 `kind`。
 
+Critical 收口补充：stop、activate 或 bootstrap 任一步失败都由 `SessionTaskRecovery` 统一将 Task 置为 `blocked` 并写入幂等 progress error；启动扫描不得静默丢失该证据。已激活 Revision 的 bootstrap 可从 blocked 状态继续重试，成功投递后恢复为 `running`。`session_control` 的 stop/stop_all 仅在 `revising` 或 `blocked` 阶段开放，running/waiting_user 状态不能绕过 update confirm 停止 child。
+
 ## 实施顺序和并行边界
 
 - Task 1-2 必须串行，先锁定数据库和 read model。

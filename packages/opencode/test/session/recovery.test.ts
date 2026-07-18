@@ -177,6 +177,71 @@ describe("session recovery", () => {
     }
   })
 
+  test("blocks an activated revision and records progress when bootstrap prompt fails", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let rejected = true
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      if (rejected) throw new Error("bootstrap rejected")
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_prompt_failure"),
+        fn: async () => {
+          const data = await revision(tmp.path, "prompt_failure")
+
+          await expect(SessionTaskRecovery.resume(data.session.id)).rejects.toThrow("bootstrap rejected")
+
+          expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+          const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
+          const progress = msg.parts.find((part) => part.type === "text" && part.metadata?.kind === "task_update_progress")
+          expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
+            kind: "task_update_progress",
+            status: "blocked",
+            error: "bootstrap rejected",
+            draft_revision_id: data.revision.id,
+          })
+
+          rejected = false
+          expect(await SessionTaskRecovery.resume(data.session.id)).toBe(true)
+          expect((await SessionTask.get(data.session.id))?.task.status).toBe("running")
+          const row = Database.use((db) => db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, data.session.id)).get())
+          expect(row?.status).toBe("delivered")
+          expect((await SessionTask.get(data.session.id))?.revision.id).toBe(data.revision.id)
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("scan persists blocked progress instead of silently swallowing bootstrap failure", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockRejectedValue(new Error("scan bootstrap rejected"))
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_scan_failure"),
+        fn: async () => {
+          const data = await revision(tmp.path, "scan_failure")
+
+          expect(await SessionTaskRecovery.scan()).toEqual([false])
+
+          expect((await SessionTask.get(data.session.id))?.task.status).toBe("blocked")
+          const msg = await MessageV2.get({ sessionID: data.session.id, messageID: data.messageID })
+          const progress = msg.parts.find((part) => part.type === "text" && part.metadata?.kind === "task_update_progress")
+          expect(progress?.type === "text" ? progress.metadata : undefined).toMatchObject({
+            kind: "task_update_progress",
+            status: "blocked",
+            error: "scan bootstrap rejected",
+            draft_revision_id: data.revision.id,
+          })
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("reconstructs direct revision stop from canonical assignment rows after restart", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
@@ -637,4 +702,51 @@ function control(sessionID: SessionID): Tool.Context {
     metadata() {},
     async ask() {},
   }
+}
+
+async function revision(dir: string, label: string) {
+  const session = await Session.create({ agent: "default" })
+  const user = (await Session.updateMessage({
+    id: MessageID.ascending(),
+    sessionID: session.id,
+    role: "user",
+    time: { created: Date.now() },
+    agent: "default",
+    model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+    tools: {},
+    mode: "",
+  } as MessageV2.User)) as MessageV2.User
+  const messageID = MessageID.ascending()
+  await Session.updateMessage({
+    id: messageID,
+    sessionID: session.id,
+    parentID: user.id,
+    role: "assistant",
+    mode: "default",
+    agent: "default",
+    path: { cwd: dir, root: dir },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    modelID: ModelID.make("gpt-5.2"),
+    providerID: ProviderID.make("openai"),
+    time: { created: Date.now() },
+  } as MessageV2.Assistant)
+  const first = await SessionTask.route({
+    sessionID: session.id,
+    messageID,
+    runID: `run_${label}_old`,
+    legacy: { title: "Old", body: "Old" },
+    actions: [],
+  })
+  if (first.type !== "execute") throw new Error("task missing")
+  const draft = await SessionTask.route({
+    sessionID: session.id,
+    messageID,
+    runID: `run_${label}_new`,
+    assignment: { op: "update", target: "self", title: "New", body: "New" },
+    actions: [],
+  })
+  if (draft.type !== "update") throw new Error("draft missing")
+  await SessionTask.activate({ taskID: first.task.id, revisionID: draft.revision.id, bootstrap: true })
+  return { session, messageID, revision: draft.revision }
 }

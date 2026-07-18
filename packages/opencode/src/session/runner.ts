@@ -1571,26 +1571,7 @@ export namespace SessionRunner {
         time: { start: Date.now(), end: Date.now() },
       })
       Database.effect(() =>
-        SessionTaskRecovery.resume(input.sessionID).catch(async (err) => {
-          SessionTaskRecovery.block(input.sessionID)
-          await Session.updatePart({
-            id: PartID.ascending(),
-            messageID: input.messageID,
-            sessionID: input.sessionID,
-            type: "text",
-            text: "Task revision shutdown is blocked.",
-            synthetic: true,
-            ignored: true,
-            metadata: {
-              kind: "task_update_progress",
-              proposal_id: `${input.runID}:${confirms[0]?.id ?? "update"}`,
-              draft_revision_id: result.revision.id,
-              old_revision_id: result.revision.previous_id,
-              status: "blocked",
-              error: err instanceof Error ? err.message : String(err),
-            },
-            time: { start: Date.now(), end: Date.now() },
-          })
+        SessionTaskRecovery.resume(input.sessionID).catch((err) => {
           log.warn("task revision recovery blocked", { err, sessionID: input.sessionID })
         }),
       )
