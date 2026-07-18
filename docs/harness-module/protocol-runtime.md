@@ -58,6 +58,10 @@ Bootstrap delivery revalidates that identity across each asynchronous message, S
 
 Revision activation and bootstrap claim form a database-level mutex around the irreversible prompt boundary. Activation runs in an immediate transaction and its current-Revision CAS rejects a live `delivering` bootstrap lease; the transaction rolls back and returns a retryable conflict. Once that prompt is delivered, activation can retry the same draft. Pending, delivered, acked, and expired delivery leases do not block activation. If activation commits first, the bootstrap claim's current-Revision guard prevents the archived Revision from entering delivery.
 
+Concurrent recovery resumes carry an expected Task/current/draft owner. If one resume activates the shared draft first, a competing activation conflict is idempotent only when that exact draft is now the active current Revision. Failure blocking uses the expected current Revision as a CAS, so a stale loser cannot block the winner's bootstrap; genuine bootstrap failures still block their owned current Revision and remain retryable.
+
+Startup recovery scanning selects only revising or blocked Tasks, plus running Tasks whose current Revision has a pending or delivering bootstrap outbox. It processes candidates in batches of four, isolates each candidate failure, and logs candidate count and elapsed duration. Direct Revision shutdown of delegated children also propagates its canonical reason into both the child terminal status message and status transition log.
+
 Each consultation prompt must include the user goal, current planning boundary, known repository evidence, assigned professional scope, concrete questions, constraints, exclusions, evidence expectations, risks, and handoff shape. A worker used as a design consultant is explicitly read-only for that assignment. Planner synthesis must separate evidence from inference, resolve conflicts, and request a focused follow-up when a material disagreement cannot be settled from available evidence.
 
 ## Package Agent Catalog

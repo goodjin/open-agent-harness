@@ -31,6 +31,20 @@
 4. claim 先提交时 activate 返回可重试冲突，prompt 完成并转 delivered 后可再次 activate；activate 先提交时旧 Revision claim 失败。
 5. pending、delivered、acked 和超过 lease 窗口的 delivering 行不阻止 activate，避免恢复死锁。
 
+## 并发恢复所有权补充
+
+两个 resume 可能同时读取相同的 revising Task 和 draft。一个成功激活后，另一个 activate 冲突不得通过全局 fail 路径封锁赢家的新 current Revision：
+
+1. 每次 resume 记录预期 `task_id + current_revision_id + draft/revision_id` owner。
+2. 失败封锁使用 owner CAS，只能更新仍匹配预期 current Revision 的 Task。
+3. activate 冲突只有在同一个 draft 已成为该 Task current Revision 时才按幂等推进处理；其他错误继续抛出。
+4. bootstrap 的真实 prompt 失败仍以新 current Revision owner 封锁，并保留重试能力。
+
+## 同轮恢复质量修复
+
+- direct `terminate_with_result` 必须把调用方的 canonical reason/source 传入状态消息，不能退化成通用的用户终止原因。
+- recovery scan 只读取 revising/blocked，或确有当前 Revision bootstrap outbox 需要恢复的 running Task，并以固定并发上限执行；单项失败继续隔离和记录。
+
 ## 影响文件
 
 - `packages/opencode/src/session/task-recovery.ts`
@@ -51,3 +65,6 @@
 - prompt barrier 在互斥修复前稳定失败：v2 prompt 已持久化并持有 delivering lease 时，v3 activate 仍然成功。
 - 互斥修复后 v3 activate 返回可重试冲突；v2 delivered 后相同 draft 可再次 activate，v3 bootstrap 随后正常投递。
 - pending、delivered 和过期 delivering lease 均不会阻塞 Revision 激活。
+- 双 resume barrier 在修复前得到一条 fulfilled 和一条 rejected；修复后两条均安全完成，Task 保持 running，bootstrap prompt/outbox 各一份。
+- direct terminate-with-result 在修复前丢失调用方 reason；修复后 status message 与 transition log 均保留 canonical reason，默认文案不变。
+- scan 在修复前把普通 running Task 计入候选并无界启动；修复后仅返回可恢复候选，测试峰值并发不超过四。

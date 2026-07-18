@@ -16,9 +16,10 @@ import { ActionResult } from "../../src/session/action-result"
 import { SessionResult } from "../../src/session/result"
 import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTask } from "../../src/session/task"
+import { SessionLog } from "../../src/session/log"
 import type { AgentProtocol } from "../../src/protocol/schema"
 import { and, Database, eq } from "../../src/storage/db"
-import { SessionResultTable } from "../../src/session/session.sql"
+import { AssignmentTable, SessionResultTable } from "../../src/session/session.sql"
 
 describe("SessionDelegation", () => {
   const poll = async (fn: () => boolean | Promise<boolean>, timeout = 5_000) => {
@@ -2908,6 +2909,66 @@ describe("SessionDelegation", () => {
               expect((await SessionResult.listForParent(parent.id)).map((item) => item.id)).toEqual(first.map((item) => item.id))
               expect(summaries).toBe(count)
             }
+          },
+        }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("direct terminate-with-result preserves its canonical reason in child status", async () => {
+    await using tmp = await tmpdir()
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () => WorkspaceContext.provide({
+          workspaceID: WorkspaceID.ascending(),
+          fn: async () => {
+            const parent = await Session.create({ agent: "default" })
+            const child = await Session.create({ parentID: parent.id, agent: "backend" })
+            const now = Date.now()
+            Database.use((db) =>
+              db.insert(AssignmentTable).values({
+                id: "assignment_revision_stop_reason",
+                parent_id: null,
+                session_id: child.id,
+                source_type: "delegation",
+                source_session_id: parent.id,
+                source_message_id: MessageID.ascending(),
+                source_run_id: "run_revision_stop_reason",
+                source_action_id: "revision_stop_reason",
+                target: "backend",
+                title: "Revision stop",
+                status: "running",
+                content_ref: "test",
+                content_hash: "test",
+                content_version: 1,
+                result_ref: null,
+                result_status: null,
+                time_created: now,
+                time_updated: now,
+              }).run(),
+            )
+            SessionStatus.set(child.id, { type: "running" })
+
+            await SessionDelegation.stop({
+              childIDs: [child.id],
+              runID: "run_revision_stop_reason",
+              sessionID: parent.id,
+              reason: "Stopped for confirmed task revision.",
+            })
+
+            expect(SessionStatus.get(child.id)).toEqual({
+              type: "user_completed",
+              message: "Stopped for confirmed task revision.",
+            })
+            await poll(async () =>
+              (await SessionLog.list({ sessionID: child.id, limit: 20 })).some(
+                (item) => item.type === "session.status.changed" && item.data.reason === "Stopped for confirmed task revision.",
+              ),
+            )
           },
         }),
       })

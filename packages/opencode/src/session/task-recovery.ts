@@ -1,4 +1,4 @@
-import { and, Database, eq, exists, inArray } from "@/storage/db"
+import { and, Database, eq, exists, inArray, or, sql } from "@/storage/db"
 import { Session } from "."
 import { SessionDelegation } from "./delegation"
 import { MessageV2 } from "./message-v2"
@@ -13,32 +13,43 @@ import { Instance } from "@/project/instance"
 
 export namespace SessionTaskRecovery {
   const log = Log.create({ service: "session.task-recovery" })
+  type Owner = { task?: string; current?: string; revision?: string }
 
-  export function block(sessionID: SessionID) {
-    Database.use((tx) =>
-      tx
+  function block(sessionID: SessionID, owner: Owner) {
+    const task = owner.task
+    const current = owner.current
+    if (!task || !current) return false
+    return Database.use((tx) =>
+      !!tx
         .update(SessionTaskTable)
         .set({ status: "blocked", time_updated: Date.now() })
         .where(
           and(
+            eq(SessionTaskTable.id, task),
             eq(SessionTaskTable.session_id, sessionID),
+            eq(SessionTaskTable.current_revision_id, current),
             inArray(SessionTaskTable.status, ["revising", "blocked", "running"]),
           ),
         )
-        .run(),
+        .returning({ id: SessionTaskTable.id })
+        .get(),
     )
   }
 
   export async function resume(sessionID: SessionID) {
-    return run(sessionID).catch(async (err) => {
-      await fail(sessionID, err)
+    const owner: Owner = {}
+    return run(sessionID, owner).catch(async (err) => {
+      await fail(sessionID, err, owner)
       throw err
     })
   }
 
-  async function run(sessionID: SessionID) {
+  async function run(sessionID: SessionID, owner: Owner) {
     const stored = await SessionTask.get(sessionID)
     if (!stored) return false
+    owner.task = stored.task.id
+    owner.current = stored.revision.id
+    owner.revision = stored.revision.id
     if (stored.task.status === "revising" || stored.task.status === "blocked") {
       const draft = Database.use((tx) =>
         tx
@@ -54,6 +65,7 @@ export namespace SessionTaskRecovery {
           .get(),
       )
       if (draft) {
+        owner.revision = draft.id
         const scope = await SessionTask.scope(sessionID)
         for (const [run, rows] of Map.groupBy(scope, (item) => item.run_id)) {
           await SessionDelegation.stop({
@@ -77,7 +89,13 @@ export namespace SessionTaskRecovery {
           )
         )
           return true
-        await SessionTask.activate({ taskID: stored.task.id, revisionID: draft.id, bootstrap: true })
+        try {
+          await SessionTask.activate({ taskID: stored.task.id, revisionID: draft.id, bootstrap: true })
+        } catch (err) {
+          if (err instanceof SessionTask.Conflict && advanced(sessionID, stored.task.id, draft.id)) return true
+          throw err
+        }
+        owner.current = draft.id
       } else if (stored.task.status === "revising") return false
     }
     const current = await SessionTask.get(sessionID)
@@ -99,6 +117,25 @@ export namespace SessionTaskRecovery {
     return true
   }
 
+  function advanced(sessionID: SessionID, taskID: string, revisionID: string) {
+    return Database.use((tx) =>
+      !!tx
+        .select({ id: SessionTaskTable.id })
+        .from(SessionTaskTable)
+        .innerJoin(TaskRevisionTable, eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id))
+        .where(
+          and(
+            eq(SessionTaskTable.id, taskID),
+            eq(SessionTaskTable.session_id, sessionID),
+            eq(SessionTaskTable.current_revision_id, revisionID),
+            eq(TaskRevisionTable.task_id, taskID),
+            eq(TaskRevisionTable.status, "active"),
+          ),
+        )
+        .get(),
+    )
+  }
+
   function terminal(status: SessionStatus.Info) {
     return (
       status.type === "completed" ||
@@ -114,6 +151,7 @@ export namespace SessionTaskRecovery {
   }
 
   export async function scan() {
+    const started = Date.now()
     const ids = Database.use((tx) =>
       tx
         .select({ id: SessionTaskTable.session_id })
@@ -121,41 +159,64 @@ export namespace SessionTaskRecovery {
         .innerJoin(SessionTable, eq(SessionTable.id, SessionTaskTable.session_id))
         .where(
           and(
-            inArray(SessionTaskTable.status, ["revising", "blocked", "running"]),
+            or(
+              inArray(SessionTaskTable.status, ["revising", "blocked"]),
+              and(
+                eq(SessionTaskTable.status, "running"),
+                exists(
+                  tx
+                    .select({ id: SessionEventOutboxTable.id })
+                    .from(SessionEventOutboxTable)
+                    .where(
+                      and(
+                        eq(SessionEventOutboxTable.session_id, SessionTaskTable.session_id),
+                        eq(SessionEventOutboxTable.kind, "task_revision_bootstrap"),
+                        inArray(SessionEventOutboxTable.status, ["pending", "delivering"]),
+                        sql`${SessionEventOutboxTable.dedupe_key} = ${"task_revision_bootstrap:"} || ${SessionTaskTable.current_revision_id}`,
+                      ),
+                    ),
+                ),
+              ),
+            ),
             eq(SessionTable.project_id, Instance.project.id),
             eq(SessionTable.directory, Instance.directory),
           ),
         )
         .all(),
     )
-    return Promise.all(
-      ids.map((item) =>
-        resume(item.id).catch((err) => {
-          log.warn("task recovery scan blocked", { err, sessionID: item.id })
-          return false
-        }),
-      ),
-    )
+    const results: boolean[] = []
+    for (let index = 0; index < ids.length; index += 4) {
+      const batch = await Promise.all(
+        ids.slice(index, index + 4).map((item) =>
+          resume(item.id).catch((err) => {
+            log.warn("task recovery scan blocked", { err, sessionID: item.id })
+            return false
+          }),
+        ),
+      )
+      results.push(...batch)
+    }
+    log.info("task recovery scan completed", { candidates: ids.length, duration: Date.now() - started })
+    return results
   }
 
-  async function fail(sessionID: SessionID, err: unknown) {
-    const stored = await SessionTask.get(sessionID)
-    if (!stored) return
-    const draft = Database.use((tx) =>
+  async function fail(sessionID: SessionID, err: unknown, owner: Owner) {
+    const task = owner.task
+    const id = owner.revision
+    if (!task || !id || !block(sessionID, owner)) return
+    const revision = Database.use((tx) =>
       tx
         .select()
         .from(TaskRevisionTable)
         .where(
           and(
-            eq(TaskRevisionTable.task_id, stored.task.id),
-            eq(TaskRevisionTable.previous_id, stored.revision.id),
-            eq(TaskRevisionTable.status, "draft"),
+            eq(TaskRevisionTable.id, id),
+            eq(TaskRevisionTable.task_id, task),
           ),
         )
         .get(),
     )
-    block(sessionID)
-    const revision = draft ?? stored.revision
+    if (!revision) return
     const messageID = revision.source_message_id
     if (!messageID) return
     const msg = await MessageV2.get({ sessionID, messageID }).catch(() => undefined)
@@ -179,7 +240,7 @@ export namespace SessionTaskRecovery {
         ...(prev?.type === "text" ? prev.metadata : {}),
         kind: "task_update_progress",
         draft_revision_id: revision.id,
-        old_revision_id: draft ? stored.revision.id : revision.previous_id,
+        old_revision_id: revision.previous_id,
         status: "blocked",
         error: err instanceof Error ? err.message : String(err),
       },

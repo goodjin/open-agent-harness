@@ -1836,11 +1836,12 @@ export namespace SessionDelegation {
         }
         if (!stopdone(status)) {
           const { SessionPrompt } = await import("./prompt")
+          const reason = opts?.reason
           SessionPrompt.cancel(entry.id)
           SessionStatus.set(
             entry.id,
-            { type: "user_completed", message: "Terminated by user after collecting current result." },
-            { reason: "User terminated delegated child session and collected current result." },
+            { type: "user_completed", message: reason ?? "Terminated by user after collecting current result." },
+            { reason: reason ?? "User terminated delegated child session and collected current result." },
           )
         }
       }

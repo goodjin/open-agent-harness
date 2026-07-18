@@ -120,6 +120,97 @@ describe("session recovery", () => {
     }
   })
 
+  test("treats a concurrent activation of the same recovery draft as idempotent", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let scopes = 0
+    let calls = 0
+    let ready = () => {}
+    let release = () => {}
+    let conflict = () => {}
+    let resume = () => {}
+    const synced = new Promise<void>((resolve) => (ready = resolve))
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const caught = new Promise<void>((resolve) => (conflict = resolve))
+    const retry = new Promise<void>((resolve) => (resume = resolve))
+    const original = SessionTask.scope
+    const activate = SessionTask.activate
+    const scope = spyOn(SessionTask, "scope").mockImplementation((async (sessionID: SessionID) => {
+      const rows = await original(sessionID)
+      scopes++
+      if (scopes === 2) ready()
+      await gate
+      return rows
+    }) as never)
+    const activation = spyOn(SessionTask, "activate").mockImplementation((async (input: Parameters<typeof SessionTask.activate>[0]) => {
+      try {
+        return await activate(input)
+      } catch (err) {
+        conflict()
+        await retry
+        throw err
+      }
+    }) as never)
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      calls++
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_resume_race"),
+        fn: async () => {
+          const session = await Session.create({ agent: "default" })
+          const first = await SessionTask.route({
+            sessionID: session.id,
+            runID: "run_resume_race_old",
+            legacy: { title: "Old", body: "Old" },
+            actions: [],
+          })
+          if (first.type !== "execute") throw new Error("task missing")
+          const draft = await SessionTask.route({
+            sessionID: session.id,
+            runID: "run_resume_race_new",
+            assignment: { op: "update", target: "self", title: "New", body: "New" },
+            actions: [],
+          })
+          if (draft.type !== "update") throw new Error("draft missing")
+
+          const runs = [SessionTaskRecovery.resume(session.id), SessionTaskRecovery.resume(session.id)]
+          await synced
+          release()
+          await caught
+          let delivered = false
+          for (let index = 0; index < 100; index++) {
+            const row = Database.use((db) =>
+              db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).get(),
+            )
+            if (row?.status === "delivered") {
+              delivered = true
+              break
+            }
+            await Bun.sleep(1)
+          }
+          expect(delivered).toBe(true)
+          resume()
+          const settled = await Promise.allSettled(runs)
+
+          expect(settled.map((item) => item.status)).toEqual(["fulfilled", "fulfilled"])
+          expect((await SessionTask.get(session.id))?.revision.id).toBe(draft.revision.id)
+          expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+          expect(calls).toBe(1)
+          expect(Database.use((db) =>
+            db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.session_id, session.id)).all(),
+          )).toHaveLength(1)
+        },
+      }) })
+    } finally {
+      release()
+      resume()
+      scope.mockRestore()
+      activation.mockRestore()
+      prompt.mockRestore()
+    }
+  })
+
   test("recovers bootstrap delivery leases without duplicate prompts", async () => {
     await using tmp = await tmpdir({ git: true })
     let calls = 0
@@ -550,6 +641,53 @@ describe("session recovery", () => {
     }) })
   })
 
+  test("scans only recoverable tasks with bounded concurrency", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let active = 0
+    let peak = 0
+    const calls: SessionID[] = []
+    const get = SessionTask.get
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    try {
+      await Instance.provide({ directory: tmp.path, fn: () => WorkspaceContext.provide({
+        workspaceID: WorkspaceID.make("wrk_task_revision_scan_limit"),
+        fn: async () => {
+          const candidates = await Promise.all(
+            Array.from({ length: 6 }, (_, index) => revision(tmp.path, `scan_limit_${index}`)),
+          )
+          const ordinary = await Session.create({ agent: "default" })
+          const task = await SessionTask.route({
+            sessionID: ordinary.id,
+            runID: "run_scan_limit_ordinary",
+            legacy: { title: "Ordinary", body: "Ordinary" },
+            actions: [],
+          })
+          if (task.type !== "execute") throw new Error("ordinary task missing")
+          const lookup = spyOn(SessionTask, "get").mockImplementation((async (sessionID: SessionID) => {
+            calls.push(sessionID)
+            active++
+            peak = Math.max(peak, active)
+            await Bun.sleep(20)
+            try {
+              return await get(sessionID)
+            } finally {
+              active--
+            }
+          }) as never)
+          try {
+            expect(await SessionTaskRecovery.scan()).toHaveLength(candidates.length)
+            expect(calls).not.toContain(ordinary.id)
+            expect(peak).toBeLessThanOrEqual(4)
+          } finally {
+            lookup.mockRestore()
+          }
+        },
+      }) })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("scan advances only task recovery rows from the current project directory", async () => {
     await using a = await tmpdir({ git: true })
     await using b = await tmpdir({ git: true })
@@ -851,7 +989,7 @@ describe("session recovery", () => {
               expect(results.filter((item) => children.some((child) => child.id === item.child_session_id))).toHaveLength(5)
               expect(bootstraps).toBe(1)
               expect(await SessionTaskRecovery.resume(parent.id)).toBe(true)
-              expect(await SessionTaskRecovery.scan()).toContain(true)
+              expect(await SessionTaskRecovery.scan()).toEqual([])
               expect((await SessionResult.listForParent(parent.id)).map((item) => item.id).sort()).toEqual(ids)
               expect(calls.filter((item) => item.agent === "summary")).toHaveLength(summaries)
               expect(calls.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
