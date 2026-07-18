@@ -36,6 +36,9 @@ The claim owner starts a heartbeat immediately and keeps it active across Assign
 
 - RED/GREEN route tests for the revision barrier, failed continuation, fixed identity, replay, and generated SDK surface.
 - Controlled lease and barrier tests across Assignment, Handoff, and live Question reply.
+- Heartbeat renewal exceptions are contained, logged, and converted into a fenced 409 while the interval is always cleared.
+- Recovery scans process at most four confirmations concurrently, isolate individual failures, and log candidate count and duration.
+- Cross-session ownership lookup remains a project/directory-scoped read and does not acquire an immediate write transaction.
 - Public Question reply route tests proving live and restored Task confirmations enter the same confirmation service and fixed continuation outbox, while generic Questions keep their existing behavior.
 - Legacy terminal import tests proving only canonical confirmed/cancelled DSL state becomes a durable terminal confirmation without a new continuation.
 - Real Bun child-process contention test against one SQLite database.

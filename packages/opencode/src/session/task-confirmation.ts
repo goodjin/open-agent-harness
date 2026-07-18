@@ -212,7 +212,8 @@ export namespace SessionTaskConfirmation {
     }
   }
 
-  export async function scan() {
+  export async function scan(run = respond) {
+    const start = Date.now()
     const rows = Database.use((db) =>
       db
         .select()
@@ -233,24 +234,30 @@ export namespace SessionTaskConfirmation {
         )
         .all(),
     )
-    return Promise.all(
-      rows.map((row) =>
-        respond({
-          sessionID: row.task_confirmation.session_id,
-          proposalID: row.task_confirmation.proposal_id,
-          action: row.task_confirmation.decision,
-          op: row.task_confirmation.operation,
-          revisionID: row.task_confirmation.expected_revision_id ?? undefined,
-          handoffID: row.task_confirmation.handoff_id ?? undefined,
-        }).then(
-          () => true,
-          (err) => {
-            log.warn("task confirmation recovery blocked", { confirmationID: row.task_confirmation.id, err })
-            return false
-          },
+    const results: boolean[] = []
+    for (let index = 0; index < rows.length; index += 4) {
+      const batch = await Promise.all(
+        rows.slice(index, index + 4).map((row) =>
+          run({
+            sessionID: row.task_confirmation.session_id,
+            proposalID: row.task_confirmation.proposal_id,
+            action: row.task_confirmation.decision,
+            op: row.task_confirmation.operation,
+            revisionID: row.task_confirmation.expected_revision_id ?? undefined,
+            handoffID: row.task_confirmation.handoff_id ?? undefined,
+          }).then(
+            () => true,
+            (err) => {
+              log.warn("task confirmation recovery blocked", { confirmationID: row.task_confirmation.id, err })
+              return false
+            },
+          ),
         ),
-      ),
-    )
+      )
+      results.push(...batch)
+    }
+    log.info("task confirmation recovery scan complete", { candidates: rows.length, duration: Date.now() - start })
+    return results
   }
 
   function rec(input: unknown): input is Record<string, unknown> {
@@ -290,26 +297,24 @@ export namespace SessionTaskConfirmation {
   }
 
   function owner(sessionID: SessionID, run: string, action: string) {
-    return Database.transaction(
-      (db) =>
-        db
-          .select({ id: SessionTable.id, ctx: SessionTable.dsl_context })
-          .from(SessionTable)
-          .where(
-            and(
-              eq(SessionTable.project_id, Instance.project.id),
-              eq(SessionTable.directory, Instance.directory),
-              ne(SessionTable.id, sessionID),
-            ),
-          )
-          .all()
-          .find((row) => {
-            const ctx = rec(row.ctx) ? row.ctx : {}
-            const protocol = rec(ctx.protocol) ? ctx.protocol : {}
-            const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
-            return vals.some((item) => rec(item) && item.run_id === run && item.action_id === action)
-          }),
-      { behavior: "immediate" },
+    return Database.use((db) =>
+      db
+        .select({ id: SessionTable.id, ctx: SessionTable.dsl_context })
+        .from(SessionTable)
+        .where(
+          and(
+            eq(SessionTable.project_id, Instance.project.id),
+            eq(SessionTable.directory, Instance.directory),
+            ne(SessionTable.id, sessionID),
+          ),
+        )
+        .all()
+        .find((row) => {
+          const ctx = rec(row.ctx) ? row.ctx : {}
+          const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+          const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+          return vals.some((item) => rec(item) && item.run_id === run && item.action_id === action)
+        }),
     )
   }
 
@@ -362,6 +367,7 @@ export namespace SessionTaskConfirmation {
 
   function pulse(proof: typeof TaskConfirmationTable.$inferSelect) {
     let lost = false
+    let error: unknown
     const touch = () => {
       if (!renew(proof)) return false
       const key = `task_confirmation:${proof.id}`
@@ -392,13 +398,31 @@ export namespace SessionTaskConfirmation {
     if (!touch()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
     const timer = setInterval(
       () => {
-        if (!touch()) lost = true
+        if (lost) return
+        try {
+          if (!touch()) lost = true
+        } catch (err) {
+          lost = true
+          error = err
+          log.error("task confirmation heartbeat failed", { confirmationID: proof.id, err })
+        }
       },
       Math.max(10, Math.floor(ttl() / 3)),
     )
     return {
       guard() {
-        if (lost || !touch()) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        if (lost) {
+          log.warn("task confirmation heartbeat lost", { confirmationID: proof.id, err: error })
+          throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        }
+        try {
+          if (touch()) return
+        } catch (err) {
+          error = err
+          log.error("task confirmation heartbeat failed", { confirmationID: proof.id, err })
+        }
+        lost = true
+        throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
       },
       stop() {
         clearInterval(timer)

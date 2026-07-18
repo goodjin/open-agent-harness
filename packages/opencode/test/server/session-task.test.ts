@@ -14,7 +14,7 @@ import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
-import { Database, eq } from "../../src/storage/db"
+import { ConflictError, Database, eq } from "../../src/storage/db"
 import {
   AssignmentTable,
   SessionEventOutboxTable,
@@ -806,6 +806,150 @@ describe("session task endpoints", () => {
     }
   })
 
+  test("contains heartbeat renewal exceptions and clears the timer", async () => {
+    const prior = process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS
+    process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS = "60"
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    const use = Database.use
+    let fail = false
+    let throws = 0
+    const db = spyOn(Database, "use").mockImplementation(((fn) => {
+      if (fail) {
+        throws++
+        throw new Error("heartbeat database unavailable")
+      }
+      return use(fn)
+    }) as typeof Database.use)
+    const unhandled: unknown[] = []
+    const listener = (err: unknown) => unhandled.push(err)
+    process.on("unhandledRejection", listener)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_session_task_heartbeat_error"),
+            fn: async () => {
+              const session = await Session.create({})
+              const task = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_heartbeat_error_old",
+                legacy: { title: "Original", body: "Original" },
+                actions: [],
+              })
+              if (task.type !== "execute") throw new Error("task missing")
+              const messageID = await message(session.id)
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID: "run_heartbeat_error",
+                actionID: "confirm_heartbeat_error",
+                title: "Heartbeat error",
+                plan: "Heartbeat error body",
+                op: "update",
+                target: "self",
+              })
+              let enter = () => {}
+              let release = () => {}
+              const entered = new Promise<void>((resolve) => (enter = resolve))
+              const blocked = new Promise<void>((resolve) => (release = resolve))
+              const original = SessionAssignment.apply
+              const assignment = spyOn(SessionAssignment, "apply").mockImplementation(async (input) => {
+                enter()
+                await blocked
+                return original(input)
+              })
+              try {
+                const response = SessionTaskConfirmation.respond({
+                  sessionID: session.id,
+                  proposalID: "run_heartbeat_error:confirm_heartbeat_error",
+                  revisionID: task.revision.id,
+                  action: "confirm",
+                  op: "update",
+                })
+                await entered
+                fail = true
+                await Bun.sleep(50)
+                fail = false
+                release()
+                await expect(response).rejects.toBeInstanceOf(ConflictError)
+                const count = throws
+                await Bun.sleep(80)
+                expect(throws).toBe(count)
+                expect(unhandled).toHaveLength(0)
+              } finally {
+                fail = false
+                release()
+                assignment.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      process.off("unhandledRejection", listener)
+      db.mockRestore()
+      prompt.mockRestore()
+      if (prior === undefined) delete process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS
+      if (prior !== undefined) process.env.OPENCODE_TASK_CONFIRMATION_LEASE_MS = prior
+    }
+  })
+
+  test("bounds recovery concurrency and keeps owner lookup read-only", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_scan_limit"),
+          fn: async () => {
+            const session = await Session.create({})
+            const now = Date.now()
+            Database.use((db) =>
+              db
+                .insert(TaskConfirmationTable)
+                .values(
+                  Array.from({ length: 9 }, (_, index) => ({
+                    id: `confirmation_scan_${index}`,
+                    session_id: session.id,
+                    proposal_id: `run_scan_${index}:confirm_scan_${index}`,
+                    operation: "update" as const,
+                    decision: "confirm" as const,
+                    status: "failed" as const,
+                    message_id: MessageID.ascending(),
+                    lease_until: 0,
+                    time_created: now,
+                    time_updated: now,
+                  })),
+                )
+                .run(),
+            )
+            let active = 0
+            let peak = 0
+            let calls = 0
+            const results = await SessionTaskConfirmation.scan(async () => {
+              const index = calls++
+              active++
+              peak = Math.max(peak, active)
+              await Bun.sleep(20)
+              active--
+              if (index === 5) throw new Error("isolated recovery failure")
+              return {} as never
+            })
+            expect(peak).toBe(4)
+            expect(results).toHaveLength(9)
+            expect(results.filter(Boolean)).toHaveLength(8)
+            expect(results.filter((item) => !item)).toHaveLength(1)
+          },
+        }),
+    })
+    const source = await Bun.file(new URL("../../src/session/task-confirmation.ts", import.meta.url)).text()
+    const owner = source.slice(source.indexOf("function owner("), source.indexOf("async function safe"))
+    expect(owner).toContain("Database.use")
+    expect(owner).not.toContain("Database.transaction")
+    expect(owner).not.toContain('behavior: "immediate"')
+  })
+
   test("keeps a reclaimed live reply on its durable prompt carrier", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
@@ -1228,7 +1372,8 @@ describe("session task endpoints", () => {
             if (!pending) throw new Error("error question missing")
             const get = MessageV2.get
             const read = spyOn(MessageV2, "get").mockImplementation((async (input: Parameters<typeof get>[0]) => {
-              if (input.sessionID === session.id && input.messageID === messageID) throw new Error("carrier read failed")
+              if (input.sessionID === session.id && input.messageID === messageID)
+                throw new Error("carrier read failed")
               return get(input)
             }) as never)
             try {
