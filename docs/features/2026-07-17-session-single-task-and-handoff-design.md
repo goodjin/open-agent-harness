@@ -456,7 +456,7 @@ Runtime 不自动判断它们是否属于同一任务。`GET /session/:sessionID
 
 单 Run 旧会话由所有 Task admission 入口共享迁移，不要求先调用 current API。入口先用有界 key probe 区分 0、1、多个 Run；恰好一个时幂等创建 legacy Task v1，再把新 package 追加到该 Revision。若旧 Revision 已终止，新执行会重新激活它、清除过期结果，并保留旧 action 与 run ID。
 
-多 Run proposal 返回准确总数和最多 50 条首尾快照，超出时标记 `truncated`。快照只读取 Run ID、标题、状态和时间，不读取 outcome、结果或完整 action。写门禁最多探测两个 key，不构造 proposal read model，因此 Task 页每 5 秒轮询的响应体与 JSON 解析成本保持有界。
+多 Run proposal 返回准确总数和最多 50 条首尾快照，超出时标记 `truncated`。新 Run 写入时同步生成只包含 Run ID、标题、状态和时间的 sidecar；轮询只读取 sidecar，不读取 outcome、结果或完整 action。旧 Run 第一次入选快照时会单次读取主文件并补建 sidecar，之后的轮询保持轻量。主 Run key 是索引真相：缺失 sidecar 可修复，孤立 sidecar 会忽略。写门禁最多探测两个主 key，不构造 proposal read model。
 
 新建会话直接使用新模型，不进入旧版兼容路径。
 

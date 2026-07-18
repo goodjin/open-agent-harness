@@ -124,15 +124,20 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
   })
   onCleanup(loader.reset)
 
-  const screen = () => present({ current: state.current, loading: state.loading.current, error: state.error.current })
+  const screen = () =>
+    present({ current: state.current, loading: state.loading.current, error: state.error.current }, state.detail)
   const legacy = () => {
     const item = screen()
     return item.kind === "legacy" ? item.legacy : undefined
   }
   const shown = () => {
-    if (state.detail) return state.detail
     const item = screen()
+    if (item.kind === "detail") return item.detail
     return item.kind === "current" ? item.current : undefined
+  }
+  const error = () => {
+    const item = screen()
+    return item.kind === "error" ? item.error : undefined
   }
   const actions = () => shown()?.actions ?? []
   const progress = () => (shown() ? count(shown()!) : { completed: 0, total: 0 })
@@ -149,19 +154,19 @@ export function SessionTask(props: { sessionID: string; feed?: Feed; onRefresh: 
   return (
     <div class="flex h-full min-h-0 bg-background-stronger" data-component="session-task">
       <main class="min-w-0 flex-1 overflow-y-auto">
-        <Show when={state.loading.current && !shown()}>
+        <Show when={screen().kind === "loading"}>
           <div aria-live="polite" class="mx-auto max-w-4xl px-6 py-8 text-12-regular text-text-weak">
             {language.t("session.task.loading")}
           </div>
         </Show>
-        <Show when={state.error.current}>
+        <Show when={error()}>
           {(err) => (
             <div role="alert" class="mx-auto max-w-4xl px-6 py-8 text-12-regular text-icon-critical-base">
               {err()}
             </div>
           )}
         </Show>
-        <Show when={!state.loading.current && !state.error.current && !shown() && !legacy()}>
+        <Show when={screen().kind === "unbound"}>
           <div class="mx-auto max-w-4xl px-6 py-8">
             <div class="text-16-medium text-text-strong">{language.t("session.task.unbound.title")}</div>
             <div class="mt-2 text-12-regular text-text-weak">{language.t("session.task.unbound.description")}</div>

@@ -107,7 +107,12 @@ export namespace SessionRuns {
       status: z.enum(["running", "completed", "blocked", "failed"]),
       time: AgentProtocol.Result.shape.time,
     })
-    .passthrough()
+    .strict()
+
+  export async function store(sessionID: SessionID, run: AgentProtocol.Result) {
+    await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
+    await Storage.write(["session_protocol_run_index", sessionID, run.run_id], migrationIndex(run))
+  }
 
   export async function migrationCount(sessionID: SessionID) {
     const keys = await Storage.probe(["session_protocol_run", sessionID], 2)
@@ -124,9 +129,7 @@ export namespace SessionRuns {
     const tail = size - edge
     const picked =
       keys.length <= size ? keys : [...keys.slice(0, edge), ...(tail ? keys.slice(-tail) : [])]
-    const runs = await Promise.all(
-      picked.map((key) => Storage.read<unknown>(key).then((item) => Migration.parse(item))),
-    )
+    const runs = await Promise.all(picked.map((key) => indexed(sessionID, key.at(-1)!)))
     return {
       count: keys.length,
       truncated: keys.length > picked.length,
@@ -139,6 +142,29 @@ export namespace SessionRuns {
         }))
         .sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
     }
+  }
+
+  async function indexed(sessionID: SessionID, runID: string) {
+    const key = ["session_protocol_run_index", sessionID, runID]
+    const found = await Storage.read<unknown>(key)
+      .then((item) => Migration.parse(item))
+      .catch(() => undefined)
+    if (found) return found
+    const raw = await Storage.read<unknown>(["session_protocol_run", sessionID, runID])
+    const saved = migrationIndex(raw)
+    await Storage.write(key, saved)
+    return saved
+  }
+
+  function migrationIndex(raw: unknown) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return Migration.parse(raw)
+    const run = raw as Record<string, unknown>
+    return Migration.parse({
+      run_id: run.run_id,
+      title: run.title,
+      status: run.status,
+      time: run.time,
+    })
   }
 
   export async function list(sessionID: SessionID) {

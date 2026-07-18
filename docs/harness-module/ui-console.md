@@ -25,6 +25,8 @@ The detection function is shared by the composer affordance and submit path, so 
 
 Proposal 携带旧 Run 总数、`truncated` 标记和最多 50 条首尾快照。页面在截断时显示提示。单 Run 会在任一执行入口先迁移为 Task v1；是否提前打开 Task tab、或 current 请求与执行并发，不改变最终 Task 的 action 与 run ID 集合。
 
+Task detail 的可见优先级高于 current feed。查看历史版本时，后台 current 刷新失败不会叠加错误卡；退出 detail 后才按 current feed 展示 normal、legacy、missing 或 error 状态。
+
 Task Update 与 Handoff proposal 使用专用卡片展示确认、取消、失败和重试。Handoff 启动后，卡片通过 `target_session_id` 跳转到平级目标会话；来源会话继续保留状态、目标链接和结果查看入口。
 
 ### Runs Compatibility API

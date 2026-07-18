@@ -93,8 +93,14 @@ describe("session task", () => {
     expect(present({ current: legacy, loading: false })).toEqual({ kind: "legacy", legacy })
     expect(present({ loading: false })).toEqual({ kind: "unbound" })
     expect(present({ loading: false, error: "404" })).toEqual({ kind: "error", error: "404" })
+    const detail = revision()
+    expect(present({ current, loading: false, error: "refresh failed" }, detail)).toEqual({
+      kind: "detail",
+      detail,
+    })
     expect(present({ current: legacy, loading: false })).not.toHaveProperty("current")
     expect(present({ current, loading: false })).not.toHaveProperty("legacy")
+    expect(present({ current, loading: false, error: "refresh failed" }, detail)).not.toHaveProperty("error")
   })
 
   const part = (metadata: Record<string, unknown>, value: Partial<ProposalPart> = {}): ProposalPart => ({
@@ -978,7 +984,7 @@ describe("session task", () => {
     expect(src).toContain('language.t("session.task.legacy.title")')
     expect(src).toContain('language.t("session.task.legacy.description"')
     expect(src).toContain("legacy()?.proposal.runs")
-    expect(src).toContain("!shown() && !legacy()")
+    expect(src).toContain('screen().kind === "unbound"')
     expect(src.indexOf('when={legacy()}')).toBeLessThan(src.indexOf('when={shown()}'))
   })
 

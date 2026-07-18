@@ -4502,7 +4502,7 @@ export namespace SessionRunner {
   }
 
   async function project(sessionID: SessionID, run: AgentProtocol.Result) {
-    await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
+    await SessionRuns.store(sessionID, run)
     await SessionTask.sync({ sessionID, runID: run.run_id, actions: run.actions }).catch((err) => {
       if (
         err instanceof SessionTask.Conflict &&

@@ -19,7 +19,7 @@ import { Storage } from "../../src/storage/storage"
 import { tmpdir } from "../fixture/fixture"
 
 describe("session runs", () => {
-  test("bounds legacy migration snapshots without reading outcomes", async () => {
+  test("indexes large legacy runs once and keeps repeated migration polls lightweight", async () => {
     await using tmp = await tmpdir({ git: true })
     await Instance.provide({
       directory: tmp.path,
@@ -31,9 +31,28 @@ describe("session runs", () => {
             await Promise.all(
               Array.from({ length: 101 }, (_, index) => {
                 const id = `run_migration_${index.toString().padStart(3, "0")}`
-                return Storage.write(["session_protocol_run", session.id, id], result(id))
+                const run = result(id)
+                return Storage.write(["session_protocol_run", session.id, id], {
+                  ...run,
+                  summary: "x".repeat(100_000),
+                  actions: Array.from({ length: 100 }, (_, action) => ({
+                    ...run.actions[0],
+                    id: `large_${index}_${action}`,
+                  })),
+                })
               }),
             )
+            await Storage.write(["session_protocol_run_index", session.id, "run_orphan"], {
+              run_id: "run_orphan",
+              title: "Orphan index",
+              status: "completed",
+              time: { started: 0, completed: 1 },
+            })
+            const indexed = await SessionRuns.migration(session.id)
+            expect(indexed.count).toBe(101)
+            expect(indexed.truncated).toBe(true)
+            expect(indexed.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
+            expect(indexed.runs.some((run) => run.run_id === "run_orphan")).toBe(false)
             const read = Storage.read
             const keys: string[][] = []
             const hook = spyOn(Storage, "read").mockImplementation(async (key) => {
@@ -42,11 +61,13 @@ describe("session runs", () => {
             })
             try {
               const migration = await SessionRuns.migration(session.id)
+              await SessionRuns.migration(session.id)
               expect(migration.count).toBe(101)
               expect(migration.truncated).toBe(true)
               expect(migration.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
-              expect(keys).toHaveLength(SessionRuns.MIGRATION_LIMIT)
-              expect(keys.every((key) => key[0] === "session_protocol_run")).toBe(true)
+              expect(keys).toHaveLength(SessionRuns.MIGRATION_LIMIT * 2)
+              expect(keys.every((key) => key[0] === "session_protocol_run_index")).toBe(true)
+              expect(keys.some((key) => key[0] === "session_protocol_run")).toBe(false)
               expect(keys.some((key) => key[0] === "session_protocol_run_outcome")).toBe(false)
             } finally {
               hook.mockRestore()

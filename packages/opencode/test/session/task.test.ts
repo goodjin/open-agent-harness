@@ -3410,24 +3410,6 @@ describe("session task", () => {
       })
     }))
 
-  test("migrates one legacy run before resolving a direct replacement create", () =>
-    setup(async () => {
-      const session = await Session.create({})
-      const old = protocol("run_legacy_direct_create", "Legacy direct create")
-      await Storage.write(["session_protocol_run", session.id, old.run_id], old)
-      const created = await SessionTask.create({
-        sessionID: session.id,
-        title: "Replacement",
-        body: "Replacement",
-        source: { type: "user", messageID: MessageID.ascending() },
-      })
-      expect(created.task.source_type).toBe("legacy")
-      expect(await SessionTask.get(session.id)).toMatchObject({
-        task: { source_type: "legacy", title: old.title },
-        revision: { version: 1, workflow: { run_ids: [old.run_id] } },
-      })
-    }))
-
   test("rejects an ordinary executable package after opening a multi-run proposal", () =>
     setup(async () => {
       const session = await Session.create({})

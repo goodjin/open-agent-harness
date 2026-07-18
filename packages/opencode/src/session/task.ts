@@ -886,13 +886,6 @@ export namespace SessionTask {
 
   export async function create(raw: z.input<typeof Create>) {
     const input = Create.parse(raw)
-    const unbound = !exists(input.sessionID)
-    const admitted = await admit(input.sessionID)
-    if (admitted === "multiple") throw new Conflict()
-    if (unbound && admitted === "bound") {
-      const stored = await get(input.sessionID)
-      if (stored) return stored
-    }
     const now = Date.now()
     const task = `task_${randomUUID()}`
     const revision = `revision_${randomUUID()}`
@@ -1081,7 +1074,7 @@ export namespace SessionTask {
     const now = Date.now()
     for (const attempt of [0, 1, 2, 3, 4]) {
       try {
-        return transact(
+        return Database.transaction(
           (tx) => {
             const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
             if (!task) throw new Conflict("session_task_missing")

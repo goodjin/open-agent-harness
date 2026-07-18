@@ -17,6 +17,7 @@ export type Summary = SessionTaskSummary
 export type Badge = { sessionID: string; value?: Summary }
 export type Feed = Badge & { current?: Response; loading: boolean; error?: string; ready: boolean }
 export type Presentation =
+  | { kind: "detail"; detail: Revision }
   | { kind: "loading" }
   | { kind: "error"; error: string }
   | { kind: "unbound" }
@@ -96,7 +97,11 @@ export const migration = (task?: Response): Legacy | undefined => (task && histo
 
 export const active = (task?: Response): Current | undefined => (task && !historical(task) ? task : undefined)
 
-export const present = (feed: Pick<Feed, "current" | "loading" | "error">): Presentation => {
+export const present = (
+  feed: Pick<Feed, "current" | "loading" | "error">,
+  detail?: Revision,
+): Presentation => {
+  if (detail) return { kind: "detail", detail }
   if (feed.error) return { kind: "error", error: feed.error }
   const legacy = migration(feed.current)
   if (legacy) return { kind: "legacy", legacy }
