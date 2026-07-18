@@ -1,3 +1,19 @@
+CREATE TEMP TABLE `task_handoff_retention_audit` (
+	`ok` integer NOT NULL CHECK (`ok` = 1)
+);
+--> statement-breakpoint
+INSERT INTO `task_handoff_retention_audit`
+SELECT CASE WHEN EXISTS (
+	SELECT 1
+	FROM `task_handoff` AS `handoff`
+	LEFT JOIN `session` AS `target_session` ON `target_session`.`id` = `handoff`.`target_session_id`
+	LEFT JOIN `session_task` AS `target_task`
+		ON `target_task`.`id` = `handoff`.`target_task_id`
+		AND `target_task`.`session_id` = `handoff`.`target_session_id`
+	WHERE `handoff`.`target_session_id` IS NOT NULL
+		AND (`target_session`.`id` IS NULL OR `target_task`.`id` IS NULL)
+) THEN 0 ELSE 1 END;
+--> statement-breakpoint
 CREATE TABLE `task_handoff_retained` (
 	`id` text PRIMARY KEY NOT NULL,
 	`source_session_id` text NOT NULL,
@@ -22,6 +38,19 @@ CREATE TABLE `task_handoff_retained` (
 );
 --> statement-breakpoint
 INSERT INTO `task_handoff_retained` SELECT * FROM `task_handoff`;
+--> statement-breakpoint
+CREATE TEMP TABLE `task_handoff_retention_count` (
+	`source` integer NOT NULL,
+	`retained` integer NOT NULL,
+	CHECK (`source` = `retained`)
+);
+--> statement-breakpoint
+INSERT INTO `task_handoff_retention_count`
+SELECT (SELECT count(*) FROM `task_handoff`), (SELECT count(*) FROM `task_handoff_retained`);
+--> statement-breakpoint
+DROP TABLE `task_handoff_retention_count`;
+--> statement-breakpoint
+DROP TABLE `task_handoff_retention_audit`;
 --> statement-breakpoint
 DROP TABLE `task_handoff`;
 --> statement-breakpoint

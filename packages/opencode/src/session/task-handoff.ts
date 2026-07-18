@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import { Instance } from "@/project/instance"
 import { ModelID, ProviderID } from "@/provider/schema"
-import { and, Database, eq, exists, inArray, isNull, or } from "@/storage/db"
+import { and, Database, eq, exists, inArray, isNull, or, sql } from "@/storage/db"
 import { Log } from "@/util/log"
 import { Session } from "."
 import { MessageV2 } from "./message-v2"
@@ -331,12 +331,24 @@ export namespace SessionTaskHandoff {
           target_revision_id: revisionID,
           message_id: found?.payload.message_id ?? MessageID.ascending(),
         }
-        if (found)
-          tx.update(SessionEventOutboxTable)
-            .set({ status: "pending", payload, updated_at: now, error: null })
-            .where(eq(SessionEventOutboxTable.id, found.id))
-            .run()
-        else
+        if (found) {
+          const retry =
+            found.status === "pending" ||
+            found.status === "failed" ||
+            (found.status === "delivering" && found.updated_at <= now - 30_000)
+          if (retry)
+            tx.update(SessionEventOutboxTable)
+              .set({ status: "pending", payload, updated_at: now, error: null })
+              .where(
+                and(
+                  eq(SessionEventOutboxTable.id, found.id),
+                  eq(SessionEventOutboxTable.payload, found.payload),
+                  eq(SessionEventOutboxTable.status, found.status),
+                  eq(SessionEventOutboxTable.updated_at, found.updated_at),
+                ),
+              )
+              .run()
+        } else
           tx.insert(SessionEventOutboxTable)
             .values({
               id: `outbox_${randomUUID()}`,
@@ -426,6 +438,7 @@ export namespace SessionTaskHandoff {
   }
 
   export async function scan() {
+    const started = Date.now()
     const rows = Database.use((tx) =>
       tx
         .select({ id: TaskHandoffTable.id })
@@ -435,6 +448,7 @@ export namespace SessionTaskHandoff {
           SessionEventOutboxTable,
           and(
             eq(SessionEventOutboxTable.kind, "task_handoff"),
+            sql`${SessionEventOutboxTable.dedupe_key} = ${"task_handoff:"} || ${TaskHandoffTable.id}`,
             eq(SessionEventOutboxTable.session_id, TaskHandoffTable.source_session_id),
             eq(SessionEventOutboxTable.target_session_id, TaskHandoffTable.target_session_id),
           ),
@@ -451,14 +465,20 @@ export namespace SessionTaskHandoff {
         )
         .all(),
     )
-    return Promise.all(
-      rows.map((row) =>
-        resume(row.id).catch((err) => {
-          log.warn("task handoff recovery blocked", { err, handoffID: row.id })
-          return false
-        }),
-      ),
-    )
+    const results: boolean[] = []
+    for (let index = 0; index < rows.length; index += 4) {
+      const batch = await Promise.all(
+        rows.slice(index, index + 4).map((row) =>
+          resume(row.id).catch((err) => {
+            log.warn("task handoff recovery blocked", { err, handoffID: row.id })
+            return false
+          }),
+        ),
+      )
+      results.push(...batch)
+    }
+    log.info("task handoff recovery scan completed", { candidates: rows.length, duration: Date.now() - started })
+    return results
   }
 
   function guard(

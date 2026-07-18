@@ -381,6 +381,75 @@ describe("SessionTaskHandoff", () => {
       }
     }))
 
+  test("keeps a live delivery lease during a failed confirmation retry", () =>
+    setup(async () => {
+      const current = await source()
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Leased retry peer",
+        body: "Leased retry body",
+        contextRefs: [],
+      })
+      const blocked = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => {
+        throw new Error("prepare failed retry")
+      }) as never)
+      const assignment = await approve({ handoff: proposed, source: current })
+      await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+      await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "failed"))
+      blocked.mockRestore()
+
+      const read = Session.get
+      let enter = () => {}
+      let release = () => {}
+      const entered = new Promise<void>((resolve) => (enter = resolve))
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      let held = false
+      const session = spyOn(Session, "get").mockImplementation((async (id: SessionID) => {
+        const result = await read(id)
+        if (!held) {
+          held = true
+          enter()
+          await gate
+        }
+        return result
+      }) as never)
+      const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async () => undefined) as never)
+      const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
+      try {
+        const running = SessionTaskHandoff.resume(proposed.id)
+        await entered
+        const before = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+        expect(before?.status).toBe("delivering")
+
+        await SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id })
+        const after = Database.use((tx) =>
+          tx
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_handoff:${proposed.id}`))
+            .get(),
+        )
+        expect(after?.status).toBe("delivering")
+        expect(after?.updated_at).toBe(before?.updated_at)
+        release()
+        await running
+        await until(() => SessionTaskHandoff.get(proposed.id).then((item) => item?.status === "started"))
+        expect(write).toHaveBeenCalledTimes(1)
+      } finally {
+        release()
+        loop.mockRestore()
+        write.mockRestore()
+        session.mockRestore()
+      }
+    }))
+
   test("rejects an outbox whose handoff identity is tampered", () =>
     setup(async () => {
       const current = await source()
