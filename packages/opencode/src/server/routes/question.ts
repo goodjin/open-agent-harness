@@ -270,7 +270,11 @@ async function task(input: {
     if (evidence) intents.push(evidence)
     if (intents.some((item) => item.op === "update" || item.op === "handoff"))
       throw new ConflictError({ message: `Task proposal locator is ambiguous: ${action}` })
-    if (intents.some((item) => "op" in item && (item.op !== "create" || ![undefined, "self"].includes(item.target))))
+    if (
+      intents.some(
+        (item) => "op" in item && (item.op !== "create" || (item.target !== undefined && item.target !== "self")),
+      )
+    )
       throw new ConflictError({ message: `Task proposal evidence is invalid: ${action}` })
     return false
   }

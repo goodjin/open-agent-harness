@@ -12,7 +12,7 @@ import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
-import type { MessageV2 } from "../../src/session/message-v2"
+import { MessageV2 } from "../../src/session/message-v2"
 import { resetDatabase } from "../fixture/db"
 import { Database, eq } from "../../src/storage/db"
 import {
@@ -1172,6 +1172,84 @@ describe("session task endpoints", () => {
     prompt.mockRestore()
   })
 
+  test("uses only completed assistant protocol evidence for live Task classification", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_live_evidence"),
+          fn: async () => {
+            const app = Server.Default()
+            for (const kind of ["user", "pending"] as const) {
+              const session = await Session.create({})
+              const messageID = kind === "user" ? await message(session.id) : await assistant(session.id)
+              if (kind === "pending")
+                await evidence({
+                  sessionID: session.id,
+                  messageID,
+                  actionID: `guard_${kind}`,
+                  kind: "confirm",
+                  assignment: { op: "update", target: "self" },
+                  status: "pending",
+                })
+              const asked = Question.askReply({
+                sessionID: session.id,
+                questions: [{ question: "Continue?", header: "Continue", options: [] }],
+                tool: { messageID, callID: `call_guard_${kind}` },
+              })
+              while (!(await Question.list()).some((item) => item.sessionID === session.id)) await Bun.sleep(1)
+              const pending = (await Question.list()).find((item) => item.sessionID === session.id)
+              if (!pending) throw new Error("guard question missing")
+              const res = await app.request(`/question/${pending.id}/reply`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ answers: [["Continue"]] }),
+              })
+              expect(res.status).toBe(200)
+              expect((await asked).answers).toEqual([["Continue"]])
+            }
+
+            const session = await Session.create({})
+            const messageID = await assistant(session.id)
+            await evidence({
+              sessionID: session.id,
+              messageID,
+              actionID: "guard_error",
+              kind: "confirm",
+              assignment: { op: "update", target: "self" },
+            })
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [{ question: "Confirm?", header: "Confirm", options: [] }],
+              tool: { messageID, callID: "call_guard_error" },
+            })
+            while (!(await Question.list()).some((item) => item.sessionID === session.id)) await Bun.sleep(1)
+            const pending = (await Question.list()).find((item) => item.sessionID === session.id)
+            if (!pending) throw new Error("error question missing")
+            const get = MessageV2.get
+            const read = spyOn(MessageV2, "get").mockImplementation((async (input: Parameters<typeof get>[0]) => {
+              if (input.sessionID === session.id && input.messageID === messageID) throw new Error("carrier read failed")
+              return get(input)
+            }) as never)
+            try {
+              const res = await app.request(`/question/${pending.id}/reply`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ answers: [["Confirm"]] }),
+              })
+              expect(res.status).toBe(500)
+              expect((await Question.list()).some((item) => item.id === pending.id)).toBe(true)
+            } finally {
+              read.mockRestore()
+              await Question.reject(pending.id)
+              await asked.catch(() => undefined)
+            }
+          },
+        }),
+    })
+  })
+
   test("imports only canonical legacy terminal confirmations without continuing", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
@@ -1563,8 +1641,33 @@ async function evidence(input: {
   actionID: string
   kind: "confirm" | "input"
   assignment?: { op: "update" | "handoff"; target: "self" | "peer" }
+  status?: "completed" | "pending"
 }) {
   const now = Date.now()
+  const payload = {
+    version: "2",
+    items: [
+      input.kind === "confirm"
+        ? {
+            id: input.actionID,
+            kind: "confirm",
+            prompt: "Confirm task",
+            plan: "Task plan",
+            depends: [],
+            result: "summary",
+            assignment: input.assignment,
+          }
+        : {
+            id: input.actionID,
+            kind: "input",
+            prompt: "Choose",
+            mode: "single",
+            options: [{ id: "a", label: "A", description: "A" }],
+            depends: [],
+            result: "summary",
+          },
+    ],
+  }
   await Session.updatePart({
     id: PartID.ascending(),
     sessionID: input.sessionID,
@@ -1572,37 +1675,17 @@ async function evidence(input: {
     type: "tool",
     callID: `protocol_${input.actionID}`,
     tool: "AgentProtocolOutput",
-    state: {
-      status: "completed",
-      input: {
-        version: "2",
-        items: [
-          input.kind === "confirm"
-            ? {
-                id: input.actionID,
-                kind: "confirm",
-                prompt: "Confirm task",
-                plan: "Task plan",
-                depends: [],
-                result: "summary",
-                assignment: input.assignment,
-              }
-            : {
-                id: input.actionID,
-                kind: "input",
-                prompt: "Choose",
-                mode: "single",
-                options: [{ label: "A", description: "A" }],
-                depends: [],
-                result: "summary",
-              },
-        ],
-      },
-      output: "",
-      title: "Protocol",
-      metadata: {},
-      time: { start: now, end: now },
-    },
+    state:
+      input.status === "pending"
+        ? { status: "pending", input: payload, raw: "" }
+        : {
+            status: "completed",
+            input: payload,
+            output: "",
+            title: "Protocol",
+            metadata: {},
+            time: { start: now, end: now },
+          },
   })
 }
 
