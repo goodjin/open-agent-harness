@@ -20,6 +20,8 @@ import { Log } from "@/util/log"
 import { Session } from "."
 import { SessionAssignment } from "./assignment"
 import { SessionTaskHandoff } from "./task-handoff"
+import { SessionTask } from "./task"
+import { SessionTaskRecovery } from "./task-recovery"
 import { MessageV2 } from "./message-v2"
 import { MessageID, SessionID } from "./schema"
 import { SessionPrompt } from "./prompt"
@@ -126,7 +128,26 @@ export namespace SessionTaskConfirmation {
       if (handoff && (handoff.source_message_id !== message || handoff.title !== title || handoff.body !== plan))
         throw new ConflictError({ message: `Task handoff proof is invalid: ${handoff.id}` })
       if (proof.status === "completed" || proof.status === "cancelled") {
-        if (rec(proof.result)) return proof.result
+        if (rec(proof.result)) {
+          if (input.op === "handoff" && input.action === "confirm" && handoff) {
+            const transfer =
+              handoff.status === "failed" && proof.assignment_id
+                ? await safe(SessionTaskHandoff.confirm(handoff.id, { assignmentID: proof.assignment_id }))
+                : handoff
+            return {
+              ...proof.result,
+              status: transfer.status,
+              target_session_id: transfer.target_session_id ?? undefined,
+              target_task_id: transfer.target_task_id ?? undefined,
+            }
+          }
+          if (input.op === "update" && input.action === "confirm") {
+            const task = await SessionTask.get(input.sessionID)
+            if (task?.task.status === "blocked") await SessionTaskRecovery.resume(input.sessionID)
+            return { ...proof.result, status: "revising" }
+          }
+          return proof.result
+        }
         throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
       }
       if (item.status === status) {
@@ -135,7 +156,7 @@ export namespace SessionTaskConfirmation {
           proposal_id: input.proposalID,
           action: input.action,
           assignment_id: saved,
-          status: handoff?.status,
+          status: input.op === "update" && input.action === "confirm" ? "revising" : handoff?.status,
           target_session_id: handoff?.target_session_id ?? undefined,
           target_task_id: handoff?.target_task_id ?? undefined,
         }
@@ -199,7 +220,7 @@ export namespace SessionTaskConfirmation {
         proposal_id: input.proposalID,
         action: input.action,
         assignment_id: assignment?.id,
-        status: transfer?.status,
+        status: input.op === "update" && input.action === "confirm" ? "revising" : transfer?.status,
         target_session_id: transfer?.target_session_id ?? undefined,
         target_task_id: transfer?.target_task_id ?? undefined,
       }
@@ -815,7 +836,7 @@ export namespace SessionTaskConfirmation {
         proposal_id: input.proposalID,
         action: input.action,
         assignment_id: assignment?.id,
-        status: handoff?.status,
+        status: input.op === "update" && input.action === "confirm" ? "revising" : handoff?.status,
         target_session_id: handoff?.target_session_id ?? undefined,
         target_task_id: handoff?.target_task_id ?? undefined,
       },

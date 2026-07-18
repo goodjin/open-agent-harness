@@ -64,7 +64,12 @@ import {
   turn,
   type DelegationItem,
 } from "@/pages/session/session-delegations"
-import { proposals as proposalList, SessionTaskProposal, type TaskProposal } from "@/pages/session/session-task-proposal"
+import {
+  proposalIndex,
+  proposals as proposalList,
+  SessionTaskProposal,
+  type TaskProposal,
+} from "@/pages/session/session-task-proposal"
 
 type MessageComment = {
   path: string
@@ -480,6 +485,7 @@ export function MessageTimeline(props: {
     if (!id) return emptyMessages
     return sync.data.message[id] ?? emptyMessages
   })
+  const indexed = createMemo(() => proposalIndex(sessionMessages(), sync.data.part))
   const pending = createMemo(() =>
     sessionMessages().findLast(
       (item): item is AssistantMessage => item.role === "assistant" && typeof item.time.completed !== "number",
@@ -1666,9 +1672,7 @@ export function MessageTimeline(props: {
                   const proposals = createMemo(() => {
                     const plans = new Map(all().map((item) => [`${item.run_id}:${item.action_id}`, item.plan]))
                     return proposalList(
-                      turnAssistants(sessionMessages(), messageID).flatMap(
-                        (message) => sync.data.part[message.id] ?? [],
-                      ),
+                      indexed().get(messageID) ?? [],
                       plans,
                       new Map(all().map((item) => [`${item.run_id}:${item.action_id}`, item.status])),
                     )

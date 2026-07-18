@@ -20,7 +20,7 @@ import {
   type Badge,
   type Feed,
 } from "./session-task-data"
-import { proposal, proposalError, proposalFlow, proposals, type ProposalPart } from "./session-task-proposal"
+import { proposal, proposalError, proposalFlow, proposalIndex, proposals, type ProposalPart } from "./session-task-proposal"
 
 const task = (value: Partial<SessionTaskCurrentResponse> = {}) =>
   ({
@@ -182,6 +182,28 @@ describe("session task", () => {
     ])
   })
 
+  test("maps blocked update recovery to a retryable failure", () => {
+    const items = proposals(
+      [
+        part({
+          kind: "task_update_proposal",
+          proposal_id: "run:update",
+          old_revision_id: "revision_1",
+          status: "pending",
+        }),
+        part({
+          kind: "task_update_progress",
+          proposal_id: "run:update",
+          draft_revision_id: "revision_2",
+          status: "blocked",
+          error: "Bootstrap failed",
+        }),
+      ],
+      new Map(),
+    )
+    expect(items).toEqual([expect.objectContaining({ status: "failed", error: "Bootstrap failed" })])
+  })
+
   test("merges handoff started projection with its proposal content and target", () => {
     expect(
       proposals(
@@ -291,6 +313,54 @@ describe("session task", () => {
 
     expect(calls).toBe(1)
     expect(states).toEqual(["proposed", "confirming", "revising"])
+  })
+
+  test("keeps event progress when update HTTP success omits status", async () => {
+    const response = deferred<Record<string, never>>()
+    const states: string[] = []
+    const update = (status: string) =>
+      proposal(
+        part({
+          kind: "task_update_proposal",
+          proposal_id: "run:update",
+          old_revision_id: "revision_1",
+          status,
+        }),
+      )!
+    const flow = proposalFlow({
+      send: async () => response.promise,
+      state: (value) => states.push(value.status),
+      focus() {},
+    })
+    flow.change(update("pending"), "session_1")
+    const request = flow.confirm()
+    flow.change(update("revising"), "session_1")
+    response.resolve({})
+    await request
+    expect(states.at(-1)).toBe("revising")
+    expect(states.slice(1)).not.toContain("proposed")
+  })
+
+  test("indexes proposal parts by assistant parent in one message pass", () => {
+    let reads = 0
+    const messages = Array.from({ length: 2_000 }, (_, index) => ({
+      id: `message_${index}`,
+      role: index % 2 ? "assistant" : "user",
+      parentID: index % 2 ? `message_${index - 1}` : undefined,
+    }))
+    const parts = new Proxy(
+      Object.fromEntries(messages.map((item) => [item.id, [item.id]])),
+      {
+        get(target, key: string) {
+          reads++
+          return target[key]
+        },
+      },
+    )
+    const index = proposalIndex(messages, parts)
+    expect(index.get("message_0")).toEqual(["message_1"])
+    expect(index.get("message_1998")).toEqual(["message_1999"])
+    expect(reads).toBe(1_000)
   })
 
   test("does not regress a local failure when an old proposed projection reparses", async () => {

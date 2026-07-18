@@ -9,6 +9,7 @@ import { SessionTask } from "../../src/session/task"
 import { SessionAssignment } from "../../src/session/assignment"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
+import { SessionTaskRecovery } from "../../src/session/task-recovery"
 import { SessionPrompt } from "../../src/session/prompt"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
@@ -427,9 +428,30 @@ describe("session task endpoints", () => {
                 proposal_id: "run_update:confirm_update",
                 revision_id: current.revision.id,
                 action: "confirm",
+                status: "revising",
               })
               expect(replies[0].assignment_id).toBe(replies[1].assignment_id)
               expect(prompt).toHaveBeenCalledTimes(1)
+              Database.use((db) =>
+                db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.id, current.task.id)).run(),
+              )
+              const resume = spyOn(SessionTaskRecovery, "resume").mockResolvedValue(true)
+              const resumed = await app.request(`/session/${session.id}/task/update/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  proposal_id: "run_update:confirm_update",
+                  revision_id: current.revision.id,
+                  action: "confirm",
+                }),
+              })
+              expect(resumed.status).toBe(200)
+              expect(await resumed.json()).toMatchObject({ status: "revising" })
+              expect(resume).toHaveBeenCalledTimes(1)
+              resume.mockRestore()
+              Database.use((db) =>
+                db.update(SessionTaskTable).set({ status: "running" }).where(eq(SessionTaskTable.id, current.task.id)).run(),
+              )
               expect(
                 await SessionAssignment.bySource({
                   sessionID: session.id,
@@ -1677,6 +1699,16 @@ describe("session task endpoints", () => {
   test("confirms and cancels handoffs only through canonical assignment proof", async () => {
     await using tmp = await tmpdir({ git: true })
     const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    const loop = spyOn(SessionPrompt, "loop").mockResolvedValue(undefined as never)
+    const enqueue = SessionPrompt.enqueue
+    let attempts = 0
+    const write = spyOn(SessionPrompt, "enqueue").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.enqueue>[0],
+    ) => {
+      attempts++
+      if (attempts === 1) throw new Error("handoff enqueue failed")
+      return enqueue(input)
+    }) as never)
     try {
       await Instance.provide({
         directory: tmp.path,
@@ -1737,7 +1769,35 @@ describe("session task endpoints", () => {
               const body = (await confirmed.json()) as { target_session_id?: string; target_task_id?: string }
               expect(body.target_session_id).toBeString()
               expect(body.target_task_id).toBeString()
-              expect((await SessionTaskHandoff.get(handoff.id))?.status).toMatch(/creating|started/)
+              for (let count = 0; count < 100; count++) {
+                if ((await SessionTaskHandoff.get(handoff.id))?.status === "failed") break
+                await Bun.sleep(10)
+              }
+              expect(await SessionTaskHandoff.get(handoff.id)).toMatchObject({
+                id: handoff.id,
+                status: "failed",
+                error: "handoff enqueue failed",
+              })
+              const retried = await app.request(`/session/${session.id}/task/handoff/${handoff.id}/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ proposal_id: "run_handoff:confirm_handoff", action: "confirm" }),
+              })
+              expect(retried.status).toBe(200)
+              expect(await retried.json()).toMatchObject({ status: "creating" })
+              for (let count = 0; count < 100; count++) {
+                if ((await SessionTaskHandoff.get(handoff.id))?.status === "started") break
+                await Bun.sleep(10)
+              }
+              expect((await SessionTaskHandoff.get(handoff.id))?.status).toBe("started")
+              const replay = await app.request(`/session/${session.id}/task/handoff/${handoff.id}/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ proposal_id: "run_handoff:confirm_handoff", action: "confirm" }),
+              })
+              expect(replay.status).toBe(200)
+              expect(await replay.json()).toMatchObject({ status: "started" })
+              expect((await SessionTaskHandoff.get(handoff.id))?.id).toBe(handoff.id)
 
               const messageID3 = await message(session.id)
               const started = await SessionTaskHandoff.propose({
@@ -1808,6 +1868,8 @@ describe("session task endpoints", () => {
           }),
       })
     } finally {
+      write.mockRestore()
+      loop.mockRestore()
       prompt.mockRestore()
     }
   })

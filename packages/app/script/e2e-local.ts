@@ -72,6 +72,7 @@ const serverEnv = {
   OPENCODE_E2E_SESSION_TITLE: "E2E Session",
   OPENCODE_E2E_MESSAGE: "Seeded for UI e2e",
   OPENCODE_E2E_MODEL: "opencode/gpt-5-nano",
+  OPENCODE_E2E_TASK_PROPOSAL: extraArgs.includes("app/smoke.spec.ts") ? "true" : "false",
   OPENCODE_CLIENT: "app",
   OPENCODE_STRICT_CONFIG_DEPS: "true",
 } satisfies Record<string, string>

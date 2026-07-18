@@ -48,10 +48,29 @@ const list = (input: unknown) => (Array.isArray(input) ? input.filter((item): it
 const status = (input: unknown, kind: TaskProposal["kind"], part: string): Status => {
   if (part === "task_handoff_started" || input === "started") return "started"
   if (input === "failed") return "failed"
+  if (input === "blocked") return "failed"
   if (input === "cancelled") return "cancelled"
   if (input === "revising") return "revising"
   if (input === "creating" || input === "confirmed") return kind === "update" ? "revising" : "creating"
   return "proposed"
+}
+
+export function proposalIndex(
+  messages: { id: string; role: string; parentID?: string }[],
+  parts: Record<string, unknown[] | undefined>,
+) {
+  return messages.reduce((map, message) => {
+    if (message.role !== "assistant" || !message.parentID) return map
+    const items = parts[message.id] ?? []
+    if (!items.length) return map
+    const prev = map.get(message.parentID)
+    if (prev) {
+      prev.push(...items)
+      return map
+    }
+    map.set(message.parentID, [...items])
+    return map
+  }, new Map<string, unknown[]>())
 }
 
 export function proposal(input: unknown, body?: string): TaskProposal | undefined {
@@ -232,7 +251,13 @@ export function proposalFlow(input: {
     const next =
       action === "cancel"
         ? "cancelled"
-        : status(result.value.status, item.kind, item.kind === "handoff" ? "task_handoff_proposal" : "task_update_progress")
+        : result.value.status === undefined && item.kind === "update"
+          ? "revising"
+          : status(
+              result.value.status,
+              item.kind,
+              item.kind === "handoff" ? "task_handoff_proposal" : "task_update_progress",
+            )
     emit({ status: next, target: result.value.target_session_id ?? item.target, error: undefined })
   }
 
@@ -360,9 +385,11 @@ export function SessionTaskProposal(props: {
                 <Button variant="ghost" size="small" onClick={flow.discuss} aria-label={language.t("session.task.proposal.discuss")}>
                   {language.t("session.task.proposal.discuss")}
                 </Button>
-                <Button variant="secondary" size="small" onClick={() => void flow.cancel()} aria-label={language.t("session.task.proposal.cancel")}>
-                  {language.t("session.task.proposal.cancel")}
-                </Button>
+                <Show when={view().status !== "failed"}>
+                  <Button variant="secondary" size="small" onClick={() => void flow.cancel()} aria-label={language.t("session.task.proposal.cancel")}>
+                    {language.t("session.task.proposal.cancel")}
+                  </Button>
+                </Show>
                 <Button variant="primary" size="small" onClick={() => void flow.confirm()} aria-label={view().status === "failed" ? language.t("session.task.proposal.retry") : language.t("session.task.proposal.confirm")}>
                   {view().status === "failed" ? language.t("session.task.proposal.retry") : language.t("session.task.proposal.confirm")}
                 </Button>
