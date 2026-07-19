@@ -120,6 +120,21 @@ export namespace SessionRuns {
       runs: z.array(Migration).max(MIGRATION_LIMIT),
     })
     .strict()
+    .superRefine((value, ctx) => {
+      if (new Set(value.runs.map((run) => run.run_id)).size !== value.runs.length)
+        ctx.addIssue({ code: "custom", path: ["runs"], message: "run ids must be unique" })
+      if (value.count <= MIGRATION_LIMIT) {
+        if (value.truncated)
+          ctx.addIssue({ code: "custom", path: ["truncated"], message: "small manifests cannot be truncated" })
+        if (value.count !== value.runs.length)
+          ctx.addIssue({ code: "custom", path: ["count"], message: "count must match all run snapshots" })
+        return
+      }
+      if (!value.truncated)
+        ctx.addIssue({ code: "custom", path: ["truncated"], message: "large manifests must be truncated" })
+      if (value.runs.length !== MIGRATION_LIMIT)
+        ctx.addIssue({ code: "custom", path: ["runs"], message: "large manifests require a full snapshot window" })
+    })
 
   const Generation = z
     .object({

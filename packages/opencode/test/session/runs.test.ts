@@ -61,6 +61,22 @@ describe("session runs", () => {
             expect(indexed.truncated).toBe(true)
             expect(indexed.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
             expect(hydrated).toBeLessThanOrEqual(SessionRuns.MIGRATION_LIMIT)
+            const poisoned = [
+              { count: 999, truncated: false, runs: [] },
+              { count: 1, truncated: false, runs: indexed.runs.slice(0, 2) },
+              { count: 2, truncated: false, runs: [indexed.runs[0]!, indexed.runs[0]!] },
+              { count: 2, truncated: true, runs: indexed.runs.slice(0, 2) },
+            ]
+            for (const value of poisoned) {
+              const generation = crypto.randomUUID()
+              await Storage.write(["session_protocol_run_manifest", session.id], {
+                version: 1,
+                generation,
+                ...value,
+              })
+              await Storage.write(["session_protocol_run_generation", session.id], { generation, dirty: false })
+              expect((await SessionRuns.migration(session.id)).count).toBe(101)
+            }
             expect(indexed.runs.some((run) => run.run_id === "run_orphan")).toBe(false)
             const read = Storage.read
             const keys: string[][] = []
