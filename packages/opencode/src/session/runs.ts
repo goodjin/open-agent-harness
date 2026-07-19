@@ -160,6 +160,8 @@ export namespace SessionRuns {
   ) {
     return Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
       const initial = await count(sessionID)
+      const cached = initial.count > 1 ? await healthy(sessionID) : undefined
+      if (cached && cached.count > 1) return fn({ count: cached.count })
       const state = initial.count > 1 ? await refresh(sessionID).then(() => count(sessionID)) : initial
       if (state.count !== 1 || !state.runID) return fn(state)
       const loaded = await primary(sessionID, state.runID)

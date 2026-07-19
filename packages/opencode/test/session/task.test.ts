@@ -3312,6 +3312,43 @@ describe("session task", () => {
       expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toHaveLength(0)
     }))
 
+  test("reuses a healthy multi-run manifest without rebuilding on repeated opens", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await legacyRuns(session.id, "healthy")
+      expect(await SessionTask.open(session.id)).toMatchObject({ type: "legacy_multi_run", count: 2 })
+
+      const read = Storage.read
+      const keys: string[][] = []
+      const reads = spyOn(Storage, "read").mockImplementation(async (key) => {
+        keys.push(key)
+        return read(key)
+      })
+      const list = spyOn(Storage, "list")
+      const atomic = spyOn(Storage, "atomic")
+      const probe = spyOn(Storage, "probe")
+      try {
+        for (let index = 0; index < 3; index++)
+          expect(await SessionTask.open(session.id)).toMatchObject({ type: "legacy_multi_run", count: 2 })
+        expect(keys).toHaveLength(12)
+        expect(
+          keys.every(
+            (key) =>
+              key[0] === "session_protocol_run_manifest" || key[0] === "session_protocol_run_generation",
+          ),
+        ).toBe(true)
+        expect(list).not.toHaveBeenCalled()
+        expect(atomic).not.toHaveBeenCalled()
+        expect(probe).toHaveBeenCalledTimes(3)
+        expect(probe.mock.calls.every((call) => call[1] === 2)).toBe(true)
+      } finally {
+        reads.mockRestore()
+        list.mockRestore()
+        atomic.mockRestore()
+        probe.mockRestore()
+      }
+    }))
+
   test("admits one legacy run before appending an ordinary executable package", () =>
     setup(async () => {
       const session = await Session.create({})
@@ -3413,6 +3450,30 @@ describe("session task", () => {
             requiresAssignment: true,
           }),
         ).toMatchObject({ type: "replay", revision: { version: 1 } })
+
+        const update = await confirmation(session.id, `confirmed_update_${mode}`, "update", "self")
+        const draft = await SessionTask.confirmed({
+          sessionID: session.id,
+          runID: update.source_run_id!,
+          actionIDs: [update.source_action_id!],
+          actions: [{ id: `confirmed_update_action_${mode}` }],
+          legacy: { title: "Untrusted", body: "Untrusted" },
+          requiresAssignment: true,
+        })
+        if (draft.type !== "update") throw new Error("legacy update draft missing")
+        await SessionTask.activate({ taskID: draft.task.id, revisionID: draft.revision.id })
+        expect((await SessionTask.get(session.id))?.revision.version).toBe(2)
+        expect(
+          await SessionTask.confirmed({
+            sessionID: session.id,
+            runID: proof.source_run_id!,
+            actionIDs: [proof.source_action_id!],
+            actions: [{ id: `confirmed_action_${mode}` }],
+            legacy: { title: "Untrusted", body: "Untrusted" },
+            requiresAssignment: true,
+          }),
+        ).toMatchObject({ type: "replay", revision: { version: 1 } })
+        expect((await SessionTask.get(session.id))?.revision.version).toBe(2)
 
         const late = await confirmation(session.id, `confirmed_late_${mode}`, "create", "self")
         await expect(

@@ -401,11 +401,13 @@ export namespace SessionTask {
     if (op !== "create" && op !== "update" && op !== "handoff")
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
+    const plan = "plan" in body ? body.plan : undefined
+    if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
+    if (sourced && assignment.status === "completed" && op !== "handoff" && assigned(input.sessionID, assignment.id))
+      return replay({ assignment, op, plan, sessionID: input.sessionID })
     const continuation = op === "create" && target === "self" ? snapshot : undefined
     if (op === "create" && target === "self" && current?.task.source_type === "legacy" && !continuation && !replayable)
       throw new Conflict("session_task_legacy_continuation_stale")
-    const plan = "plan" in body ? body.plan : undefined
-    if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
     if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self"))
       throw new Conflict()
     if (assignment.status === "completed") {
@@ -1909,6 +1911,18 @@ export namespace SessionTask {
     if (expected && (expected.task !== snapshot.task || expected.revision !== snapshot.revision || expected.run !== run))
       return
     return snapshot
+  }
+
+  function assigned(sessionID: SessionID, assignmentID: string) {
+    return Database.use((db) =>
+      db
+        .select({ workflow: TaskRevisionTable.workflow })
+        .from(TaskRevisionTable)
+        .innerJoin(SessionTaskTable, eq(SessionTaskTable.id, TaskRevisionTable.task_id))
+        .where(eq(SessionTaskTable.session_id, sessionID))
+        .all()
+        .some((item) => Workflow.parse(item.workflow).assignment_id === assignmentID),
+    )
   }
 
   function merge(prev: unknown[], next: unknown[]) {
