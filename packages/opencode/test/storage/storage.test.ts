@@ -4,6 +4,8 @@ import path from "path"
 import { Global } from "../../src/global"
 import { Storage } from "../../src/storage/storage"
 
+const posix = process.platform === "darwin" || process.platform === "linux" ? test : test.skip
+
 describe("storage", () => {
   test("creates a new JSON value", async () => {
     const key = ["test", "create", crypto.randomUUID()]
@@ -38,121 +40,103 @@ describe("storage", () => {
     expect((await fs.readdir(dir)).filter((file) => file.endsWith(".tmp"))).toEqual(["orphan.tmp"])
   })
 
-  test("never reclaims an aged lock owned by a live process", async () => {
+  posix("serializes real processes on one kernel lock", async () => {
     const key = ["test", "lock", crypto.randomUUID()]
-    const dir = lockdir(key)
-    await fs.mkdir(dir, { recursive: true })
-    await fs.writeFile(path.join(dir, "owner.json"), JSON.stringify({ pid: process.pid, token: "live-owner" }))
-    const old = new Date(Date.now() - 120_000)
-    await fs.utimes(dir, old, old)
+    const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
+    const owner = locker(key, path.join(dir, "owner"), path.join(dir, "release"))
+    await ready(path.join(dir, "owner"))
+    const next = locker(key, path.join(dir, "next"), path.join(dir, "release-next"))
+    await Bun.sleep(100)
+    expect(await Bun.file(path.join(dir, "next")).exists()).toBe(false)
+    await Bun.write(path.join(dir, "release"), "release")
+    expect(await owner.exited).toBe(0)
+    await ready(path.join(dir, "next"))
+    await Bun.write(path.join(dir, "release-next"), "release")
+    expect(await next.exited).toBe(0)
+  })
 
-    await expect(Storage.locked(key, async () => {}, { timeout: 30, grace: 5 })).rejects.toBeInstanceOf(
+  posix("times out without stealing or breaking a live process lock", async () => {
+    const key = ["test", "lock", crypto.randomUUID()]
+    const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
+    const owner = locker(key, path.join(dir, "owner"), path.join(dir, "release"))
+    await ready(path.join(dir, "owner"))
+
+    await expect(Storage.locked(key, async () => {}, { timeout: 30 })).rejects.toBeInstanceOf(
       Storage.LockTimeoutError,
     )
-    expect(JSON.parse(await fs.readFile(path.join(dir, "owner.json"), "utf8"))).toEqual({
-      pid: process.pid,
-      token: "live-owner",
-    })
-    await fs.rm(dir, { recursive: true, force: true })
+    expect(owner.killed).toBe(false)
+    await Bun.write(path.join(dir, "release"), "release")
+    expect(await owner.exited).toBe(0)
+    expect(await Storage.locked(key, async () => "released", { timeout: 100 })).toBe("released")
   })
 
-  test("reclaims a lock only after its recorded owner dies", async () => {
+  posix("releases a process lock when its owner is killed", async () => {
     const key = ["test", "lock", crypto.randomUUID()]
-    const dir = lockdir(key)
-    await fs.mkdir(dir, { recursive: true })
-    await fs.writeFile(path.join(dir, "owner.json"), JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" }))
+    const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
+    const owner = locker(key, path.join(dir, "owner"), path.join(dir, "never"))
+    await ready(path.join(dir, "owner"))
+    owner.kill("SIGKILL")
+    await owner.exited
 
-    expect(await Storage.locked(key, async () => "recovered", { timeout: 100 })).toBe("recovered")
-    expect(await fs.stat(dir).then(() => true, () => false)).toBe(false)
+    expect(await Storage.locked(key, async () => "recovered", { timeout: 500 })).toBe("recovered")
+  }, 15_000)
+
+  posix("releases a lock when the protected callback throws", async () => {
+    const key = ["test", "lock", crypto.randomUUID()]
+    await expect(
+      Storage.locked(key, async () => {
+        throw new Error("callback failed")
+      }),
+    ).rejects.toThrow("callback failed")
+    expect(await Storage.locked(key, async () => "released", { timeout: 100 })).toBe("released")
   })
 
-  test.each(["missing", "corrupt"])("waits through the %s-owner grace window before recovery", async (kind) => {
-    const key = ["test", "lock", crypto.randomUUID()]
-    const dir = lockdir(key)
-    await fs.mkdir(dir, { recursive: true })
-    if (kind === "corrupt") await fs.writeFile(path.join(dir, "owner.json"), "not-json")
+  posix("keeps lock files out of storage listings", async () => {
+    const prefix = ["test", "lock", crypto.randomUUID()]
+    await Storage.write([...prefix, "value"], { complete: true })
+    await Storage.locked([...prefix, "manifest"], async () => {})
 
-    await expect(Storage.locked(key, async () => {}, { timeout: 20, grace: 100 })).rejects.toBeInstanceOf(
-      Storage.LockTimeoutError,
-    )
-    expect(await fs.stat(dir).then(() => true, () => false)).toBe(true)
-    const old = new Date(Date.now() - 1_000)
-    await fs.utimes(dir, old, old)
-    expect(await Storage.locked(key, async () => "recovered", { timeout: 100, grace: 10 })).toBe("recovered")
-  })
-
-  test("does not let an old owner release a replacement token", async () => {
-    const key = ["test", "lock", crypto.randomUUID()]
-    const dir = lockdir(key)
-    await Storage.locked(key, async () => {
-      await fs.writeFile(
-        path.join(dir, "owner.json"),
-        JSON.stringify({ pid: process.pid, token: "replacement-owner" }),
-      )
-    })
-
-    expect(JSON.parse(await fs.readFile(path.join(dir, "owner.json"), "utf8"))).toEqual({
-      pid: process.pid,
-      token: "replacement-owner",
-    })
-    await fs.rm(dir, { recursive: true, force: true })
-  })
-
-  test("serializes concurrent reclaimers without deleting a new owner", async () => {
-    const key = ["test", "lock", crypto.randomUUID()]
-    const dir = lockdir(key)
-    await fs.mkdir(dir, { recursive: true })
-    await fs.writeFile(path.join(dir, "owner.json"), JSON.stringify({ pid: 2_147_483_647, token: "dead-owner" }))
-    const seen: string[] = []
-    let active = 0
-    let peak = 0
-    const run = (name: string) =>
-      Storage.locked(
-        key,
-        async () => {
-          active++
-          peak = Math.max(peak, active)
-          seen.push(name)
-          await Bun.sleep(20)
-          active--
-        },
-        { timeout: 1_000, grace: 5 },
-      )
-
-    await Promise.all([run("a"), run("b")])
-    expect(peak).toBe(1)
-    expect(seen.sort()).toEqual(["a", "b"])
-    expect((await fs.readdir(path.dirname(dir))).filter((item) => item.includes(path.basename(dir)))).toEqual([])
-  })
-
-  test("keeps release and reclaim races mutually exclusive", async () => {
-    const key = ["test", "lock", crypto.randomUUID()]
-    const gate = Promise.withResolvers<void>()
-    const seen: string[] = []
-    let active = 0
-    let peak = 0
-    const first = Storage.locked(key, async () => {
-      active++
-      peak = Math.max(peak, active)
-      seen.push("owner")
-      await gate.promise
-      active--
-    })
-    while (!seen.length) await Bun.sleep(5)
-    const next = Storage.locked(key, async () => {
-      active++
-      peak = Math.max(peak, active)
-      seen.push("reclaimer")
-      active--
-    })
-    gate.resolve()
-    await Promise.all([first, next])
-
-    expect(peak).toBe(1)
-    expect(seen).toEqual(["owner", "reclaimer"])
+    expect(await Storage.list(prefix)).toEqual([[...prefix, "value"]])
+    expect((await fs.stat(lockfile([...prefix, "manifest"]))).isFile()).toBe(true)
   })
 })
 
-function lockdir(key: string[]) {
+function lockfile(key: string[]) {
   return path.join(Global.Path.data, "storage", ...key) + ".lock"
+}
+
+function locker(key: string[], ready: string, release: string) {
+  return Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { Storage } from "./src/storage/storage.ts"
+        import { existsSync } from "fs"
+        await Storage.locked(JSON.parse(process.env.LOCK_KEY), async () => {
+          await Bun.write(process.env.LOCK_READY, "ready")
+          while (!existsSync(process.env.LOCK_RELEASE)) await Bun.sleep(5)
+        })
+      `,
+    ],
+    {
+      cwd: path.join(import.meta.dir, "../.."),
+      env: {
+        ...process.env,
+        LOCK_KEY: JSON.stringify(key),
+        LOCK_READY: ready,
+        LOCK_RELEASE: release,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+}
+
+async function ready(file: string) {
+  for (let count = 0; count < 2_000; count++) {
+    if (await Bun.file(file).exists()) return
+    await Bun.sleep(5)
+  }
+  throw new Error(`Timed out waiting for ${file}`)
 }

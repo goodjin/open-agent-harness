@@ -115,8 +115,8 @@ describe("session runs", () => {
             expect(after.runs.some((run) => run.run_id === stored.run_id)).toBe(true)
 
             const same = "run_migration_same"
-            const start = path.join(tmp.path, "run-store-start")
-            const children = ["First committed title", "Second committed title"].map((title, index) =>
+            const dir = path.join(tmp.path, "run-store")
+            const children = ["First committed title", "Second committed title"].map((title, side) =>
               Bun.spawn(
                 [
                   "bun",
@@ -125,37 +125,51 @@ describe("session runs", () => {
                     process.stdout.write("RUN_")
                     await Bun.sleep(10)
                     console.log("STORE_READY")
-                    while (!(await Bun.file(process.env.RUN_START).exists())) await Bun.sleep(5)
                     const { AgentProtocol } = await import("./src/protocol/schema.ts")
                     const { SessionRuns } = await import("./src/session/runs.ts")
-                    await SessionRuns.store(process.env.RUN_SESSION, AgentProtocol.Result.parse(JSON.parse(process.env.RUN_VALUE)))
+                    const run = AgentProtocol.Result.parse(JSON.parse(process.env.RUN_VALUE))
+                    for (let round = 0; round < 5; round++) {
+                      await Bun.write(process.env.RUN_DIR + "/ready-" + process.env.RUN_SIDE + "-" + round, "ready")
+                      while (!(await Bun.file(process.env.RUN_DIR + "/start-" + round).exists())) await Bun.sleep(5)
+                      await SessionRuns.store(process.env.RUN_SESSION, { ...run, title: process.env.RUN_TITLE + " " + round })
+                      await Bun.write(process.env.RUN_DIR + "/done-" + process.env.RUN_SIDE + "-" + round, "done")
+                    }
                   `,
                 ],
                 {
                   cwd: path.join(import.meta.dir, "../.."),
                   env: {
                     ...process.env,
-                    RUN_START: start,
+                    RUN_DIR: dir,
                     RUN_SESSION: session.id,
-                    RUN_VALUE: JSON.stringify({ ...result(same), title }),
+                    RUN_SIDE: side.toString(),
+                    RUN_TITLE: title,
+                    RUN_VALUE: JSON.stringify(result(same)),
                   },
                   stdout: "pipe",
                   stderr: "pipe",
                 },
               ),
             )
-            const ready = await Promise.all(children.map((child) => signal(child, "RUN_STORE_READY\n")))
-            expect(ready.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
-            await Bun.write(start, "go")
-            expect(await Promise.all(children.map((child) => child.exited))).toEqual([0, 0])
-            const main = await Storage.read<AgentProtocol.Result>(["session_protocol_run", session.id, same])
-            expect((await SessionRuns.migration(session.id)).runs).toContainEqual(
-              expect.objectContaining({ run_id: same, title: main.title }),
-            )
+            const signals = await Promise.all(children.map((child) => signal(child, "RUN_STORE_READY\n")))
+            expect(signals.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
+            for (const round of Array.from({ length: 5 }, (_, index) => index)) {
+              await Promise.all([ready(path.join(dir, `ready-0-${round}`)), ready(path.join(dir, `ready-1-${round}`))])
+              await Bun.write(path.join(dir, `start-${round}`), "go")
+              await Promise.all([ready(path.join(dir, `done-0-${round}`)), ready(path.join(dir, `done-1-${round}`))])
+              const main = await Storage.read<AgentProtocol.Result>(["session_protocol_run", session.id, same])
+              expect((await SessionRuns.migration(session.id)).runs).toContainEqual(
+                expect.objectContaining({ run_id: same, title: main.title }),
+              )
+            }
+            const codes = await Promise.all(children.map((child) => child.exited))
+            const errors = await Promise.all(children.map((child) => new Response(child.stderr).text()))
+            if (codes.some((code) => code !== 0)) throw new Error(`run store failed: ${JSON.stringify({ codes, errors })}`)
+            expect(codes).toEqual([0, 0])
           },
         }),
     })
-  })
+  }, 60_000)
 
   test("settles a fragmented readiness read before reporting timeout diagnostics", async () => {
     const failures: unknown[] = []
@@ -1542,6 +1556,14 @@ async function signal(
   throw new Error(
     `child readiness failed: expected=${JSON.stringify(expected)} exit=${code} stdout=${JSON.stringify(output)} stderr=${JSON.stringify(error)} read=${JSON.stringify(failure instanceof Error ? failure.message : failure)}`,
   )
+}
+
+async function ready(file: string) {
+  for (let count = 0; count < 3_000; count++) {
+    if (await Bun.file(file).exists()) return
+    await Bun.sleep(5)
+  }
+  throw new Error(`Timed out waiting for ${file}`)
 }
 
 async function reply(

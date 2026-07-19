@@ -9,6 +9,7 @@ import { NamedError } from "@open-agent-harness/util/error"
 import z from "zod"
 import { Glob } from "../util/glob"
 import { git } from "@/util/git"
+import { FileLock } from "@/util/file-lock"
 
 export namespace Storage {
   const log = Log.create({ service: "storage" })
@@ -233,89 +234,16 @@ export namespace Storage {
   export async function locked<T>(
     key: string[],
     fn: () => Promise<T>,
-    options: { timeout?: number; grace?: number } = {},
+    options: { timeout?: number } = {},
   ) {
     const root = await state().then((x) => x.dir)
-    const dir = path.join(root, ...key) + ".lock"
+    const file = path.join(root, ...key) + ".lock"
     const timeout = options.timeout ?? 30_000
-    const grace = options.grace ?? 1_000
-    const end = Date.now() + timeout
-    const token = crypto.randomUUID()
-    const parse = (raw: unknown) => {
-      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
-      const item = raw as { pid?: unknown; token?: unknown }
-      if (!Number.isInteger(item.pid) || typeof item.token !== "string" || !item.token) return
-      return { pid: item.pid as number, token: item.token }
-    }
-    const read = (root = dir) =>
-      Filesystem.readJson<unknown>(path.join(root, "owner.json"))
-        .then(parse)
-        .catch(() => undefined)
-    const claim = async (expected?: string) => {
-      const current = await read()
-      if (expected ? current?.token !== expected : current) return false
-      const tomb = `${dir}.${expected ?? "empty"}.${crypto.randomUUID()}.tomb`
-      const moved = await fs.rename(dir, tomb).then(
-        () => true,
-        (err: unknown) => {
-          if (!(err instanceof Error)) throw err
-          const code = (err as NodeJS.ErrnoException).code
-          if (code === "ENOENT" || code === "EEXIST") return false
-          throw err
-        },
-      )
-      if (!moved) return false
-      const saved = await read(tomb)
-      if (expected ? saved?.token !== expected : saved) {
-        await fs.rename(tomb, dir).catch(() => undefined)
-        return false
-      }
-      await fs.rm(tomb, { recursive: true, force: true })
-      return true
-    }
-    while (true) {
-      const made = await fs.mkdir(dir, { recursive: false }).then(
-        () => true,
-        (err: unknown) => {
-          if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return undefined
-          if (err instanceof Error && (err as NodeJS.ErrnoException).code === "EEXIST") return false
-          throw err
-        },
-      )
-      if (made === undefined) {
-        await fs.mkdir(path.dirname(dir), { recursive: true })
-        continue
-      }
-      if (made) {
-        await Filesystem.writeJson(path.join(dir, "owner.json"), { pid: process.pid, token })
-        try {
-          return await fn()
-        } finally {
-          await claim(token)
-        }
-      }
-      const saved = await read()
-      const age = await fs.stat(dir).then(
-        (item) => Date.now() - item.mtimeMs,
-        () => 0,
-      )
-      const alive = saved
-        ? (() => {
-            try {
-              process.kill(saved.pid, 0)
-              return true
-            } catch {
-              return false
-            }
-          })()
-        : undefined
-      if (saved && !alive && (await claim(saved.token))) continue
-      if (!saved && age >= grace && (await claim())) {
-        continue
-      }
-      if (Date.now() >= end) throw new LockTimeoutError({ key: key.join("/"), timeout })
-      await Bun.sleep(10)
-    }
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    return FileLock.withLock(file, fn, timeout).catch((err) => {
+      if (err instanceof FileLock.TimeoutError) throw new LockTimeoutError({ key: key.join("/"), timeout })
+      throw err
+    })
   }
 
   async function withErrorHandling<T>(body: () => Promise<T>) {
