@@ -2,7 +2,9 @@
 
 ## 状态
 
-设计已确认，尚未进入实现。
+设计已实现并完成整体验收。当前实现以 SQLite Task/Revision/Handoff 为持久化真相源，保留 Runs 兼容读取，并通过后端领域、服务端、SDK、前端单元与应用 smoke 验证。
+
+旧 Run 懒迁移使用会话级内核文件锁与原子 JSON 发布：Task admission 和 Run store 共用同一锁边界，避免 1→2 Run 并发绕过确认；崩溃留下的 dirty、截断 sidecar 会自动重建，无法解析的旧主 Run 会隔离为诊断文件而不阻塞后续读取。Darwin、Linux 使用 `flock`，Windows 使用 `CreateFileW + LockFileEx`。
 
 本设计调整 `docs/features/2026-07-14-session-runs-task-result-semantics.md` 中“一个会话可展示多个顶层 Run”的产品语义。实现完成后，Task 成为会话中唯一的顶层执行概念，Run 不再作为独立用户概念展示。现有 Run、Action、SessionResult 和 delegation 数据可作为任务版本的内部执行记录继续复用。
 

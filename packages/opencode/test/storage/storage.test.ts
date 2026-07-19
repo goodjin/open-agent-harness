@@ -4,7 +4,7 @@ import path from "path"
 import { Global } from "../../src/global"
 import { Storage } from "../../src/storage/storage"
 
-const posix = process.platform === "darwin" || process.platform === "linux" ? test : test.skip
+const native = ["darwin", "linux", "win32"].includes(process.platform) ? test : test.skip
 
 describe("storage", () => {
   test("creates a new JSON value", async () => {
@@ -40,48 +40,91 @@ describe("storage", () => {
     expect((await fs.readdir(dir)).filter((file) => file.endsWith(".tmp"))).toEqual(["orphan.tmp"])
   })
 
-  posix("serializes real processes on one kernel lock", async () => {
+  test("atomically replaces JSON without leaving publication files", async () => {
+    const key = ["test", "atomic", crypto.randomUUID()]
+    await Storage.atomic(key, { value: "first" })
+    await Storage.atomic(key, { value: "second", body: "x".repeat(100_000) })
+
+    expect(await Storage.read<{ value: string; body: string }>(key)).toEqual({
+      value: "second",
+      body: "x".repeat(100_000),
+    })
+    const dir = path.dirname(path.join(Global.Path.data, "storage", ...key))
+    expect((await fs.readdir(dir)).filter((file) => file.endsWith(".tmp"))).toEqual([])
+  })
+
+  test("keeps the previous JSON when atomic publication fails", async () => {
+    const key = ["test", "atomic", crypto.randomUUID()]
+    await Storage.atomic(key, { value: "stable" })
+
+    await expect(Storage.atomic(key, { value: 1n })).rejects.toThrow()
+    expect(await Storage.read<{ value: string }>(key)).toEqual({ value: "stable" })
+    const dir = path.dirname(path.join(Global.Path.data, "storage", ...key))
+    expect((await fs.readdir(dir)).filter((file) => file.endsWith(".tmp"))).toEqual([])
+  })
+
+  test.each([-1, 0.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid storage lock timeout %p",
+    async (timeout) => {
+      await expect(Storage.locked(["test", "lock", crypto.randomUUID()], async () => {}, { timeout })).rejects.toThrow()
+    },
+  )
+
+  native("serializes real processes on one kernel lock", async () => {
+    const key = ["test", "lock", crypto.randomUUID()]
+    const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
+    const children: ReturnType<typeof locker>[] = []
+    try {
+      const owner = locker(key, path.join(dir, "owner"), path.join(dir, "release"))
+      children.push(owner)
+      await ready(path.join(dir, "owner"))
+      const next = locker(key, path.join(dir, "next"), path.join(dir, "release-next"))
+      children.push(next)
+      await Bun.sleep(100)
+      expect(await Bun.file(path.join(dir, "next")).exists()).toBe(false)
+      await Bun.write(path.join(dir, "release"), "release")
+      expect(await owner.exited).toBe(0)
+      await ready(path.join(dir, "next"))
+      await Bun.write(path.join(dir, "release-next"), "release")
+      expect(await next.exited).toBe(0)
+    } finally {
+      await Promise.all(children.map(reap))
+    }
+  })
+
+  native("times out without stealing or breaking a live process lock", async () => {
     const key = ["test", "lock", crypto.randomUUID()]
     const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
     const owner = locker(key, path.join(dir, "owner"), path.join(dir, "release"))
-    await ready(path.join(dir, "owner"))
-    const next = locker(key, path.join(dir, "next"), path.join(dir, "release-next"))
-    await Bun.sleep(100)
-    expect(await Bun.file(path.join(dir, "next")).exists()).toBe(false)
-    await Bun.write(path.join(dir, "release"), "release")
-    expect(await owner.exited).toBe(0)
-    await ready(path.join(dir, "next"))
-    await Bun.write(path.join(dir, "release-next"), "release")
-    expect(await next.exited).toBe(0)
+    try {
+      await ready(path.join(dir, "owner"))
+      await expect(Storage.locked(key, async () => {}, { timeout: 30 })).rejects.toBeInstanceOf(
+        Storage.LockTimeoutError,
+      )
+      expect(owner.killed).toBe(false)
+      await Bun.write(path.join(dir, "release"), "release")
+      expect(await owner.exited).toBe(0)
+      expect(await Storage.locked(key, async () => "released", { timeout: 100 })).toBe("released")
+    } finally {
+      await reap(owner)
+    }
   })
 
-  posix("times out without stealing or breaking a live process lock", async () => {
-    const key = ["test", "lock", crypto.randomUUID()]
-    const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
-    const owner = locker(key, path.join(dir, "owner"), path.join(dir, "release"))
-    await ready(path.join(dir, "owner"))
-
-    await expect(Storage.locked(key, async () => {}, { timeout: 30 })).rejects.toBeInstanceOf(
-      Storage.LockTimeoutError,
-    )
-    expect(owner.killed).toBe(false)
-    await Bun.write(path.join(dir, "release"), "release")
-    expect(await owner.exited).toBe(0)
-    expect(await Storage.locked(key, async () => "released", { timeout: 100 })).toBe("released")
-  })
-
-  posix("releases a process lock when its owner is killed", async () => {
+  native("releases a process lock when its owner is killed", async () => {
     const key = ["test", "lock", crypto.randomUUID()]
     const dir = path.join(Global.Path.data, `lock-test-${crypto.randomUUID()}`)
     const owner = locker(key, path.join(dir, "owner"), path.join(dir, "never"))
-    await ready(path.join(dir, "owner"))
-    owner.kill("SIGKILL")
-    await owner.exited
-
-    expect(await Storage.locked(key, async () => "recovered", { timeout: 500 })).toBe("recovered")
+    try {
+      await ready(path.join(dir, "owner"))
+      owner.kill()
+      await owner.exited
+      expect(await Storage.locked(key, async () => "recovered", { timeout: 500 })).toBe("recovered")
+    } finally {
+      await reap(owner)
+    }
   }, 15_000)
 
-  posix("releases a lock when the protected callback throws", async () => {
+  native("releases a lock when the protected callback throws", async () => {
     const key = ["test", "lock", crypto.randomUUID()]
     await expect(
       Storage.locked(key, async () => {
@@ -91,7 +134,7 @@ describe("storage", () => {
     expect(await Storage.locked(key, async () => "released", { timeout: 100 })).toBe("released")
   })
 
-  posix("keeps lock files out of storage listings", async () => {
+  native("keeps lock files out of storage listings", async () => {
     const prefix = ["test", "lock", crypto.randomUUID()]
     await Storage.write([...prefix, "value"], { complete: true })
     await Storage.locked([...prefix, "manifest"], async () => {})
@@ -139,4 +182,18 @@ async function ready(file: string) {
     await Bun.sleep(5)
   }
   throw new Error(`Timed out waiting for ${file}`)
+}
+
+async function reap(child: ReturnType<typeof locker>) {
+  child.kill()
+  await child.exited.catch(() => undefined)
+  await Promise.all([drain(child.stdout), drain(child.stderr)])
+}
+
+async function drain(stream: ReadableStream<Uint8Array>) {
+  try {
+    return await new Response(stream).text()
+  } catch {
+    return ""
+  }
 }

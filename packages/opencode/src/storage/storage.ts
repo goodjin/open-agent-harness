@@ -168,6 +168,19 @@ export namespace Storage {
     })
   }
 
+  export async function quarantine(key: string[]) {
+    const dir = await state().then((x) => x.dir)
+    const target = path.join(dir, ...key) + ".json"
+    const saved = `${target}.${Date.now()}.${crypto.randomUUID()}.corrupt`
+    return fs.rename(target, saved).then(
+      () => saved,
+      (err: unknown) => {
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return
+        throw err
+      },
+    )
+  }
+
   export async function read<T>(key: string[]) {
     const dir = await state().then((x) => x.dir)
     const target = path.join(dir, ...key) + ".json"
@@ -196,6 +209,39 @@ export namespace Storage {
     return withErrorHandling(async () => {
       using _ = await Lock.write(target)
       await Filesystem.writeJson(target, content)
+    })
+  }
+
+  export async function atomic<T>(key: string[], content: T) {
+    const dir = await state().then((x) => x.dir)
+    const target = path.join(dir, ...key) + ".json"
+    const tmp = `${target}.${process.pid}.${crypto.randomUUID()}.tmp`
+    return withErrorHandling(async () => {
+      using _ = await Lock.write(target)
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      try {
+        const file = await fs.open(tmp, "wx", 0o600)
+        try {
+          await file.writeFile(JSON.stringify(content, null, 2))
+          await file.sync()
+        } finally {
+          await file.close()
+        }
+        await fs.rename(tmp, target)
+        const parent = await fs.open(path.dirname(target), "r").catch(() => undefined)
+        if (parent) {
+          try {
+            await parent.sync().catch((err: unknown) => {
+              if (process.platform === "win32") return
+              throw err
+            })
+          } finally {
+            await parent.close()
+          }
+        }
+      } finally {
+        await fs.unlink(tmp).catch(() => undefined)
+      }
     })
   }
 
@@ -238,7 +284,7 @@ export namespace Storage {
   ) {
     const root = await state().then((x) => x.dir)
     const file = path.join(root, ...key) + ".lock"
-    const timeout = options.timeout ?? 30_000
+    const timeout = z.number().int().nonnegative().finite().parse(options.timeout ?? 30_000)
     await fs.mkdir(path.dirname(file), { recursive: true })
     return FileLock.withLock(file, fn, timeout).catch((err) => {
       if (err instanceof FileLock.TimeoutError) throw new LockTimeoutError({ key: key.join("/"), timeout })

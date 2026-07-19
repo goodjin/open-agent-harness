@@ -390,12 +390,15 @@ export namespace SessionTask {
     const legacy = assignment.content_ref.split("/").at(-1)?.startsWith("rev-") === true
     const meta =
       !legacy && "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
-    const fallback = legacy && !(await get(input.sessionID)) ? { op: "create", target: "self" } : undefined
+    const current = await get(input.sessionID)
+    const fallback =
+      legacy && (!current || current.task.source_type === "legacy") ? { op: "create", target: "self" } : undefined
     const op = "op" in meta ? meta.op : fallback?.op
     const target = "target" in meta ? meta.target : (fallback?.target ?? assignment.target)
     if (op !== "create" && op !== "update" && op !== "handoff")
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
+    const continuation = op === "create" && target === "self" && current?.task.source_type === "legacy"
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
     if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self"))
@@ -429,7 +432,7 @@ export namespace SessionTask {
             sessionID: input.sessionID,
             runID: input.runID,
             messageID: input.messageID,
-            assignment: { op, target, title: assignment.title, body: plan },
+            ...(continuation ? {} : { assignment: { op, target, title: assignment.title, body: plan } }),
             actions: input.actions,
           },
           assignment.id,
@@ -459,11 +462,13 @@ export namespace SessionTask {
           .select()
           .from(TaskRevisionTable)
           .where(
-            and(
-              eq(TaskRevisionTable.task_id, task.id),
-              eq(TaskRevisionTable.title, input.assignment.title),
-              eq(TaskRevisionTable.body_hash, hash(input.plan)),
-            ),
+            task.source_type === "legacy" && input.op === "create"
+              ? eq(TaskRevisionTable.task_id, task.id)
+              : and(
+                  eq(TaskRevisionTable.task_id, task.id),
+                  eq(TaskRevisionTable.title, input.assignment.title),
+                  eq(TaskRevisionTable.body_hash, hash(input.plan)),
+                ),
           )
           .orderBy(desc(TaskRevisionTable.version))
           .all()
@@ -661,7 +666,15 @@ export namespace SessionTask {
           const run_ids = ids.includes(input.runID) ? ids : [...ids, input.runID]
           const revision = tx
             .update(TaskRevisionTable)
-            .set({ workflow: bounded({ ...Workflow.parse(active.workflow), actions, run_id: input.runID, run_ids }) })
+            .set({
+              workflow: bounded({
+                ...Workflow.parse(active.workflow),
+                ...(assignmentID ? { assignment_id: assignmentID } : {}),
+                actions,
+                run_id: input.runID,
+                run_ids,
+              }),
+            })
             .where(
               and(
                 eq(TaskRevisionTable.id, active.id),
@@ -1963,13 +1976,14 @@ export namespace SessionTask {
   async function admit(sessionID: SessionID) {
     if (exists(sessionID)) return "bound" as const
     const { SessionRuns } = await import("./runs")
-    const state = await SessionRuns.migrationCount(sessionID)
-    if (state.count === 0) return "empty" as const
-    if (state.count > 1) return "multiple" as const
-    const run = state.runID ? await SessionRuns.persisted(sessionID, state.runID) : undefined
-    if (!run) return "empty" as const
-    await migrate(sessionID, run)
-    return "bound" as const
+    return SessionRuns.admission(sessionID, async (state) => {
+      if (exists(sessionID)) return "bound" as const
+      if (state.count === 0) return "empty" as const
+      if (state.count > 1) return "multiple" as const
+      if (!state.run) return "empty" as const
+      await migrate(sessionID, state.run)
+      return "bound" as const
+    })
   }
 
   function hash(input: string) {

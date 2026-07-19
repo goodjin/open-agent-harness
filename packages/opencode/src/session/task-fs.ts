@@ -1,7 +1,8 @@
-import { closeSync, fchmodSync, fstatSync, fsyncSync, readFileSync, writeFileSync } from "fs"
+import { closeSync, fchmodSync, fstatSync, fsyncSync, writeFileSync } from "fs"
 import { dlopen, ptr, read } from "bun:ffi"
 import { Instance } from "@/project/instance"
 import { Log } from "@/util/log"
+import { Native } from "@/util/native"
 
 export namespace TaskFS {
   type Result = { ok: true; value: number } | { ok: false; errno: number }
@@ -26,8 +27,7 @@ export namespace TaskFS {
   const errno = {
     exist: 17,
     missing: 2,
-    interrupt: 4,
-    blocked: process.platform === "darwin" ? 35 : 11,
+    ...Native.errno,
   }
   const flags =
     process.platform === "darwin"
@@ -289,7 +289,7 @@ export namespace TaskFS {
       log.warn("task markdown projection disabled", { platform: process.platform, reason: "unsupported_platform" })
       return
     }
-    for (const file of source ? [source] : libraries()) {
+    for (const file of source ? [source] : Native.libraries()) {
       try {
         const native = library(file)
         source = file
@@ -298,24 +298,6 @@ export namespace TaskFS {
     }
     source = null
     log.warn("task markdown projection disabled", { platform: process.platform, reason: "native_backend_unavailable" })
-  }
-
-  function libraries() {
-    if (process.platform === "darwin") return ["libSystem.B.dylib"]
-    const maps = (() => {
-      try {
-        return readFileSync("/proc/self/maps", "utf8")
-      } catch {
-        return ""
-      }
-    })()
-    const loaded = maps
-      .split("\n")
-      .flatMap(
-        (line) =>
-          line.match(/\s(\/\S*(?:libc\.so(?:\.\d+)*|libc\.musl-[^/\s]+\.so\.1|ld-musl-[^/\s]+\.so\.1))$/)?.[1] ?? [],
-      )
-    return [...new Set([...loaded, "libc.so.6"])]
   }
 
   function library(file: string): Native {

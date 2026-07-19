@@ -4,6 +4,7 @@ import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
+import { Global } from "../../src/global"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Session } from "../../src/session"
@@ -87,6 +88,18 @@ describe("session runs", () => {
             await Storage.write(["session_protocol_run_manifest", session.id], { invalid: true })
             expect((await SessionRuns.migration(session.id)).count).toBe(101)
 
+            const root = path.join(Global.Path.data, "storage")
+            await Bun.write(path.join(root, "session_protocol_run_manifest", `${session.id}.json`), "{")
+            expect((await SessionRuns.migration(session.id)).count).toBe(101)
+            await Bun.write(path.join(root, "session_protocol_run_generation", `${session.id}.json`), "{")
+            expect((await SessionRuns.migration(session.id)).count).toBe(101)
+            await Bun.write(
+              path.join(root, "session_protocol_run_index", session.id, "run_migration_000.json"),
+              "{",
+            )
+            await Bun.write(path.join(root, "session_protocol_run_manifest", `${session.id}.json`), "{")
+            expect((await SessionRuns.migration(session.id)).count).toBe(101)
+
             const stale = await Storage.read<Record<string, unknown>>([
               "session_protocol_run_manifest",
               session.id,
@@ -151,21 +164,32 @@ describe("session runs", () => {
                 },
               ),
             )
-            const signals = await Promise.all(children.map((child) => signal(child, "RUN_STORE_READY\n")))
-            expect(signals.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
-            for (const round of Array.from({ length: 5 }, (_, index) => index)) {
-              await Promise.all([ready(path.join(dir, `ready-0-${round}`)), ready(path.join(dir, `ready-1-${round}`))])
-              await Bun.write(path.join(dir, `start-${round}`), "go")
-              await Promise.all([ready(path.join(dir, `done-0-${round}`)), ready(path.join(dir, `done-1-${round}`))])
-              const main = await Storage.read<AgentProtocol.Result>(["session_protocol_run", session.id, same])
-              expect((await SessionRuns.migration(session.id)).runs).toContainEqual(
-                expect.objectContaining({ run_id: same, title: main.title }),
-              )
+            try {
+              const signals = await Promise.all(children.map((child) => signal(child, "RUN_STORE_READY\n")))
+              expect(signals.every((item) => item.includes("RUN_STORE_READY"))).toBe(true)
+              for (const round of Array.from({ length: 5 }, (_, index) => index)) {
+                await Promise.all([
+                  ready(path.join(dir, `ready-0-${round}`)),
+                  ready(path.join(dir, `ready-1-${round}`)),
+                ])
+                await Bun.write(path.join(dir, `start-${round}`), "go")
+                await Promise.all([
+                  ready(path.join(dir, `done-0-${round}`)),
+                  ready(path.join(dir, `done-1-${round}`)),
+                ])
+                const main = await Storage.read<AgentProtocol.Result>(["session_protocol_run", session.id, same])
+                expect((await SessionRuns.migration(session.id)).runs).toContainEqual(
+                  expect.objectContaining({ run_id: same, title: main.title }),
+                )
+              }
+              const codes = await Promise.all(children.map((child) => child.exited))
+              const errors = await Promise.all(children.map((child) => new Response(child.stderr).text()))
+              if (codes.some((code) => code !== 0))
+                throw new Error(`run store failed: ${JSON.stringify({ codes, errors })}`)
+              expect(codes).toEqual([0, 0])
+            } finally {
+              await Promise.all(children.map(reap))
             }
-            const codes = await Promise.all(children.map((child) => child.exited))
-            const errors = await Promise.all(children.map((child) => new Response(child.stderr).text()))
-            if (codes.some((code) => code !== 0)) throw new Error(`run store failed: ${JSON.stringify({ codes, errors })}`)
-            expect(codes).toEqual([0, 0])
           },
         }),
     })
@@ -1564,6 +1588,20 @@ async function ready(file: string) {
     await Bun.sleep(5)
   }
   throw new Error(`Timed out waiting for ${file}`)
+}
+
+async function reap(child: { stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>; exited: Promise<number>; kill(): void }) {
+  child.kill()
+  await child.exited.catch(() => undefined)
+  await Promise.all([drain(child.stdout), drain(child.stderr)])
+}
+
+async function drain(stream: ReadableStream<Uint8Array>) {
+  try {
+    return await new Response(stream).text()
+  } catch {
+    return ""
+  }
 }
 
 async function reply(

@@ -316,6 +316,7 @@ describe("session task endpoints", () => {
             await Storage.write(["session_protocol_run", multi.id, "run_route_second"], {
               ...one,
               run_id: "run_route_second",
+              title: "   ",
             })
             const app = Server.Default()
 
@@ -334,11 +335,18 @@ describe("session task endpoints", () => {
             })
             const proposal = await app.request(`/session/${multi.id}/task`)
             expect(proposal.status).toBe(200)
-            expect(await proposal.json()).toMatchObject({
+            const body = await proposal.json()
+            expect(body).toMatchObject({
               type: "legacy_multi_run",
               count: 2,
-              proposal: { status: "pending_confirmation", session_id: multi.id },
+              proposal: {
+                status: "pending_confirmation",
+                session_id: multi.id,
+              },
             })
+            expect(body.proposal.runs).toContainEqual(
+              expect.objectContaining({ run_id: "run_route_second", title: "Legacy task" }),
+            )
             expect(await SessionTask.get(multi.id)).toBeUndefined()
           },
         }),

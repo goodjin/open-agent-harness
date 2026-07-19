@@ -81,7 +81,7 @@ describe("session task", () => {
         runs: [
           {
             run_id: "run_old",
-            title: "Old run",
+            title: "Legacy task",
             status: "completed",
             time: { started: 1, completed: 2 },
           },
@@ -91,6 +91,7 @@ describe("session task", () => {
 
     expect(present({ current, loading: false })).toEqual({ kind: "current", current })
     expect(present({ current: legacy, loading: false })).toEqual({ kind: "legacy", legacy })
+    expect(legacy.proposal.runs[0]?.title).toBe("Legacy task")
     expect(present({ loading: false })).toEqual({ kind: "unbound" })
     expect(present({ loading: false, error: "404" })).toEqual({ kind: "error", error: "404" })
     const detail = revision()

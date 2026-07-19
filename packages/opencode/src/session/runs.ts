@@ -11,8 +11,10 @@ import { SessionResult } from "./result"
 import { SessionID } from "./schema"
 import { SessionTurn } from "./turn"
 import { Markdown } from "./task-documents"
+import { Log } from "@/util/log"
 
 export namespace SessionRuns {
+  const log = Log.create({ service: "session.runs" })
   const kinds = ["requirements", "designs", "plans", "reviews"] as const
   export const ID = z.string().regex(/^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/)
 
@@ -103,7 +105,7 @@ export namespace SessionRuns {
   const Migration = z
     .object({
       run_id: ID,
-      title: z.string().optional(),
+      title: z.string().min(1),
       status: z.enum(["running", "completed", "blocked", "failed"]),
       time: AgentProtocol.Result.shape.time,
     })
@@ -131,19 +133,50 @@ export namespace SessionRuns {
       const generation = crypto.randomUUID()
       const existed = await Storage.exists(["session_protocol_run", sessionID, run.run_id])
       const cached = await healthy(sessionID)
-      await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: true })
-      await Storage.write(["session_protocol_run", sessionID, run.run_id], run)
+      await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: true })
+      await Storage.atomic(["session_protocol_run", sessionID, run.run_id], run)
       const index = migrationIndex(run)
-      await Storage.write(["session_protocol_run_index", sessionID, run.run_id], index)
+      await Storage.atomic(["session_protocol_run_index", sessionID, run.run_id], index)
       const manifest = cached
         ? update(cached, index, existed, generation)
         : await rebuild(sessionID, generation)
-      await Storage.write(["session_protocol_run_manifest", sessionID], manifest)
-      await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: false })
+      await Storage.atomic(["session_protocol_run_manifest", sessionID], manifest)
+      await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: false })
     })
   }
 
   export async function migrationCount(sessionID: SessionID) {
+    return admission(sessionID, async (state) => ({ count: state.count, runID: state.runID }))
+  }
+
+  export async function admission<T>(
+    sessionID: SessionID,
+    fn: (state: { count: number; runID?: string; run?: Run }) => Promise<T>,
+  ) {
+    return Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
+      const state = await count(sessionID)
+      if (state.count !== 1 || !state.runID) return fn(state)
+      const loaded = await persisted(sessionID, state.runID).then(
+        (run) => ({ run }),
+        (error: unknown) => ({ error }),
+      )
+      if (!("run" in loaded) || !loaded.run) {
+        const key = ["session_protocol_run", sessionID, state.runID]
+        const saved = await Storage.quarantine(key).catch(() => undefined)
+        await Storage.remove(["session_protocol_run_index", sessionID, state.runID])
+        log.warn("isolated unreadable protocol run", {
+          sessionID,
+          runID: state.runID,
+          file: saved,
+          error: "error" in loaded && loaded.error instanceof Error ? loaded.error.message : "invalid run",
+        })
+        return fn({ count: 0 })
+      }
+      return fn({ ...state, run: loaded.run })
+    })
+  }
+
+  async function count(sessionID: SessionID) {
     const keys = await Storage.probe(["session_protocol_run", sessionID], 2)
     return {
       count: keys.length,
@@ -159,10 +192,10 @@ export namespace SessionRuns {
         const found = await healthy(sessionID)
         if (found) return found
         const generation = crypto.randomUUID()
-        await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: true })
+        await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: true })
         const manifest = await rebuild(sessionID, generation)
-        await Storage.write(["session_protocol_run_manifest", sessionID], manifest)
-        await Storage.write(["session_protocol_run_generation", sessionID], { generation, dirty: false })
+        await Storage.atomic(["session_protocol_run_manifest", sessionID], manifest)
+        await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: false })
         return manifest
       }))
     const runs = select(cached.runs, size)
@@ -189,13 +222,14 @@ export namespace SessionRuns {
 
   async function rebuild(sessionID: SessionID, generation: string) {
     const keys = await Storage.list(["session_protocol_run", sessionID])
-    const picked = select(keys, MIGRATION_LIMIT)
-    const runs = await Promise.all(picked.map((key) => indexed(sessionID, key.at(-1)!)))
+    const indexedRuns = await Promise.all(keys.map((key) => indexed(sessionID, key.at(-1)!)))
+    const valid = indexedRuns.filter((item): item is z.infer<typeof Migration> => item !== undefined)
+    const runs = select(valid, MIGRATION_LIMIT)
     return Manifest.parse({
       version: 1,
       generation,
-      count: keys.length,
-      truncated: keys.length > runs.length,
+      count: valid.length,
+      truncated: valid.length > runs.length,
       runs: runs.sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
     })
   }
@@ -227,10 +261,46 @@ export namespace SessionRuns {
     const found = await Storage.read<unknown>(key)
       .then((item) => Migration.parse(item))
       .catch(() => undefined)
-    if (found) return found
-    const raw = await Storage.read<unknown>(["session_protocol_run", sessionID, runID])
-    const saved = migrationIndex(raw)
-    await Storage.write(key, saved)
+    const main = ["session_protocol_run", sessionID, runID]
+    const raw = await Storage.read<unknown>(main).catch(async (err) => {
+      const saved = await Storage.quarantine(main).catch(() => undefined)
+      log.warn("isolated corrupt protocol run", {
+        sessionID,
+        runID,
+        file: saved,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      await Storage.remove(key)
+      return undefined
+    })
+    if (raw === undefined) return
+    const parsed = (() => {
+      try {
+        return { data: migrationIndex(raw) } as const
+      } catch (err) {
+        return { error: err } as const
+      }
+    })()
+    if ("error" in parsed) {
+      const saved = await Storage.quarantine(main).catch(() => undefined)
+      log.warn("isolated invalid protocol run", {
+        sessionID,
+        runID,
+        file: saved,
+        error: parsed.error instanceof Error ? parsed.error.message : String(parsed.error),
+      })
+      await Storage.remove(key)
+      return
+    }
+    if (
+      found &&
+      found.run_id === parsed.data.run_id &&
+      found.title === parsed.data.title &&
+      found.status === parsed.data.status
+    )
+      return found
+    const saved = parsed.data
+    await Storage.atomic(key, saved)
     return saved
   }
 
@@ -239,7 +309,7 @@ export namespace SessionRuns {
     const run = raw as Record<string, unknown>
     return Migration.parse({
       run_id: run.run_id,
-      title: run.title,
+      title: typeof run.title === "string" && run.title.trim() ? run.title.trim() : "Legacy task",
       status: run.status,
       time: run.time,
     })

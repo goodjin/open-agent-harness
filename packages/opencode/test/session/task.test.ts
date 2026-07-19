@@ -5,6 +5,7 @@ import path from "path"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
+import { Global } from "../../src/global"
 import { AgentProtocol } from "../../src/protocol/schema"
 import { Session } from "../../src/session"
 import { SessionRuns } from "../../src/session/runs"
@@ -3369,6 +3370,125 @@ describe("session task", () => {
           mode === "before" ? 1 : 2,
         )
       }
+    }))
+
+  test("normalizes a confirmed create onto one migrated legacy revision before and after open", () =>
+    setup(async () => {
+      for (const mode of ["unopened", "opened"] as const) {
+        const session = await Session.create({})
+        const old = protocol(`run_legacy_confirmed_${mode}`, `Legacy confirmed ${mode}`)
+        await Storage.write(["session_protocol_run", session.id, old.run_id], old)
+        if (mode === "opened") await SessionTask.open(session.id)
+        const proof = await confirmation(session.id, `confirmed_${mode}`, "create", "self")
+
+        const saved = await SessionTask.confirmed({
+          sessionID: session.id,
+          runID: proof.source_run_id!,
+          actionIDs: [proof.source_action_id!],
+          actions: [{ id: `confirmed_action_${mode}` }],
+          legacy: { title: "Untrusted", body: "Untrusted" },
+          requiresAssignment: true,
+        })
+
+        expect(saved.type).toBe("execute")
+        expect(await SessionTask.get(session.id)).toMatchObject({
+          task: { source_type: "legacy", title: old.title },
+          revision: {
+            version: 1,
+            workflow: {
+              assignment_id: proof.id,
+              run_id: proof.source_run_id,
+              run_ids: [old.run_id, proof.source_run_id],
+            },
+          },
+        })
+        expect((await SessionAssignment.get(proof.id))?.status).toBe("completed")
+        expect(
+          await SessionTask.confirmed({
+            sessionID: session.id,
+            runID: proof.source_run_id!,
+            actionIDs: [proof.source_action_id!],
+            actions: [{ id: `confirmed_action_${mode}` }],
+            legacy: { title: "Untrusted", body: "Untrusted" },
+            requiresAssignment: true,
+          }),
+        ).toMatchObject({ type: "replay", revision: { version: 1 } })
+      }
+    }))
+
+  test("serializes legacy admission behind a second run store", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = protocol("run_admission_first", "First")
+      const second = protocol("run_admission_second", "Second")
+      await Storage.write(["session_protocol_run", session.id, first.run_id], first)
+      const entered = Promise.withResolvers<void>()
+      const release = Promise.withResolvers<void>()
+      const atomic = Storage.atomic
+      const hook = spyOn(Storage, "atomic").mockImplementation(async (key, value) => {
+        if (key[0] === "session_protocol_run_generation" && (value as { dirty?: boolean }).dirty) {
+          entered.resolve()
+          await release.promise
+        }
+        return atomic(key, value)
+      })
+      try {
+        const store = SessionRuns.store(session.id, second)
+        await entered.promise
+        const route = SessionTask.route({
+          sessionID: session.id,
+          runID: "run_admission_new",
+          legacy: { title: "Unsafe", body: "Unsafe" },
+          actions: [{ id: "unsafe" }],
+        })
+        release.resolve()
+        await store
+        await expect(route).rejects.toBeInstanceOf(SessionTask.Conflict)
+        expect(await SessionTask.get(session.id)).toBeUndefined()
+      } finally {
+        release.resolve()
+        hook.mockRestore()
+      }
+    }))
+
+  test("uses a stable title for blank or missing legacy migration snapshots", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await Storage.write(["session_protocol_run", session.id, "run_blank_a"], {
+        ...protocol("run_blank_a", "Temporary"),
+        title: "",
+      })
+      await Storage.write(["session_protocol_run", session.id, "run_blank_b"], {
+        ...protocol("run_blank_b", "Temporary"),
+        title: undefined,
+      })
+
+      expect(await SessionTask.open(session.id)).toMatchObject({
+        type: "legacy_multi_run",
+        proposal: { runs: [{ title: "Legacy task" }, { title: "Legacy task" }] },
+      })
+    }))
+
+  test("isolates a truncated single legacy run instead of failing task admission", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const run = protocol("run_truncated_legacy", "Truncated")
+      await SessionRuns.store(session.id, run)
+      const file = path.join(
+        Global.Path.data,
+        "storage",
+        "session_protocol_run",
+        session.id,
+        `${run.run_id}.json`,
+      )
+      await Bun.write(file, "{")
+
+      expect(await SessionTask.open(session.id)).toBeUndefined()
+      expect(await SessionTask.get(session.id)).toBeUndefined()
+      expect(await Bun.file(file).exists()).toBe(false)
+      expect(
+        (await Array.fromAsync(new Bun.Glob(`${run.run_id}.json.*.corrupt`).scan({ cwd: path.dirname(file) }))).length,
+      ).toBe(1)
     }))
 
   test("migrates a delegated child legacy run before rejecting its incompatible assignment", () =>
