@@ -66,6 +66,7 @@ describe("session runs", () => {
               { count: 1, truncated: false, runs: indexed.runs.slice(0, 2) },
               { count: 2, truncated: false, runs: [indexed.runs[0]!, indexed.runs[0]!] },
               { count: 2, truncated: true, runs: indexed.runs.slice(0, 2) },
+              { count: 2, truncated: true, runs: indexed.runs.slice(0, 1) },
             ]
             for (const value of poisoned) {
               const generation = crypto.randomUUID()
