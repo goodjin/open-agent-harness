@@ -229,6 +229,63 @@ describe("session runs", () => {
     })
   }, 60_000)
 
+  test("builds a clean truncated manifest after isolating a selected corrupt legacy run", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_run_migration_corrupt_projection"),
+          fn: async () => {
+            const session = await Session.create({})
+            await Promise.all(
+              Array.from({ length: 101 }, (_, index) => {
+                const id = `run_corrupt_${index.toString().padStart(3, "0")}`
+                return Storage.write(["session_protocol_run", session.id, id], result(id))
+              }),
+            )
+            const root = path.join(Global.Path.data, "storage")
+            const file = path.join(root, "session_protocol_run", session.id, "run_corrupt_000.json")
+            await Bun.write(file, "{")
+            const read = Storage.read
+            let reads = 0
+            const hook = spyOn(Storage, "read").mockImplementation(async (key) => {
+              if (key[0] === "session_protocol_run") reads++
+              return read(key)
+            })
+            const migration = await SessionRuns.migration(session.id).finally(() => hook.mockRestore())
+            expect(migration.count).toBe(100)
+            expect(migration.truncated).toBe(true)
+            expect(migration.runs).toHaveLength(49)
+            expect(reads).toBeLessThanOrEqual(SessionRuns.MIGRATION_LIMIT)
+            expect(await Bun.file(file).exists()).toBe(false)
+            expect(
+              (await Array.fromAsync(new Bun.Glob("run_corrupt_000.json.*.corrupt").scan({ cwd: path.dirname(file) })))
+                .length,
+            ).toBe(1)
+            const manifest = await Storage.read<{
+              generation: string
+              count: number
+              truncated: boolean
+              runs: unknown[]
+            }>(["session_protocol_run_manifest", session.id])
+            expect(manifest.count).toBe(100)
+            expect(manifest.truncated).toBe(true)
+            expect(manifest.runs).toHaveLength(49)
+            expect(
+              await Storage.read<{ generation: string; dirty: boolean }>([
+                "session_protocol_run_generation",
+                session.id,
+              ]),
+            ).toEqual({
+              generation: manifest.generation,
+              dirty: false,
+            })
+          },
+        }),
+    })
+  })
+
   test("settles a fragmented readiness read before reporting timeout diagnostics", async () => {
     const failures: unknown[] = []
     const hook = (err: unknown) => failures.push(err)

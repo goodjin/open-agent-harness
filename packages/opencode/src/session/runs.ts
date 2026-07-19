@@ -123,17 +123,10 @@ export namespace SessionRuns {
     .superRefine((value, ctx) => {
       if (new Set(value.runs.map((run) => run.run_id)).size !== value.runs.length)
         ctx.addIssue({ code: "custom", path: ["runs"], message: "run ids must be unique" })
-      if (value.count <= MIGRATION_LIMIT) {
-        if (value.truncated)
-          ctx.addIssue({ code: "custom", path: ["truncated"], message: "small manifests cannot be truncated" })
-        if (value.count !== value.runs.length)
-          ctx.addIssue({ code: "custom", path: ["count"], message: "count must match all run snapshots" })
-        return
-      }
-      if (!value.truncated)
-        ctx.addIssue({ code: "custom", path: ["truncated"], message: "large manifests must be truncated" })
-      if (value.runs.length !== MIGRATION_LIMIT)
-        ctx.addIssue({ code: "custom", path: ["runs"], message: "large manifests require a full snapshot window" })
+      if (value.runs.length > value.count)
+        ctx.addIssue({ code: "custom", path: ["count"], message: "count cannot be smaller than run snapshots" })
+      if (value.truncated !== (value.count > value.runs.length))
+        ctx.addIssue({ code: "custom", path: ["truncated"], message: "truncated must match omitted run snapshots" })
     })
 
   const Generation = z
