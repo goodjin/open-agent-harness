@@ -170,17 +170,32 @@ describe("session runs", () => {
                   "bun",
                   "-e",
                   `
-                    process.stdout.write("RUN_")
-                    await Bun.sleep(10)
-                    console.log("STORE_READY")
-                    const { AgentProtocol } = await import("./src/protocol/schema.ts")
-                    const { SessionRuns } = await import("./src/session/runs.ts")
-                    const run = AgentProtocol.Result.parse(JSON.parse(process.env.RUN_VALUE))
-                    for (let round = 0; round < 5; round++) {
-                      await Bun.write(process.env.RUN_DIR + "/ready-" + process.env.RUN_SIDE + "-" + round, "ready")
-                      while (!(await Bun.file(process.env.RUN_DIR + "/start-" + round).exists())) await Bun.sleep(5)
-                      await SessionRuns.store(process.env.RUN_SESSION, { ...run, title: process.env.RUN_TITLE + " " + round })
-                      await Bun.write(process.env.RUN_DIR + "/done-" + process.env.RUN_SIDE + "-" + round, "done")
+                    let phase = "boot"
+                    try {
+                      phase = "import:schema"
+                      const { AgentProtocol } = await import("./src/protocol/schema.ts")
+                      phase = "import:runs"
+                      const { SessionRuns } = await import("./src/session/runs.ts")
+                      phase = "parse"
+                      const run = AgentProtocol.Result.parse(JSON.parse(process.env.RUN_VALUE))
+                      process.stdout.write("RUN_")
+                      await Bun.sleep(10)
+                      console.log("STORE_READY")
+                      for (let round = 0; round < 5; round++) {
+                        phase = "ready:" + round
+                        await Bun.write(process.env.RUN_DIR + "/ready-" + process.env.RUN_SIDE + "-" + round, "ready")
+                        phase = "wait:" + round
+                        while (!(await Bun.file(process.env.RUN_DIR + "/start-" + round).exists())) await Bun.sleep(5)
+                        phase = "store:" + round
+                        await SessionRuns.store(process.env.RUN_SESSION, { ...run, title: process.env.RUN_TITLE + " " + round })
+                        phase = "done:" + round
+                        await Bun.write(process.env.RUN_DIR + "/done-" + process.env.RUN_SIDE + "-" + round, "done")
+                      }
+                    } catch (error) {
+                      const name = error instanceof Error ? error.name : typeof error
+                      const message = error instanceof Error ? error.message : String(error)
+                      console.error("RUN_STORE_FAILURE " + JSON.stringify({ phase, name, message }))
+                      process.exitCode = 1
                     }
                   `,
                 ],
@@ -193,6 +208,7 @@ describe("session runs", () => {
                     RUN_SIDE: side.toString(),
                     RUN_TITLE: title,
                     RUN_VALUE: JSON.stringify(result(same)),
+                    OPENCODE_DISABLE_MODELS_FETCH: "1",
                   },
                   stdout: "pipe",
                   stderr: "pipe",
