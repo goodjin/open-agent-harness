@@ -1,5 +1,5 @@
 import { closeSync, fchmodSync, fstatSync, fsyncSync, writeFileSync } from "fs"
-import { dlopen, ptr, read } from "bun:ffi"
+import { ptr } from "bun:ffi"
 import { Instance } from "@/project/instance"
 import { Log } from "@/util/log"
 import { Native } from "@/util/native"
@@ -306,41 +306,15 @@ export namespace TaskFS {
       mkdirat: { args: ["i32", "ptr", "u32"], returns: "i32" },
       renameat: { args: ["i32", "ptr", "i32", "ptr"], returns: "i32" },
       unlinkat: { args: ["i32", "ptr", "i32"], returns: "i32" },
-      flock: { args: ["i32", "i32"], returns: "i32" },
     } as const
     const text = (value: string) => ptr(Buffer.from(`${value}\0`))
-    if (process.platform === "darwin") {
-      const lib = dlopen(file, { ...shared, __error: { args: [], returns: "ptr" } })
-      const result = (value: number): Result => {
-        if (value >= 0) return { ok: true, value }
-        const error = lib.symbols.__error()
-        return { ok: false, errno: error ? read.i32(error, 0) : -1 }
-      }
-      return {
-        open: (dir, name, value, mode = 0) => result(lib.symbols.openat(dir, text(name), value, mode)),
-        mkdir: (dir, name, mode) => result(lib.symbols.mkdirat(dir, text(name), mode)),
-        rename: (dir, from, to) => result(lib.symbols.renameat(dir, text(from), dir, text(to))),
-        unlink: (dir, name, value) => result(lib.symbols.unlinkat(dir, text(name), value)),
-        flock: (fd, op) => result(lib.symbols.flock(fd, op)),
-        close: () => {
-          try {
-            lib.close()
-          } catch {}
-        },
-      }
-    }
-    const lib = dlopen(file, { ...shared, __errno_location: { args: [], returns: "ptr" } })
-    const result = (value: number): Result => {
-      if (value >= 0) return { ok: true, value }
-      const error = lib.symbols.__errno_location()
-      return { ok: false, errno: error ? read.i32(error, 0) : -1 }
-    }
+    const lib = Native.unix(file, shared)
     return {
-      open: (dir, name, value, mode = 0) => result(lib.symbols.openat(dir, text(name), value, mode)),
-      mkdir: (dir, name, mode) => result(lib.symbols.mkdirat(dir, text(name), mode)),
-      rename: (dir, from, to) => result(lib.symbols.renameat(dir, text(from), dir, text(to))),
-      unlink: (dir, name, value) => result(lib.symbols.unlinkat(dir, text(name), value)),
-      flock: (fd, op) => result(lib.symbols.flock(fd, op)),
+      open: (dir, name, value, mode = 0) => lib.result(lib.symbols.openat(dir, text(name), value, mode)),
+      mkdir: (dir, name, mode) => lib.result(lib.symbols.mkdirat(dir, text(name), mode)),
+      rename: (dir, from, to) => lib.result(lib.symbols.renameat(dir, text(from), dir, text(to))),
+      unlink: (dir, name, value) => lib.result(lib.symbols.unlinkat(dir, text(name), value)),
+      flock: lib.flock,
       close: () => {
         try {
           lib.close()

@@ -6,6 +6,8 @@
 
 旧 Run 懒迁移使用会话级内核文件锁与原子 JSON 发布：Task admission 和 Run store 共用同一锁边界，避免 1→2 Run 并发绕过确认；崩溃留下的 dirty、截断 sidecar 会自动重建，无法解析的旧主 Run 会隔离为诊断文件而不阻塞后续读取。Darwin、Linux 使用 `flock`，Windows 使用 `CreateFileW + LockFileEx`。
 
+恢复扫描以主 Run 文件名计算精确数量，只水合最多 50 个迁移快照并顺序校验，避免在大量历史 Run 下无界加载完整 JSON。隔离仅适用于能确认的主 JSON 语法或协议 schema 损坏；outcome、数据库、权限和瞬态 I/O 异常不会移动主 Run。单 Run 隔离与多 Run 重分类都会在同一锁内重新发布 clean manifest。旧 Run 迁移后的 confirmed-create 兼容仅开放给未追加执行、未产生新版本且无 assignment 的原始 v1 快照。
+
 本设计调整 `docs/features/2026-07-14-session-runs-task-result-semantics.md` 中“一个会话可展示多个顶层 Run”的产品语义。实现完成后，Task 成为会话中唯一的顶层执行概念，Run 不再作为独立用户概念展示。现有 Run、Action、SessionResult 和 delegation 数据可作为任务版本的内部执行记录继续复用。
 
 ## 用户目标

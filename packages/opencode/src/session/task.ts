@@ -29,6 +29,7 @@ export function locators(rows: { run: string; action: string; child: SessionID }
 }
 
 export namespace SessionTask {
+  type LegacySnapshot = { task: string; revision: string; run: string }
   export const Status = z.enum(["running", "waiting_user", "revising", "blocked", "completed", "failed"])
   export type Status = z.infer<typeof Status>
   export const RunID = z.string().regex(/^[A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?$/)
@@ -391,14 +392,18 @@ export namespace SessionTask {
     const meta =
       !legacy && "assignment" in body && body.assignment && typeof body.assignment === "object" ? body.assignment : {}
     const current = await get(input.sessionID)
+    const snapshot = legacySnapshot(current)
+    const replayable = current?.revision.workflow.assignment_id === assignment.id
     const fallback =
-      legacy && (!current || current.task.source_type === "legacy") ? { op: "create", target: "self" } : undefined
+      legacy && (!current || snapshot || replayable) ? { op: "create", target: "self" } : undefined
     const op = "op" in meta ? meta.op : fallback?.op
     const target = "target" in meta ? meta.target : (fallback?.target ?? assignment.target)
     if (op !== "create" && op !== "update" && op !== "handoff")
       throw new Conflict("session_task_assignment_content_invalid")
     if (target !== "self" && target !== "peer") throw new Conflict("session_task_assignment_content_invalid")
-    const continuation = op === "create" && target === "self" && current?.task.source_type === "legacy"
+    const continuation = op === "create" && target === "self" ? snapshot : undefined
+    if (op === "create" && target === "self" && current?.task.source_type === "legacy" && !continuation && !replayable)
+      throw new Conflict("session_task_legacy_continuation_stale")
     const plan = "plan" in body ? body.plan : undefined
     if (typeof plan !== "string") throw new Conflict("session_task_assignment_content_invalid")
     if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self"))
@@ -436,6 +441,7 @@ export namespace SessionTask {
             actions: input.actions,
           },
           assignment.id,
+          continuation,
         )
         if (!SessionAssignment.withCurrent(tx, locator)) throw new Conflict("session_task_assignment_not_current")
         if (op !== "handoff" && !SessionAssignment.consume(tx, locator))
@@ -495,7 +501,7 @@ export namespace SessionTask {
     return write(input)
   }
 
-  function write(raw: z.input<typeof Route>, assignmentID?: string) {
+  function write(raw: z.input<typeof Route>, assignmentID?: string, continuation?: LegacySnapshot) {
     const input = Route.parse(raw)
     const now = Date.now()
     try {
@@ -575,6 +581,8 @@ export namespace SessionTask {
             .where(eq(TaskRevisionTable.id, task.current_revision_id))
             .get()
           if (!current || current.task_id !== task.id) throw new Conflict("session_task_revision_missing")
+          if (continuation && !legacySnapshot(Stored.parse({ task, revision: current }), continuation))
+            throw new Conflict("session_task_legacy_continuation_stale")
           if (input.assignment?.op === "create") throw new Conflict()
           if (input.assignment?.op === "handoff") return { type: "handoff" as const, task: Task.parse(task) }
           if (input.assignment?.op === "update") {
@@ -1879,6 +1887,28 @@ export namespace SessionTask {
         total: compact.total + removed.length,
       },
     }
+  }
+
+  function legacySnapshot(stored: Stored | undefined, expected?: LegacySnapshot) {
+    if (!stored || stored.task.source_type !== "legacy") return
+    const run = typeof stored.task.source_ref.runID === "string" ? stored.task.source_ref.runID : undefined
+    if (!run || stored.task.current_revision_id !== stored.revision.id) return
+    if (stored.revision.version !== 1 || stored.revision.previous_id !== null) return
+    if (stored.revision.source_message_id !== null || stored.revision.reason !== "Migrated from one legacy Run") return
+    const flow = stored.revision.workflow
+    if (flow.assignment_id || flow.compact || flow.run_id !== run) return
+    if (runids(flow).length !== 1 || runids(flow)[0] !== run) return
+    if (
+      flow.actions.some((item) => {
+        const parsed = TaskAction.safeParse(item)
+        return !parsed.success || parsed.data.run_id !== run
+      })
+    )
+      return
+    const snapshot = { task: stored.task.id, revision: stored.revision.id, run }
+    if (expected && (expected.task !== snapshot.task || expected.revision !== snapshot.revision || expected.run !== run))
+      return
+    return snapshot
   }
 
   function merge(prev: unknown[], next: unknown[]) {

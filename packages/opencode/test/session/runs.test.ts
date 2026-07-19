@@ -49,10 +49,18 @@ describe("session runs", () => {
               status: "completed",
               time: { started: 0, completed: 1 },
             })
+            const raw = Storage.read
+            let hydrated = 0
+            const reads = spyOn(Storage, "read").mockImplementation(async (key) => {
+              if (key[0] === "session_protocol_run") hydrated++
+              return raw(key)
+            })
             const indexed = await SessionRuns.migration(session.id)
+            reads.mockRestore()
             expect(indexed.count).toBe(101)
             expect(indexed.truncated).toBe(true)
             expect(indexed.runs).toHaveLength(SessionRuns.MIGRATION_LIMIT)
+            expect(hydrated).toBeLessThanOrEqual(SessionRuns.MIGRATION_LIMIT)
             expect(indexed.runs.some((run) => run.run_id === "run_orphan")).toBe(false)
             const read = Storage.read
             const keys: string[][] = []
@@ -91,6 +99,16 @@ describe("session runs", () => {
             const root = path.join(Global.Path.data, "storage")
             await Bun.write(path.join(root, "session_protocol_run_manifest", `${session.id}.json`), "{")
             expect((await SessionRuns.migration(session.id)).count).toBe(101)
+
+            const actual = indexed.runs[0]!
+            await Storage.write(["session_protocol_run_index", session.id, actual.run_id], {
+              ...actual,
+              time: { started: 0, completed: 1 },
+            })
+            await Bun.write(path.join(root, "session_protocol_run_manifest", `${session.id}.json`), "{")
+            expect((await SessionRuns.migration(session.id)).runs.find((item) => item.run_id === actual.run_id)?.time).toEqual(
+              actual.time,
+            )
             await Bun.write(path.join(root, "session_protocol_run_generation", `${session.id}.json`), "{")
             expect((await SessionRuns.migration(session.id)).count).toBe(101)
             await Bun.write(

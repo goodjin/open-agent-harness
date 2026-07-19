@@ -128,6 +128,11 @@ export namespace SessionRuns {
     })
     .strict()
 
+  type Primary =
+    | { type: "run"; run: AgentProtocol.Result }
+    | { type: "missing" }
+    | { type: "corrupt"; error: Error }
+
   export async function store(sessionID: SessionID, run: AgentProtocol.Result) {
     return Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
       const generation = crypto.randomUUID()
@@ -154,25 +159,17 @@ export namespace SessionRuns {
     fn: (state: { count: number; runID?: string; run?: Run }) => Promise<T>,
   ) {
     return Storage.locked(["session_protocol_run_manifest", sessionID], async () => {
-      const state = await count(sessionID)
+      const initial = await count(sessionID)
+      const state = initial.count > 1 ? await refresh(sessionID).then(() => count(sessionID)) : initial
       if (state.count !== 1 || !state.runID) return fn(state)
-      const loaded = await persisted(sessionID, state.runID).then(
-        (run) => ({ run }),
-        (error: unknown) => ({ error }),
-      )
-      if (!("run" in loaded) || !loaded.run) {
-        const key = ["session_protocol_run", sessionID, state.runID]
-        const saved = await Storage.quarantine(key).catch(() => undefined)
-        await Storage.remove(["session_protocol_run_index", sessionID, state.runID])
-        log.warn("isolated unreadable protocol run", {
-          sessionID,
-          runID: state.runID,
-          file: saved,
-          error: "error" in loaded && loaded.error instanceof Error ? loaded.error.message : "invalid run",
-        })
-        return fn({ count: 0 })
+      const loaded = await primary(sessionID, state.runID)
+      if (loaded.type === "missing") return fn(await count(sessionID))
+      if (loaded.type === "corrupt") {
+        await isolate(sessionID, state.runID, loaded.error)
+        await refresh(sessionID)
+        return fn(await count(sessionID))
       }
-      return fn({ ...state, run: loaded.run })
+      return fn({ ...state, run: await hydrate(sessionID, state.runID, loaded.run) })
     })
   }
 
@@ -222,16 +219,28 @@ export namespace SessionRuns {
 
   async function rebuild(sessionID: SessionID, generation: string) {
     const keys = await Storage.list(["session_protocol_run", sessionID])
-    const indexedRuns = await Promise.all(keys.map((key) => indexed(sessionID, key.at(-1)!)))
-    const valid = indexedRuns.filter((item): item is z.infer<typeof Migration> => item !== undefined)
-    const runs = select(valid, MIGRATION_LIMIT)
+    const runs: z.infer<typeof Migration>[] = []
+    for (const key of select(keys, MIGRATION_LIMIT)) {
+      const item = await indexed(sessionID, key.at(-1)!)
+      if (item) runs.push(item)
+    }
+    const count = (await Storage.list(["session_protocol_run", sessionID])).length
     return Manifest.parse({
       version: 1,
       generation,
-      count: valid.length,
-      truncated: valid.length > runs.length,
+      count,
+      truncated: count > runs.length,
       runs: runs.sort((a, b) => b.time.started - a.time.started || b.run_id.localeCompare(a.run_id)),
     })
+  }
+
+  async function refresh(sessionID: SessionID) {
+    const generation = crypto.randomUUID()
+    await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: true })
+    const manifest = await rebuild(sessionID, generation)
+    await Storage.atomic(["session_protocol_run_manifest", sessionID], manifest)
+    await Storage.atomic(["session_protocol_run_generation", sessionID], { generation, dirty: false })
+    return manifest
   }
 
   function update(manifest: z.infer<typeof Manifest>, run: z.infer<typeof Migration>, existed: boolean, generation: string) {
@@ -258,50 +267,72 @@ export namespace SessionRuns {
 
   async function indexed(sessionID: SessionID, runID: string) {
     const key = ["session_protocol_run_index", sessionID, runID]
-    const found = await Storage.read<unknown>(key)
-      .then((item) => Migration.parse(item))
-      .catch(() => undefined)
-    const main = ["session_protocol_run", sessionID, runID]
-    const raw = await Storage.read<unknown>(main).catch(async (err) => {
-      const saved = await Storage.quarantine(main).catch(() => undefined)
-      log.warn("isolated corrupt protocol run", {
-        sessionID,
-        runID,
-        file: saved,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      await Storage.remove(key)
-      return undefined
-    })
-    if (raw === undefined) return
-    const parsed = (() => {
-      try {
-        return { data: migrationIndex(raw) } as const
-      } catch (err) {
-        return { error: err } as const
-      }
-    })()
-    if ("error" in parsed) {
-      const saved = await Storage.quarantine(main).catch(() => undefined)
-      log.warn("isolated invalid protocol run", {
-        sessionID,
-        runID,
-        file: saved,
-        error: parsed.error instanceof Error ? parsed.error.message : String(parsed.error),
-      })
+    const found = await index(key)
+    const loaded = await primary(sessionID, runID)
+    if (loaded.type === "missing") {
       await Storage.remove(key)
       return
     }
-    if (
-      found &&
-      found.run_id === parsed.data.run_id &&
-      found.title === parsed.data.title &&
-      found.status === parsed.data.status
-    )
-      return found
-    const saved = parsed.data
+    if (loaded.type === "corrupt") {
+      await isolate(sessionID, runID, loaded.error)
+      return
+    }
+    const saved = migrationIndex(loaded.run)
+    if (found && equal(found, saved)) return found
     await Storage.atomic(key, saved)
     return saved
+  }
+
+  async function index(key: string[]) {
+    const value = await Storage.read<unknown>(key).catch((err: unknown) => {
+      if (Storage.NotFoundError.isInstance(err) || err instanceof SyntaxError) return
+      throw err
+    })
+    if (value === undefined) return
+    const parsed = Migration.safeParse(value)
+    return parsed.success ? parsed.data : undefined
+  }
+
+  async function primary(sessionID: SessionID, runID: string): Promise<Primary> {
+    const loaded = await Storage.read<unknown>(["session_protocol_run", sessionID, runID]).then(
+      (value) => ({ type: "value" as const, value }),
+      (err: unknown) => {
+        if (Storage.NotFoundError.isInstance(err)) return { type: "missing" as const }
+        if (err instanceof SyntaxError) return { type: "corrupt" as const, error: err }
+        throw err
+      },
+    )
+    if (loaded.type !== "value") return loaded
+    const value =
+      loaded.value &&
+      typeof loaded.value === "object" &&
+      !Array.isArray(loaded.value) &&
+      "title" in loaded.value &&
+      typeof loaded.value.title === "string" &&
+      !loaded.value.title.trim()
+        ? Object.fromEntries(Object.entries(loaded.value).filter(([key]) => key !== "title"))
+        : loaded.value
+    const parsed = AgentProtocol.Result.safeParse(value)
+    if (!parsed.success) return { type: "corrupt", error: parsed.error }
+    if (parsed.data.run_id !== runID)
+      return { type: "corrupt", error: new Error(`Protocol run id mismatch: ${parsed.data.run_id} !== ${runID}`) }
+    return { type: "run", run: parsed.data }
+  }
+
+  async function isolate(sessionID: SessionID, runID: string, error: Error) {
+    const saved = await Storage.quarantine(["session_protocol_run", sessionID, runID])
+    await Storage.remove(["session_protocol_run_index", sessionID, runID])
+    log.warn("isolated corrupt protocol run", { sessionID, runID, file: saved, error: error.message })
+  }
+
+  function equal(a: z.infer<typeof Migration>, b: z.infer<typeof Migration>) {
+    return (
+      a.run_id === b.run_id &&
+      a.title === b.title &&
+      a.status === b.status &&
+      a.time.started === b.time.started &&
+      a.time.completed === b.time.completed
+    )
   }
 
   function migrationIndex(raw: unknown) {
@@ -378,16 +409,19 @@ export namespace SessionRuns {
 
   export async function persisted(sessionID: SessionID, runID: string) {
     if (!ID.safeParse(runID).success) return
+    const loaded = await primary(sessionID, runID)
+    if (loaded.type === "corrupt") throw loaded.error
+    return hydrate(sessionID, runID, loaded.type === "run" ? loaded.run : undefined)
+  }
+
+  async function hydrate(sessionID: SessionID, runID: string, stored?: AgentProtocol.Result) {
     const session = await Session.get(sessionID)
     const delegated = await delegation(session, runID)
     if (delegated?.run_id === runID) return delegated
-    const stored = await Storage.read<AgentProtocol.Result>(["session_protocol_run", sessionID, runID]).catch(
-      () => undefined,
-    )
     const projected = projections(session).find((item) => item.runID === runID)
     if (!stored && !projected) return
     const outcome = await readoutcome(sessionID, runID)
-    if (stored) return map(sessionID, AgentProtocol.Result.parse(stored), outcome, projected, undefined, true, false)
+    if (stored) return map(sessionID, stored, outcome, projected, undefined, true, false)
     if (projected) return map(sessionID, projection(projected), outcome, projected, undefined, false, false)
   }
 

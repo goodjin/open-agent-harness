@@ -1,5 +1,5 @@
 import { closeSync, constants, fchmodSync, fstatSync, openSync } from "fs"
-import { dlopen, ptr, read } from "bun:ffi"
+import { dlopen, ptr } from "bun:ffi"
 import path from "path"
 import { Native } from "./native"
 
@@ -95,40 +95,15 @@ export namespace FileLock {
   }
 
   function unix(file: string): Backend {
-    const symbols = { flock: { args: ["i32", "i32"], returns: "i32" } } as const
     const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW | cloexec()
-    if (process.platform === "darwin") {
-      const lib = dlopen(file, { ...symbols, __error: { args: [], returns: "ptr" } })
-      const flock = (fd: number, value: number): Result => {
-        const result = lib.symbols.flock(fd, value)
-        if (result >= 0) return { ok: true, value: result }
-        const error = lib.symbols.__error()
-        return { ok: false, errno: error ? read.i32(error, 0) : -1 }
-      }
-      return {
-        open: (path) => openSync(path, flags, 0o600),
-        regular: (fd) => (fchmodSync(fd, 0o600), fstatSync(fd).isFile()),
-        lock: (fd) => flock(fd, 2 | 4),
-        unlock: (fd) => flock(fd, 8),
-        release: closeSync,
-        close: () => lib.close(),
-        interrupt: Native.errno.interrupt,
-      }
-    }
-    const lib = dlopen(file, { ...symbols, __errno_location: { args: [], returns: "ptr" } })
-    const flock = (fd: number, value: number): Result => {
-      const result = lib.symbols.flock(fd, value)
-      if (result >= 0) return { ok: true, value: result }
-      const error = lib.symbols.__errno_location()
-      return { ok: false, errno: error ? read.i32(error, 0) : -1 }
-    }
+    const lib = Native.unix(file, {})
     return {
       open: (path) => openSync(path, flags, 0o600),
       regular: (fd) => (fchmodSync(fd, 0o600), fstatSync(fd).isFile()),
-      lock: (fd) => flock(fd, 2 | 4),
-      unlock: (fd) => flock(fd, 8),
+      lock: (fd) => lib.flock(fd, 2 | 4),
+      unlock: (fd) => lib.flock(fd, 8),
       release: closeSync,
-      close: () => lib.close(),
+      close: lib.close,
       interrupt: Native.errno.interrupt,
     }
   }

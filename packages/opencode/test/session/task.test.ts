@@ -3413,6 +3413,18 @@ describe("session task", () => {
             requiresAssignment: true,
           }),
         ).toMatchObject({ type: "replay", revision: { version: 1 } })
+
+        const late = await confirmation(session.id, `confirmed_late_${mode}`, "create", "self")
+        await expect(
+          SessionTask.confirmed({
+            sessionID: session.id,
+            runID: late.source_run_id!,
+            actionIDs: [late.source_action_id!],
+            actions: [{ id: `confirmed_late_action_${mode}` }],
+            legacy: { title: "Untrusted", body: "Untrusted" },
+            requiresAssignment: true,
+          }),
+        ).rejects.toBeInstanceOf(SessionTask.Conflict)
       }
     }))
 
@@ -3489,6 +3501,56 @@ describe("session task", () => {
       expect(
         (await Array.fromAsync(new Bun.Glob(`${run.run_id}.json.*.corrupt`).scan({ cwd: path.dirname(file) }))).length,
       ).toBe(1)
+
+      const next = protocol("run_after_isolation", "After isolation")
+      await SessionRuns.store(session.id, next)
+      expect(await SessionRuns.migrationCount(session.id)).toEqual({ count: 1, runID: next.run_id })
+      expect(await SessionRuns.migration(session.id)).toMatchObject({ count: 1, runs: [{ run_id: next.run_id }] })
+    }))
+
+  test("does not isolate a valid main run when an outcome or transient read fails", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const run = protocol("run_derived_failure", "Derived failure")
+      await Storage.write(["session_protocol_run", session.id, run.run_id], run)
+      await Storage.write(["session_protocol_run_outcome", session.id, run.run_id], { invalid: true })
+      const file = path.join(Global.Path.data, "storage", "session_protocol_run", session.id, `${run.run_id}.json`)
+
+      await expect(SessionTask.open(session.id)).rejects.toThrow()
+      expect(await Bun.file(file).exists()).toBe(true)
+      expect(
+        (await Array.fromAsync(new Bun.Glob(`${run.run_id}.json.*.corrupt`).scan({ cwd: path.dirname(file) }))).length,
+      ).toBe(0)
+
+      await Storage.remove(["session_protocol_run_outcome", session.id, run.run_id])
+      const read = Storage.read
+      const hook = spyOn(Storage, "read").mockImplementation(async (key) => {
+        if (key[0] === "session_protocol_run" && key.at(-1) === run.run_id)
+          throw Object.assign(new Error("transient main read"), { code: "EIO" })
+        return read(key)
+      })
+      try {
+        await expect(SessionTask.open(session.id)).rejects.toThrow("transient main read")
+      } finally {
+        hook.mockRestore()
+      }
+      expect(await Bun.file(file).exists()).toBe(true)
+    }))
+
+  test("reclassifies legacy migration after isolating corrupt main runs", () =>
+    setup(async () => {
+      const single = await Session.create({})
+      const valid = protocol("run_reclassify_valid", "Valid")
+      await Storage.write(["session_protocol_run", single.id, valid.run_id], valid)
+      await Storage.write(["session_protocol_run", single.id, "run_reclassify_corrupt"], { invalid: true })
+      expect(await SessionTask.open(single.id)).toMatchObject({ title: valid.title, version: 1 })
+      expect(await SessionTask.get(single.id)).toMatchObject({ task: { source_type: "legacy" } })
+
+      const empty = await Session.create({})
+      await Storage.write(["session_protocol_run", empty.id, "run_reclassify_bad_a"], { invalid: true })
+      await Storage.write(["session_protocol_run", empty.id, "run_reclassify_bad_b"], { invalid: true })
+      expect(await SessionTask.open(empty.id)).toBeUndefined()
+      expect(await SessionTask.get(empty.id)).toBeUndefined()
     }))
 
   test("migrates a delegated child legacy run before rejecting its incompatible assignment", () =>
