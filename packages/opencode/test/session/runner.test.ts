@@ -29,6 +29,7 @@ import { Storage } from "../../src/storage/storage"
 import { SessionRuns } from "../../src/session/runs"
 import { SessionTask } from "../../src/session/task"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
+import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { Database, eq } from "../../src/storage/db"
 
@@ -1521,25 +1522,42 @@ describe("SessionRunner", () => {
           const assistant = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: session.id, parentID: user.id, role: "assistant", mode: "protocol-runner", agent: "protocol-runner", path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now() } } as MessageV2.Assistant)) as MessageV2.Assistant
           const runner = SessionRunner.create({ assistantMessage: assistant, sessionID: session.id, model, abort: new AbortController().signal })
           const result = runner.process({ user, sessionID: session.id, model, agent: { name: "protocol-runner", runner: "protocol" } as never, system: [], abort: new AbortController().signal, messages: [{ role: "user", content: "revise task" }], tools: {}, runtimeTools: { catalog: [{ id: "read", description: "Read", schema: { type: "object" } }], prompt: "", execute: async () => ({ title: "Read", output: "ok", metadata: {} }) } as never })
-          await poll(async () => (await Question.list()).length > 0)
-          const question = (await Question.list())[0]!
-          await Question.reply({ requestID: question.id, answers: [["Confirm"]], response: "confirm" })
-          const unblocked = await Promise.race([result.then(() => true), Bun.sleep(100).then(() => false)])
-          release()
+          await poll(async () => {
+            const current = await Session.get(session.id)
+            const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
+            return protocol?.confirmations?.[0]?.status === "pending"
+          })
+          expect((await Question.list()).filter((item) => item.sessionID === session.id)).toHaveLength(0)
+          const before = await SessionTask.get(session.id)
+          if (!before) throw new Error("task missing")
           await result
-
-          expect(unblocked).toBe(true)
-          await poll(async () => (await SessionTask.current(session.id))?.title === "Revised task")
-          expect((await SessionTask.current(session.id))?.title).toBe("Revised task")
-          expect(bootstraps.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
+          const pending = await Session.get(session.id)
+          const pendingProtocol = pending.dsl_context?.protocol as
+            | { confirmations?: { run_id?: string; action_id?: string }[] }
+            | undefined
+          const pendingItem = pendingProtocol?.confirmations?.[0]
+          if (!pendingItem?.run_id || !pendingItem.action_id) throw new Error("update proposal missing")
+          await SessionTaskConfirmation.respond({
+            sessionID: session.id,
+            proposalID: `${pendingItem.run_id}:${pendingItem.action_id}`,
+            revisionID: before.revision.id,
+            action: "confirm",
+            op: "update",
+          })
+          release()
+          const assignment = await SessionAssignment.bySource({
+            sessionID: session.id,
+            runID: pendingItem.run_id,
+            actionID: pendingItem.action_id,
+          })
+          expect(assignment?.title).toBe("Revised task")
+          expect(bootstraps.filter((item) => item.metadata?.source === "task_confirmation")).toHaveLength(1)
           const messages = await MessageV2.filterCompacted(MessageV2.stream(session.id))
           const metadata = messages.flatMap((item) => item.parts).flatMap((part) => part.type === "text" && part.metadata ? [part.metadata] : [])
           const proposal = metadata.find((item) => item.kind === "task_update_proposal")
-          const progress = metadata.find((item) => item.kind === "task_update_progress")
           expect(String(proposal?.difference_summary)).toContain("title")
-          expect(String(progress?.difference_summary)).toContain("actions")
-          expect(progress?.affected_child_ids).toEqual([child.id])
-          expect(progress?.reusable_result_refs).toEqual([reusable.id])
+          expect(proposal?.affected_child_ids).toEqual([child.id])
+          expect(proposal?.reusable_result_refs).toEqual([reusable.id])
 
           calls = 0
           const cancelled = await Session.create({ agent: "protocol-runner" })
@@ -1548,12 +1566,29 @@ describe("SessionRunner", () => {
           const cancelAssistant = (await Session.updateMessage({ id: MessageID.ascending(), sessionID: cancelled.id, parentID: cancelUser.id, role: "assistant", mode: "protocol-runner", agent: "protocol-runner", path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now() } } as MessageV2.Assistant)) as MessageV2.Assistant
           const cancelRunner = SessionRunner.create({ assistantMessage: cancelAssistant, sessionID: cancelled.id, model, abort: new AbortController().signal })
           const cancelResult = cancelRunner.process({ user: cancelUser, sessionID: cancelled.id, model, agent: { name: "protocol-runner", runner: "protocol" } as never, system: [], abort: new AbortController().signal, messages: [{ role: "user", content: "cancel revision" }], tools: {}, runtimeTools: { catalog: [{ id: "read", description: "Read", schema: { type: "object" } }], prompt: "", execute: async () => ({ title: "Read", output: "ok", metadata: {} }) } as never })
-          await poll(async () => (await Question.list()).length > 0)
-          const cancelQuestion = (await Question.list())[0]!
-          await Question.reply({ requestID: cancelQuestion.id, answers: [["Cancel"]], response: "cancel" })
+          await poll(async () => {
+            const current = await Session.get(cancelled.id)
+            const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
+            return protocol?.confirmations?.[0]?.status === "pending"
+          })
+          expect((await Question.list()).filter((item) => item.sessionID === cancelled.id)).toHaveLength(0)
           await cancelResult
+          const cancelBefore = await SessionTask.get(cancelled.id)
+          const cancelSession = await Session.get(cancelled.id)
+          const cancelProtocol = cancelSession.dsl_context?.protocol as
+            | { confirmations?: { run_id?: string; action_id?: string }[] }
+            | undefined
+          const cancelItem = cancelProtocol?.confirmations?.[0]
+          if (!cancelBefore || !cancelItem?.run_id || !cancelItem.action_id) throw new Error("cancel proposal missing")
+          await SessionTaskConfirmation.respond({
+            sessionID: cancelled.id,
+            proposalID: `${cancelItem.run_id}:${cancelItem.action_id}`,
+            revisionID: cancelBefore.revision.id,
+            action: "cancel",
+            op: "update",
+          })
           expect((await SessionTask.current(cancelled.id))?.title).toBe("Cancel old")
-          expect(bootstraps.filter((item) => item.metadata?.source === "task_revision_bootstrap")).toHaveLength(1)
+          expect(bootstraps.filter((item) => item.metadata?.source === "task_confirmation")).toHaveLength(2)
         },
       }) })
     } finally {
@@ -1605,6 +1640,7 @@ describe("SessionRunner", () => {
       starts.push(input)
       return enqueue(input)
     }) as never)
+    const continuation = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
     const loop = spyOn(SessionPrompt, "loop").mockImplementation((async () => undefined) as never)
     try {
       await Instance.provide({
@@ -1671,18 +1707,31 @@ describe("SessionRunner", () => {
                 } as never,
               })
 
-              await poll(async () => (await Question.list()).length > 0)
+              await poll(async () => {
+                const current = await Session.get(source.id)
+                const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
+                return protocol?.confirmations?.[0]?.status === "pending"
+              })
               const proposed = Database.use((tx) =>
                 tx.select().from(TaskHandoffTable).where(eq(TaskHandoffTable.source_session_id, source.id)).get(),
               )
               expect(proposed?.status).toBe("proposed")
               expect(await Session.children(parent.id)).toHaveLength(1)
-              await Question.reply({
-                requestID: (await Question.list())[0]!.id,
-                answers: [["Confirm"]],
-                response: "confirm",
-              })
+              expect((await Question.list()).filter((item) => item.sessionID === source.id)).toHaveLength(0)
               await result
+              const current = await Session.get(source.id)
+              const protocol = current.dsl_context?.protocol as
+                | { confirmations?: { run_id?: string; action_id?: string }[] }
+                | undefined
+              const item = protocol?.confirmations?.[0]
+              if (!proposed || !item?.run_id || !item.action_id) throw new Error("handoff proposal missing")
+              await SessionTaskConfirmation.respond({
+                sessionID: source.id,
+                proposalID: `${item.run_id}:${item.action_id}`,
+                handoffID: proposed.id,
+                action: "confirm",
+                op: "handoff",
+              })
               await poll(async () => (await SessionTaskHandoff.get(proposed!.id))?.status === "started")
 
               const handoff = await SessionTaskHandoff.get(proposed!.id)
@@ -1695,6 +1744,7 @@ describe("SessionRunner", () => {
           }),
       })
     } finally {
+      continuation.mockRestore()
       prompt.mockRestore()
       loop.mockRestore()
       provider.mockRestore()

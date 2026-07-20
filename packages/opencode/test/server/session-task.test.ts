@@ -575,6 +575,15 @@ describe("session task endpoints", () => {
                 }),
               })
               expect(failed.status).toBe(409)
+              const decided = await Session.get(session.id)
+              const decidedProtocol = decided.dsl_context?.protocol as
+                | { confirmations?: { run_id?: string; action_id?: string; status?: string; response?: string }[] }
+                | undefined
+              expect(
+                decidedProtocol?.confirmations?.find(
+                  (item) => item.run_id === "run_retry" && item.action_id === "confirm_retry",
+                ),
+              ).toMatchObject({ status: "confirmed", response: "confirm" })
               const first = prompt.mock.calls.at(-1)?.[0]?.messageID
               await rewrite(session.id, "run_retry", "confirm_retry", { plan: "Tampered body" })
               const blocked = prompt.mock.calls.length
@@ -619,6 +628,73 @@ describe("session task endpoints", () => {
           }),
       })
     } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("publishes the task proposal decision before continuation completes", async () => {
+    await using tmp = await tmpdir({ git: true })
+    let enter = () => {}
+    let release = () => {}
+    const entered = new Promise<void>((resolve) => (enter = resolve))
+    const blocked = new Promise<void>((resolve) => (release = resolve))
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
+      enter()
+      await blocked
+      return undefined
+    }) as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_session_task_decision_first"),
+            fn: async () => {
+              const session = await Session.create({})
+              const task = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_decision_old",
+                legacy: { title: "Original", body: "Original" },
+                actions: [],
+              })
+              if (task.type !== "execute") throw new Error("task missing")
+              const messageID = await message(session.id)
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID: "run_decision",
+                actionID: "confirm_decision",
+                title: "Revised",
+                plan: "Revised body",
+                op: "update",
+                target: "self",
+              })
+
+              const response = SessionTaskConfirmation.respond({
+                sessionID: session.id,
+                proposalID: "run_decision:confirm_decision",
+                revisionID: task.revision.id,
+                action: "confirm",
+                op: "update",
+              })
+              await entered
+              const current = await Session.get(session.id)
+              const protocol = current.dsl_context?.protocol as
+                | { confirmations?: { status?: string; response?: string }[] }
+                | undefined
+              expect(protocol?.confirmations?.[0]).toMatchObject({ status: "confirmed", response: "confirm" })
+              expect(
+                Database.use((db) =>
+                  db.select().from(TaskConfirmationTable).where(eq(TaskConfirmationTable.session_id, session.id)).get(),
+                )?.status,
+              ).toBe("continuation_pending")
+              release()
+              await response
+            },
+          }),
+      })
+    } finally {
+      release()
       prompt.mockRestore()
     }
   })
@@ -1370,6 +1446,62 @@ describe("session task endpoints", () => {
         }),
     })
     prompt.mockRestore()
+  })
+
+  test("rejects task proposal question replies without an explicit decision", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_question_decision"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_question_decision_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_question_decision",
+              actionID: "confirm_question_decision",
+              title: "Decision",
+              plan: "Decision body",
+              op: "update",
+              target: "self",
+            })
+            const asked = Question.askReply({
+              sessionID: session.id,
+              questions: [{ question: "Confirm?", header: "Confirm", options: [] }],
+              tool: { messageID, callID: "call_confirm_question_decision" },
+            })
+            while (!(await Question.list()).length) await Bun.sleep(1)
+            const pending = (await Question.list())[0]
+            if (!pending) throw new Error("question missing")
+            try {
+              const empty = await Server.Default().request(`/question/${pending.id}/reply`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ answers: [] }),
+              })
+              expect(empty.status).toBe(409)
+              expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(0)
+              expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(0)
+              const current = await Session.get(session.id)
+              const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
+              expect(protocol?.confirmations?.[0]?.status).toBe("pending")
+            } finally {
+              await Question.reject(pending.id)
+              await asked.catch(() => undefined)
+            }
+          },
+        }),
+    })
   })
 
   test("fails closed for live Task questions with missing or duplicate protocol locators", async () => {

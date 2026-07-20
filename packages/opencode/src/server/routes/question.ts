@@ -289,10 +289,12 @@ async function task(input: {
   const run = text(item.run_id)
   const id = text(item.action_id)
   if (!run || !id) throw new ConflictError({ message: "Task proposal identity is invalid" })
-  const decision =
-    input.response === "cancel" || input.answers?.flat().some((part) => /^cancel$/i.test(part.trim()))
-      ? "cancel"
-      : "confirm"
+  const answers = input.answers?.flat().map((part) => part.trim()) ?? []
+  const confirm = input.response === "confirm" || answers.some((part) => /^confirm$/i.test(part))
+  const cancel = input.response === "cancel" || answers.some((part) => /^cancel$/i.test(part))
+  if (confirm === cancel)
+    throw new ConflictError({ message: `Task proposal decision must be explicit: ${run}:${id}` })
+  const decision = cancel ? "cancel" : "confirm"
   const current = intent.op === "update" ? await SessionTask.get(sessionID) : undefined
   if (intent.op === "update" && !current)
     throw new ConflictError({ message: `Task proposal has no current Task: ${run}:${id}` })

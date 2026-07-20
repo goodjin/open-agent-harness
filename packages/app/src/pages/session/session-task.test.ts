@@ -319,7 +319,25 @@ describe("session task", () => {
       { handoff: "handoff_fixed", action: "confirm" },
       { handoff: "handoff_fixed", action: "confirm" },
     ])
-    expect(states).toEqual(["failed", "confirming", "failed", "confirming", "creating"])
+    expect(states).toEqual(["failed", "creating", "failed", "creating", "creating"])
+  })
+
+  test("optimistically leaves the confirmation state when a task proposal is approved", async () => {
+    const sent = deferred<{ status: string }>()
+    const states: string[] = []
+    const flow = proposalFlow({
+      send: () => sent.promise,
+      state: (value) => states.push(value.status),
+      focus: () => {},
+    })
+    flow.change(
+      proposal(part({ kind: "task_update_proposal", proposal_id: "run:update", old_revision_id: "revision_1" }))!,
+    )
+    const confirming = flow.confirm()
+    await Promise.resolve()
+    expect(states.at(-1)).toBe("revising")
+    sent.resolve({ status: "revising" })
+    await confirming
   })
 
   test("keeps confirmation in flight across same-proposal reparses", async () => {
@@ -351,7 +369,7 @@ describe("session task", () => {
     await request
 
     expect(calls).toBe(1)
-    expect(states).toEqual(["proposed", "confirming", "revising"])
+    expect(states).toEqual(["proposed", "revising", "revising"])
   })
 
   test("keeps event progress when update HTTP success omits status", async () => {
@@ -424,7 +442,7 @@ describe("session task", () => {
     flow.change(update(), "session_1")
 
     expect(states.at(-1)).toMatchObject({ status: "failed", error: "Confirmation failed" })
-    expect(states.map((item) => item.status)).toEqual(["proposed", "confirming", "failed"])
+    expect(states.map((item) => item.status)).toEqual(["proposed", "revising", "failed"])
     flow.change(update("failed", "Server failure"), "session_1")
     expect(states.at(-1)).toMatchObject({ status: "failed", error: "Server failure" })
   })
@@ -449,7 +467,7 @@ describe("session task", () => {
     flow.change(handoff("proposed"), "session_1")
     await flow.confirm()
     flow.change(handoff("proposed"), "session_1")
-    expect(states.map((item) => item.status)).toEqual(["proposed", "confirming", "creating"])
+    expect(states.map((item) => item.status)).toEqual(["proposed", "creating", "creating"])
 
     flow.change(handoff("failed"), "session_1")
     flow.change(handoff("cancelled"), "session_1")
@@ -471,7 +489,7 @@ describe("session task", () => {
     revise.change(update(), "session_1")
     await revise.confirm()
     revise.change(update(), "session_1")
-    expect(updates).toEqual(["proposed", "confirming", "revising"])
+    expect(updates).toEqual(["proposed", "revising", "revising"])
   })
 
   test("keeps discussion dismissed across reparses and resets for a new scoped proposal", () => {
@@ -565,7 +583,7 @@ describe("session task", () => {
     flow.stop()
     gone.resolve({ status: "started" })
     await stopping
-    expect(states.at(-1)).toBe("run:two:confirming")
+    expect(states.at(-1)).toBe("run:two:creating")
   })
   test("maps unbound and active task statuses", () => {
     expect(view()).toMatchObject({ status: "unbound", showResult: false })

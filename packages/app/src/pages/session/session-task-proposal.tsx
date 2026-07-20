@@ -237,7 +237,10 @@ export function proposalFlow(input: {
     const mark = token
     busy = true
     dismissed = false
-    emit({ status: "confirming" })
+    emit({
+      status:
+        action === "confirm" ? (item.kind === "update" ? "revising" : "creating") : "confirming",
+    })
     const result = await input.send(item, action).then(
       (value) => ({ value }),
       (error: unknown) => ({ error }),

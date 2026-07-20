@@ -3545,6 +3545,15 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
       status: "pending",
     })
+    if (intent.op === "update" || intent.op === "handoff")
+      return {
+        title: input.action.title,
+        output:
+          intent.op === "update"
+            ? "Task update proposal is waiting for the user's decision."
+            : "Task handoff proposal is waiting for the user's decision.",
+        metadata: { blocked: true, proposal: true },
+      }
     const reply = await Question.askReply({
       sessionID: input.sessionID,
       questions: [

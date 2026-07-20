@@ -145,18 +145,6 @@ export namespace SessionTaskConfirmation {
         }
         throw new ConflictError({ message: `Task confirmation result is missing: ${proof.id}` })
       }
-      if (item.status === status) {
-        const saved = proof.assignment_id ?? (rec(item.assignment) ? text(item.assignment.id) : undefined)
-        return {
-          proposal_id: input.proposalID,
-          action: input.action,
-          assignment_id: saved,
-          status: input.op === "update" && input.action === "confirm" ? "revising" : handoff?.status,
-          target_session_id: handoff?.target_session_id ?? undefined,
-          target_task_id: handoff?.target_task_id ?? undefined,
-        }
-      }
-
       beat?.guard()
       const assignment = proof.assignment_id
         ? await SessionAssignment.get(proof.assignment_id)
@@ -203,14 +191,6 @@ export namespace SessionTaskConfirmation {
       if (input.action === "cancel" && handoff && transfer?.status !== "cancelled")
         throw new ConflictError({ message: `Task handoff could not be cancelled: ${handoff.id}` })
       fence(proof)
-      const live = (await Question.list()).find(
-        (request) =>
-          request.sessionID === input.sessionID &&
-          request.tool?.messageID === message &&
-          request.tool.callID === `call_${action}`,
-      )
-      await deliver(proof, input.sessionID, run, action, input.action, live?.id, beat)
-      fence(proof)
       const result = {
         proposal_id: input.proposalID,
         action: input.action,
@@ -219,6 +199,16 @@ export namespace SessionTaskConfirmation {
         target_session_id: transfer?.target_session_id ?? undefined,
         target_task_id: transfer?.target_task_id ?? undefined,
       }
+      publish(proof, status, assignment)
+      fence(proof)
+      const live = (await Question.list()).find(
+        (request) =>
+          request.sessionID === input.sessionID &&
+          request.tool?.messageID === message &&
+          request.tool.callID === `call_${action}`,
+      )
+      await deliver(proof, input.sessionID, run, action, input.action, live?.id, beat)
+      fence(proof)
       beat?.guard()
       const saved = complete(proof, result, status, assignment)
       await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
@@ -547,6 +537,74 @@ export namespace SessionTaskConfirmation {
           .get()
         if (!committed) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
         return saved
+      },
+      { behavior: "immediate" },
+    )
+  }
+
+  function publish(
+    proof: typeof TaskConfirmationTable.$inferSelect,
+    status: "confirmed" | "cancelled",
+    assignment?: SessionAssignment.Info,
+  ) {
+    return Database.transaction(
+      (tx) => {
+        const current = tx
+          .select()
+          .from(TaskConfirmationTable)
+          .where(
+            and(
+              eq(TaskConfirmationTable.id, proof.id),
+              owned(proof.owner_token),
+              eq(TaskConfirmationTable.generation, proof.generation),
+              gt(TaskConfirmationTable.lease_until, Date.now()),
+            ),
+          )
+          .get()
+        if (!current) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+        if (current.snapshot_hash !== proof.snapshot_hash || digest(current.snapshot) !== current.snapshot_hash)
+          throw new ConflictError({ message: `Task proposal proof changed: ${proof.proposal_id}` })
+        const session = tx.select().from(SessionTable).where(eq(SessionTable.id, proof.session_id)).get()
+        if (!session) throw new NotFoundError({ message: `Session not found: ${proof.session_id}` })
+        const ctx = rec(session.dsl_context) ? session.dsl_context : {}
+        const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+        const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+        const next = vals.map((value) => {
+          if (!rec(value) || `${value.run_id}:${value.action_id}` !== proof.proposal_id) return value
+          const handoff = proof.handoff_id
+            ? tx
+                .select({ id: TaskHandoffTable.id, context_refs: TaskHandoffTable.context_refs })
+                .from(TaskHandoffTable)
+                .where(eq(TaskHandoffTable.id, proof.handoff_id))
+                .get()
+            : undefined
+          if (
+            (proof.operation === "handoff" && !handoff) ||
+            digest(snap(proof.session_id, value, handoff)) !== proof.snapshot_hash
+          )
+            throw new ConflictError({ message: `Task proposal proof changed: ${proof.proposal_id}` })
+          return {
+            ...value,
+            assignment: assignment
+              ? {
+                  id: assignment.id,
+                  session_id: assignment.session_id,
+                  status: assignment.status,
+                  content_ref: assignment.content_ref,
+                  content_version: assignment.content_version,
+                }
+              : value.assignment,
+            response: current.decision,
+            status,
+            updated_at: Date.now(),
+          }
+        })
+        if (!next.some((value) => rec(value) && `${value.run_id}:${value.action_id}` === proof.proposal_id))
+          throw new ConflictError({ message: `Task proposal is not current: ${proof.proposal_id}` })
+        tx.update(SessionTable)
+          .set({ dsl_context: { ...ctx, protocol: { ...protocol, confirmations: next } } })
+          .where(eq(SessionTable.id, proof.session_id))
+          .run()
       },
       { behavior: "immediate" },
     )
