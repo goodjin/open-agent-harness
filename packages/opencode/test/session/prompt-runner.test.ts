@@ -1348,6 +1348,100 @@ describe("SessionPrompt runner wiring", () => {
     }
   })
 
+  test("session loop continues the running turn after ordinary tool calls", async () => {
+    const prev = process.env.OPENAI_API_KEY
+    process.env.OPENAI_API_KEY = "test-openai-key"
+
+    try {
+      await using tmp = await tmpdir({
+        git: true,
+        init: async (dir) => {
+          await agent(dir, "worker", { runner: "chat" })
+        },
+      })
+
+      await Instance.provide({
+        directory: tmp.path,
+        fn: async () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("test-workspace-running-turn-tools"),
+            fn: async () => {
+              resetRegistry()
+              let count = 0
+              const hook = spyOn(SessionRunner, "create").mockImplementation((input) => ({
+                get message() {
+                  return input.assistantMessage
+                },
+                partFromToolCall() {
+                  return undefined
+                },
+                async process() {
+                  count++
+                  input.assistantMessage.finish = count === 1 ? "tool-calls" : "stop"
+                  input.assistantMessage.time.completed = Date.now()
+                  await Session.updateMessage(input.assistantMessage)
+                  if (count === 1)
+                    await Session.updatePart({
+                      id: PartID.ascending(),
+                      messageID: input.assistantMessage.id,
+                      sessionID: input.sessionID,
+                      type: "tool",
+                      callID: "call-read",
+                      tool: "read",
+                      state: {
+                        status: "completed",
+                        input: {},
+                        output: "evidence",
+                        title: "Read",
+                        metadata: {},
+                        time: { start: Date.now(), end: Date.now() },
+                      },
+                    } satisfies MessageV2.ToolPart)
+                  return count === 1 ? "continue" : "stop"
+                },
+              }) as unknown as SessionRunner.Info)
+
+              try {
+                const session = await Session.create({ title: "Running turn tool continuation" })
+                const user = MessageID.ascending()
+                await Session.updateMessage({
+                  id: user,
+                  sessionID: session.id,
+                  role: "user",
+                  time: { created: Date.now() },
+                  agent: "worker",
+                  model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                  tools: {},
+                  mode: "",
+                } as MessageV2.User)
+                await Session.updatePart({
+                  id: PartID.ascending(),
+                  messageID: user,
+                  sessionID: session.id,
+                  type: "text",
+                  text: "read then answer",
+                })
+
+                await SessionPrompt.loop({ sessionID: session.id })
+                const current = await MessageV2.get({ sessionID: session.id, messageID: user })
+
+                expect(count).toBe(2)
+                expect(current.info.role).toBe("user")
+                if (current.info.role === "user") expect(SessionTurn.get(current.info)?.outcome).toBe("completed")
+                expect(SessionStatus.get(session.id).type).toBe("completed")
+                await Session.remove(session.id)
+              } finally {
+                hook.mockRestore()
+              }
+            },
+          }),
+      })
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_API_KEY
+      else process.env.OPENAI_API_KEY = prev
+    }
+  })
+
   test("session loop blocks after agent max tool calls", async () => {
     const prev = process.env.OPENAI_API_KEY
     process.env.OPENAI_API_KEY = "test-openai-key"

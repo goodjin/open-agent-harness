@@ -1648,16 +1648,6 @@ export namespace SessionDelegation {
     return [
       `Please handle this delegated task: ${action.title}.`,
       "Treat the task block below as your initial task for this session.",
-      "When you are done, return a task result for the parent session.",
-      "Use result for the task handoff payload: final answer, report, verification conclusion, or next-step request.",
-      "Use one result status: success, failure, error, reply, or skipped.",
-      "For success/failure/error, include result, changed_files, verification, and blockers.",
-      ...ActionResult.protocol({
-        verifier: agent.kind === "verifier",
-        action: action.id,
-        target: action.depends_on[0] ?? "worker_action_id",
-      }),
-      "Use reply when you need to answer or ask for information instead of claiming the task is complete.",
       policyText(action.result_policy),
       "",
       "<task>",

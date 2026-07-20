@@ -130,6 +130,52 @@ describe("SessionTurn.next", () => {
   })
 })
 
+describe("SessionTurn.active", () => {
+  test("selects the persisted running turn before queued followups", () => {
+    const running = user({
+      id: "u1",
+      turn: {
+        kind: "user",
+        status: "running",
+        time: { queued: 1, started: 2 },
+      },
+    })
+    const queued = user({
+      id: "u2",
+      turn: {
+        kind: "user",
+        status: "queued",
+        time: { queued: 3 },
+      },
+    })
+
+    expect(String(SessionTurn.active([queued, running])?.info.id)).toBe("u1")
+  })
+
+  test("ignores queued and completed turns", () => {
+    const queued = user({
+      id: "u1",
+      turn: {
+        kind: "user",
+        status: "queued",
+        time: { queued: 1 },
+      },
+    })
+    const done = user({
+      id: "u2",
+      turn: {
+        kind: "user",
+        status: "done",
+        outcome: "completed",
+        reason: "assistant",
+        time: { queued: 2, started: 3, completed: 4 },
+      },
+    })
+
+    expect(SessionTurn.active([queued, done])).toBeUndefined()
+  })
+})
+
 describe("SessionTurn.finish", () => {
   test("keeps terminal completion when a concurrent waiting finish writes later", async () => {
     await using tmp = await tmpdir()

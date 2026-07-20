@@ -1003,7 +1003,7 @@ export namespace SessionPrompt {
   }
 
   function turn(messages: MessageV2.WithParts[]) {
-    const item = SessionTurn.next(messages)
+    const item = SessionTurn.active(messages) ?? SessionTurn.next(messages)
     const legacy = item
       ? undefined
       : messages.find(

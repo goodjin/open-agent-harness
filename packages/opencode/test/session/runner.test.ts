@@ -5852,6 +5852,11 @@ describe("SessionRunner", () => {
               expect(parent?.agent).toBe("default")
               const text = child?.parts?.map((part) => (part.type === "text" ? part.text : "")).join("\n")
               expect(text).not.toContain("@default")
+              expect(text).toContain("<task>")
+              expect(text).toContain("Use a structured result with clear sections or bullets.")
+              expect(text).not.toContain("ActionResult protocol:")
+              expect(text).not.toContain("Call the native ActionResult tool exactly once")
+              expect(text).not.toContain("Worker result required fields")
             },
           }),
       })

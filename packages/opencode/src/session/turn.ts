@@ -78,6 +78,18 @@ export namespace SessionTurn {
       })[0]
   }
 
+  export function active(messages: MessageV2.WithParts[]) {
+    return messages
+      .filter((item) => item.info.role === "user" && get(item.info)?.status === "running")
+      .sort((a, b) => {
+        if (a.info.role !== "user" || b.info.role !== "user") return 0
+        const first = get(a.info)?.time.started ?? a.info.time.created
+        const second = get(b.info)?.time.started ?? b.info.time.created
+        if (first !== second) return first - second
+        return a.info.id.localeCompare(b.info.id)
+      })[0]
+  }
+
   export async function queue(input: { user: MessageV2.User; kind?: Kind }) {
     const turn = get(input.user)
     if (turn) return input.user
