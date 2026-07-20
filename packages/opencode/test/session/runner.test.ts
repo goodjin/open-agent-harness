@@ -981,13 +981,6 @@ describe("SessionRunner", () => {
                 agent: {
                   name: "protocol-runner",
                   runner: "protocol",
-                  entry: {
-                    primary: true,
-                    delegable: false,
-                    mentionable: true,
-                    default: false,
-                    hidden: false,
-                  },
                   capability: {
                     purpose: "protocol_orchestration",
                     tags: [],
@@ -1709,7 +1702,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner executes native AgentProtocolOutput tool calls", async () => {
+  test("protocol runner explores with allowlisted tools before creating a Task", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1741,10 +1734,8 @@ describe("SessionRunner", () => {
       items: [
         {
           id: "reply",
-          kind: "success",
-          answer: "Read package successfully.",
-          summary: "Both requested files were inspected.",
-          changed_files: ["package.json"],
+          kind: "answer",
+          message: "Read package successfully. Both requested files were inspected.",
         },
       ],
     }
@@ -1839,6 +1830,7 @@ describe("SessionRunner", () => {
                 agent: {
                   name: "protocol-runner",
                   runner: "protocol",
+                  entry: { primary: true },
                 } as never,
                 system: [],
                 abort: new AbortController().signal,
@@ -1879,17 +1871,9 @@ describe("SessionRunner", () => {
 
               expect(result).toBe("stop")
               expect(calls).toBe(2)
-              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(1)
-              const runs = await SessionRuns.list(session.id)
-              expect(runs[0]?.summary).toBe(
-                "Read package successfully.\n\nBoth requested files were inspected.\n\nChanged files: package.json",
-              )
-              expect(runs[0]?.summary_source).toBe("protocol")
-              expect(protocol?.runs?.[0]?.status).toBe("completed")
-              expect(protocol?.runs?.[0]?.actions).toHaveLength(2)
-              expect(protocol?.runs?.[0]?.actions[0]?.summary ?? protocol?.runs?.[0]?.actions[0]?.output).toContain(
-                "native-protocol",
-              )
+              expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
+              expect(await SessionTask.get(session.id)).toBeUndefined()
+              expect(protocol?.runs).toBeUndefined()
               expect(
                 messages.some((item) =>
                   item.parts.some((part) => part.type === "text" && part.text.includes("Read package successfully.")),
@@ -3893,6 +3877,7 @@ describe("SessionRunner", () => {
                 agent: {
                   name: "protocol-runner",
                   runner: "protocol",
+                  entry: { primary: true },
                 } as never,
                 system: [],
                 abort: new AbortController().signal,
@@ -4285,13 +4270,14 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              const run = runner.process({
+              await runner.process({
                 user,
                 sessionID: session.id,
                 model,
                 agent: {
                   name: "protocol-runner",
                   runner: "protocol",
+                  entry: { primary: true },
                 } as never,
                 system: [],
                 abort: new AbortController().signal,
@@ -4299,21 +4285,19 @@ describe("SessionRunner", () => {
                 tools: {},
               })
 
-              await poll(async () => (await Question.list()).length > 0)
               const questions = await Question.list()
               const logs = await SessionLog.list({ sessionID: session.id })
               const retry = logs.find((item) => item.type === "protocol.retry")
 
-              expect(calls).toBe(1)
-              expect(questions).toHaveLength(1)
-              expect(retry).toBeUndefined()
+              expect(calls).toBe(2)
+              expect(questions).toHaveLength(0)
+              expect(retry?.data.reason).toBe("task_admission_required")
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
               expect(await Session.children(session.id)).toHaveLength(0)
+              expect(await SessionTask.get(session.id)).toBeUndefined()
               const pending = await SessionLog.list({ sessionID: session.id })
               expect(pending.filter((item) => item.data.runID)).toHaveLength(0)
 
-              await Question.reject(questions[0]!.id).catch(() => {})
-              await run.catch(() => undefined)
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
               expect(await Session.children(session.id)).toHaveLength(0)
               const done = await SessionLog.list({ sessionID: session.id })
@@ -5582,6 +5566,17 @@ describe("SessionRunner", () => {
               await fs.writeFile(path.join(tmp.path, "package.json"), "{}")
               const session = await Session.create({})
               target = session.id
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_permission_task",
+                assignment: {
+                  op: "create",
+                  target: "self",
+                  title: "Permission routing",
+                  body: "Inspect and delegate with target permissions.",
+                },
+                actions: [],
+              })
               await Session.setPermission({
                 sessionID: session.id,
                 permission: [
@@ -6065,6 +6060,17 @@ describe("SessionRunner", () => {
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
               const session = await Session.create({ agent: "default" })
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_stale_child_task",
+                assignment: {
+                  op: "create",
+                  target: "self",
+                  title: "Stale child cleanup",
+                  body: "Clean up stale delegated state after protocol failure.",
+                },
+                actions: [],
+              })
               const child = await Session.create({ parentID: session.id, agent: "general-executor" })
               SessionStatus.set(child.id, {
                 type: "interrupted",

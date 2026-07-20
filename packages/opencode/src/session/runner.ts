@@ -557,10 +557,10 @@ export namespace SessionRunner {
     }
     const issues =
       parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
-        ? await packageIssues(parsedValue.declaration.payload.actions, sessionID)
+        ? await packageIssues(parsedValue.declaration.payload.actions, sessionID, !!stream.agent.entry)
         : []
     if (issues.length > 0 && retry < 1) {
-      const kind = issueKind()
+      const kind = issueKind(issues)
       await Promise.all(
         parts.flatMap((part) => {
           if (part.type !== "text") return []
@@ -627,7 +627,7 @@ export namespace SessionRunner {
             [
               `Your previous Agent Protocol DSL v2 package had ${kind.label}.`,
               "The runtime did not execute any actions from that package.",
-              ...issueHints(),
+              ...issueHints(issues),
               "",
               "Protocol package errors:",
               ...issues.map((item) => `- ${item.id}: ${item.reason}`),
@@ -644,7 +644,7 @@ export namespace SessionRunner {
       )
     }
     if (issues.length > 0) {
-      const kind = issueKind()
+      const kind = issueKind(issues)
       return fail({
         chat,
         sessionID,
@@ -1104,11 +1104,47 @@ export namespace SessionRunner {
     }
   }
 
-  type Issue = { id: string; title: string; reason: string; type: "dependency" }
+  type Issue = { id: string; title: string; reason: string; type: "admission" | "dependency" }
 
-  async function packageIssues(actions: AgentProtocol.Action[], sessionID: SessionID) {
-    if (confirms(actions).length > 0) return []
-    return dependencyIssues(actions, sessionID)
+  const EXPLORATION = new Set(["read", "glob", "grep", "webfetch", "websearch", "lsp", "todoread", "agent_query"])
+
+  function exploratory(actions: AgentProtocol.Action[]) {
+    if (confirms(actions).length > 0) return false
+    const work = actions.filter((item) => item.executor.type !== "human")
+    return (
+      work.length > 0 &&
+      work.every((item) => item.executor.type === "tool" && EXPLORATION.has(item.executor.target))
+    )
+  }
+
+  async function packageIssues(actions: AgentProtocol.Action[], sessionID: SessionID, enforce = false) {
+    const admission = enforce ? await admissionIssues(actions, sessionID) : []
+    if (confirms(actions).length > 0) return admission
+    return [...admission, ...(await dependencyIssues(actions, sessionID))]
+  }
+
+  async function admissionIssues(actions: AgentProtocol.Action[], sessionID: SessionID): Promise<Issue[]> {
+    if (await SessionTask.get(sessionID)) return []
+    if ((await SessionRuns.migrationCount(sessionID)).count > 0) return []
+    if (exploratory(actions)) return []
+    const work = actions.filter((item) => item.executor.type !== "human")
+    if (work.length === 0) return []
+    const create = confirms(actions).some((item) => {
+      const assignment = object(item.input).assignment
+      if (!assignment || typeof assignment !== "object" || Array.isArray(assignment)) return false
+      return object(assignment).op === "create" && object(assignment).target === "self"
+    })
+    if (create) return []
+    return [
+      {
+        id: work[0]!.id,
+        title: work[0]!.title,
+        type: "admission",
+        reason:
+          "This session has no Task. Explore first with an allowed read-only tool, or add a confirmed " +
+          'assignment={"op":"create","target":"self"} before formal execution.',
+      },
+    ]
   }
 
   async function dependencyIssues(actions: AgentProtocol.Action[], sessionID: SessionID): Promise<Issue[]> {
@@ -1155,7 +1191,13 @@ export namespace SessionRunner {
     })
   }
 
-  function issueKind() {
+  function issueKind(issues: Issue[] = []) {
+    if (issues.some((item) => item.type === "admission"))
+      return {
+        code: "task_admission_required",
+        label: "missing Task admission",
+        title: "Session Task admission",
+      }
     return {
       code: "invalid_dependency",
       label: "invalid dependencies",
@@ -1163,7 +1205,13 @@ export namespace SessionRunner {
     }
   }
 
-  function issueHints() {
+  function issueHints(issues: Issue[] = []) {
+    if (issues.some((item) => item.type === "admission"))
+      return [
+        "Before Task confirmation, use only the allowlisted exploration tools when more evidence is needed.",
+        'For formal execution, add a confirm item with assignment={"op":"create","target":"self"} and the complete Task plan.',
+        "Do not delegate agents or use bash, write, or persistent-state tools before the Task is confirmed.",
+      ]
     return [
       "Every depends id must refer to an item in the current package or a completed historical child-session action id.",
       "When verifying historical work, use the exact historical action id shown by the session history.",
@@ -1251,7 +1299,12 @@ export namespace SessionRunner {
           }
         : input.parsed.declaration
     let actions = declaration.payload.type === "action_graph" ? declaration.payload.actions : []
-    const work = tracks(actions)
+    const work =
+      tracks(actions) &&
+      (!input.stream.agent.entry ||
+        !!(await SessionTask.get(input.sessionID)) ||
+        (await SessionRuns.migrationCount(input.sessionID)).count > 0 ||
+        !exploratory(actions))
     const audit = {
       declaration,
       raw: input.parsed.raw,
@@ -1267,7 +1320,7 @@ export namespace SessionRunner {
         data: audit,
       })
     }
-    const issues = await packageIssues(actions, input.sessionID)
+    const issues = await packageIssues(actions, input.sessionID, !!input.stream.agent.entry)
     if (issues.length > 0) return { run: rejected(runID, declaration, issues), tracked: false }
     await SessionTask.preflight(input.sessionID, actions)
     const plan = actions
@@ -1315,6 +1368,7 @@ export namespace SessionRunner {
                 messageID: input.chat.message.id,
                 runID,
                 sessionID: input.sessionID,
+                enforce: !!input.stream.agent.entry,
               })
             }
             if (bound && bound.type !== "execute") {
@@ -1546,18 +1600,23 @@ export namespace SessionRunner {
     messageID: MessageID
     runID: string
     sessionID: SessionID
+    enforce: boolean
   }) {
     const confirms = input.actions.filter((item) => item.operation === "confirm" && item.executor.type === "human")
     const title = input.declaration.title ?? "Session task"
+    const current = await SessionTask.get(input.sessionID)
+    const legacy = !current && (await SessionRuns.migrationCount(input.sessionID)).count > 0
     const result = await SessionTask.confirmed({
       sessionID: input.sessionID,
       runID: input.runID,
       messageID: input.messageID,
       actionIDs: confirms.map((item) => item.id),
-      requiresAssignment: confirms.some((item) => {
-        const assignment = object(item.input).assignment
-        return !!assignment && typeof assignment === "object" && !Array.isArray(assignment)
-      }),
+      requiresAssignment:
+        (input.enforce && !current && !legacy) ||
+        confirms.some((item) => {
+          const assignment = object(item.input).assignment
+          return !!assignment && typeof assignment === "object" && !Array.isArray(assignment)
+        }),
       legacy: { title, body: input.declaration.message ?? title },
       actions: input.actions,
     })
@@ -1688,7 +1747,7 @@ export namespace SessionRunner {
 
   function rejected(runID: string, declaration: AgentProtocol.Declaration, issues: Issue[]): AgentProtocol.Result {
     const now = Date.now()
-    const kind = issueKind()
+    const kind = issueKind(issues)
     const summary = [
       `${kind.title} failed before execution.`,
       "",
@@ -2345,10 +2404,10 @@ export namespace SessionRunner {
         }
         const issues =
           parsed.value.declaration.payload.type === "action_graph"
-            ? await packageIssues(parsed.value.declaration.payload.actions, sessionID)
+            ? await packageIssues(parsed.value.declaration.payload.actions, sessionID, !!input.stream.agent.entry)
             : []
         if (issues.length > 0 && closure < 1) {
-          const kind = issueKind()
+          const kind = issueKind(issues)
           msg.finish = "stop"
           msg.time.completed = Date.now()
           await Session.updateMessage(msg)
@@ -2360,7 +2419,7 @@ export namespace SessionRunner {
             closure + 1,
             [
               `Your previous package had ${kind.label}.`,
-              ...issueHints(),
+              ...issueHints(issues),
               "Protocol package errors:",
               ...issues.map((item) => `- ${item.id}: ${item.reason}`),
               `Retry with a regenerated package after correcting every dependency.`,
@@ -2369,7 +2428,7 @@ export namespace SessionRunner {
           return
         }
         if (issues.length > 0) {
-          const kind = issueKind()
+          const kind = issueKind(issues)
           await fail({
             chat: processor,
             sessionID,
