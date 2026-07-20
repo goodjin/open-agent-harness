@@ -750,7 +750,9 @@ export namespace AgentProtocol {
   }
 
   function v2Parsed(parsed: z.infer<typeof V2>) {
-    const terminal = parsed.items.find((item): item is z.infer<typeof V2Terminal> => done(item.kind))
+    const terminal =
+      parsed.items.find((item): item is z.infer<typeof V2Terminal> => item.kind === "answer") ??
+      parsed.items.find((item): item is z.infer<typeof V2Terminal> => done(item.kind))
     const answers = new Set(parsed.items.filter((item) => item.kind === "answer").map((item) => item.id))
     const actions = parsed.items.filter(
       (item): item is Exclude<z.infer<typeof V2Item>, z.infer<typeof V2Terminal>> => !done(item.kind),

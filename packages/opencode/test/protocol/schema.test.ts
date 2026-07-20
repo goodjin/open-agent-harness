@@ -51,6 +51,20 @@ describe("agent protocol schema", () => {
     expect(out.payload.actions[1]?.input).toEqual({ prompt: "Inspect runner behavior." })
   })
 
+  test("uses answer as the user response when a prior Run result shares the package", () => {
+    const out = AgentProtocol.parse({
+      version: "2",
+      items: [
+        { id: "old", kind: "success", message: "Previous Run completed." },
+        { id: "reply", kind: "answer", message: "Here is the result for the user." },
+      ],
+    })
+
+    expect(out.intent).toBe("respond")
+    expect(out.message).toBe("Here is the result for the user.")
+    expect(out.outcome).toBe("success")
+  })
+
   test("preserves verifier metadata from v2 agent items", () => {
     const out = AgentProtocol.parse({
       version: "2",

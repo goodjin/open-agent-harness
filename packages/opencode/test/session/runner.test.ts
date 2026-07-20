@@ -6554,6 +6554,13 @@ describe("SessionRunner", () => {
                 },
                 {
                   internal: true,
+                  item: { id: "success", kind: "success", message: "Previous Run succeeded." },
+                  extra: { id: "answer", kind: "answer", message: "User-visible answer." },
+                  summary: "Previous Run succeeded.",
+                  tracked: true,
+                },
+                {
+                  internal: true,
                   item: { id: "failure", kind: "failure", answer: "Failure answer." },
                   summary: "Failure answer.",
                   tracked: true,
@@ -6927,6 +6934,7 @@ describe("SessionRunner", () => {
               items: [
                 { id: "old_result", kind: "success", message: "Old run synthesized.", summary: "Verified." },
                 next,
+                { id: "reply", kind: "answer", message: "User-visible progress." },
               ],
             }
           : { version: "2", items: [next] },

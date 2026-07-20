@@ -76,7 +76,7 @@ export namespace SessionRunner {
     return meta.run_id
   }
 
-  function closureIssue(parsed: AgentProtocolParser.Parsed) {
+  function rows(parsed: AgentProtocolParser.Parsed) {
     const raw = (() => {
       try {
         return JSON.parse(parsed.raw) as unknown
@@ -84,10 +84,10 @@ export namespace SessionRunner {
         return
       }
     })()
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "invalid_prior_run_package"
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
     const items = (raw as { version?: unknown; items?: unknown }).items
-    if ((raw as { version?: unknown }).version !== "2" || !Array.isArray(items)) return "invalid_prior_run_package"
-    const rows = items.filter((item): item is { kind: string } => {
+    if ((raw as { version?: unknown }).version !== "2" || !Array.isArray(items)) return
+    const rows = items.filter((item): item is { kind: string; [key: string]: unknown } => {
       return (
         !!item &&
         typeof item === "object" &&
@@ -95,14 +95,35 @@ export namespace SessionRunner {
         typeof (item as { kind?: unknown }).kind === "string"
       )
     })
-    if (rows.length !== items.length) return "invalid_prior_run_package"
+    if (rows.length !== items.length) return
+    return rows
+  }
+
+  function closureIssue(parsed: AgentProtocolParser.Parsed) {
+    const items = rows(parsed)
+    if (!items) return "invalid_prior_run_package"
     const terminal = new Set(["answer", "done", "success", "failure", "error", "reply"])
     const result = new Set(["success", "failure", "error", "reply"])
-    const ends = rows.flatMap((item, index) => (terminal.has(item.kind) ? [{ index, kind: item.kind }] : []))
-    if (ends.length !== 1 || !result.has(ends[0]?.kind ?? "")) return "invalid_prior_run_result"
-    const exec = rows.findIndex((item) => !terminal.has(item.kind))
+    const ends = items.flatMap((item, index) => (result.has(item.kind) ? [{ index, kind: item.kind }] : []))
+    if (ends.length !== 1) return "invalid_prior_run_result"
+    const exec = items.findIndex((item) => !terminal.has(item.kind))
     if (exec >= 0 && (ends[0]?.index ?? -1) > exec) return "prior_run_result_after_actions"
-    if (!parsed.declaration.message?.trim()) return "missing_prior_run_result"
+    if (!priorResult(parsed)) return "missing_prior_run_result"
+  }
+
+  function priorResult(parsed: AgentProtocolParser.Parsed) {
+    const result = new Set(["success", "failure", "error", "reply"])
+    const item = rows(parsed)?.find((item) => result.has(item.kind))
+    if (!item) return
+    const msg = [item.message, item.answer, item.text, item.say].find(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    )
+    const sum = typeof item.summary === "string" ? item.summary.trim() : ""
+    const changed = Array.isArray(item.changed_files)
+      ? item.changed_files.filter((value): value is string => typeof value === "string")
+      : []
+    const files = changed.length ? `Changed files: ${changed.join(", ")}` : ""
+    return [msg, sum, files].filter((value): value is string => !!value).join("\n\n")
   }
 
   function v2(parsed: AgentProtocolParser.Parsed) {
@@ -637,6 +658,7 @@ export namespace SessionRunner {
         parsed: parsedValue,
         runID: old,
         sessionID,
+        summary: priorResult(parsedValue),
       })
       if (!saved && parsedValue.declaration.intent === "execute") {
         return fail({
@@ -2369,7 +2391,14 @@ export namespace SessionRunner {
           return
         }
         const saved =
-          !tracked || (await finish({ messageID: msg.id, parsed: parsed.value, runID: input.run.run_id, sessionID }))
+          !tracked ||
+          (await finish({
+            messageID: msg.id,
+            parsed: parsed.value,
+            runID: input.run.run_id,
+            sessionID,
+            summary: v2(parsed.value) ? priorResult(parsed.value) : undefined,
+          }))
         if (!saved) {
           await fail({
             chat: processor,
@@ -2474,7 +2503,14 @@ export namespace SessionRunner {
           }
         }
       } else {
-        if (tracked) await finish({ messageID: msg.id, parsed: parsed.value, runID: input.run.run_id, sessionID })
+        if (tracked)
+          await finish({
+            messageID: msg.id,
+            parsed: parsed.value,
+            runID: input.run.run_id,
+            sessionID,
+            summary: v2(parsed.value) ? priorResult(parsed.value) : undefined,
+          })
         await response({
           chat: processor,
           sessionID,
@@ -2487,7 +2523,13 @@ export namespace SessionRunner {
       const plain = AgentProtocolParser.parse(text)
       if (plain.ok && plain.value.declaration.intent !== "execute") {
         if (tracked) {
-          await finish({ messageID: msg.id, parsed: plain.value, runID: input.run.run_id, sessionID })
+          await finish({
+            messageID: msg.id,
+            parsed: plain.value,
+            runID: input.run.run_id,
+            sessionID,
+            summary: v2(plain.value) ? priorResult(plain.value) : undefined,
+          })
         }
         await hide(msg.id, "protocol_final_plain_json")
         await response({
