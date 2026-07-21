@@ -742,11 +742,7 @@ export namespace SessionTaskHandoff {
         parts: [
           {
             type: "text",
-            text: [
-              "A confirmed Task handoff is ready in this session.",
-              "Inspect the current Task and execute only its active revision.",
-              "Return results in this session; do not continue the source session's task.",
-            ].join("\n"),
+            text: SessionTask.request(handoff.body),
           },
         ],
       })
@@ -915,11 +911,7 @@ export namespace SessionTaskHandoff {
     )
   }
 
-  async function project(
-    row: Info,
-    kind: "task_handoff_proposal" | "task_handoff_started",
-    proposal?: string,
-  ) {
+  async function project(row: Info, kind: "task_handoff_proposal" | "task_handoff_started", proposal?: string) {
     if (!row.source_message_id) return
     const message = await MessageV2.get({ sessionID: row.source_session_id, messageID: row.source_message_id }).catch(
       () => undefined,

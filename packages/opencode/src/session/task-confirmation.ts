@@ -24,7 +24,6 @@ import { SessionTask } from "./task"
 import { SessionTaskRecovery } from "./task-recovery"
 import { MessageV2 } from "./message-v2"
 import { MessageID, SessionID } from "./schema"
-import { SessionPrompt } from "./prompt"
 import {
   AssignmentTable,
   SessionEventOutboxTable,
@@ -32,6 +31,7 @@ import {
   SessionTaskTable,
   TaskConfirmationTable,
   TaskHandoffTable,
+  TaskRevisionTable,
 } from "./session.sql"
 
 export namespace SessionTaskConfirmation {
@@ -75,7 +75,8 @@ export namespace SessionTaskConfirmation {
       throw new ConflictError({ message: `Task proposal proof is incomplete: ${input.proposalID}` })
     if (input.op === "update" && input.handoffID)
       throw new ConflictError({ message: `Task update cannot use handoff proof: ${input.handoffID}` })
-    const handoff = input.op === "handoff" && input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
+    const handoff =
+      input.op === "handoff" && input.handoffID ? await SessionTaskHandoff.get(input.handoffID) : undefined
     if (input.op === "handoff" && !handoff)
       throw new NotFoundError({ message: `Task handoff not found: ${input.handoffID}` })
     if (handoff && handoff.source_session_id !== input.sessionID)
@@ -190,6 +191,26 @@ export namespace SessionTaskConfirmation {
             : undefined
       if (input.action === "cancel" && handoff && transfer?.status !== "cancelled")
         throw new ConflictError({ message: `Task handoff could not be cancelled: ${handoff.id}` })
+      const revision =
+        assignment && input.op === "update" && input.action === "confirm"
+          ? await safe(
+              SessionTask.confirmed({
+                sessionID: input.sessionID,
+                runID: run,
+                messageID: MessageID.make(message),
+                actionIDs: [action],
+                actions: [],
+                legacy: { title, body: plan },
+                requiresAssignment: true,
+              }),
+            )
+          : undefined
+      if (revision?.type === "update")
+        Database.effect(() =>
+          SessionTaskRecovery.resume(input.sessionID).catch((err) => {
+            log.warn("task revision recovery blocked", { err, sessionID: input.sessionID })
+          }),
+        )
       fence(proof)
       const result = {
         proposal_id: input.proposalID,
@@ -333,7 +354,11 @@ export namespace SessionTaskConfirmation {
     try {
       return await value
     } catch (err) {
-      if (err instanceof SessionAssignment.Conflict || err instanceof SessionTaskHandoff.Conflict)
+      if (
+        err instanceof SessionAssignment.Conflict ||
+        err instanceof SessionTaskHandoff.Conflict ||
+        err instanceof SessionTask.Conflict
+      )
         throw new ConflictError({ message: err.message })
       throw err
     }
@@ -697,26 +722,6 @@ export namespace SessionTaskConfirmation {
           guard: () => right(proof, outbox.id, "prompt"),
           rerouted: true,
         })
-      if (mode === "prompt") {
-        const existing = await MessageV2.get({ sessionID, messageID: proof.message_id }).catch(() => undefined)
-        beat?.guard()
-        if (existing) await SessionPrompt.loop({ sessionID, messageID: proof.message_id })
-        if (!existing)
-          await SessionPrompt.prompt({
-            sessionID,
-            messageID: proof.message_id,
-            metadata: { internal: true, source: "task_confirmation", run_id: run },
-            parts: [
-              {
-                type: "text",
-                text:
-                  decision === "confirm"
-                    ? `User confirmed protocol action ${action} from run ${run}. Continue from the persisted assignment proof.`
-                    : `User cancelled protocol action ${action} from run ${run}. Do not execute dependent work.`,
-              },
-            ],
-          })
-      }
       fence(proof)
       const delivered = Database.transaction(
         (db) => {
@@ -990,7 +995,16 @@ export namespace SessionTaskConfirmation {
               .from(SessionTaskTable)
               .where(eq(SessionTaskTable.session_id, input.sessionID))
               .get()
-            if (!task || task.revision !== input.revisionID)
+            const revision = task?.revision
+              ? tx
+                  .select({ workflow: TaskRevisionTable.workflow })
+                  .from(TaskRevisionTable)
+                  .where(eq(TaskRevisionTable.id, task.revision))
+                  .get()
+              : undefined
+            const flow = revision ? SessionTask.Workflow.safeParse(revision.workflow) : undefined
+            const bound = found.assignment_id && flow?.success && flow.data.assignment_id === found.assignment_id
+            if (!task || (task.revision !== input.revisionID && !bound))
               throw new ConflictError({ message: `Task revision is no longer current: ${input.revisionID}` })
           }
           if (

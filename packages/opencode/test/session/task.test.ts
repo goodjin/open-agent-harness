@@ -1310,9 +1310,16 @@ describe("session task", () => {
         title: "Approved assignment",
         body: "Approved canonical plan",
       })
+      expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({ actions: [] })
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_formal_execution",
+        legacy: { title: "Ignored", body: "Ignored" },
+        actions: [{ id: "formal_execution", title: "Formal execution" }],
+      })
       expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
-        run_id: "run_execute_later",
-        run_ids: ["run_execute_later"],
+        run_id: "run_formal_execution",
+        run_ids: ["run_formal_execution"],
       })
       expect((await SessionAssignment.get(assignment.id))?.status).toBe("completed")
       const bound = await SessionTask.get(session.id)
@@ -1344,7 +1351,7 @@ describe("session task", () => {
       })
       expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
         run_id: "run_execute_third",
-        run_ids: ["run_execute_later", "run_execute_again", "run_execute_third"],
+        run_ids: ["run_formal_execution", "run_execute_again", "run_execute_third"],
       })
     }))
 
@@ -2383,15 +2390,67 @@ describe("session task", () => {
       ]).actions[0]!
 
       const cases = [
-        { result: "Protocol result", source: "protocol", canonical: undefined, expected: { present: true, status: "completed" } },
-        { result: "Fallback result", source: "fallback_summary", canonical: undefined, expected: { present: true, status: "partial" } },
-        { result: "Action completed", source: "action_result", canonical: "completed", carrier: "action_result", expected: { present: true, status: "completed" } },
-        { result: "Action failed", source: "action_result", canonical: "failed", carrier: "action_result", expected: { present: true, status: "failed" } },
-        { result: "Action aborted", source: "action_result", canonical: "aborted", carrier: "action_result", expected: { present: true, status: "failed" } },
-        { result: "Action ambiguous", source: "action_result", canonical: "ambiguous", carrier: "action_result", expected: { present: true } },
-        { result: "Fallback carrier", source: "action_result", canonical: "completed", carrier: "fallback_summary", expected: { present: true } },
-        { result: "Synthetic carrier", source: "action_result", canonical: "completed", carrier: "synthetic", expected: { present: true } },
-        { result: "Protocol carrier", source: "action_result", canonical: "completed", carrier: "agent_protocol_output", expected: { present: true } },
+        {
+          result: "Protocol result",
+          source: "protocol",
+          canonical: undefined,
+          expected: { present: true, status: "completed" },
+        },
+        {
+          result: "Fallback result",
+          source: "fallback_summary",
+          canonical: undefined,
+          expected: { present: true, status: "partial" },
+        },
+        {
+          result: "Action completed",
+          source: "action_result",
+          canonical: "completed",
+          carrier: "action_result",
+          expected: { present: true, status: "completed" },
+        },
+        {
+          result: "Action failed",
+          source: "action_result",
+          canonical: "failed",
+          carrier: "action_result",
+          expected: { present: true, status: "failed" },
+        },
+        {
+          result: "Action aborted",
+          source: "action_result",
+          canonical: "aborted",
+          carrier: "action_result",
+          expected: { present: true, status: "failed" },
+        },
+        {
+          result: "Action ambiguous",
+          source: "action_result",
+          canonical: "ambiguous",
+          carrier: "action_result",
+          expected: { present: true },
+        },
+        {
+          result: "Fallback carrier",
+          source: "action_result",
+          canonical: "completed",
+          carrier: "fallback_summary",
+          expected: { present: true },
+        },
+        {
+          result: "Synthetic carrier",
+          source: "action_result",
+          canonical: "completed",
+          carrier: "synthetic",
+          expected: { present: true },
+        },
+        {
+          result: "Protocol carrier",
+          source: "action_result",
+          canonical: "completed",
+          carrier: "agent_protocol_output",
+          expected: { present: true },
+        },
         { result: "Action unknown", source: "action_result", canonical: undefined, expected: { present: true } },
         { result: "Untrusted result", source: null, canonical: undefined, expected: { present: false } },
         { result: null, source: null, canonical: undefined, expected: { present: false } },
@@ -2402,25 +2461,26 @@ describe("session task", () => {
           if (item.canonical) {
             const statuses = item.canonical === "ambiguous" ? ["completed", "failed"] : [item.canonical]
             db.insert(SessionResultTable)
-              .values(statuses.map((status, index) => ({
-                id: `result_${item.canonical}_${index}`,
-                carrier: ("carrier" in item ? item.carrier : "action_result") as never,
-                status: status as never,
-                satisfying: status === "completed",
-                session_id: session.id,
-                parent_session_id: session.id,
-                child_session_id: null,
-                run_id: "run_legacy_archive",
-                action_id: "legacy_result",
-                target_action_id: null,
-                raw_ref: `legacy/${item.canonical}/${index}`,
-                summary: item.result,
-                created_at: Date.now(),
-              })))
+              .values(
+                statuses.map((status, index) => ({
+                  id: `result_${item.canonical}_${index}`,
+                  carrier: ("carrier" in item ? item.carrier : "action_result") as never,
+                  status: status as never,
+                  satisfying: status === "completed",
+                  session_id: session.id,
+                  parent_session_id: session.id,
+                  child_session_id: null,
+                  run_id: "run_legacy_archive",
+                  action_id: "legacy_result",
+                  target_action_id: null,
+                  raw_ref: `legacy/${item.canonical}/${index}`,
+                  summary: item.result,
+                  created_at: Date.now(),
+                })),
+              )
               .run()
           }
-          db
-            .update(TaskRevisionTable)
+          db.update(TaskRevisionTable)
             .set({
               result: item.result,
               result_source: item.source,
@@ -2609,7 +2669,11 @@ describe("session task", () => {
       const archive = async (input: {
         id: string
         actions: { id: string; status: "completed" | "failed" | "blocked" }[]
-        rows: { action: string; carrier: "action_result" | "fallback_summary" | "agent_protocol_output" | "plain_text_result" | "synthetic"; status: "completed" | "partial" | "failed" | "blocked" | "waiting_user" }[]
+        rows: {
+          action: string
+          carrier: "action_result" | "fallback_summary" | "agent_protocol_output" | "plain_text_result" | "synthetic"
+          status: "completed" | "partial" | "failed" | "blocked" | "waiting_user"
+        }[]
         shared?: boolean
         wrong?: "completed" | "failed"
       }) => {
@@ -2652,13 +2716,14 @@ describe("session task", () => {
           db.update(TaskRevisionTable)
             .set({
               workflow: {
-                actions: result(run, input.actions.map((item) => ({ ...item, title: item.id }))).actions.map(
-                  (action) => ({
-                    ...action,
-                    executor: { type: "agent", target: "backend", capabilities: [] },
-                    run_id: run,
-                  }),
-                ),
+                actions: result(
+                  run,
+                  input.actions.map((item) => ({ ...item, title: item.id })),
+                ).actions.map((action) => ({
+                  ...action,
+                  executor: { type: "agent", target: "backend", capabilities: [] },
+                  run_id: run,
+                })),
               },
             })
             .where(eq(TaskRevisionTable.id, first.revision.id))
@@ -3333,8 +3398,7 @@ describe("session task", () => {
         expect(keys).toHaveLength(12)
         expect(
           keys.every(
-            (key) =>
-              key[0] === "session_protocol_run_manifest" || key[0] === "session_protocol_run_generation",
+            (key) => key[0] === "session_protocol_run_manifest" || key[0] === "session_protocol_run_generation",
           ),
         ).toBe(true)
         expect(list).not.toHaveBeenCalled()
@@ -3376,7 +3440,10 @@ describe("session task", () => {
         workflow: {
           run_id: "run_after_legacy",
           run_ids: [old.run_id, "run_after_legacy"],
-          actions: [{ id: "legacy_action", run_id: old.run_id }, { id: "new_action", run_id: "run_after_legacy" }],
+          actions: [
+            { id: "legacy_action", run_id: old.run_id },
+            { id: "new_action", run_id: "run_after_legacy" },
+          ],
         },
       })
     }))
@@ -3403,9 +3470,7 @@ describe("session task", () => {
         const stored = await SessionTask.get(session.id)
         expect(stored?.revision.version).toBe(1)
         expect(stored?.revision.workflow.run_ids).toEqual([old.run_id, `run_new_${mode}`])
-        expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(
-          mode === "before" ? 1 : 2,
-        )
+        expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(mode === "before" ? 1 : 2)
       }
     }))
 
@@ -3434,8 +3499,7 @@ describe("session task", () => {
             version: 1,
             workflow: {
               assignment_id: proof.id,
-              run_id: proof.source_run_id,
-              run_ids: [old.run_id, proof.source_run_id],
+              actions: [],
             },
           },
         })
@@ -3547,13 +3611,7 @@ describe("session task", () => {
       const session = await Session.create({})
       const run = protocol("run_truncated_legacy", "Truncated")
       await SessionRuns.store(session.id, run)
-      const file = path.join(
-        Global.Path.data,
-        "storage",
-        "session_protocol_run",
-        session.id,
-        `${run.run_id}.json`,
-      )
+      const file = path.join(Global.Path.data, "storage", "session_protocol_run", session.id, `${run.run_id}.json`)
       await Bun.write(file, "{")
 
       expect(await SessionTask.open(session.id)).toBeUndefined()
@@ -3734,8 +3792,8 @@ describe("session task", () => {
       expect(results[1]?.status).toBe("fulfilled")
       expect(await SessionTask.current(session.id)).toMatchObject({ title: "legacy_race", version: 1 })
       expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
-        run_id: proof.source_run_id,
-        run_ids: [proof.source_run_id],
+        actions: [],
+        assignment_id: proof.id,
       })
       expect(JSON.stringify((await SessionTask.get(session.id))?.revision.workflow)).not.toContain(
         "run_legacy_race_old",
@@ -3750,7 +3808,7 @@ describe("session task", () => {
       })
       expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({
         run_id: "run_legacy_race_followup",
-        run_ids: [proof.source_run_id, "run_legacy_race_followup"],
+        run_ids: ["run_legacy_race_followup"],
       })
     }))
 })

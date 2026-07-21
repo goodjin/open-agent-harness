@@ -325,6 +325,17 @@ export namespace SessionTask {
     }
   }
 
+  export function request(body: string) {
+    return [
+      "This is the confirmed Task description prepared from the earlier conversation.",
+      "The Task is already bound to this session. Do not ask for assignment confirmation or inspect the Task before starting.",
+      "Treat the description below as the complete execution request. Create a fresh execution graph from it and begin the work.",
+      "Ignore any execution graph that may have appeared while the Task was being prepared.",
+      "",
+      body,
+    ].join("\n")
+  }
+
   export async function preflight(sessionID: SessionID, actions: unknown[]) {
     const assignments = actions.flatMap((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return []
@@ -394,8 +405,7 @@ export namespace SessionTask {
     const current = await get(input.sessionID)
     const snapshot = legacySnapshot(current)
     const replayable = current?.revision.workflow.assignment_id === assignment.id
-    const fallback =
-      legacy && (!current || snapshot || replayable) ? { op: "create", target: "self" } : undefined
+    const fallback = legacy && (!current || snapshot || replayable) ? { op: "create", target: "self" } : undefined
     const op = "op" in meta ? meta.op : fallback?.op
     const target = "target" in meta ? meta.target : (fallback?.target ?? assignment.target)
     if (op !== "create" && op !== "update" && op !== "handoff")
@@ -408,8 +418,7 @@ export namespace SessionTask {
     const continuation = op === "create" && target === "self" ? snapshot : undefined
     if (op === "create" && target === "self" && current?.task.source_type === "legacy" && !continuation && !replayable)
       throw new Conflict("session_task_legacy_continuation_stale")
-    if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self"))
-      throw new Conflict()
+    if (admitted === "multiple" && (!sourced || op !== "create" || target !== "self")) throw new Conflict()
     if (assignment.status === "completed") {
       if (!sourced) throw new Conflict("session_task_assignment_not_current")
       if (op === "handoff") {
@@ -440,7 +449,7 @@ export namespace SessionTask {
             runID: input.runID,
             messageID: input.messageID,
             ...(continuation ? {} : { assignment: { op, target, title: assignment.title, body: plan } }),
-            actions: input.actions,
+            actions: [],
           },
           assignment.id,
           continuation,
@@ -560,6 +569,26 @@ export namespace SessionTask {
               })
               .run()
             tx.update(SessionTaskTable).set({ current_revision_id: revision }).where(eq(SessionTaskTable.id, id)).run()
+            if (assignmentID) {
+              const key = `task_revision_bootstrap:${revision}`
+              tx.insert(SessionEventOutboxTable)
+                .values({
+                  id: `outbox_${randomUUID()}`,
+                  session_id: input.sessionID,
+                  target_session_id: input.sessionID,
+                  kind: "task_revision_bootstrap",
+                  dedupe_key: key,
+                  status: "pending",
+                  payload: { task_id: id, revision_id: revision, message_id: MessageID.ascending() },
+                  created_at: now,
+                  updated_at: now,
+                  delivered_at: null,
+                  acked_at: null,
+                  error: null,
+                })
+                .onConflictDoNothing()
+                .run()
+            }
             const stored = Stored.parse({
               task: tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, id)).get(),
               revision: tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, revision)).get(),
@@ -1336,9 +1365,7 @@ export namespace SessionTask {
             archive_reason: item.archive_reason,
             ...(item.terminal_status === null ? {} : { terminal_status: item.terminal_status }),
             ...(item.stopped_child_count === null ? {} : { stopped_child_count: item.stopped_child_count }),
-            result: saved.result
-              ? { present: true, ...(status ? { status } : {}) }
-              : { present: false },
+            result: saved.result ? { present: true, ...(status ? { status } : {}) } : { present: false },
             time: {
               created: item.time_created,
               ...(item.time_archived === null ? {} : { archived: item.time_archived }),
@@ -1553,11 +1580,7 @@ export namespace SessionTask {
     try {
       return transact(
         (tx) => {
-          const found = tx
-            .select()
-            .from(SessionTaskTable)
-            .where(eq(SessionTaskTable.session_id, sessionID))
-            .get()
+          const found = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.session_id, sessionID)).get()
           if (found) return found
           tx.insert(SessionTaskTable)
             .values({
@@ -1664,9 +1687,7 @@ export namespace SessionTask {
     const flow = Workflow.parse(revision.workflow)
     const actions = workflow(flow)
     const keys = new Set(
-      actions
-        .filter((item) => item.executor.type === "agent")
-        .map((item) => `${item.run_id}:${item.id}`),
+      actions.filter((item) => item.executor.type === "agent").map((item) => `${item.run_id}:${item.id}`),
     )
     const runs = new Set([...(flow.run_ids ?? []), ...(flow.run_id ? [flow.run_id] : [])])
     const scoped = tx
@@ -1677,12 +1698,7 @@ export namespace SessionTask {
         action: AssignmentTable.source_action_id,
       })
       .from(AssignmentTable)
-      .where(
-        and(
-          eq(AssignmentTable.source_session_id, sessionID),
-          eq(AssignmentTable.source_type, "delegation"),
-        ),
-      )
+      .where(and(eq(AssignmentTable.source_session_id, sessionID), eq(AssignmentTable.source_type, "delegation")))
       .all()
       .filter((item): item is typeof item & { run: string; action: string } => {
         if (!item.run || !item.action) return false
@@ -1704,10 +1720,7 @@ export namespace SessionTask {
       .all()
       .filter(
         (item) =>
-          item.run &&
-          item.action &&
-          item.child &&
-          located.values.get(`${item.run}:${item.action}`) === item.child,
+          item.run && item.action && item.child && located.values.get(`${item.run}:${item.action}`) === item.child,
       )
     const saved = result(revision.result, revision.result_source)
     const expected = actions.length > 0 ? keys : new Set(located.values.keys())
@@ -1725,10 +1738,10 @@ export namespace SessionTask {
           ? ("partial" as const)
           : undefined
         : rows.some((item) => item.status !== "completed") || saved.result_source === "fallback_summary"
-        ? ("partial" as const)
-        : rows.length > 0 || saved.result
-          ? ("completed" as const)
-          : undefined
+          ? ("partial" as const)
+          : rows.length > 0 || saved.result
+            ? ("completed" as const)
+            : undefined
     const progress = {
       completed:
         (flow.compact?.completed ?? 0) +
@@ -1743,15 +1756,15 @@ export namespace SessionTask {
           ? ("blocked" as const)
           : !complete
             ? ("blocked" as const)
-          : progress.total > 0
-            ? progress.completed >= progress.total
-              ? ("completed" as const)
-              : ("blocked" as const)
-            : resultStatus === "completed"
-              ? ("completed" as const)
-              : expected.size > 0 && resultStatus === "partial"
+            : progress.total > 0
+              ? progress.completed >= progress.total
                 ? ("completed" as const)
                 : ("blocked" as const)
+              : resultStatus === "completed"
+                ? ("completed" as const)
+                : expected.size > 0 && resultStatus === "partial"
+                  ? ("completed" as const)
+                  : ("blocked" as const)
     return { terminal, result: resultStatus }
   }
 
@@ -1789,13 +1802,14 @@ export namespace SessionTask {
   function resultIndex(sessionID: SessionID) {
     const rows = Database.use((tx) =>
       tx
-        .select({ run: SessionResultTable.run_id, action: SessionResultTable.action_id, status: SessionResultTable.status })
+        .select({
+          run: SessionResultTable.run_id,
+          action: SessionResultTable.action_id,
+          status: SessionResultTable.status,
+        })
         .from(SessionResultTable)
         .where(
-          and(
-            eq(SessionResultTable.parent_session_id, sessionID),
-            eq(SessionResultTable.carrier, "action_result"),
-          ),
+          and(eq(SessionResultTable.parent_session_id, sessionID), eq(SessionResultTable.carrier, "action_result")),
         )
         .all(),
     )
@@ -1821,6 +1835,7 @@ export namespace SessionTask {
 
   function flow(actions: unknown[], runID?: string, assignmentID?: string): Workflow {
     const assignment = assignmentID ? { assignment_id: assignmentID } : {}
+    if (assignmentID && actions.length === 0) return { actions: [], ...assignment }
     if (!runID) return { actions, ...assignment }
     return { actions: tagged(actions, runID), ...assignment, run_id: runID, run_ids: [runID] }
   }
@@ -1908,7 +1923,10 @@ export namespace SessionTask {
     )
       return
     const snapshot = { task: stored.task.id, revision: stored.revision.id, run }
-    if (expected && (expected.task !== snapshot.task || expected.revision !== snapshot.revision || expected.run !== run))
+    if (
+      expected &&
+      (expected.task !== snapshot.task || expected.revision !== snapshot.revision || expected.run !== run)
+    )
       return
     return snapshot
   }

@@ -37,7 +37,7 @@
 - Describe each feature in concise structured Markdown with enough goal, boundary, dependency, acceptance, shared-decision, risk, and unresolved context for `feature-planner`. Omit empty sections and add domain-specific context when useful.
 - Before direct user-originated executable work, read Current Session Task. With no Task, emit create/self confirmation with the full proposed feature breakdown. Continue the current Revision without assignment inside the same Task boundary; use update/self for a boundary-changing revision and handoff/peer for a new Task.
 - For delegated graphs from a parent session, skip the `confirm` item and declare executable feature items directly.
-- When a `confirm` item is used, every executable `agent` item must depend on the confirmation item so the runtime starts it automatically after user confirmation. Do not rely on a later model turn to regenerate or declare the executable graph.
+- When `confirm` carries a Task `assignment`, emit it without executable sibling items. Put the complete reviewed milestone and feature breakdown in `plan`; after confirmation, the runtime delivers that Task as a fresh request, and this planner declares the executable feature graph without confirming the same assignment again. Any graph included in the preparation package is ignored.
 - If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
 - Express the feature breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
 - Declare all currently identifiable features in one DSL package.

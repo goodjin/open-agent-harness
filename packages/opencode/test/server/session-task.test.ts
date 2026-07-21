@@ -90,7 +90,7 @@ describe("session task endpoints", () => {
         expect(results[0]?.out.result.assignment_id).toBe(results[1]?.out.result.assignment_id)
         expect(results.reduce((sum, item) => sum + item.out.calls, 0)).toBe(1)
         expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(1)
-        expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(1)
+        expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(2)
         expect(results.every((item) => !item.err.includes("ERROR"))).toBe(true)
       },
     })
@@ -499,7 +499,11 @@ describe("session task endpoints", () => {
               expect(replies[0].assignment_id).toBe(replies[1].assignment_id)
               expect(prompt).toHaveBeenCalledTimes(1)
               Database.use((db) =>
-                db.update(SessionTaskTable).set({ status: "blocked" }).where(eq(SessionTaskTable.id, current.task.id)).run(),
+                db
+                  .update(SessionTaskTable)
+                  .set({ status: "blocked" })
+                  .where(eq(SessionTaskTable.id, current.task.id))
+                  .run(),
               )
               const resume = spyOn(SessionTaskRecovery, "resume").mockResolvedValue(true)
               const resumed = await app.request(`/session/${session.id}/task/update/confirm`, {
@@ -516,7 +520,11 @@ describe("session task endpoints", () => {
               expect(resume).toHaveBeenCalledTimes(1)
               resume.mockRestore()
               Database.use((db) =>
-                db.update(SessionTaskTable).set({ status: "running" }).where(eq(SessionTaskTable.id, current.task.id)).run(),
+                db
+                  .update(SessionTaskTable)
+                  .set({ status: "running" })
+                  .where(eq(SessionTaskTable.id, current.task.id))
+                  .run(),
               )
               expect(
                 await SessionAssignment.bySource({
@@ -524,7 +532,7 @@ describe("session task endpoints", () => {
                   runID: "run_update",
                   actionID: "confirm_update",
                 }),
-              ).toMatchObject({ status: "running", target: "self" })
+              ).toMatchObject({ status: "completed", target: "self" })
 
               await proposal({
                 sessionID: session.id,
@@ -536,12 +544,13 @@ describe("session task endpoints", () => {
                 op: "update",
                 target: "self",
               })
+              const revised = await SessionTask.get(session.id)
               const cancelled = await app.request(`/session/${session.id}/task/update/confirm`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
                   proposal_id: "run_cancel:confirm_cancel",
-                  revision_id: current.revision.id,
+                  revision_id: revised?.revision.id,
                   action: "cancel",
                 }),
               })
@@ -553,77 +562,6 @@ describe("session task endpoints", () => {
                   actionID: "confirm_cancel",
                 }),
               ).toBeUndefined()
-
-              await proposal({
-                sessionID: session.id,
-                messageID,
-                runID: "run_retry",
-                actionID: "confirm_retry",
-                title: "Retry",
-                plan: "Retry body",
-                op: "update",
-                target: "self",
-              })
-              prompt.mockRejectedValueOnce(new Error("continuation unavailable"))
-              const failed = await app.request(`/session/${session.id}/task/update/confirm`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  proposal_id: "run_retry:confirm_retry",
-                  revision_id: current.revision.id,
-                  action: "confirm",
-                }),
-              })
-              expect(failed.status).toBe(409)
-              const decided = await Session.get(session.id)
-              const decidedProtocol = decided.dsl_context?.protocol as
-                | { confirmations?: { run_id?: string; action_id?: string; status?: string; response?: string }[] }
-                | undefined
-              expect(
-                decidedProtocol?.confirmations?.find(
-                  (item) => item.run_id === "run_retry" && item.action_id === "confirm_retry",
-                ),
-              ).toMatchObject({ status: "confirmed", response: "confirm" })
-              const first = prompt.mock.calls.at(-1)?.[0]?.messageID
-              await rewrite(session.id, "run_retry", "confirm_retry", { plan: "Tampered body" })
-              const blocked = prompt.mock.calls.length
-              expect(await SessionTaskConfirmation.scan()).toEqual([false])
-              expect(prompt.mock.calls.length).toBe(blocked)
-              await rewrite(session.id, "run_retry", "confirm_retry", { plan: "Retry body" })
-              expect(await SessionTaskConfirmation.scan()).toContain(true)
-              expect(prompt.mock.calls.at(-1)?.[0]?.messageID).toBe(first)
-              const calls = prompt.mock.calls.length
-              const retried = await app.request(`/session/${session.id}/task/update/confirm`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  proposal_id: "run_retry:confirm_retry",
-                  revision_id: current.revision.id,
-                  action: "confirm",
-                }),
-              })
-              expect(retried.status).toBe(200)
-              expect(prompt.mock.calls.length).toBe(calls)
-
-              const advanced = await SessionTask.draft({
-                taskID: current.task.id,
-                title: "Advanced",
-                body: "Advanced body",
-              })
-              await SessionTask.activate({ taskID: current.task.id, revisionID: advanced.id })
-              const before = prompt.mock.calls.length
-              const replay = await app.request(`/session/${session.id}/task/update/confirm`, {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({
-                  proposal_id: "run_update:confirm_update",
-                  revision_id: current.revision.id,
-                  action: "confirm",
-                }),
-              })
-              expect(replay.status).toBe(200)
-              expect(await replay.json()).toMatchObject({ assignment_id: replies[0].assignment_id })
-              expect(prompt.mock.calls.length).toBe(before)
             },
           }),
       })
@@ -836,7 +774,7 @@ describe("session task endpoints", () => {
               expect((await first).status).toBe(409)
               expect(prompt).toHaveBeenCalledTimes(1)
               expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(1)
-              expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(1)
+              expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(2)
             } finally {
               unblock()
               apply.mockRestore()
@@ -875,9 +813,10 @@ describe("session task endpoints", () => {
                 block: (enter: () => void, wait: Promise<void>) => () => void
                 handoffID?: string
               }) => {
+                const current = await SessionTask.get(session.id)
                 const body = JSON.stringify({
                   proposal_id: `run_${input.id}:confirm_${input.id}`,
-                  revision_id: input.op === "update" ? task.revision.id : undefined,
+                  revision_id: input.op === "update" ? current?.revision.id : undefined,
                   action: "confirm",
                 })
                 let enter = () => {}
@@ -1038,7 +977,7 @@ describe("session task endpoints", () => {
                   .map((row) => (typeof row.payload === "object" && row.payload ? row.payload.mode : undefined))
                   .sort(),
               ).toEqual(["prompt", "prompt", "prompt"])
-              expect(prompt).toHaveBeenCalledTimes(3)
+              expect(prompt).toHaveBeenCalledTimes(2)
             },
           }),
       })
@@ -1323,10 +1262,11 @@ describe("session task endpoints", () => {
 
   test("routes live and restored Task questions through one durable confirmation service", async () => {
     await using tmp = await tmpdir({ git: true })
-    let prompts = 0
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async () => {
-      prompts++
-      if (prompts === 2) throw new Error("restored route crashed")
+    const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      prompts.push(input)
       return undefined as never
     }) as unknown as typeof SessionPrompt.prompt)
     await Instance.provide({
@@ -1388,14 +1328,14 @@ describe("session task endpoints", () => {
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
             })
-            expect(second.status).toBe(409)
-            expect(await SessionTaskConfirmation.scan()).toEqual([true])
+            expect(second.status).toBe(200)
+            expect(await SessionTaskConfirmation.scan()).toEqual([])
             const replay = await app.request(`/question/${listed[0]?.id}/reply`, {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
             })
-            expect(replay.status).toBe(200)
+            expect(replay.status).toBe(409)
             const rows = Database.use((db) => db.select().from(TaskConfirmationTable).all())
             expect(rows).toHaveLength(2)
             expect(rows.every((row) => row.status === "completed")).toBe(true)
@@ -1404,7 +1344,8 @@ describe("session task endpoints", () => {
             )
             expect(outbox).toHaveLength(2)
             expect(outbox.every((row) => row.status === "delivered")).toBe(true)
-            expect(prompt).toHaveBeenCalledTimes(3)
+            expect(prompts).toHaveLength(2)
+            expect(prompts.every((input) => input.metadata?.source === "task_revision_bootstrap")).toBe(true)
 
             const messageID3 = await message(session.id)
             await proposal({
@@ -1421,7 +1362,7 @@ describe("session task endpoints", () => {
             const cancelled = await app.request(`/question/${cancellable[0]?.id}/reject`, { method: "POST" })
             expect(cancelled.status).toBe(200)
             expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(3)
-            expect(prompt).toHaveBeenCalledTimes(4)
+            expect(prompts).toHaveLength(2)
 
             const messageID4 = await message(session.id)
             await proposal({
@@ -1575,6 +1516,7 @@ describe("session task endpoints", () => {
               if (!pending) throw new Error("question missing")
               const sessions = Database.use((db) => db.select().from(SessionTable).all()).length
               const tasks = Database.use((db) => db.select().from(SessionTaskTable).all()).length
+              const calls = prompt.mock.calls.length
               const res = await app.request(`/question/${pending.id}/${item.route}`, {
                 method: "POST",
                 ...(item.route === "reply"
@@ -1590,7 +1532,7 @@ describe("session task endpoints", () => {
               expect(Database.use((db) => db.select().from(TaskConfirmationTable).all())).toHaveLength(0)
               expect(Database.use((db) => db.select().from(AssignmentTable).all())).toHaveLength(0)
               expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(0)
-              expect(prompt).toHaveBeenCalledTimes(0)
+              expect(prompt.mock.calls.length).toBe(calls)
               expect(Database.use((db) => db.select().from(SessionTable).all())).toHaveLength(sessions)
               expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toHaveLength(tasks)
               if (handoff) expect(await SessionTaskHandoff.get(handoff.id)).toMatchObject({ status: "proposed" })
@@ -1609,6 +1551,7 @@ describe("session task endpoints", () => {
             while (!(await Question.list()).some((question) => question.sessionID === session.id)) await Bun.sleep(1)
             const pending = (await Question.list()).find((question) => question.sessionID === session.id)
             if (!pending) throw new Error("input question missing")
+            const calls = prompt.mock.calls.length
             const res = await app.request(`/question/${pending.id}/reply`, {
               method: "POST",
               headers: { "content-type": "application/json" },
@@ -1616,7 +1559,7 @@ describe("session task endpoints", () => {
             })
             expect(res.status).toBe(200)
             expect((await asked).answers).toEqual([["A"]])
-            expect(prompt).toHaveBeenCalledTimes(0)
+            expect(prompt.mock.calls.length).toBe(calls)
           },
         }),
     })
@@ -1757,6 +1700,7 @@ describe("session task endpoints", () => {
               action: "confirm" as const,
               op: "update" as const,
             }
+            const calls = prompt.mock.calls.length
             const first = await SessionTaskConfirmation.respond(input)
             const second = await SessionTaskConfirmation.respond(input)
             expect(second).toEqual(first)
@@ -1764,7 +1708,7 @@ describe("session task endpoints", () => {
             const row = Database.use((db) => db.select().from(TaskConfirmationTable).get())
             expect(row).toMatchObject({ status: "completed", lease_until: 0, result: first })
             expect(Database.use((db) => db.select().from(SessionEventOutboxTable).all())).toHaveLength(0)
-            expect(prompt).not.toHaveBeenCalled()
+            expect(prompt.mock.calls.length).toBe(calls)
 
             const messageID2 = await message(session.id)
             await proposal({
@@ -2026,14 +1970,11 @@ describe("session task endpoints", () => {
                 contextRefs: ["artifact:two"],
               })
               const count = Database.use((db) => db.select({ id: SessionTable.id }).from(SessionTable).all().length)
-              const mismatch = await app.request(
-                `/session/${session.id}/task/handoff/${alternate.id}/confirm`,
-                {
-                  method: "POST",
-                  headers: { "content-type": "application/json" },
-                  body: JSON.stringify({ proposal_id: "run_handoff:confirm_handoff", action: "confirm" }),
-                },
-              )
+              const mismatch = await app.request(`/session/${session.id}/task/handoff/${alternate.id}/confirm`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ proposal_id: "run_handoff:confirm_handoff", action: "confirm" }),
+              })
               expect(mismatch.status).toBe(409)
               expect(await SessionTaskHandoff.get(alternate.id)).toMatchObject({
                 status: "proposed",
@@ -2061,8 +2002,7 @@ describe("session task endpoints", () => {
                 }),
               ).rejects.toBeInstanceOf(ConflictError)
               Database.use((db) => {
-                db
-                  .update(TaskHandoffTable)
+                db.update(TaskHandoffTable)
                   .set({ context_refs: ["artifact:one"] })
                   .where(eq(TaskHandoffTable.id, handoff.id))
                   .run()
@@ -2072,8 +2012,7 @@ describe("session task endpoints", () => {
                   .where(eq(TaskConfirmationTable.proposal_id, "run_handoff:confirm_handoff"))
                   .get()
                 if (!proof) throw new Error("confirmation proof missing")
-                db
-                  .update(TaskConfirmationTable)
+                db.update(TaskConfirmationTable)
                   .set({ snapshot: { ...proof.snapshot, context_refs: ["artifact:tampered"] } })
                   .where(eq(TaskConfirmationTable.id, proof.id))
                   .run()

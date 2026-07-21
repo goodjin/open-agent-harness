@@ -79,7 +79,9 @@ Use `input` when the user's choice or additional information should affect the n
 
 Use `confirm` when a planner has designed a plan that must be approved before execution.
 
-The planner should emit the `confirm` item and the executable items in the same protocol package. The runtime treats any `confirm` item as package-level approval: it asks the user before running the other items, regardless of the confirm item's `depends` value and regardless of whether other items depend on the confirm item. If the user confirms, the remaining items execute from the persisted package without asking the model to regenerate the plan or emit another package. If the user cancels, remaining items do not execute.
+For an ordinary approval without `assignment`, the planner may emit the `confirm` item and gated executable items in the same protocol package. The runtime asks the user before running the other items. If the user confirms, the remaining items execute from the persisted package; cancellation stops them.
+
+An assignment confirmation is Task preparation, not an execution graph. Put the complete organized Task Markdown in `plan` and do not place executable `agent` or `tool` items beside it. After confirmation, the runtime binds the Task and starts a fresh model turn whose request contains the complete Task description. Any sibling execution graph emitted with an assignment confirmation is ignored and does not enter the Task workflow or model context.
 
 Use `input`, not `confirm`, when the user must choose between multiple plans, provide parameters, or add details that the model must interpret before building the next package.
 
@@ -89,9 +91,9 @@ Planner agents must follow this order:
 2. Ask questions or delegate read-only exploration when the intent, context, constraints, risks, or task boundaries are not clear enough.
 3. After the intent is clear and the execution plan is designed, emit a `confirm` item whose `plan` is the full assignment content for final user approval.
 4. Choose `assignment` from Session Task Admission below. Do not use assignment confirmation merely to explore, clarify, discuss a plan, report progress, or review results.
-5. A create or update confirmation may share a package with executable `agent` or `tool` items; the runtime gates that package automatically. A handoff confirmation has no source-session executable actions for the new Task.
+5. For create/self or update/self, emit the assignment confirmation by itself. The runtime starts the confirmed Task or Revision from its complete `plan`. For handoff/peer, the runtime starts the peer session from that complete `plan`; the source session does not execute or continue the new Task.
 
-After the user confirms, the runtime automatically executes the remaining items from the persisted package.
+After the runtime delivers the confirmed Task as a fresh request, design the execution graph from that Task. Do not ask for the same assignment confirmation again.
 
 ## Session Task Admission
 

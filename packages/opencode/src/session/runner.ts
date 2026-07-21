@@ -1077,6 +1077,8 @@ export namespace SessionRunner {
         sessionID,
         type: "text",
         text: summarize(run),
+        synthetic: preparing(run),
+        ignored: preparing(run),
         metadata: {
           kind: "protocol_summary",
           action,
@@ -1090,7 +1092,7 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
-      if (revision(run) || repairable(run)) {
+      if ((!preparing(run) && revision(run)) || repairable(run)) {
         await final(
           {
             stream,
@@ -1112,8 +1114,7 @@ export namespace SessionRunner {
     if (confirms(actions).length > 0) return false
     const work = actions.filter((item) => item.executor.type !== "human")
     return (
-      work.length > 0 &&
-      work.every((item) => item.executor.type === "tool" && EXPLORATION.has(item.executor.target))
+      work.length > 0 && work.every((item) => item.executor.type === "tool" && EXPLORATION.has(item.executor.target))
     )
   }
 
@@ -3186,6 +3187,16 @@ export namespace SessionRunner {
     return receipt(run) !== undefined
   }
 
+  function preparing(run: AgentProtocol.Result) {
+    return run.actions.some((item) => {
+      if (item.operation !== "confirm") return false
+      const assignment = object(item.input).assignment
+      if (!assignment || typeof assignment !== "object" || Array.isArray(assignment)) return false
+      const op = object(assignment).op
+      return op === "create" || op === "update" || op === "handoff"
+    })
+  }
+
   function pseudo(text: string) {
     return /\bminimax:tool_call\b|<minimax:tool_call>|<invoke\s+name=|\[TOOL_CALL\]|\btool[_-]call\b|```(?:json\s+)?agent-protocol[\s\S]*?"type"\s*:\s*"agent\.protocol\.output"|"type"\s*:\s*"tool-call"|"(?:toolName|name)"\s*:\s*"AgentProtocolOutput"|\btool\s*=>/i.test(
       text,
@@ -3494,6 +3505,7 @@ export namespace SessionRunner {
     const plan = typeof data.plan === "string" ? data.plan : ""
     const prompt = typeof data.prompt === "string" ? data.prompt : "Please confirm this plan before execution."
     const intent = object(data.assignment)
+    if (intent.op === "create" || intent.op === "update" || intent.op === "handoff") await discard(input.messageID)
     const refs = input.action.context_refs.filter((item): item is string => typeof item === "string")
     const handoff =
       intent.op === "handoff"
@@ -3587,6 +3599,24 @@ export namespace SessionRunner {
           sessionID: input.sessionID,
         })
       : undefined
+    const created =
+      ok && assignment && intent.op === "create" && intent.target === "self"
+        ? await SessionTask.confirmed({
+            sessionID: input.sessionID,
+            runID: input.runID,
+            messageID: input.messageID,
+            actionIDs: [input.action.id],
+            actions: [],
+            legacy: { title: input.action.title, body: plan },
+            requiresAssignment: true,
+          })
+        : undefined
+    if (created?.type === "execute")
+      Database.effect(() =>
+        SessionTaskRecovery.resume(input.sessionID).catch((err) => {
+          log.warn("task bootstrap blocked", { err, sessionID: input.sessionID })
+        }),
+      )
     const transferred =
       ok && assignment && handoff
         ? await SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id })
@@ -3611,6 +3641,13 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
     })
     if (ok) {
+      if (created)
+        return {
+          title: input.action.title,
+          output:
+            "Task confirmed and persisted. The Runtime discarded preparation actions and queued the formal Task request.",
+          metadata: { blocked: true, confirmed: true, dispatched: true },
+        }
       return {
         title: input.action.title,
         output: transferred
@@ -3633,6 +3670,22 @@ export namespace SessionRunner {
         .join("\n"),
       metadata: { blocked: true, confirmed: false, cancelled: true },
     }
+  }
+
+  async function discard(messageID: MessageID) {
+    const parts = await MessageV2.parts(messageID)
+    await Promise.all(
+      parts.flatMap((part) => {
+        if (part.type !== "tool" || part.tool !== LLM.PROTOCOL_OUTPUT_TOOL) return []
+        return [
+          Session.updatePart({
+            ...part,
+            ignored: true,
+            metadata: { ...part.metadata, protocol: true, task_preparation: true },
+          }),
+        ]
+      }),
+    )
   }
 
   function yes(input: string) {

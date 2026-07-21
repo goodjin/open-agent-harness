@@ -185,9 +185,7 @@ export namespace SessionTaskRecovery {
         time_applied: null,
       }))
     if (!rows.length) return
-    Database.use((tx) =>
-      tx.insert(TaskRevisionStopTable).values(rows).onConflictDoNothing().run(),
-    )
+    Database.use((tx) => tx.insert(TaskRevisionStopTable).values(rows).onConflictDoNothing().run())
   }
 
   function reconcile(revision: string) {
@@ -510,6 +508,16 @@ export namespace SessionTaskRecovery {
       return true
     }
     const session = await Session.get(row.session_id)
+    const task = await SessionTask.get(row.session_id)
+    if (
+      !task ||
+      task.task.id !== data.task_id ||
+      task.revision.id !== data.revision_id ||
+      task.revision.status !== "active"
+    ) {
+      retry(row, stamp, new Error("task_revision_bootstrap_stale"))
+      return true
+    }
     if (!valid(row, "delivering", stamp)) {
       retry(row, stamp)
       return true
@@ -527,11 +535,7 @@ export namespace SessionTaskRecovery {
       parts: [
         {
           type: "text",
-          text: [
-            "A confirmed Task revision is now active.",
-            "Inspect the current Task workflow and reusable results, then continue the revised work.",
-            "Do not revive actions or child sessions from the archived revision.",
-          ].join("\n"),
+          text: SessionTask.request(task.revision.body),
         },
       ],
     }).catch((err) => {
