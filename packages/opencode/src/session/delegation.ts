@@ -692,8 +692,8 @@ export namespace SessionDelegation {
 
   export async function recover() {
     for (const session of Session.list({ directory: Instance.directory, limit: 5000 })) {
-      if (!assignment(session)) continue
-      await complete({ sessionID: session.id })
+      if (assignment(session)) await complete({ sessionID: session.id })
+      await restoreConfirm(session.id)
     }
   }
 
@@ -1937,6 +1937,49 @@ export namespace SessionDelegation {
       "## Changes after those requests",
       ...rows.flatMap((item) => [`### Delegation Run \`${item.runID}\``, item.text]),
     ].join("\n\n")
+  }
+
+  async function restoreConfirm(parentID: SessionID) {
+    const expired = await expire(parentID)
+    if (expired.length === 0) return false
+    const parent = await Session.get(parentID)
+    const protocol = object(object(parent.dsl_context).protocol)
+    const waiting = Object.keys(object(protocol.pending_delegations)).length
+    if (waiting > 0) {
+      SessionStatus.set(parentID, {
+        type: "waiting_child",
+        message: `Waiting for ${waiting} delegated child session${waiting === 1 ? "" : "s"}.`,
+      })
+      return false
+    }
+    const at = Math.min(...expired.map((item) => item.updated_at ?? 0))
+    const results = (await SessionResult.listForParent(parentID)).filter((item) => item.created_at > at)
+    const groups = Map.groupBy(results, (item) => item.run_id ?? "unassigned")
+    const rows = Array.from(groups, ([runID, items]) => ({
+      runID,
+      text: items
+        .map(
+          (item) =>
+            `- ${item.action_id ?? item.child_session_id ?? item.id} [${item.status}]: ${item.summary ?? "Result stored without a summary."}`,
+        )
+        .join("\n"),
+    }))
+    const { SessionPrompt } = await import("./prompt")
+    await refreshed(parentID, expired)
+    SessionStatus.set(parentID, { type: "running" })
+    await SessionPrompt.prompt({
+      sessionID: parentID,
+      agent: parent.agent,
+      metadata: { internal: true, source: "confirmation_refresh", restored: true },
+      parts: [{ type: "text", text: changed(expired, rows) }],
+    })
+    await SessionLog.emit({
+      sessionID: parentID,
+      level: "info",
+      type: "protocol.confirmation.refresh.restored",
+      data: { confirmations: expired.length, results: results.length },
+    })
+    return true
   }
 
   async function claim(parent: Session.Info, runID: string) {
