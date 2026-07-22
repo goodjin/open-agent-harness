@@ -10,6 +10,7 @@ import type { SessionResumePrompt } from "@/pages/session/helpers"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
+import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
 import type { SessionComposerState } from "@/pages/session/composer/session-composer-state"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
@@ -240,6 +241,13 @@ export function SessionComposerRegion(props: {
                   >
                     {resume.prompt.action}
                   </Button>
+                </div>
+              )}
+            </Show>
+            <Show when={props.state.questionRequest()} keyed>
+              {(request) => (
+                <div data-component="session-current-question" class="mb-2">
+                  <SessionQuestionDock request={request} onSubmit={props.onSubmit} />
                 </div>
               )}
             </Show>

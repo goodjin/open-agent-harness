@@ -11,6 +11,7 @@ import { SessionAssignment } from "@/session/assignment"
 import { SessionTaskConfirmation } from "@/session/task-confirmation"
 import { SessionTask } from "@/session/task"
 import { SessionTaskHandoff } from "@/session/task-handoff"
+import { SessionResult } from "@/session/result"
 import { ConflictError } from "@/storage/db"
 import { MessageV2 } from "@/session/message-v2"
 import { Storage } from "@/storage/storage"
@@ -29,6 +30,12 @@ type Confirm = {
   run_id?: unknown
   status?: unknown
   updated_at?: unknown
+}
+
+async function stale(sessionID: SessionID, item: Confirm) {
+  const at = num(item.updated_at)
+  if (!at) return false
+  return (await SessionResult.listForParent(sessionID)).some((result) => result.created_at > at)
 }
 
 const prefix = "que_protocol_confirm_"
@@ -153,13 +160,35 @@ async function confirm(input: {
   requestID: QuestionID
   response?: Question.Reply["response"]
 }) {
-  const key = parse(input.requestID)
-  if (!key) return false
-  const status = input.reject || input.response === "cancel" ? "cancelled" : "confirmed"
-  const session = await Session.get(key.sessionID)
+  const parsed = parse(input.requestID)
+  const live = parsed ? undefined : (await Question.list()).find((item) => item.id === input.requestID)
+  const action = live?.tool?.callID.startsWith("call_") ? live.tool.callID.slice(5) : undefined
+  const sessionID = parsed?.sessionID ?? live?.sessionID
+  if (!sessionID) return false
+  const session = await Session.get(sessionID)
   const ctx = rec(session.dsl_context) ? session.dsl_context : {}
   const protocol = rec(ctx.protocol) ? ctx.protocol : {}
   const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+  const found = vals.filter((item) => {
+    if (!rec(item)) return false
+    if (parsed) return item.run_id === parsed.run && item.action_id === parsed.action
+    return item.action_id === action && item.message_id === live?.tool?.messageID
+  })
+  if (found.length === 0 && live) return false
+  if (found.length !== 1 || !rec(found[0])) {
+    const label = parsed ? `${parsed.run}:${parsed.action}` : action
+    throw new ConflictError({ message: `Protocol confirmation is not current: ${label}` })
+  }
+  const current = found[0]
+  if (current.status !== "pending" || (await stale(sessionID, current)))
+    throw new ConflictError({
+      message: `Protocol confirmation was superseded by newer task results: ${current.run_id}:${current.action_id}`,
+    })
+  const run = text(current.run_id)
+  const aid = text(current.action_id)
+  if (!run || !aid) throw new ConflictError({ message: "Protocol confirmation identity is invalid" })
+  const key = { sessionID, run, action: aid }
+  const status = input.reject || input.response === "cancel" ? "cancelled" : "confirmed"
   const next = vals.map((val) => {
     if (!rec(val)) return val
     if (val.run_id !== key.run || val.action_id !== key.action) return val
@@ -279,6 +308,10 @@ async function task(input: {
     return false
   }
   const item = found[0]
+  if (item.status !== "pending" || (await stale(sessionID, item)))
+    throw new ConflictError({
+      message: `Task proposal was superseded by newer task results: ${item.run_id}:${item.action_id}`,
+    })
   const intent = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
   if (intent.op !== "update" && intent.op !== "handoff") {
     if (intent.op === "create" && intent.target === "self") return false
@@ -292,8 +325,7 @@ async function task(input: {
   const answers = input.answers?.flat().map((part) => part.trim()) ?? []
   const confirm = input.response === "confirm" || answers.some((part) => /^confirm$/i.test(part))
   const cancel = input.response === "cancel" || answers.some((part) => /^cancel$/i.test(part))
-  if (confirm === cancel)
-    throw new ConflictError({ message: `Task proposal decision must be explicit: ${run}:${id}` })
+  if (confirm === cancel) throw new ConflictError({ message: `Task proposal decision must be explicit: ${run}:${id}` })
   const decision = cancel ? "cancel" : "confirm"
   const current = intent.op === "update" ? await SessionTask.get(sessionID) : undefined
   if (intent.op === "update" && !current)

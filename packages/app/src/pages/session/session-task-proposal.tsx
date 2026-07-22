@@ -43,7 +43,8 @@ type View = { id: string; status: Status; dismissed: boolean; target?: string; e
 const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 const text = (input: unknown) => (typeof input === "string" && input.length ? input : undefined)
-const list = (input: unknown) => (Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : [])
+const list = (input: unknown) =>
+  Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : []
 
 const status = (input: unknown, kind: TaskProposal["kind"], part: string): Status => {
   if (part === "task_handoff_started" || input === "started") return "started"
@@ -131,7 +132,7 @@ const progress = (input: unknown, body?: string): Update | undefined => {
 export function proposals(
   parts: unknown[],
   bodies: Map<string, string | undefined>,
-  decisions = new Map<string, "pending" | "confirmed" | "cancelled">(),
+  decisions = new Map<string, "pending" | "confirmed" | "cancelled" | "superseded">(),
 ) {
   const map = parts
     .flatMap((part) => {
@@ -189,7 +190,7 @@ export function proposals(
   return Array.from(map.values()).map((item) => {
     if (item.status !== "proposed") return item
     const decision = decisions.get(item.id)
-    if (decision === "cancelled") return { ...item, status: "cancelled" as const }
+    if (decision === "cancelled" || decision === "superseded") return { ...item, status: "cancelled" as const }
     if (decision === "confirmed")
       return { ...item, status: item.kind === "update" ? ("revising" as const) : ("creating" as const) }
     return item
@@ -238,8 +239,7 @@ export function proposalFlow(input: {
     busy = true
     dismissed = false
     emit({
-      status:
-        action === "confirm" ? (item.kind === "update" ? "revising" : "creating") : "confirming",
+      status: action === "confirm" ? (item.kind === "update" ? "revising" : "creating") : "confirming",
     })
     const result = await input.send(item, action).then(
       (value) => ({ value }),
@@ -337,25 +337,37 @@ export function SessionTaskProposal(props: {
         <section
           data-component="session-task-proposal"
           class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
-          aria-label={props.value.kind === "update" ? language.t("session.task.proposal.update") : language.t("session.task.proposal.handoff")}
+          aria-label={
+            props.value.kind === "update"
+              ? language.t("session.task.proposal.update")
+              : language.t("session.task.proposal.handoff")
+          }
         >
           <header class="flex items-start justify-between gap-3 border-b border-border-weaker-base px-3 py-2">
             <div class="min-w-0">
               <div class="text-12-medium text-text-strong">
-                {props.value.kind === "update" ? language.t("session.task.proposal.update") : language.t("session.task.proposal.handoff")}
+                {props.value.kind === "update"
+                  ? language.t("session.task.proposal.update")
+                  : language.t("session.task.proposal.handoff")}
               </div>
               <Show when={props.value.kind === "handoff" ? props.value.title : props.value.summary}>
                 {(value) => <div class="mt-0.5 text-11-regular text-text-weak break-words">{value()}</div>}
               </Show>
             </div>
-            <span class="shrink-0 rounded-sm border border-border-weak-base px-1.5 py-0.5 text-10-medium text-text-weak" role="status" aria-live="polite">
+            <span
+              class="shrink-0 rounded-sm border border-border-weak-base px-1.5 py-0.5 text-10-medium text-text-weak"
+              role="status"
+              aria-live="polite"
+            >
               {label()}
             </span>
           </header>
           <div class="flex flex-col gap-3 p-3">
             <Show when={props.value.kind === "update" && props.value.children.length}>
               <div class="text-11-regular text-text-weak">
-                {language.t("session.task.proposal.children", { sessions: props.value.kind === "update" ? props.value.children.join(", ") : "" })}
+                {language.t("session.task.proposal.children", {
+                  sessions: props.value.kind === "update" ? props.value.children.join(", ") : "",
+                })}
               </div>
             </Show>
             <Show when={props.value.kind === "handoff"}>
@@ -368,33 +380,66 @@ export function SessionTaskProposal(props: {
             </Show>
             <Show when={props.value.body}>
               {(body) => (
-                <div data-scrollable class="max-h-[420px] overflow-auto rounded-sm bg-background-strong p-3 text-12-regular text-text-strong">
+                <div
+                  data-scrollable
+                  class="max-h-[420px] overflow-auto rounded-sm bg-background-strong p-3 text-12-regular text-text-strong"
+                >
                   <Markdown text={body()} />
                 </div>
               )}
             </Show>
             <Show when={view().error}>
-              {(error) => <div role="alert" class="text-11-regular text-text-danger-base">{error()}</div>}
+              {(error) => (
+                <div role="alert" class="text-11-regular text-text-danger-base">
+                  {error()}
+                </div>
+              )}
             </Show>
             <Show when={view().status === "started" && view().target}>
               {(target) => (
-                <Button variant="secondary" size="small" onClick={() => props.open(target())} aria-label={language.t("session.task.proposal.openTarget")}>
+                <Button
+                  variant="secondary"
+                  size="small"
+                  onClick={() => props.open(target())}
+                  aria-label={language.t("session.task.proposal.openTarget")}
+                >
                   {language.t("session.task.proposal.openTarget")}
                 </Button>
               )}
             </Show>
             <Show when={pending()}>
               <div class="flex flex-wrap justify-end gap-2">
-                <Button variant="ghost" size="small" onClick={flow.discuss} aria-label={language.t("session.task.proposal.discuss")}>
+                <Button
+                  variant="ghost"
+                  size="small"
+                  onClick={flow.discuss}
+                  aria-label={language.t("session.task.proposal.discuss")}
+                >
                   {language.t("session.task.proposal.discuss")}
                 </Button>
                 <Show when={view().status !== "failed"}>
-                  <Button variant="secondary" size="small" onClick={() => void flow.cancel()} aria-label={language.t("session.task.proposal.cancel")}>
+                  <Button
+                    variant="secondary"
+                    size="small"
+                    onClick={() => void flow.cancel()}
+                    aria-label={language.t("session.task.proposal.cancel")}
+                  >
                     {language.t("session.task.proposal.cancel")}
                   </Button>
                 </Show>
-                <Button variant="primary" size="small" onClick={() => void flow.confirm()} aria-label={view().status === "failed" ? language.t("session.task.proposal.retry") : language.t("session.task.proposal.confirm")}>
-                  {view().status === "failed" ? language.t("session.task.proposal.retry") : language.t("session.task.proposal.confirm")}
+                <Button
+                  variant="primary"
+                  size="small"
+                  onClick={() => void flow.confirm()}
+                  aria-label={
+                    view().status === "failed"
+                      ? language.t("session.task.proposal.retry")
+                      : language.t("session.task.proposal.confirm")
+                  }
+                >
+                  {view().status === "failed"
+                    ? language.t("session.task.proposal.retry")
+                    : language.t("session.task.proposal.confirm")}
                 </Button>
               </div>
             </Show>

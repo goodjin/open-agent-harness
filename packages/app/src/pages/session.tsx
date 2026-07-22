@@ -86,6 +86,7 @@ type SessionHistoryWindowInput = {
   messagesReady: () => boolean
   loaded: () => number
   visibleUserMessages: () => UserMessage[]
+  requiredUserIDs: () => Set<string>
   measure: (message: UserMessage) => number
   historyMore: () => boolean
   historyLoading: () => boolean
@@ -159,7 +160,9 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
       const msgs = input.visibleUserMessages()
       const start = turnStart()
       if (start <= 0) return msgs
-      return msgs.slice(start)
+      const required = input.requiredUserIDs()
+      if (required.size === 0) return msgs.slice(start)
+      return msgs.filter((msg, index) => index >= start || required.has(msg.id))
     },
     emptyUserMessages,
     {
@@ -511,8 +514,7 @@ export default function Page() {
   const [latest, setLatest] = createSignal<Feed>()
   const monitor = observe({
     on: sdk.event.on,
-    load: (sessionID, signal) =>
-      sdk.client.session.task.current({ sessionID }, { signal }).then((res) => res.data!),
+    load: (sessionID, signal) => sdk.client.session.task.current({ sessionID }, { signal }).then((res) => res.data!),
     done: setLatest,
     missing: (err) => code(err) === 404,
     error: (err) => formatServerError(err, language.t, language.t("session.task.error.current")),
@@ -1723,6 +1725,22 @@ export default function Page() {
     messagesReady,
     loaded: () => messages().length,
     visibleUserMessages,
+    requiredUserIDs: () => {
+      const current = composer.questionRequest()?.tool?.messageID
+      const vals = messages()
+      const recent = vals.slice(-20)
+      const source =
+        current && !recent.some((msg) => msg.id === current)
+          ? [...recent, ...vals.filter((msg) => msg.id === current)]
+          : recent
+      return new Set(
+        source.flatMap((msg) => {
+          if (msg.role !== "assistant" || !msg.parentID) return []
+          if (msg.id !== current && msg.time.created < (vals.at(-1)?.time.created ?? 0) - 5 * 60_000) return []
+          return [msg.parentID]
+        }),
+      )
+    },
     measure,
     historyMore,
     historyLoading,
@@ -1731,7 +1749,13 @@ export default function Page() {
     scroller: () => scroller,
   })
 
-  createEffect(on(() => params.id, () => setDelegationLoad(undefined), { defer: true }))
+  createEffect(
+    on(
+      () => params.id,
+      () => setDelegationLoad(undefined),
+      { defer: true },
+    ),
+  )
 
   createEffect(
     on(
@@ -2285,7 +2309,10 @@ export default function Page() {
                     <Icon size="small" name="branch" />
                   </Button>
                 </Tooltip>
-                <TooltipKeybind title={language.t("command.terminal.toggle")} keybind={command.keybind("terminal.toggle")}>
+                <TooltipKeybind
+                  title={language.t("command.terminal.toggle")}
+                  keybind={command.keybind("terminal.toggle")}
+                >
                   <Button
                     variant="ghost"
                     class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
@@ -2306,22 +2333,34 @@ export default function Page() {
                     aria-expanded={desktopSidePanelOpen() && activeTab() === "review"}
                     aria-controls="review-panel"
                   >
-                    <Icon size="small" name={desktopSidePanelOpen() && activeTab() === "review" ? "review-active" : "review"} />
+                    <Icon
+                      size="small"
+                      name={desktopSidePanelOpen() && activeTab() === "review" ? "review-active" : "review"}
+                    />
                   </Button>
                 </TooltipKeybind>
-                <TooltipKeybind title={language.t("command.fileTree.toggle")} keybind={command.keybind("fileTree.toggle")}>
+                <TooltipKeybind
+                  title={language.t("command.fileTree.toggle")}
+                  keybind={command.keybind("fileTree.toggle")}
+                >
                   <Button
                     variant="ghost"
                     class="titlebar-icon w-8 h-6 p-0 box-border shrink-0"
                     onClick={openFiles}
                     aria-label={language.t("command.fileTree.toggle")}
-                    aria-expanded={desktopSidePanelOpen() && layout.fileTree.opened() && (activeTab() === "changes" || activeTab() === "all")}
+                    aria-expanded={
+                      desktopSidePanelOpen() &&
+                      layout.fileTree.opened() &&
+                      (activeTab() === "changes" || activeTab() === "all")
+                    }
                     aria-controls="file-tree-panel"
                   >
                     <Icon
                       size="small"
                       name={
-                        desktopSidePanelOpen() && layout.fileTree.opened() && (activeTab() === "changes" || activeTab() === "all")
+                        desktopSidePanelOpen() &&
+                        layout.fileTree.opened() &&
+                        (activeTab() === "changes" || activeTab() === "all")
                           ? "file-tree-active"
                           : "file-tree"
                       }

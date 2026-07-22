@@ -119,10 +119,18 @@ describe("SessionDelegation", () => {
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.status).toBe("failed")
               expect(pctx.completed_delegations?.[0]?.summary).toContain("No child result was requested or collected")
-              expect(messages.some((msg) => msg.info.role === "user" && msg.parts.some((part) => part.type === "text" && part.text.includes("cancel_delegated_task")))).toBe(true)
+              expect(
+                messages.some(
+                  (msg) =>
+                    msg.info.role === "user" &&
+                    msg.parts.some((part) => part.type === "text" && part.text.includes("cancel_delegated_task")),
+                ),
+              ).toBe(true)
               const sent = prompts.filter((entry) => entry.sessionID === parent.id)
               expect(sent).toHaveLength(1)
-              expect(sent[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Partial: 0"))).toBe(true)
+              expect(sent[0]?.parts?.some((part) => part.type === "text" && part.text.includes("Partial: 0"))).toBe(
+                true,
+              )
             },
           }),
       })
@@ -1329,7 +1337,9 @@ describe("SessionDelegation", () => {
               })
               expect(tasks[0]?.revision).toMatchObject({ title: "Review", body: "Review" })
               expect(await SessionDelegation.complete({ sessionID: child.id, messageID: done.id })).toBe(false)
-              expect(review?.child_session_id ? await SessionTask.history(SessionID.make(review.child_session_id)) : []).toHaveLength(0)
+              expect(
+                review?.child_session_id ? await SessionTask.history(SessionID.make(review.child_session_id)) : [],
+              ).toHaveLength(0)
               expect(SessionStatus.get(parent.id).type).toBe("waiting_child")
               expect(prompts.some((entry) => entry.sessionID === parent.id)).toBe(false)
             },
@@ -1511,15 +1521,19 @@ describe("SessionDelegation", () => {
                 pending_delegations?: Record<string, { action_id?: string }>
               }
               expect(failed.status).toBe("failed")
-              expect(Object.values(ctx.pending_delegations ?? {}).some((entry) => entry.action_id === "review")).toBe(false)
+              expect(Object.values(ctx.pending_delegations ?? {}).some((entry) => entry.action_id === "review")).toBe(
+                false,
+              )
               expect(await SessionAssignment.active(failed.session_id)).toBeUndefined()
               expect(await SessionTask.get(failed.session_id)).toBeUndefined()
               expect(["failed", "error", "aborted"]).toContain(SessionStatus.get(failed.session_id).type)
               expect(prompts.some((entry) => entry.sessionID === failed.session_id)).toBe(false)
               const info = await Session.get(failed.session_id)
-              const audit = (info.dsl_context?.protocol as {
-                failed_delegation?: { action_id?: string; action_title?: string; agent?: string }
-              })?.failed_delegation
+              const audit = (
+                info.dsl_context?.protocol as {
+                  failed_delegation?: { action_id?: string; action_title?: string; agent?: string }
+                }
+              )?.failed_delegation
               const first = await MessageV2.get({ sessionID: parent.id, messageID: owner.id })
               const rows = first.info.role === "user" ? first.info.metadata?.turn?.children : undefined
               const row = rows?.find((entry: { id?: string }) => entry.id === failed.session_id)
@@ -1566,9 +1580,11 @@ describe("SessionDelegation", () => {
                 status: "failed",
                 completed_at: time,
               })
-              const pending = ((await Session.get(parent.id)).dsl_context?.protocol as {
-                pending_delegations?: object
-              }).pending_delegations
+              const pending = (
+                (await Session.get(parent.id)).dsl_context?.protocol as {
+                  pending_delegations?: object
+                }
+              ).pending_delegations
               expect(Object.keys(pending ?? {})).toHaveLength(0)
               expect(SessionStatus.get(failed.session_id).type).toBe("failed")
             },
@@ -2105,7 +2121,7 @@ describe("SessionDelegation", () => {
     }
   })
 
-  test("records child results and notifies parent only after all sibling children end", async () => {
+  test("notifies parent only after delegated children from every active run end", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []
     const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
@@ -2231,13 +2247,29 @@ describe("SessionDelegation", () => {
               }
               const second = {
                 ...base,
+                run_id: "apr_sibling_wait_next",
                 action_id: "two",
                 action_title: "Second child",
                 child_session_id: two.id,
               }
               await Session.setDslContext({
                 sessionID: parent.id,
-                dsl_context: { protocol: { pending_delegations: { [one.id]: first, [two.id]: second } } },
+                dsl_context: {
+                  protocol: {
+                    pending_delegations: { [one.id]: first, [two.id]: second },
+                    confirmations: [
+                      {
+                        run_id: "apr_old_confirm",
+                        action_id: "confirm_old",
+                        action_title: "Old confirmation",
+                        message_id: MessageID.ascending(),
+                        plan: "Dispatch the old plan",
+                        status: "pending",
+                        updated_at: Date.now() - 1,
+                      },
+                    ],
+                  },
+                },
               })
               await Session.setDslContext({ sessionID: one.id, dsl_context: { protocol: { delegation: first } } })
               await Session.setDslContext({ sessionID: two.id, dsl_context: { protocol: { delegation: second } } })
@@ -2265,6 +2297,15 @@ describe("SessionDelegation", () => {
               expect(prompts[0]?.parts?.some((part) => part.type === "text" && part.text.includes("second done"))).toBe(
                 true,
               )
+              expect(
+                prompts[0]?.parts?.some(
+                  (part) => part.type === "text" && part.text.includes("previous confirmation request became stale"),
+                ),
+              ).toBe(true)
+              const vals = (await Session.get(parent.id)).dsl_context?.protocol as {
+                confirmations?: { refresh_status?: string; status?: string }[]
+              }
+              expect(vals.confirmations?.[0]).toMatchObject({ status: "superseded", refresh_status: "delivered" })
             },
           }),
       })
@@ -2675,7 +2716,9 @@ describe("SessionDelegation", () => {
                 type: "user_completed",
                 message: "Terminated by user after collecting current result.",
               })
-              expect(summary?.parts?.some((part) => part.type === "text" && part.text.includes("Child Transcript"))).toBe(true)
+              expect(
+                summary?.parts?.some((part) => part.type === "text" && part.text.includes("Child Transcript")),
+              ).toBe(true)
               expect(Object.keys(pctx.pending_delegations ?? {})).toHaveLength(0)
               expect(pctx.completed_delegations?.[0]?.child_session_id).toBe(child.id)
               expect(pctx.completed_delegations?.[0]?.status).toBe("partial")
@@ -2978,52 +3021,106 @@ describe("SessionDelegation", () => {
   test("terminate-with-result preserves terminal child status and fallback identity", async () => {
     await using tmp = await tmpdir()
     let summaries = 0
-    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (input: Parameters<typeof SessionPrompt.prompt>[0]) => {
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
       if (input.agent === "summary") summaries++
       const user = (await Session.updateMessage({
-        id: MessageID.ascending(), sessionID: input.sessionID, role: "user", time: { created: Date.now() },
-        agent: input.agent ?? "summary", model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") }, tools: {}, mode: "",
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        role: "user",
+        time: { created: Date.now() },
+        agent: input.agent ?? "summary",
+        model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+        tools: {},
+        mode: "",
       } as MessageV2.User)) as MessageV2.User
       const msg = (await Session.updateMessage({
-        id: MessageID.ascending(), sessionID: input.sessionID, parentID: user.id, role: "assistant", mode: input.agent ?? "summary", agent: input.agent ?? "summary",
-        path: { cwd: tmp.path, root: tmp.path }, cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-        modelID: ModelID.make("gpt-5.2"), providerID: ProviderID.make("openai"), time: { created: Date.now(), completed: Date.now() }, finish: "stop",
+        id: MessageID.ascending(),
+        sessionID: input.sessionID,
+        parentID: user.id,
+        role: "assistant",
+        mode: input.agent ?? "summary",
+        agent: input.agent ?? "summary",
+        path: { cwd: tmp.path, root: tmp.path },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        modelID: ModelID.make("gpt-5.2"),
+        providerID: ProviderID.make("openai"),
+        time: { created: Date.now(), completed: Date.now() },
+        finish: "stop",
       })) as MessageV2.Assistant
-      const part = await Session.updatePart({ id: PartID.ascending(), messageID: msg.id, sessionID: input.sessionID, type: "text", text: "terminal fallback", time: { start: Date.now(), end: Date.now() } } as MessageV2.TextPart)
+      const part = await Session.updatePart({
+        id: PartID.ascending(),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        type: "text",
+        text: "terminal fallback",
+        time: { start: Date.now(), end: Date.now() },
+      } as MessageV2.TextPart)
       return { info: msg, parts: [part] } as MessageV2.WithParts
     }) as never)
     try {
       await Instance.provide({
         directory: tmp.path,
-        fn: () => WorkspaceContext.provide({
-          workspaceID: WorkspaceID.ascending(),
-          fn: async () => {
-            const states = [
-              { type: "failed", message: "native failure" },
-              { type: "aborted", message: "native abort" },
-              { type: "terminal_reply", message: "native reply" },
-              { type: "completed" },
-              { type: "archived" },
-            ] as const
-            for (const [index, state] of states.entries()) {
-              const parent = await Session.create({ agent: "default" })
-              const child = await Session.create({ parentID: parent.id, agent: "backend" })
-              const action = { type: "action", id: `terminal_${index}`, title: `Terminal ${index}`, operation: "delegate", executor: { type: "agent", target: "backend", capabilities: [] }, input: {}, depends_on: [], context_refs: [], result_policy: "summary" } as AgentProtocol.Action
-              await SessionDelegation.assign({ action, agent: "backend", childID: child.id, messageID: MessageID.ascending(), parentAgent: "default", runID: `run_terminal_${index}`, sessionID: parent.id })
-              if (state.type !== "archived") SessionStatus.set(child.id, { type: "running" })
-              SessionStatus.set(child.id, state)
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const states = [
+                { type: "failed", message: "native failure" },
+                { type: "aborted", message: "native abort" },
+                { type: "terminal_reply", message: "native reply" },
+                { type: "completed" },
+                { type: "archived" },
+              ] as const
+              for (const [index, state] of states.entries()) {
+                const parent = await Session.create({ agent: "default" })
+                const child = await Session.create({ parentID: parent.id, agent: "backend" })
+                const action = {
+                  type: "action",
+                  id: `terminal_${index}`,
+                  title: `Terminal ${index}`,
+                  operation: "delegate",
+                  executor: { type: "agent", target: "backend", capabilities: [] },
+                  input: {},
+                  depends_on: [],
+                  context_refs: [],
+                  result_policy: "summary",
+                } as AgentProtocol.Action
+                await SessionDelegation.assign({
+                  action,
+                  agent: "backend",
+                  childID: child.id,
+                  messageID: MessageID.ascending(),
+                  parentAgent: "default",
+                  runID: `run_terminal_${index}`,
+                  sessionID: parent.id,
+                })
+                if (state.type !== "archived") SessionStatus.set(child.id, { type: "running" })
+                SessionStatus.set(child.id, state)
 
-              await SessionDelegation.stop({ childIDs: [child.id], runID: `run_terminal_${index}`, sessionID: parent.id })
-              const first = await SessionResult.listForParent(parent.id)
-              const count = summaries
-              await SessionDelegation.stop({ childIDs: [child.id], runID: `run_terminal_${index}`, sessionID: parent.id })
+                await SessionDelegation.stop({
+                  childIDs: [child.id],
+                  runID: `run_terminal_${index}`,
+                  sessionID: parent.id,
+                })
+                const first = await SessionResult.listForParent(parent.id)
+                const count = summaries
+                await SessionDelegation.stop({
+                  childIDs: [child.id],
+                  runID: `run_terminal_${index}`,
+                  sessionID: parent.id,
+                })
 
-              expect(SessionStatus.get(child.id)).toEqual(state)
-              expect((await SessionResult.listForParent(parent.id)).map((item) => item.id)).toEqual(first.map((item) => item.id))
-              expect(summaries).toBe(count)
-            }
-          },
-        }),
+                expect(SessionStatus.get(child.id)).toEqual(state)
+                expect((await SessionResult.listForParent(parent.id)).map((item) => item.id)).toEqual(
+                  first.map((item) => item.id),
+                )
+                expect(summaries).toBe(count)
+              }
+            },
+          }),
       })
     } finally {
       prompt.mockRestore()
@@ -3036,65 +3133,71 @@ describe("SessionDelegation", () => {
     try {
       await Instance.provide({
         directory: tmp.path,
-        fn: () => WorkspaceContext.provide({
-          workspaceID: WorkspaceID.ascending(),
-          fn: async () => {
-            const parent = await Session.create({ agent: "default" })
-            const child = await Session.create({ parentID: parent.id, agent: "backend" })
-            const now = Date.now()
-            Database.use((db) =>
-              db.insert(AssignmentTable).values({
-                id: "assignment_revision_stop_reason",
-                parent_id: null,
-                session_id: child.id,
-                source_type: "delegation",
-                source_session_id: parent.id,
-                source_message_id: MessageID.ascending(),
-                source_run_id: "run_revision_stop_reason",
-                source_action_id: "revision_stop_reason",
-                target: "backend",
-                title: "Revision stop",
-                status: "running",
-                content_ref: "test",
-                content_hash: "test",
-                content_version: 1,
-                result_ref: null,
-                result_status: null,
-                time_created: now,
-                time_updated: now,
-              }).run(),
-            )
-            SessionStatus.set(child.id, { type: "running" })
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "default" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const now = Date.now()
+              Database.use((db) =>
+                db
+                  .insert(AssignmentTable)
+                  .values({
+                    id: "assignment_revision_stop_reason",
+                    parent_id: null,
+                    session_id: child.id,
+                    source_type: "delegation",
+                    source_session_id: parent.id,
+                    source_message_id: MessageID.ascending(),
+                    source_run_id: "run_revision_stop_reason",
+                    source_action_id: "revision_stop_reason",
+                    target: "backend",
+                    title: "Revision stop",
+                    status: "running",
+                    content_ref: "test",
+                    content_hash: "test",
+                    content_version: 1,
+                    result_ref: null,
+                    result_status: null,
+                    time_created: now,
+                    time_updated: now,
+                  })
+                  .run(),
+              )
+              SessionStatus.set(child.id, { type: "running" })
 
-            const stopped = await SessionDelegation.stopScoped({
-              childIDs: [child.id],
-              runID: "run_revision_stop_reason",
-              sessionID: parent.id,
-              reason: "Stopped for confirmed task revision.",
-            })
-            expect(stopped.stopped).toEqual([child.id])
-            expect(
-              (
-                await SessionDelegation.stopScoped({
-                  childIDs: [child.id],
-                  runID: "run_revision_stop_reason",
-                  sessionID: parent.id,
-                  reason: "Stopped for confirmed task revision.",
-                })
-              ).stopped,
-            ).toEqual([])
+              const stopped = await SessionDelegation.stopScoped({
+                childIDs: [child.id],
+                runID: "run_revision_stop_reason",
+                sessionID: parent.id,
+                reason: "Stopped for confirmed task revision.",
+              })
+              expect(stopped.stopped).toEqual([child.id])
+              expect(
+                (
+                  await SessionDelegation.stopScoped({
+                    childIDs: [child.id],
+                    runID: "run_revision_stop_reason",
+                    sessionID: parent.id,
+                    reason: "Stopped for confirmed task revision.",
+                  })
+                ).stopped,
+              ).toEqual([])
 
-            expect(SessionStatus.get(child.id)).toEqual({
-              type: "user_completed",
-              message: "Stopped for confirmed task revision.",
-            })
-            await poll(async () =>
-              (await SessionLog.list({ sessionID: child.id, limit: 20 })).some(
-                (item) => item.type === "session.status.changed" && item.data.reason === "Stopped for confirmed task revision.",
-              ),
-            )
-          },
-        }),
+              expect(SessionStatus.get(child.id)).toEqual({
+                type: "user_completed",
+                message: "Stopped for confirmed task revision.",
+              })
+              await poll(async () =>
+                (await SessionLog.list({ sessionID: child.id, limit: 20 })).some(
+                  (item) =>
+                    item.type === "session.status.changed" &&
+                    item.data.reason === "Stopped for confirmed task revision.",
+                ),
+              )
+            },
+          }),
       })
     } finally {
       prompt.mockRestore()

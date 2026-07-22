@@ -8,6 +8,7 @@ import { Server } from "../../src/server/server"
 import { Session } from "../../src/session"
 import { SessionPrompt } from "../../src/session/prompt"
 import { SessionID } from "../../src/session/schema"
+import { SessionResult } from "../../src/session/result"
 import { Log } from "../../src/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -348,6 +349,68 @@ describe("question routes", () => {
       expect(seen).toEqual({ requestID: questions[0]?.id, response: "confirm" })
     } finally {
       unsub()
+      prompt.mockRestore()
+    }
+  })
+
+  test("rejects a confirmation after a newer delegated result arrives", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const app = Server.Default()
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+
+    try {
+      const request = await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({})
+              const child = await Session.create({ parentID: parent.id })
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: {
+                  protocol: {
+                    confirmations: [
+                      {
+                        run_id: "apr_stale",
+                        action_id: "confirm_stale",
+                        message_id: "msg_stale",
+                        plan: "old plan",
+                        assignment: { op: "create", target: "self" },
+                        assignment_intent: { op: "create", target: "self" },
+                        status: "pending",
+                        updated_at: Date.now() - 100,
+                      },
+                    ],
+                  },
+                },
+              })
+              await SessionResult.put({
+                carrier: "action_result",
+                status: "completed",
+                satisfying: true,
+                sessionID: child.id,
+                parentSessionID: parent.id,
+                childSessionID: child.id,
+                runID: "apr_child",
+                actionID: "inspect",
+                raw: { result: "new evidence" },
+              })
+              const listed = await app.request("/question", { headers: headers(tmp.path) })
+              return ((await listed.json()) as { id: string }[])[0]?.id
+            },
+          }),
+      })
+      if (!request) throw new Error("confirmation missing")
+      const res = await call(app, tmp.path, `/question/${request}/reply`, {
+        method: "POST",
+        body: JSON.stringify({ answers: [["Confirm"]], response: "confirm" }),
+      })
+
+      expect(res.status).toBe(409)
+      expect(prompt).not.toHaveBeenCalled()
+    } finally {
       prompt.mockRestore()
     }
   })

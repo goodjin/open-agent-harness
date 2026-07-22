@@ -9,7 +9,12 @@ import { DropdownMenu } from "@open-agent-harness/ui/dropdown-menu"
 import { Dialog } from "@open-agent-harness/ui/dialog"
 import { InlineInput } from "@open-agent-harness/ui/inline-input"
 import { Spinner } from "@open-agent-harness/ui/spinner"
-import { SessionTurn, SessionTurnDiffs, turnAssistants, type SessionTurnFilter } from "@open-agent-harness/ui/session-turn"
+import {
+  SessionTurn,
+  SessionTurnDiffs,
+  turnAssistants,
+  type SessionTurnFilter,
+} from "@open-agent-harness/ui/session-turn"
 import { Markdown } from "@open-agent-harness/ui/markdown"
 import { ScrollView } from "@open-agent-harness/ui/scroll-view"
 import { TextField } from "@open-agent-harness/ui/text-field"
@@ -86,13 +91,22 @@ const idle = { type: "idle" as const }
 const completeLabel = "本轮执行完毕"
 const delegationLabel = "等待子会话执行任务中"
 const restorable = new Set(["interrupted"])
-const live = new Set(["running", "starting", "queued", "retry", "rate_limited", "waiting_permission", "waiting_user", "waiting_child"])
+const live = new Set([
+  "running",
+  "starting",
+  "queued",
+  "retry",
+  "rate_limited",
+  "waiting_permission",
+  "waiting_user",
+  "waiting_child",
+])
 const done = new Set(["completed", "terminal_reply", "user_completed", "archived"])
 const fallbackable = new Set(["failed", "blocked"])
 
 const text = (input: unknown) => (typeof input === "string" ? input : undefined)
 
-type ConfirmStatus = "pending" | "confirmed" | "cancelled"
+type ConfirmStatus = "pending" | "confirmed" | "cancelled" | "superseded"
 type FallbackStatus = "success" | "failure" | "reply"
 type SubmitMode = "cancel_without_result" | "terminate_with_result"
 
@@ -110,7 +124,7 @@ const record = (input: unknown): input is Record<string, unknown> =>
   typeof input === "object" && input !== null && !Array.isArray(input)
 
 const status = (input: unknown): ConfirmStatus | undefined => {
-  if (input === "pending" || input === "confirmed" || input === "cancelled") return input
+  if (input === "pending" || input === "confirmed" || input === "cancelled" || input === "superseded") return input
   return undefined
 }
 
@@ -237,15 +251,12 @@ type Requests = {
   decide: (response: "once" | "always" | "reject") => void
 }
 
-function SessionConfirmationCard(props: {
-  item: ConfirmRecord
-  request?: QuestionRequest
-  submit: () => void
-}) {
+function SessionConfirmationCard(props: { item: ConfirmRecord; request?: QuestionRequest; submit: () => void }) {
   const [open, setOpen] = createSignal(props.item.status === "pending")
   const title = createMemo(() => {
     if (props.item.status === "confirmed") return "已确认"
     if (props.item.status === "cancelled") return "已取消"
+    if (props.item.status === "superseded") return "已被新结果替代"
     return "需要确认"
   })
 
@@ -255,7 +266,10 @@ function SessionConfirmationCard(props: {
 
   return (
     <div class="px-6 md:px-8 pt-4">
-      <div data-component="session-request-card" class="rounded-md border border-border-weak-base bg-background-base overflow-hidden">
+      <div
+        data-component="session-request-card"
+        class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
+      >
         <button
           type="button"
           class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
@@ -275,6 +289,7 @@ function SessionConfirmationCard(props: {
                 "border-border-weak-base text-text-weak": props.item.status === "pending",
                 "border-icon-success-base/40 text-icon-success-base": props.item.status === "confirmed",
                 "border-icon-warning-base/40 text-icon-warning-base": props.item.status === "cancelled",
+                "border-icon-info-base/40 text-icon-info-base": props.item.status === "superseded",
               }}
             >
               {props.item.status}
@@ -360,7 +375,10 @@ function SessionTodoPanel(props: { todos: Todo[]; title: string }) {
 
   return (
     <div class="px-6 md:px-8 pt-4">
-      <div data-component="session-todo-panel" class="rounded-md border border-border-weak-base bg-background-base overflow-hidden">
+      <div
+        data-component="session-todo-panel"
+        class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
+      >
         <div class="flex items-center justify-between gap-2 border-b border-border-weaker-base px-3 py-2">
           <div class="min-w-0 text-12-medium text-text-strong">{props.title}</div>
           <div class="shrink-0 text-11-regular text-text-weak">
@@ -497,7 +515,9 @@ export function MessageTimeline(props: {
     return sync.data.session_status[id] ?? idle
   })
   const usage = createMemo(() => totals(sessionMessages()))
-  const num = createMemo(() => new Intl.NumberFormat(language.intl(), { notation: "compact", maximumFractionDigits: 1 }))
+  const num = createMemo(
+    () => new Intl.NumberFormat(language.intl(), { notation: "compact", maximumFractionDigits: 1 }),
+  )
   const usd = createMemo(() => new Intl.NumberFormat(language.intl(), { style: "currency", currency: "USD" }))
   const model = createMemo(() =>
     modelName({
@@ -1051,7 +1071,8 @@ export function MessageTimeline(props: {
           if (!res.ok) throw new Error(await res.text())
           await sync.session.sync(props.sessionID, { force: true }).catch(() => undefined)
           const current = sessionID()
-          if (current && current !== props.sessionID) await sync.session.sync(current, { force: true }).catch(() => undefined)
+          if (current && current !== props.sessionID)
+            await sync.session.sync(current, { force: true }).catch(() => undefined)
           dialog.close()
         })
         .catch((err: unknown) =>
@@ -1096,7 +1117,12 @@ export function MessageTimeline(props: {
               <Button variant="ghost" size="large" onClick={() => dialog.close()}>
                 {language.t("common.cancel")}
               </Button>
-              <Button variant="primary" size="large" disabled={saving() || value().trim().length === 0} onClick={submit}>
+              <Button
+                variant="primary"
+                size="large"
+                disabled={saving() || value().trim().length === 0}
+                onClick={submit}
+              >
                 确认提交
               </Button>
             </div>
@@ -1613,7 +1639,9 @@ export function MessageTimeline(props: {
                   )
                   const queued = createMemo(() => queuedUserMessage(turn()))
                   const history = createMemo(() => timelineChildren(turn()))
-                  const current = createMemo(() => delegationProgress(info()?.dsl_context, messageID, sessionMessages()))
+                  const current = createMemo(() =>
+                    delegationProgress(info()?.dsl_context, messageID, sessionMessages()),
+                  )
                   const timeline = createMemo(() => timelineProgress(history(), current().completed))
                   const delegation = createMemo(() => (history().length > 0 ? timeline() : current()))
                   const delegated = createMemo(
@@ -1652,8 +1680,11 @@ export function MessageTimeline(props: {
                   const locked = createMemo(() => {
                     const id = run()
                     if (!id) return
-                    if (history().length > 0 && delegation().active.length === 0) return op.run[id] ?? "terminate_with_result"
-                    return op.run[id] ?? (delegationSubmitted(info()?.dsl_context, id) ? "terminate_with_result" : undefined)
+                    if (history().length > 0 && delegation().active.length === 0)
+                      return op.run[id] ?? "terminate_with_result"
+                    return (
+                      op.run[id] ?? (delegationSubmitted(info()?.dsl_context, id) ? "terminate_with_result" : undefined)
+                    )
                   })
                   const kids = createMemo(() => {
                     const vals = fresh()
@@ -1678,15 +1709,6 @@ export function MessageTimeline(props: {
                     )
                   })
                   const questionKey = createMemo(() => questionConfirmationKey(question()))
-                  const taskQuestion = createMemo(() => {
-                    const key = questionKey()
-                    if (!key) return false
-                    return all().some(
-                      (item) =>
-                        confirmationKey(item) === key &&
-                        proposals().some((proposal) => proposal.id === `${item.run_id}:${item.action_id}`),
-                    )
-                  })
                   const confirms = createMemo(() => visibleConfirmations(all(), questionKey()))
                   const timelineConfirms = createMemo(() =>
                     confirms().filter(
@@ -1727,7 +1749,6 @@ export function MessageTimeline(props: {
                     if (!match(req, messageID, sessionID(), kids(), sync.data.session, sessionMessages())) return
                     return req
                   })
-                  const [questionOpen, setQuestionOpen] = createSignal(true)
                   const [permissionOpen, setPermissionOpen] = createSignal(true)
                   const [kidsOpen, setKidsOpen] = createSignal(true)
                   return (
@@ -1843,47 +1864,6 @@ export function MessageTimeline(props: {
                           )}
                         </For>
                       </Show>
-                      <Show
-                        when={
-                          props.filter === "all" && timelineQuestionVisible({ active: active(), request: question() })
-                            && !taskQuestion()
-                            ? question()
-                            : undefined
-                        }
-                        keyed
-                      >
-                        {(request) => {
-                          const submit = props.request!.submit
-                          return (
-                            <div class="px-6 md:px-8 pt-4">
-                              <div
-                                data-component="session-request-card"
-                                class="rounded-md border border-border-weak-base bg-background-base overflow-hidden"
-                              >
-                                <button
-                                  type="button"
-                                  class="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-12-medium text-text-strong"
-                                  aria-expanded={questionOpen()}
-                                  onClick={() => setQuestionOpen((value) => !value)}
-                                >
-                                  <span>需要确认</span>
-                                  <span
-                                    class="inline-flex text-icon-weak transition-transform"
-                                    classList={{ "-rotate-90": !questionOpen() }}
-                                  >
-                                    <Icon name="chevron-down" size="small" />
-                                  </span>
-                                </button>
-                                <Show when={questionOpen()}>
-                                  <div class="border-t border-border-weaker-base p-2">
-                                    <SessionQuestionDock request={request} onSubmit={submit} />
-                                  </div>
-                                </Show>
-                              </div>
-                            </div>
-                          )
-                        }}
-                      </Show>
                       <Show when={props.filter === "all" && active() && permission()}>
                         {(request) => {
                           const req = request()
@@ -1942,9 +1922,7 @@ export function MessageTimeline(props: {
                                 </span>
                               </Show>
                               <Show when={statText().length > 0}>
-                                <span class="shrink-0 text-11-regular text-text-weaker">
-                                  {statText().join(" · ")}
-                                </span>
+                                <span class="shrink-0 text-11-regular text-text-weaker">{statText().join(" · ")}</span>
                               </Show>
                             </span>
                             <div class="h-px flex-1 bg-border-weaker-base" />
@@ -1974,7 +1952,9 @@ export function MessageTimeline(props: {
                                 <div class="max-h-[300dvh] overflow-y-auto" data-scrollable>
                                   <For each={kids()}>
                                     {(item) => {
-                                      const status = createMemo(() => delegationStatus(item, sync.data.session_status[item.id]))
+                                      const status = createMemo(() =>
+                                        delegationStatus(item, sync.data.session_status[item.id]),
+                                      )
                                       const info = createMemo(() => sync.session.get(item.id))
                                       const busy = createMemo(() => !!op.child[item.id])
                                       return (
@@ -1987,14 +1967,22 @@ export function MessageTimeline(props: {
                                             <div class="flex min-w-0 items-center gap-2">
                                               <Show
                                                 when={status() === "user_completed"}
-                                                fallback={<span class={`size-2 rounded-full shrink-0 ${dot(status())}`} />}
+                                                fallback={
+                                                  <span class={`size-2 rounded-full shrink-0 ${dot(status())}`} />
+                                                }
                                               >
-                                                <Icon name="circle-check" size="small" class="shrink-0 text-icon-success-base" />
+                                                <Icon
+                                                  name="circle-check"
+                                                  size="small"
+                                                  class="shrink-0 text-icon-success-base"
+                                                />
                                               </Show>
                                               <span class="truncate text-12-medium text-text-strong">
                                                 {info()?.title || item.label}
                                               </span>
-                                              <span class="shrink-0 text-11-regular text-text-weak">{label(status())}</span>
+                                              <span class="shrink-0 text-11-regular text-text-weak">
+                                                {label(status())}
+                                              </span>
                                             </div>
                                             <div class="mt-0.5 truncate text-11-regular text-text-weak">{item.id}</div>
                                             <Show when={item.delivery === "partial"}>
@@ -2060,7 +2048,9 @@ export function MessageTimeline(props: {
                                                 size="small"
                                                 class="h-7 px-2"
                                                 disabled={busy()}
-                                                onClick={() => void mark(item.id, "User marked delegated child session complete.")}
+                                                onClick={() =>
+                                                  void mark(item.id, "User marked delegated child session complete.")
+                                                }
                                               >
                                                 标完成
                                               </Button>
@@ -2096,7 +2086,11 @@ export function MessageTimeline(props: {
                                       confirmSubmit(id, stale())
                                     }}
                                   >
-                                    {locked() === "terminate_with_result" ? "已终止并汇总" : locked() ? "已提交" : "终止并汇总"}
+                                    {locked() === "terminate_with_result"
+                                      ? "已终止并汇总"
+                                      : locked()
+                                        ? "已提交"
+                                        : "终止并汇总"}
                                   </Button>
                                 </div>
                               </Show>
