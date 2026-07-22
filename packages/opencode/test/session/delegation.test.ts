@@ -2273,6 +2273,119 @@ describe("SessionDelegation", () => {
     }
   })
 
+  test("queues a completed child result without overriding waiting_user", async () => {
+    await using tmp = await tmpdir()
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((async (
+      _input: Parameters<typeof SessionPrompt.prompt>[0],
+    ) => {
+      throw new Error("waiting_user parent must not start a prompt loop")
+    }) as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const parent = await Session.create({ agent: "protocol-runner" })
+              const child = await Session.create({ parentID: parent.id, agent: "backend" })
+              const item = {
+                type: "agent.delegation.assignment",
+                version: "1",
+                run_id: "run_waiting_user",
+                action_id: "inspect",
+                action_title: "Inspect child",
+                parent_session_id: parent.id,
+                parent_message_id: MessageID.ascending(),
+                parent_agent: "protocol-runner",
+                child_session_id: child.id,
+                agent: "backend",
+                result_policy: "structured",
+                result_tool: "ActionResult",
+                created_at: Date.now(),
+              }
+              await Session.setDslContext({
+                sessionID: parent.id,
+                dsl_context: { protocol: { pending_delegations: { [child.id]: item } } },
+              })
+              await Session.setDslContext({ sessionID: child.id, dsl_context: { protocol: { delegation: item } } })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "backend",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: child.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "backend",
+                agent: "backend",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now(), completed: Date.now() },
+                finish: "stop",
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                messageID: assistant.id,
+                sessionID: child.id,
+                type: "tool",
+                callID: "call_inspect",
+                tool: "ActionResult",
+                state: {
+                  status: "completed",
+                  input: {
+                    kind: "action_result",
+                    role: "worker",
+                    action_id: "inspect",
+                    status: "success",
+                    result: "Inspection completed.",
+                    changed_files: "",
+                    verification: "done",
+                    blockers: "",
+                  },
+                  output: "Action result received.",
+                  title: "Action Result",
+                  metadata: { action_result: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } as MessageV2.ToolPart)
+              SessionStatus.set(parent.id, { type: "waiting_user" })
+
+              expect(await SessionDelegation.complete({ sessionID: child.id })).toBe(true)
+              expect(SessionStatus.get(parent.id)).toEqual({ type: "waiting_user" })
+              expect(prompt).not.toHaveBeenCalled()
+
+              const messages = await Session.messages({ sessionID: parent.id })
+              const queued = messages.flatMap((msg) =>
+                msg.info.role === "user" &&
+                msg.info.metadata?.source === "delegation" &&
+                msg.info.metadata.turn?.status === "queued"
+                  ? [msg.info]
+                  : [],
+              )
+              const logs = await SessionLog.list({ sessionID: parent.id, limit: 100 })
+              expect(queued).toHaveLength(1)
+              expect(queued[0]?.metadata?.run_id).toBe("run_waiting_user")
+              expect(logs.some((log) => log.type === "protocol.delegation.queued")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
   test("manual submit aggregates current child results and statuses", async () => {
     await using tmp = await tmpdir()
     const prompts: Parameters<typeof SessionPrompt.prompt>[0][] = []

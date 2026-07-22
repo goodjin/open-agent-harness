@@ -431,22 +431,36 @@ export namespace SessionDelegation {
     const session = await Session.get(input.sessionID)
     if (!(await claim(session, input.runID))) return false
     const { SessionPrompt } = await import("./prompt")
-    SessionStatus.set(input.sessionID, { type: "running" })
-    void SessionPrompt.prompt({
+    const status = SessionStatus.get(input.sessionID)
+    const wait = status.type === "waiting_user" || status.type === "waiting_permission"
+    const args = {
       sessionID: input.sessionID,
       agent: session.agent ?? input.agent,
       metadata: {
         internal: true,
-        source: "delegation",
+        source: "delegation" as const,
         run_id: input.runID,
       },
       parts: [
         {
-          type: "text",
+          type: "text" as const,
           text: ready.text,
         },
       ],
-    }).catch((error) => {
+    }
+    if (wait) {
+      const msg = await SessionPrompt.enqueue(args)
+      await SessionLog.emit({
+        sessionID: input.sessionID,
+        messageID: msg.info.id,
+        level: "info",
+        type: "protocol.delegation.queued",
+        data: { runID: input.runID, blockedBy: status.type },
+      })
+      return true
+    }
+    SessionStatus.set(input.sessionID, { type: "running" })
+    void SessionPrompt.prompt(args).catch((error) => {
       log.warn("session delegation submit failed", { error, sessionID: input.sessionID })
     })
     return true

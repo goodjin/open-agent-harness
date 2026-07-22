@@ -234,6 +234,25 @@ describe("deriveSessionLiveStatus", () => {
     })
     expect(
       deriveSessionLiveStatus({
+        status: { type: "waiting_user" },
+        messages: [
+          {
+            ...user("queued_result"),
+            metadata: {
+              internal: true,
+              source: "delegation",
+              turn: { kind: "internal", status: "queued", time: { queued: 1 } },
+            },
+          } as Message,
+        ],
+        parts: {},
+      }),
+    ).toMatchObject({
+      label: "等待用户确认",
+      description: "模型请求已暂停，正在等待你的回复。",
+    })
+    expect(
+      deriveSessionLiveStatus({
         status: {
           type: "rate_limited",
           providerID: "anthropic",

@@ -987,6 +987,48 @@ describe("session state machine", () => {
     })
   })
 
+  test("restores a queued session with a pending protocol confirmation as waiting_user", async () => {
+    const session = await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const session = await Session.create({})
+        await Session.setDslContext({
+          sessionID: session.id,
+          dsl_context: {
+            protocol: {
+              confirmations: [
+                {
+                  run_id: "run_confirm",
+                  action_id: "confirm_plan",
+                  message_id: "msg_confirm",
+                  plan: "Confirm the plan",
+                  status: "pending",
+                },
+              ],
+            },
+          },
+        })
+        SessionStatus.set(session.id, { type: "running" })
+        await SessionStatus.flush()
+        return session
+      },
+    })
+
+    await Instance.disposeAll()
+
+    await Instance.provide({
+      directory: projectRoot,
+      fn: async () => {
+        const restored = await SessionStatus.restore()
+        expect(restored[session.id]).toEqual({ type: "waiting_user" })
+        expect(SessionStatus.get(session.id)).toEqual({ type: "waiting_user" })
+        SessionStatus.set(session.id, { type: "idle" })
+        await SessionStatus.flush()
+        await Session.remove(session.id)
+      },
+    })
+  })
+
   test("allows a completed session to enter rate limited for a new request", async () => {
     await Instance.provide({
       directory: projectRoot,

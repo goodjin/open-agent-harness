@@ -698,6 +698,11 @@ export namespace SessionStatus {
   }
 
   function repair(row: Row, status: Info, rows?: Map<string, Row>): Info {
+    if (
+      awaiting(row) &&
+      !["archived", "aborted", "failed", "error", "timeout", "terminal_reply", "user_completed"].includes(status.type)
+    )
+      return { type: "waiting_user" }
     if (status.type !== "waiting_child") return status
     const pending = obj(obj(row.dsl_context).protocol).pending_delegations ?? {}
     const entries = Object.entries(obj(pending))
@@ -718,6 +723,13 @@ export namespace SessionStatus {
       type: "waiting_child",
       message: `Waiting for ${live.length} delegated child session${live.length === 1 ? "" : "s"}.`,
     }
+  }
+
+  function awaiting(row: Row) {
+    const protocol = obj(obj(row.dsl_context).protocol)
+    return [protocol.confirmations, protocol.inputs].some(
+      (items) => Array.isArray(items) && items.some((item) => obj(item).status === "pending"),
+    )
   }
 
   function delivered(parent: SessionID, child: string, item: Record<string, unknown>) {
