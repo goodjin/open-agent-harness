@@ -692,8 +692,12 @@ export namespace SessionDelegation {
 
   export async function recover() {
     for (const session of Session.list({ directory: Instance.directory, limit: 5000 })) {
-      if (assignment(session)) await complete({ sessionID: session.id })
-      await restoreConfirm(session.id)
+      await Promise.resolve()
+        .then(async () => {
+          if (assignment(session)) await complete({ sessionID: session.id })
+          await restoreConfirm(session.id)
+        })
+        .catch((err) => log.warn("delegation session recovery failed", { err, sessionID: session.id }))
     }
   }
 
