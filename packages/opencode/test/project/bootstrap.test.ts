@@ -39,4 +39,9 @@ describe("project bootstrap session restore policy", () => {
     expect(revive({ type: "completed" }, false, true)).toBe(true)
     expect(revive({ type: "idle" }, false, true)).toBe(true)
   })
+
+  test("does not consume persisted queued turns across manual wait boundaries", () => {
+    expect(revive({ type: "waiting_user" }, false, true)).toBe(false)
+    expect(revive({ type: "waiting_permission" }, false, true)).toBe(false)
+  })
 })

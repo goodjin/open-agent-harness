@@ -107,12 +107,13 @@
 
 - `SessionDelegation.submit()` 现在先读取父会话状态；处于 `waiting_user` 或 `waiting_permission` 时通过 durable queue 保存聚合结果，保留人工等待状态，并记录 `protocol.delegation.queued` 日志。
 - `SessionStatus.restore()` 现在从协议上下文识别 pending confirmation/input，在队列自动恢复前把 stale 活跃状态修复为 `waiting_user`。
+- bootstrap 的 queued Turn 扫描现在尊重 `waiting_user` 与 `waiting_permission`，不会在重启后越过人工等待边界启动 session pump。
 - UI 原有状态优先级已经是人工等待高于 queued Turn，本次增加回归用例固定该行为，无需修改生产组件。
 - 没有人工等待时仍执行原有即时 fan-in 和父会话唤醒路径。
 
 ## 自动化验证
 
-- `packages/opencode`：delegation、status、prompt 三个完整测试文件共 110 项通过。
+- `packages/opencode`：delegation、status、prompt 三个完整测试文件共 110 项通过；bootstrap 恢复策略测试通过。
 - `packages/opencode`：`bun typecheck` 通过。
 - `packages/app`：session helper 28 项测试通过。
 - `packages/app`：`bun test:e2e:local -- app/smoke.spec.ts` 通过。

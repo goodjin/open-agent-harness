@@ -78,7 +78,13 @@ export async function InstanceBootstrap() {
 }
 
 export function revive(status: SessionStatus.Info, stale: boolean, queued = false) {
-  if (queued && status.type !== "archived") return true
+  if (
+    queued &&
+    status.type !== "archived" &&
+    status.type !== "waiting_user" &&
+    status.type !== "waiting_permission"
+  )
+    return true
   if (SessionStatus.shouldContinue(status)) return true
   if (status.type !== "interrupted") return false
   if (status.prior !== "running" && status.prior !== "starting") return false
