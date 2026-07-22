@@ -76,6 +76,26 @@ export namespace SessionRunner {
     return meta.run_id
   }
 
+  async function recorded(input: { messageID: MessageID; runID: string; sessionID: SessionID }) {
+    const state = await SessionRuns.result(input.sessionID, input.runID)
+      .then((value) => (value ? { type: "existing" as const, value } : { type: "missing" as const }))
+      .catch((err: unknown) => ({ type: "unreadable" as const, err }))
+    if (state.type === "missing") return state
+    await SessionLog.emit({
+      sessionID: input.sessionID,
+      messageID: input.messageID,
+      level: "warn",
+      type: state.type === "existing" ? "protocol.run.outcome.reused" : "protocol.run.outcome.unreadable",
+      data: {
+        runID: input.runID,
+        ...(state.type === "existing"
+          ? { outcomeMessageID: state.value?.message_id }
+          : { error: state.err instanceof Error ? state.err.message.slice(0, 500) : String(state.err).slice(0, 500) }),
+      },
+    })
+    return state
+  }
+
   function rows(parsed: AgentProtocolParser.Parsed) {
     const raw = (() => {
       try {
@@ -105,7 +125,8 @@ export namespace SessionRunner {
     const terminal = new Set(["answer", "done", "success", "failure", "error", "reply"])
     const result = new Set(["success", "failure", "error", "reply"])
     const ends = items.flatMap((item, index) => (result.has(item.kind) ? [{ index, kind: item.kind }] : []))
-    if (ends.length !== 1) return "invalid_prior_run_result"
+    if (ends.length === 0) return "missing_prior_run_result"
+    if (ends.length > 1) return "invalid_prior_run_result"
     const exec = items.findIndex((item) => !terminal.has(item.kind))
     if (exec >= 0 && (ends[0]?.index ?? -1) > exec) return "prior_run_result_after_actions"
     if (!priorResult(parsed)) return "missing_prior_run_result"
@@ -191,6 +212,7 @@ export namespace SessionRunner {
     sessionID: SessionID
     summary?: string
   }) {
+    if ((await recorded(input)).type !== "missing") return true
     const summary = (input.summary ?? input.parsed?.declaration.message)?.trim()
     if (!summary) return false
     return SessionRuns.finish({
@@ -582,11 +604,18 @@ export namespace SessionRunner {
     })
     if (!parsed.ok) return result
     const parsedValue = parsed.value
-    const old = prior(stream.user)
+    const source = prior(stream.user)
+    const state = source ? await recorded({ messageID: chat.message.id, runID: source, sessionID }) : undefined
+    const old = state?.type === "missing" ? source : undefined
     const issue = old ? closureIssue(parsedValue) : undefined
+    const graph =
+      parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
     const fallback =
-      old && issue && retry >= 1 ? await synthesis({ parsed: parsedValue, runID: old, sessionID }) : undefined
-    if (old && issue && !fallback) {
+      old && issue && (retry >= 1 || (issue === "missing_prior_run_result" && graph))
+        ? await synthesis({ parsed: parsedValue, runID: old, sessionID })
+        : undefined
+    const deferred = old && issue === "missing_prior_run_result" && graph && !fallback
+    if (old && issue && !fallback && !deferred) {
       if (retry < 1) return closure(chat, stream, retry)
       return fail({
         chat,
@@ -596,6 +625,14 @@ export namespace SessionRunner {
         runID: old,
       })
     }
+    if (deferred)
+      await SessionLog.emit({
+        sessionID,
+        messageID: chat.message.id,
+        level: "warn",
+        type: "protocol.run.outcome.deferred",
+        data: { runID: old, reason: issue },
+      })
     const issues =
       parsedValue.declaration.intent === "execute" && parsedValue.declaration.payload.type === "action_graph"
         ? await packageIssues(parsedValue.declaration.payload.actions, sessionID, !!stream.agent.entry)
@@ -693,7 +730,7 @@ export namespace SessionRunner {
         data: { recovered: false, error: { code: kind.code, issues } },
       })
     }
-    if (old) {
+    if (old && (!issue || fallback)) {
       const saved = await finish({
         messageID: chat.message.id,
         parsed: parsedValue,
@@ -701,15 +738,6 @@ export namespace SessionRunner {
         sessionID,
         summary: priorResult(parsedValue) ?? fallback,
       })
-      if (!saved && parsedValue.declaration.intent === "execute") {
-        return fail({
-          chat,
-          sessionID,
-          text: "The previous Run result could not be persisted; new actions were not executed.",
-          data: { recovered: false, error: { code: "prior_run_outcome_failed", runID: old } },
-          runID: old,
-        })
-      }
       if (saved && fallback)
         await SessionLog.emit({
           sessionID,
@@ -763,6 +791,7 @@ export namespace SessionRunner {
       exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: false })
     } catch (err) {
       if (!(err instanceof SessionTask.Conflict)) throw err
+      if (retry < 2) return again(chat, stream, retry, err.message)
       return fail({
         chat,
         sessionID,
@@ -783,6 +812,56 @@ export namespace SessionRunner {
       user: stream.user,
     })
     return "stop"
+  }
+
+  async function again(chat: SessionProcessor.Info, stream: LLM.StreamInput, retry: number, error: string) {
+    const sessionID = SessionID.make(stream.sessionID)
+    await SessionLog.emit({
+      sessionID,
+      messageID: chat.message.id,
+      level: "warn",
+      type: "protocol.dispatch.retry",
+      data: { error, retry: retry + 1 },
+    })
+    const msg = await Session.updateMessage({
+      id: MessageID.ascending(),
+      parentID: stream.user.id,
+      role: "assistant",
+      mode: stream.agent.name,
+      agent: stream.agent.name,
+      variant: stream.user.variant,
+      path: { cwd: Instance.directory, root: Instance.worktree },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: stream.model.id,
+      providerID: stream.model.providerID,
+      time: { created: Date.now() },
+      sessionID,
+    } as MessageV2.Assistant)
+    return protocol(
+      SessionProcessor.create({
+        assistantMessage: msg as MessageV2.Assistant,
+        sessionID,
+        model: stream.model,
+        abort: stream.abort,
+      }),
+      {
+        ...stream,
+        system: [
+          ...stream.system,
+          [
+            "The Runtime accepted the protocol shape but could not apply the declared Task or Run operation to current persisted state.",
+            `State error: ${error}`,
+            "No action from that package was executed.",
+            "Re-read Current Session Task and declare the correct create/self, update/self, handoff/peer, or ordinary executable graph.",
+            "Runtime will execute the corrected declaration and will not reclassify the request for you.",
+            `Call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with the corrected package.`,
+          ].join("\n"),
+        ],
+        toolChoice: { type: "tool", toolName: LLM.PROTOCOL_OUTPUT_TOOL },
+      },
+      retry + 1,
+    )
   }
 
   async function closure(chat: SessionProcessor.Info, stream: LLM.StreamInput, retry: number) {
@@ -2356,16 +2435,21 @@ export namespace SessionRunner {
       model: input.stream.model,
       abort: input.stream.abort,
     })
+    const result = await recorded({ messageID: msg.id, runID: input.run.run_id, sessionID })
+    const tracked = state.tracked ?? false
+    const pending = tracked && result.type === "missing"
     const prompt = [
       "You are deciding the next Agent Protocol response after a runtime DSL run.",
       "The runtime has already executed or blocked the previous package.",
       "If the run captured user input, use that input to declare the next package or final answer.",
       `Use only the conversation turns below, then decide the next protocol response.`,
       `You must call ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once.`,
-      state.tracked
+      pending
         ? "First provide exactly one success/failure/error/reply item for the previous Run, before any new executable items."
-        : "Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.",
-      state.tracked
+        : result.type === "existing"
+          ? "The previous Run already has an immutable result. Do not rewrite it. Use an `answer` item for user-visible content or declare a new executable graph to create a new Run."
+          : "Use an `answer` item when there is user-visible final content, and put the final Markdown answer in `message`.",
+      pending
         ? "Do not use answer or done for the previous Run result."
         : "Use a `done` item when there is nothing else useful to add.",
       "Do not output ordinary Markdown directly unless the runtime explicitly falls back after a failed retry.",
@@ -2390,7 +2474,7 @@ export namespace SessionRunner {
             "",
             "Protocol retry warning:",
             `Your previous final response did not call the native ${LLM.PROTOCOL_OUTPUT_TOOL} tool.`,
-            state.tracked
+            pending
               ? `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with one success/failure/error/reply item before any new executable items.`
               : `Retry now by calling ${LLM.PROTOCOL_OUTPUT_TOOL} exactly once with an \`answer\` item, a \`done\` item, or strictly necessary runtime items.`,
           ].join("\n")
@@ -2413,22 +2497,17 @@ export namespace SessionRunner {
           ].join("\n")
         : "",
     ].join("\n")
-    if (state.err !== undefined) {
-      await fail({
-        chat: processor,
+    if (state.err !== undefined)
+      await SessionLog.emit({
         sessionID,
-        text: "The previous Run state could not be read; new actions were not executed.",
-        type: "protocol.final.malformed",
+        messageID: msg.id,
+        level: "warn",
+        type: "protocol.run.state.unreadable",
         data: {
           runID: input.run.run_id,
-          reason: "prior_run_persistence_failed",
           error: state.err instanceof Error ? state.err.message.slice(0, 500) : String(state.err).slice(0, 500),
         },
-        runID: input.run.run_id,
       })
-      return
-    }
-    const tracked = state.tracked ?? false
     await SessionLog.emit({
       sessionID: SessionID.make(input.stream.sessionID),
       messageID: msg.id,
@@ -2449,8 +2528,19 @@ export namespace SessionRunner {
     const parsed = await protocolOutput(msg.id)
     let plainResult = false
     if (parsed?.ok) {
-      const issue = tracked && v2(parsed.value) ? closureIssue(parsed.value) : undefined
-      if (issue) {
+      const issue = pending && v2(parsed.value) ? closureIssue(parsed.value) : undefined
+      const graph =
+        parsed.value.declaration.intent === "execute" && parsed.value.declaration.payload.type === "action_graph"
+      const deferred = issue === "missing_prior_run_result" && graph
+      if (deferred)
+        await SessionLog.emit({
+          sessionID,
+          messageID: msg.id,
+          level: "warn",
+          type: "protocol.run.outcome.deferred",
+          data: { runID: input.run.run_id, reason: issue },
+        })
+      if (issue && !deferred) {
         if (closure < 1) {
           msg.finish = "stop"
           msg.time.completed = Date.now()
@@ -2469,7 +2559,7 @@ export namespace SessionRunner {
         return
       }
       if (parsed.value.declaration.intent === "execute") {
-        if (!parsed.value.declaration.message?.trim()) {
+        if (pending && !deferred && !parsed.value.declaration.message?.trim()) {
           if (closure < 1) {
             msg.finish = "stop"
             msg.time.completed = Date.now()
@@ -2546,26 +2636,14 @@ export namespace SessionRunner {
           })
           return
         }
-        const saved =
-          !tracked ||
-          (await finish({
+        if (pending && !deferred)
+          await finish({
             messageID: msg.id,
             parsed: parsed.value,
             runID: input.run.run_id,
             sessionID,
             summary: v2(parsed.value) ? priorResult(parsed.value) : undefined,
-          }))
-        if (!saved) {
-          await fail({
-            chat: processor,
-            sessionID,
-            text: "The previous Run result could not be persisted; new actions were not executed.",
-            type: "protocol.final.malformed",
-            data: { runID: input.run.run_id, reason: "prior_run_outcome_failed" },
-            runID: input.run.run_id,
           })
-          return
-        }
         await intro({
           messageID: msg.id,
           sessionID,
@@ -2659,7 +2737,7 @@ export namespace SessionRunner {
           }
         }
       } else {
-        if (tracked)
+        if (pending)
           await finish({
             messageID: msg.id,
             parsed: parsed.value,
@@ -2678,7 +2756,7 @@ export namespace SessionRunner {
       const text = await textOf(msg.id)
       const plain = AgentProtocolParser.parse(text)
       if (plain.ok && plain.value.declaration.intent !== "execute") {
-        if (tracked) {
+        if (pending) {
           await finish({
             messageID: msg.id,
             parsed: plain.value,
@@ -2770,7 +2848,7 @@ export namespace SessionRunner {
         return
       } else {
         plainResult = true
-        if (tracked) {
+        if (pending) {
           await finish({ messageID: msg.id, runID: input.run.run_id, sessionID, summary: text })
         }
         await SessionLog.emit({

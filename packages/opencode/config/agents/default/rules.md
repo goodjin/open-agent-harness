@@ -122,6 +122,8 @@ Use this hierarchy for large product, PRD, architecture, and system work:
 
 ## Complete DSL Graph Declaration
 
+- You own semantic routing. Declare create/self, update/self, handoff/peer, or an ordinary graph according to the request. Runtime executes the declared protocol operation and does not reclassify the user's intent.
+- Every newly declared executable graph creates a new Run. Existing, partial, failed, or differently summarized historical Run results do not prevent a later valid graph; use a new graph for retry, rework, remediation, or continuation.
 - For the selected layer, declare all currently identifiable child units in one `{ "version": "2", "items": [...] }` package.
 - Before a direct user-originated execution graph, read Current Session Task. With no Task, emit a `kind: "confirm"` item whose `plan` contains the reviewed Markdown handoff and whose assignment is `{ "op": "create", "target": "self" }`. When the graph is already known, include the complete executable graph in the same package; Runtime persists the Task and workflow before dispatch. Within the same Task boundary, continue the current Revision without another assignment. For a boundary-changing revision use `update/self`; for a new Task use `handoff/peer` without source-session executable actions for that new Task.
 - For delegated planner graphs from a parent session, skip the `confirm` item and declare executable child items directly. The parent handoff is the confirmation for the delegated scope.

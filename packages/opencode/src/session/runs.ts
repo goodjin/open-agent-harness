@@ -462,6 +462,11 @@ export namespace SessionRuns {
     throw new Error(`Run outcome already exists: ${input.runID}`)
   }
 
+  export async function result(sessionID: SessionID, runID: string) {
+    if (!ID.safeParse(runID).success) return
+    return readoutcome(sessionID, runID)
+  }
+
   export async function documents(sessionID: SessionID, runID: string) {
     const dir = await root(sessionID, runID)
     if (!dir) return [] as Document[]

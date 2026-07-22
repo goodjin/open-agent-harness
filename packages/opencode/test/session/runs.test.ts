@@ -974,10 +974,16 @@ describe("session runs", () => {
 
             const listed = (await SessionRuns.list(session.id))[0]
             const saved = await SessionRuns.get(session.id, run.run_id)
+            const outcome = await SessionRuns.result(session.id, run.run_id)
             expect(listed?.summary).toBe("User-facing result")
             expect(listed?.summary_source).toBe("protocol")
             expect(saved?.summary).toBe("User-facing result")
             expect(saved?.summary_source).toBe("protocol")
+            expect(outcome).toMatchObject({
+              run_id: run.run_id,
+              summary: "User-facing result",
+              message_id: "msg_outcome",
+            })
           },
         }),
     })

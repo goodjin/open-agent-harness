@@ -77,6 +77,8 @@ Use `input` when the user's choice or additional information should affect the n
 
 ## Plan Confirmation
 
+The model owns semantic routing. Express the decision through the protocol: `create/self` creates the current Session Task, `update/self` creates a new Revision, `handoff/peer` creates a peer Session Task, and every newly declared executable action graph creates a new Run. Runtime executes the declared operation; it does not reinterpret natural-language intent. A previous Run result is immutable history and never blocks a later valid graph. If it already exists, Runtime reuses it and continues.
+
 Use `confirm` when a planner has designed a plan that must be approved before execution.
 
 For an ordinary approval without `assignment`, the planner may emit the `confirm` item and gated executable items in the same protocol package. The runtime asks the user before running the other items. If the user confirms, the remaining items execute from the persisted package; cancellation stops them.

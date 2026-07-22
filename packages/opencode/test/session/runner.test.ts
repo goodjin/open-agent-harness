@@ -1038,7 +1038,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner rejects ordinary execution for an unbound multi-run legacy session", async () => {
+  test("protocol runner requests repair before failing an unbound multi-run legacy session", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -1124,7 +1124,9 @@ describe("SessionRunner", () => {
                   },
                 } as never,
               })
-              const parts = await MessageV2.parts(assistant.id)
+              const messages = await Session.messages({ sessionID: session.id })
+              const parts = messages.flatMap((item) => item.parts)
+              const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
               expect(tools).toBe(0)
               expect(result).toBe("stop")
               expect(await SessionTask.get(session.id)).toBeUndefined()
@@ -1132,6 +1134,7 @@ describe("SessionRunner", () => {
               expect(
                 parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_dispatch_failed"),
               ).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.dispatch.retry")).toBe(true)
               expect(
                 Database.use((db) => ({
                   tasks: db.select().from(SessionTaskTable).all().length,
@@ -1363,7 +1366,8 @@ describe("SessionRunner", () => {
                   },
                 } as never,
               })
-              const parts = await MessageV2.parts(assistant.id)
+              const messages = await Session.messages({ sessionID: session.id })
+              const parts = messages.flatMap((item) => item.parts)
               const logs = await SessionLog.list({ sessionID: session.id })
               expect(result).toBe("stop")
               expect(await Question.list()).toHaveLength(0)
@@ -1377,6 +1381,7 @@ describe("SessionRunner", () => {
                     part.text.includes("session_task_conflict"),
                 ),
               ).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.dispatch.retry")).toBe(true)
               expect(logs.some((item) => item.type === "protocol.dispatch.failed")).toBe(true)
             },
           }),
@@ -6957,8 +6962,23 @@ describe("SessionRunner", () => {
       limit: { context: 200_000 },
     } as never
     let body: unknown
+    let calls = 0
     let tools = 0
-    const hook = spyOn(LLM, "stream").mockImplementation(async () => packet(body, MessageID.ascending()))
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      const graph =
+        !!body &&
+        typeof body === "object" &&
+        "items" in body &&
+        Array.isArray(body.items) &&
+        body.items.some((item) => !!item && typeof item === "object" && "kind" in item && item.kind === "tool")
+      return packet(
+        calls > 1 && graph
+          ? { version: "2", items: [{ id: "done", kind: "answer", message: "Follow-up Run completed." }] }
+          : body,
+        MessageID.ascending(),
+      )
+    })
 
     try {
       await Instance.provide({
@@ -7021,7 +7041,15 @@ describe("SessionRunner", () => {
                 },
                 {
                   internal: true,
-                  item: { id: "conflict", kind: "reply", summary: "Conflicting summary." },
+                  item: { id: "continue", kind: "answer", message: "Start a new Run from the declared graph." },
+                  next: { id: "next", kind: "tool", target: "read", args: { filePath: "package.json" } },
+                  summary: undefined,
+                  tracked: false,
+                  deferred: true,
+                },
+                {
+                  internal: true,
+                  item: { id: "continue", kind: "answer", message: "Start a new Run from the declared graph." },
                   next: { id: "next", kind: "tool", target: "read", args: { filePath: "package.json" } },
                   summary: "Existing summary.",
                   tracked: true,
@@ -7029,6 +7057,7 @@ describe("SessionRunner", () => {
                 },
               ]
               for (const item of cases) {
+                calls = 0
                 body = {
                   version: "2",
                   items: [item.item, ...(item.extra ? [item.extra] : []), ...(item.next ? [item.next] : [])],
@@ -7097,14 +7126,16 @@ describe("SessionRunner", () => {
                   () => undefined,
                 )
                 expect(runs.find((run) => run.run_id === "apr_old")?.summary).toBe(item.summary)
-                expect(runs).toHaveLength(1)
+                expect(runs).toHaveLength(item.conflict || item.deferred ? 2 : 1)
                 expect(outcome !== undefined).toBe(item.tracked)
+                if (item.deferred)
+                  expect(logs.some((log) => log.type === "protocol.run.outcome.deferred")).toBe(true)
                 if (item.multiple) {
                   expect(logs.some((log) => log.type === "protocol.retry")).toBe(true)
                   expect(logs.some((log) => log.type === "protocol.malformed")).toBe(true)
                 }
               }
-              expect(tools).toBe(0)
+              expect(tools).toBe(2)
             },
           }),
       })
@@ -8259,7 +8290,8 @@ describe("SessionRunner", () => {
               ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.final.malformed")).toBe(false)
               expect(logs.some((item) => item.type === "protocol.final.retry")).toBe(false)
-              expect(failed).toBe(1)
+              expect(failed).toBe(0)
+              expect(logs.some((item) => item.type === "protocol.run.outcome.unreadable")).toBe(true)
             },
           }),
       })
@@ -8393,7 +8425,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol final stops new actions when prior persistence conflicts or is corrupt", async () => {
+  test("protocol final preserves prior results and continues new actions", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -8404,7 +8436,7 @@ describe("SessionRunner", () => {
     let calls = 0
     let tools = 0
     let target: SessionID | undefined
-    let mode: "conflict" | "corrupt" = "conflict"
+    let mode: "conflict" | "corrupt" | "missing" = "conflict"
     const read = Storage.read
     const storage = spyOn(Storage, "read").mockImplementation((async (key: string[]) => {
       if (mode === "corrupt" && calls === 1 && key[0] === "session_protocol_run" && key[1] === target) {
@@ -8414,13 +8446,18 @@ describe("SessionRunner", () => {
     }) as typeof Storage.read)
     const hook = spyOn(LLM, "stream").mockImplementation(async () => {
       calls++
-      if (calls > 2) throw new Error(`unexpected final model call after ${mode} persistence failure`)
+      if (calls > 3) throw new Error(`unexpected final model call after ${mode} persistence recovery`)
       if (calls === 1) {
         return packet(
           { version: "2", items: [{ id: "read", kind: "tool", target: "read", args: { filePath: "package.json" } }] },
           "call_initial",
         )
       }
+      if (calls === 3)
+        return packet(
+          { version: "2", items: [{ id: "done", kind: "success", message: "Follow-up completed." }] },
+          "call_done",
+        )
       if (!target) throw new Error("missing target session")
       const old = (await SessionRuns.list(target))[0]!
       if (mode === "conflict") {
@@ -8435,7 +8472,9 @@ describe("SessionRunner", () => {
         {
           version: "2",
           items: [
-            { id: "old", kind: "success", message: "Conflicting final outcome." },
+            mode === "missing"
+              ? { id: "answer", kind: "answer", message: "Continue with a new Run." }
+              : { id: "old", kind: "success", message: "Conflicting final outcome." },
             { id: "next", kind: "tool", target: "glob", args: { pattern: "*.json" } },
           ],
         },
@@ -8451,7 +8490,7 @@ describe("SessionRunner", () => {
           WorkspaceContext.provide({
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
-              for (const kind of ["conflict", "corrupt"] as const) {
+              for (const kind of ["conflict", "corrupt", "missing"] as const) {
                 mode = kind
                 calls = 0
                 tools = 0
@@ -8515,19 +8554,20 @@ describe("SessionRunner", () => {
                 const messages = await Session.messages({ sessionID: session.id })
 
                 expect(result).toBe("stop")
-                expect(calls).toBe(kind === "conflict" ? 2 : 1)
-                expect(tools).toBe(1)
+                expect(calls).toBe(3)
+                expect(tools).toBe(2)
                 expect(
                   logs.some((item) =>
                     kind === "conflict"
-                      ? item.type === "protocol.run.outcome.failed"
-                      : item.type === "protocol.final.malformed" && item.data.reason === "prior_run_persistence_failed",
+                      ? item.type === "protocol.run.outcome.reused"
+                      : item.type ===
+                        (kind === "corrupt" ? "protocol.run.state.unreadable" : "protocol.run.outcome.deferred"),
                   ),
                 ).toBe(true)
                 const last = messages.findLast(
                   (item): item is typeof item & { info: MessageV2.Assistant } => item.info.role === "assistant",
                 )
-                expect(last?.info.finish).toBe("error")
+                expect(last?.info.finish).not.toBe("error")
               }
             },
           }),

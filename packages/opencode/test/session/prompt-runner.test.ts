@@ -647,6 +647,8 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).toContain('assignment={"op":"handoff","target":"peer"}')
                 expect(seen[0]?.prompt).toContain("continue the current Revision without creating a second Task")
                 expect(seen[0]?.prompt).toContain("complete executable graph in the same package")
+                expect(seen[0]?.prompt).toContain("You own semantic routing")
+                expect(seen[0]?.prompt).toContain("Every newly declared executable action graph creates a new Run")
                 expect(seen[0]?.prompt).not.toContain(
                   'After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`',
                 )
@@ -736,6 +738,8 @@ describe("SessionPrompt runner wiring", () => {
                 expect(seen[0]?.prompt).toContain('assignment={"op":"handoff","target":"peer"}')
                 expect(seen[0]?.prompt).toContain("continue the current Revision without creating a second Task")
                 expect(seen[0]?.prompt).toContain("complete executable graph in the same package")
+                expect(seen[0]?.prompt).toContain("You own semantic routing")
+                expect(seen[0]?.prompt).toContain("Every newly declared executable action graph creates a new Run")
                 expect(seen[0]?.prompt).not.toContain(
                   'After intent is clear and before starting execution work, use `items[].kind: "confirm"` with `assignment: { "op": "create", "target": "self" }`',
                 )
