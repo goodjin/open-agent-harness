@@ -670,10 +670,11 @@ export namespace SessionTask {
             return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
           if (task.status === "revising" || task.status === "blocked")
             throw new Conflict("session_task_revision_frozen")
+          const reopen = current.status !== "active" && task.source_type !== "delegation" && !!input.runID
           const active =
             current.status === "active"
               ? current
-              : task.source_type === "legacy" && input.runID
+              : reopen
                 ? tx
                     .update(TaskRevisionTable)
                     .set({
@@ -682,6 +683,7 @@ export namespace SessionTask {
                       result_source: null,
                       time_completed: null,
                       terminal_status: null,
+                      stopped_child_count: null,
                       result_status: null,
                     })
                     .where(
@@ -695,6 +697,21 @@ export namespace SessionTask {
                     .get()
                 : undefined
           if (!active) throw new Conflict("session_task_revision_not_active")
+          if (reopen) {
+            const resumed = tx
+              .update(SessionTaskTable)
+              .set({ status: "running", time_updated: now })
+              .where(
+                and(
+                  eq(SessionTaskTable.id, task.id),
+                  eq(SessionTaskTable.current_revision_id, active.id),
+                  inArray(SessionTaskTable.status, ["completed", "failed"]),
+                ),
+              )
+              .returning({ id: SessionTaskTable.id })
+              .get()
+            if (!resumed) throw new Conflict("session_task_revision_not_active")
+          }
           if (!input.runID)
             return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(active) }
           const actions = merge(

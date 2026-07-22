@@ -401,6 +401,81 @@ describe("session task", () => {
       ).rejects.toThrow("session_task_result_conflict")
     }))
 
+  test("reopens a completed main task for a new run without losing workflow history", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_main_first",
+        assignment: { op: "create", target: "self", title: "Main task", body: "Main task body" },
+        actions: [{ id: "first" }],
+      })
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_main_first",
+        summary: "First run completed",
+        source: "protocol",
+      })
+
+      const saved = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_main_second",
+        actions: [{ id: "second" }],
+      })
+
+      expect(saved).toMatchObject({
+        type: "execute",
+        task: { status: "running", source_type: "user" },
+        revision: {
+          status: "active",
+          result: null,
+          result_source: null,
+          time_completed: null,
+          workflow: {
+            run_id: "run_main_second",
+            run_ids: ["run_main_first", "run_main_second"],
+            actions: [
+              { id: "first", run_id: "run_main_first" },
+              { id: "second", run_id: "run_main_second" },
+            ],
+          },
+        },
+      })
+    }))
+
+  test("does not reopen a completed delegated task from a local run", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const saved = await SessionTask.route({
+        sessionID: child.id,
+        legacy: { title: "Delegated task", body: "Delegated task body" },
+        source: {
+          type: "delegation",
+          sessionID: parent.id,
+          runID: "run_parent",
+          actionID: "delegate_child",
+        },
+        actions: [],
+      })
+      if (saved.type !== "execute") throw new Error("delegated task missing")
+      Database.use((tx) => {
+        tx.update(TaskRevisionTable)
+          .set({ status: "completed", result: "Delivered", result_source: "action_result", time_completed: Date.now() })
+          .where(eq(TaskRevisionTable.id, saved.revision.id))
+          .run()
+        tx.update(SessionTaskTable).set({ status: "completed" }).where(eq(SessionTaskTable.id, saved.task.id)).run()
+      })
+
+      await expect(
+        SessionTask.route({
+          sessionID: child.id,
+          runID: "run_child_again",
+          actions: [{ id: "again" }],
+        }),
+      ).rejects.toThrow("session_task_revision_not_active")
+    }))
+
   test("binds delegated child source once and rejects mismatched recovery", () =>
     setup(async () => {
       const parent = await Session.create({})

@@ -205,11 +205,13 @@ export namespace SessionRunner {
     chat: SessionProcessor.Info
     sessionID: SessionID
     text: string
+    kind?: string
     type?: string
     data?: Record<string, unknown>
     runID?: string
   }): Promise<SessionProcessor.Result> {
-    await malformed(input.chat.message.id)
+    const kind = input.kind ?? "protocol_malformed"
+    await hide(input.chat.message.id, kind)
     await Session.updatePart({
       id: PartID.ascending(),
       messageID: input.chat.message.id,
@@ -217,7 +219,7 @@ export namespace SessionRunner {
       type: "text",
       text: input.text,
       metadata: {
-        kind: "protocol_malformed",
+        kind,
         action: "failed",
         ...(input.runID ? { protocol: { runID: input.runID } } : {}),
       },
@@ -709,7 +711,20 @@ export namespace SessionRunner {
       })
       return "stop"
     }
-    const exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: false })
+    let exec: Awaited<ReturnType<typeof execute>>
+    try {
+      exec = await execute({ chat, stream, sessionID, parsed: parsedValue, recovered: false })
+    } catch (err) {
+      if (!(err instanceof SessionTask.Conflict)) throw err
+      return fail({
+        chat,
+        sessionID,
+        text: `Task dispatch failed before execution: ${err.message}`,
+        kind: "protocol_dispatch_failed",
+        type: "protocol.dispatch.failed",
+        data: { recovered: false, error: { code: err.message } },
+      })
+    }
     const run = exec.run
     await settle({ chat, stream, sessionID, ...exec })
     await mark({
@@ -875,33 +890,45 @@ export namespace SessionRunner {
       return
     }
     if (action.executor.type === "human" && action.operation === "confirm") {
-      await settle({
+      const exec = await execute({
         chat,
         stream,
         sessionID: input.sessionID,
-        ...(await execute({
-          chat,
-          stream,
-          sessionID: input.sessionID,
-          parsed: single(input.parsed, action),
-          recovered: true,
-        })),
+        parsed: single(input.parsed, action),
+        recovered: true,
+      })
+      await settle({ chat, stream, sessionID: input.sessionID, ...exec })
+      await mark({
+        assistant: chat.message,
+        outcome: outcome(exec.run),
+        reason: reason(exec.run),
+        runID: exec.run.run_id,
+        stats: stats(exec.run),
+        user: input.user.info,
       })
       return
     }
     if (action.executor.type === "agent") {
       if (await recoverAgent(input, action)) return
-      await settle({
+      const exec = await execute({
         chat,
         stream,
         sessionID: input.sessionID,
-        ...(await execute({
-          chat,
-          stream,
-          sessionID: input.sessionID,
-          parsed: single(input.parsed, action),
-          recovered: true,
-        })),
+        parsed: single(input.parsed, action),
+        recovered: true,
+      })
+      await settle({ chat, stream, sessionID: input.sessionID, ...exec })
+      await mark({
+        assistant: chat.message,
+        outcome: outcome(exec.run),
+        reason: reason(exec.run),
+        runID: exec.run.run_id,
+        stats: stats(exec.run),
+        user: input.user.info,
+      })
+      SessionStatus.set(input.sessionID, {
+        type: "waiting_child",
+        message: "Waiting for recovered delegated child session.",
       })
       return
     }
@@ -945,8 +972,22 @@ export namespace SessionRunner {
     const row = [...rows.pending, ...rows.completed].find((item) => item.action_id === action.id)
     if (!row?.child_session_id) return false
     const child = SessionID.make(row.child_session_id)
+    const finish = () =>
+      mark({
+        assistant: input.message.info,
+        outcome: "waiting_child",
+        reason: "waiting_child",
+        runID: row.run_id,
+        user: input.user.info,
+      })
+    const wait = () =>
+      SessionStatus.set(input.sessionID, {
+        type: "waiting_child",
+        message: "Waiting for recovered delegated child session.",
+      })
     if (await SessionDelegation.complete({ sessionID: child })) {
       await note(input, `Recovered existing child session ${child} and delivered its completed result to the parent.`)
+      await finish()
       return true
     }
     const status = SessionStatus.get(child)
@@ -959,6 +1000,8 @@ export namespace SessionRunner {
         input,
         `Recovered existing child session ${child}. It is currently ${status.type}; no duplicate child was created.`,
       )
+      await finish()
+      wait()
       return true
     }
     const restorable = new Set(["idle", "aborted", "failed", "blocked", "timeout", "error", "paused"])
@@ -967,6 +1010,8 @@ export namespace SessionRunner {
         input,
         `Recovered existing child session ${child}, but its status is ${status.type}; no duplicate child was created.`,
       )
+      await finish()
+      wait()
       return true
     }
     void SessionPrompt.loop({ sessionID: child }).catch((err) => {
@@ -974,6 +1019,8 @@ export namespace SessionRunner {
       SessionStatus.set(child, { type: "error", message: err instanceof Error ? err.message : String(err) })
     })
     await note(input, `Recovered existing child session ${child} and requested it to continue from its current state.`)
+    await finish()
+    wait()
     return true
   }
 
@@ -1092,7 +1139,7 @@ export namespace SessionRunner {
         },
         time: { start: Date.now(), end: Date.now() },
       })
-      if ((!preparing(run) && revision(run)) || repairable(run)) {
+      if (!delegated(run) && ((!preparing(run) && revision(run)) || repairable(run))) {
         await final(
           {
             stream,

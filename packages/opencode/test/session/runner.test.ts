@@ -1106,29 +1106,32 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              await expect(
-                runner.process({
-                  user,
-                  sessionID: session.id,
-                  model,
-                  agent: { name: "protocol-runner", runner: "protocol" } as never,
-                  system: [],
-                  abort: new AbortController().signal,
-                  messages: [{ role: "user", content: "inspect legacy session" }],
-                  tools: {},
-                  runtimeTools: {
-                    catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
-                    prompt: "",
-                    execute: async () => {
-                      tools++
-                      return { title: "read", output: "unexpected", metadata: {} }
-                    },
-                  } as never,
-                }),
-              ).rejects.toThrow("session_task_conflict")
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "inspect legacy session" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
+                  prompt: "",
+                  execute: async () => {
+                    tools++
+                    return { title: "read", output: "unexpected", metadata: {} }
+                  },
+                } as never,
+              })
+              const parts = await MessageV2.parts(assistant.id)
               expect(tools).toBe(0)
+              expect(result).toBe("stop")
               expect(await SessionTask.get(session.id)).toBeUndefined()
               expect(await Session.children(session.id)).toHaveLength(0)
+              expect(
+                parts.some((part) => part.type === "text" && part.metadata?.kind === "protocol_dispatch_failed"),
+              ).toBe(true)
               expect(
                 Database.use((db) => ({
                   tasks: db.select().from(SessionTaskTable).all().length,
@@ -1342,29 +1345,142 @@ describe("SessionRunner", () => {
                 model,
                 abort: new AbortController().signal,
               })
-              await expect(
-                runner.process({
-                  user,
-                  sessionID: session.id,
-                  model,
-                  agent: { name: "protocol-runner", runner: "protocol" } as never,
-                  system: [],
-                  abort: new AbortController().signal,
-                  messages: [{ role: "user", content: "create conflicting task" }],
-                  tools: {},
-                  runtimeTools: {
-                    catalog: [],
-                    prompt: "",
-                    execute: async () => {
-                      tools++
-                      return { title: "read", output: "unexpected", metadata: {} }
-                    },
-                  } as never,
-                }),
-              ).rejects.toThrow("session_task_conflict")
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "create conflicting task" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [],
+                  prompt: "",
+                  execute: async () => {
+                    tools++
+                    return { title: "read", output: "unexpected", metadata: {} }
+                  },
+                } as never,
+              })
+              const parts = await MessageV2.parts(assistant.id)
+              const logs = await SessionLog.list({ sessionID: session.id })
+              expect(result).toBe("stop")
               expect(await Question.list()).toHaveLength(0)
               expect(tools).toBe(0)
               expect(await SessionAssignment.active(session.id)).toBeUndefined()
+              expect(
+                parts.some(
+                  (part) =>
+                    part.type === "text" &&
+                    part.metadata?.kind === "protocol_dispatch_failed" &&
+                    part.text.includes("session_task_conflict"),
+                ),
+              ).toBe(true)
+              expect(logs.some((item) => item.type === "protocol.dispatch.failed")).toBe(true)
+            },
+          }),
+      })
+    } finally {
+      stream.mockRestore()
+    }
+  })
+
+  test("protocol runner appends executable work after a main task completed", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const stream = spyOn(LLM, "stream").mockImplementation(async () =>
+      packet(
+        {
+          version: "2",
+          items: [{ id: "continue_task", kind: "tool", target: "read", args: { filePath: "package.json" } }],
+        },
+        "call_continue_completed_task",
+      ),
+    )
+    let tools = 0
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_completed_seed",
+                assignment: { op: "create", target: "self", title: "Existing task", body: "Existing plan" },
+                actions: [{ id: "seed" }],
+              })
+              await SessionTask.finish({
+                sessionID: session.id,
+                runID: "run_completed_seed",
+                summary: "Seed completed",
+                source: "protocol",
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              const runner = SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              })
+
+              const result = await runner.process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "continue the same task" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
+                  prompt: "",
+                  execute: async () => {
+                    tools++
+                    return { title: "read", output: "continued", metadata: {} }
+                  },
+                } as never,
+              })
+              const stored = await SessionTask.get(session.id)
+              expect(result).toBe("stop")
+              expect(tools).toBe(1)
+              expect(stored).toMatchObject({
+                task: { status: "running", source_type: "user" },
+                revision: { status: "active", result: null, result_source: null },
+              })
+              expect(stored?.revision.workflow.run_ids).toEqual(["run_completed_seed", expect.any(String)])
             },
           }),
       })
@@ -2768,12 +2884,144 @@ describe("SessionRunner", () => {
               expect(children).toHaveLength(1)
               expect(parts.some((part) => part.type === "text" && part.text.includes("no duplicate child"))).toBe(true)
               expect(SessionStatus.get(child.id).type).toBe("running")
+              expect(SessionStatus.get(session.id).type).toBe("waiting_child")
+              const fresh = await MessageV2.get({ sessionID: session.id, messageID: user.id })
+              expect(fresh.info.role === "user" ? fresh.info.metadata?.turn : undefined).toMatchObject({
+                status: "done",
+                outcome: "waiting_child",
+                reason: "waiting_child",
+              })
               SessionStatus.set(child.id, { type: "idle" })
             },
           }),
       })
     } finally {
       hook.mockRestore()
+    }
+  })
+
+  test("finishes the recovered source turn after creating a delegated child", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const provider = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    const prompt = spyOn(SessionPrompt, "prompt").mockImplementation((() => new Promise(() => {})) as never)
+    const parent = {
+      name: "protocol-runner",
+      runner: "protocol",
+      kind: "orchestrator",
+      capability: { purpose: "orchestrate", tags: [], writes: false },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: false },
+      inheritPermissions: true,
+      permission: [],
+    } as const
+    const worker = {
+      name: "feature-planner",
+      kind: "worker",
+      capability: { purpose: "plan", tags: [], writes: false },
+      verification: { required: [], on_write: [], high_risk: [] },
+      entry: { delegable: true },
+      inheritPermissions: true,
+      permission: [],
+    } as const
+    const agent = spyOn(Agent, "get").mockImplementation(async (name) =>
+      name === parent.name ? (parent as never) : name === worker.name ? (worker as never) : undefined,
+    )
+    const list = spyOn(Agent, "list").mockImplementation(async () => [parent, worker] as never)
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_recovery_seed",
+                assignment: { op: "create", target: "self", title: "Recovery task", body: "Recovery task" },
+                actions: [{ id: "seed" }],
+              })
+              await SessionTask.finish({
+                sessionID: session.id,
+                runID: "run_recovery_seed",
+                summary: "Seed completed",
+                source: "protocol",
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+                metadata: { turn: { status: "running", queued_at: Date.now(), started_at: Date.now() } },
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                finish: "tool-calls",
+                time: { created: Date.now(), completed: Date.now() },
+              })) as MessageV2.Assistant
+              await Session.updatePart({
+                id: PartID.ascending(),
+                sessionID: session.id,
+                messageID: assistant.id,
+                type: "tool",
+                callID: "call_protocol_agent_create",
+                tool: LLM.PROTOCOL_OUTPUT_TOOL,
+                state: {
+                  status: "completed",
+                  input: {
+                    version: "2",
+                    items: [{ id: "plan_create", kind: "agent", target: "feature-planner", prompt: "Create plan." }],
+                  },
+                  title: "Agent Protocol Output",
+                  output: "Agent Protocol package received.",
+                  metadata: { protocol: true },
+                  time: { start: Date.now(), end: Date.now() },
+                },
+              } satisfies MessageV2.ToolPart)
+
+              expect(await SessionRunner.recover({ sessionID: session.id })).toBe(true)
+              await poll(async () => (await Session.children(session.id)).length === 1)
+              await poll(() => SessionStatus.get(session.id).type === "waiting_child")
+              const children = await Session.children(session.id)
+              const fresh = await MessageV2.get({ sessionID: session.id, messageID: user.id })
+
+              expect(children).toHaveLength(1)
+              expect(prompt).toHaveBeenCalledTimes(1)
+              expect(fresh.info.role === "user" ? fresh.info.metadata?.turn : undefined).toMatchObject({
+                status: "done",
+                outcome: "waiting_child",
+                reason: "waiting_child",
+              })
+              SessionStatus.set(children[0]!.id, { type: "idle" })
+            },
+          }),
+      })
+    } finally {
+      provider.mockRestore()
+      prompt.mockRestore()
+      agent.mockRestore()
+      list.mockRestore()
     }
   })
 
