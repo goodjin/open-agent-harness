@@ -126,6 +126,43 @@ export namespace SessionRunner {
     return [msg, sum, files].filter((value): value is string => !!value).join("\n\n")
   }
 
+  async function synthesis(input: {
+    parsed: AgentProtocolParser.Parsed
+    runID: string
+    sessionID: SessionID
+  }) {
+    const items = rows(input.parsed)
+    if (!items) return
+    const result = new Set(["success", "failure", "error", "reply"])
+    if (items.some((item) => result.has(item.kind))) return
+    if (
+      input.parsed.declaration.intent !== "execute" ||
+      input.parsed.declaration.payload.type !== "action_graph" ||
+      input.parsed.declaration.payload.actions.length === 0
+    )
+      return
+    const run = await Storage.read<unknown>(["session_protocol_run", input.sessionID, input.runID])
+      .then(AgentProtocol.Result.parse)
+      .catch(() => undefined)
+    if (!run) return
+    const agents = run.actions.filter((item) => item.executor.type === "agent")
+    if (agents.length === 0) return
+    const results = await SessionResult.listForParentRun({
+      parentSessionID: input.sessionID,
+      runID: input.runID,
+    })
+    const terminal = new Set<SessionResult.Status>(["completed", "partial", "failed", "terminal_reply"])
+    const found = new Map(results.flatMap((item) => (item.action_id ? [[item.action_id, item] as const] : [])))
+    if (agents.some((item) => !found.has(item.id) || !terminal.has(found.get(item.id)!.status))) return
+    const failed = agents.filter((item) => !found.get(item.id)!.satisfying).map((item) => item.id)
+    const passed = agents.filter((item) => found.get(item.id)!.satisfying).map((item) => item.id)
+    return [
+      "Runtime recovered the previous Run result from settled child-session results after the model omitted its terminal item twice.",
+      passed.length ? `Satisfied actions: ${passed.join(", ")}` : "Satisfied actions: none",
+      failed.length ? `Unsatisfied actions: ${failed.join(", ")}` : "Unsatisfied actions: none",
+    ].join("\n")
+  }
+
   function v2(parsed: AgentProtocolParser.Parsed) {
     try {
       const raw = JSON.parse(parsed.raw) as unknown
@@ -547,7 +584,9 @@ export namespace SessionRunner {
     const parsedValue = parsed.value
     const old = prior(stream.user)
     const issue = old ? closureIssue(parsedValue) : undefined
-    if (old && issue) {
+    const fallback =
+      old && issue && retry >= 1 ? await synthesis({ parsed: parsedValue, runID: old, sessionID }) : undefined
+    if (old && issue && !fallback) {
       if (retry < 1) return closure(chat, stream, retry)
       return fail({
         chat,
@@ -660,7 +699,7 @@ export namespace SessionRunner {
         parsed: parsedValue,
         runID: old,
         sessionID,
-        summary: priorResult(parsedValue),
+        summary: priorResult(parsedValue) ?? fallback,
       })
       if (!saved && parsedValue.declaration.intent === "execute") {
         return fail({
@@ -671,6 +710,14 @@ export namespace SessionRunner {
           runID: old,
         })
       }
+      if (saved && fallback)
+        await SessionLog.emit({
+          sessionID,
+          messageID: chat.message.id,
+          level: "warn",
+          type: "protocol.run.outcome.recovered",
+          data: { runID: old, reason: issue, summary: fallback },
+        })
     }
     const msg = native?.ok ? parsedValue.declaration.message?.trim() : ""
     if (msg && parsedValue.declaration.intent === "execute") {
@@ -1385,6 +1432,7 @@ export namespace SessionRunner {
       }))
     let started = false
     let bound: Awaited<ReturnType<typeof bind>> | undefined
+    let admitted = false
     let active: AgentProtocol.Action | undefined
     let began: number | undefined
     const evidence = new Map<string, AgentProtocol.ResultAction>()
@@ -1409,7 +1457,7 @@ export namespace SessionRunner {
           starts.set(action.id, start)
           active = action
           try {
-            if (work && action.executor.type !== "human" && !bound) {
+            if (work && action.executor.type !== "human" && !bound && !admitted) {
               bound = await bind({
                 actions,
                 declaration,
@@ -1507,6 +1555,7 @@ export namespace SessionRunner {
                       messageID: input.chat.message.id,
                     })
                   : Promise.resolve(undefined))
+            if (action.executor.type === "human" && result?.metadata?.task_graph_bound === true) admitted = true
             return finish(result)
           } catch (err) {
             if (!started || aborted(err, input.stream.abort)) throw err
@@ -3653,12 +3702,14 @@ export namespace SessionRunner {
             runID: input.runID,
             messageID: input.messageID,
             actionIDs: [input.action.id],
-            actions: [],
+            actions: input.actions.filter((item) => item.executor.type !== "human"),
             legacy: { title: input.action.title, body: plan },
+            persist: true,
             requiresAssignment: true,
           })
         : undefined
-    if (created?.type === "execute")
+    const graph = input.actions.some((item) => item.executor.type !== "human")
+    if (created?.type === "execute" && !graph)
       Database.effect(() =>
         SessionTaskRecovery.resume(input.sessionID).catch((err) => {
           log.warn("task bootstrap blocked", { err, sessionID: input.sessionID })
@@ -3692,8 +3743,15 @@ export namespace SessionRunner {
         return {
           title: input.action.title,
           output:
-            "Task confirmed and persisted. The Runtime discarded preparation actions and queued the formal Task request.",
-          metadata: { blocked: true, confirmed: true, dispatched: true },
+            created.type === "execute" && graph
+              ? "Task and workflow persisted. The Runtime will now dispatch the confirmed action graph."
+              : "Task confirmed and persisted. The Runtime queued the formal Task request.",
+          metadata: {
+            blocked: created.type !== "execute" || !graph,
+            confirmed: true,
+            dispatched: true,
+            task_graph_bound: created.type === "execute" && graph,
+          },
         }
       return {
         title: input.action.title,

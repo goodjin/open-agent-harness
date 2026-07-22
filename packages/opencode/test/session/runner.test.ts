@@ -4189,7 +4189,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner binds confirmed task assignment before other actions", async () => {
+  test("protocol runner persists a confirmed task graph before executing sibling actions", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -4345,6 +4345,13 @@ describe("SessionRunner", () => {
                   ],
                   prompt: "",
                   execute: async () => {
+                    const task = await SessionTask.get(session.id)
+                    expect(task?.revision.workflow.actions).toEqual(
+                      expect.arrayContaining([
+                        expect.objectContaining({ id: "impl" }),
+                        expect.objectContaining({ id: "verify" }),
+                      ]),
+                    )
                     tools++
                     return { title: "read", output: "ok", metadata: {} }
                   },
@@ -4370,17 +4377,18 @@ describe("SessionRunner", () => {
                 response: "confirm",
               })
               await run
-              await poll(() => bootstraps.some((item) => item.metadata?.source === "task_revision_bootstrap"))
-              expect(tools).toBe(0)
+              expect(tools).toBe(2)
               expect(await SessionTask.current(session.id)).toMatchObject({
                 title: "confirm_plan",
                 body: "Run backend work.",
                 version: 1,
               })
-              expect((await SessionTask.get(session.id))?.revision.workflow).toMatchObject({ actions: [] })
-              const bootstrap = bootstraps.find((item) => item.metadata?.source === "task_revision_bootstrap")
-              expect(bootstrap?.parts[0]).toMatchObject({ type: "text" })
-              expect(bootstrap?.parts[0]?.type === "text" ? bootstrap.parts[0].text : "").toContain("Run backend work.")
+              expect(
+                (await SessionTask.get(session.id))?.revision.workflow.actions.map((item) =>
+                  item && typeof item === "object" && "id" in item ? item.id : undefined,
+                ),
+              ).toEqual(expect.arrayContaining(["impl", "verify"]))
+              expect(bootstraps).toHaveLength(0)
               const parts = await MessageV2.parts(assistant.id)
               const prepared = parts.find((part) => part.type === "tool" && part.tool === LLM.PROTOCOL_OUTPUT_TOOL) as
                 | MessageV2.ToolPart
@@ -7204,6 +7212,135 @@ describe("SessionRunner", () => {
               expect(prompt).toContain("previous Run")
               expect(prompt).toContain("success/failure/error/reply")
               expect(prompt).toContain("new executable items")
+            },
+          }),
+      })
+    } finally {
+      hook.mockRestore()
+    }
+  })
+
+  test("protocol runner recovers an omitted prior result from settled child results before follow-up execution", async () => {
+    await using tmp = await tmpdir()
+    const model = {
+      id: ModelID.make("gpt-5.2"),
+      providerID: ProviderID.make("openai"),
+      api: { id: "openai", npm: "" },
+      limit: { context: 200_000 },
+    } as never
+    const body = {
+      version: "2",
+      items: [{ id: "next", kind: "tool", target: "read", args: { filePath: "package.json" } }],
+    }
+    let calls = 0
+    let tools = 0
+    const hook = spyOn(LLM, "stream").mockImplementation(async () => {
+      calls++
+      return packet(
+        calls <= 2
+          ? body
+          : { version: "2", items: [{ id: "done", kind: "success", message: "Follow-up Run completed." }] },
+        `call_fallback_${calls}`,
+      )
+    })
+
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.ascending(),
+            fn: async () => {
+              const session = await Session.create({})
+              const old: AgentProtocol.Result = {
+                ...run("apr_old"),
+                status: "blocked",
+                actions: [
+                  {
+                    id: "worker",
+                    title: "Worker",
+                    operation: "backend",
+                    executor: { type: "agent", target: "backend", capabilities: [] },
+                    input: { prompt: "Implement the change." },
+                    depends_on: [],
+                    status: "blocked",
+                    summary: "Delegated to backend.",
+                    sessionID: "ses_child",
+                    tool_call_ids: [],
+                    duration_ms: 1,
+                    time: { started: Date.now(), completed: Date.now() },
+                  },
+                ],
+              }
+              await Storage.write(["session_protocol_run", session.id, old.run_id], old)
+              await SessionResult.put({
+                carrier: "action_result",
+                status: "completed",
+                satisfying: false,
+                sessionID: session.id,
+                parentSessionID: session.id,
+                childSessionID: SessionID.make("ses_child"),
+                runID: old.run_id,
+                actionID: "worker",
+                summary: "Worker failed and requires remediation.",
+                raw: { output: "Worker failed and requires remediation." },
+              })
+              const user = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                role: "user",
+                time: { created: Date.now() },
+                agent: "protocol-runner",
+                model: { providerID: ProviderID.make("openai"), modelID: ModelID.make("gpt-5.2") },
+                tools: {},
+                mode: "",
+                metadata: { internal: true, source: "delegation", run_id: old.run_id },
+              } as MessageV2.User)) as MessageV2.User
+              const assistant = (await Session.updateMessage({
+                id: MessageID.ascending(),
+                sessionID: session.id,
+                parentID: user.id,
+                role: "assistant",
+                mode: "protocol-runner",
+                agent: "protocol-runner",
+                path: { cwd: tmp.path, root: tmp.path },
+                cost: 0,
+                tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+                modelID: ModelID.make("gpt-5.2"),
+                providerID: ProviderID.make("openai"),
+                time: { created: Date.now() },
+              })) as MessageV2.Assistant
+              await SessionRunner.create({
+                assistantMessage: assistant,
+                sessionID: session.id,
+                model,
+                abort: new AbortController().signal,
+              }).process({
+                user,
+                sessionID: session.id,
+                model,
+                agent: { name: "protocol-runner", runner: "protocol" } as never,
+                system: [],
+                abort: new AbortController().signal,
+                messages: [{ role: "user", content: "delegation results" }],
+                tools: {},
+                runtimeTools: {
+                  catalog: [{ id: "read", description: "read", schema: { type: "object" } }],
+                  prompt: "",
+                  execute: async () => {
+                    tools++
+                    return { title: "read", output: "ok", metadata: {} }
+                  },
+                } as never,
+              })
+              const runs = await SessionRuns.list(session.id)
+              const logs = await SessionLog.list({ sessionID: session.id, limit: 100 })
+              expect(calls).toBe(3)
+              expect(tools).toBe(1)
+              expect(runs.find((item) => item.run_id === old.run_id)?.summary).toContain(
+                "Unsatisfied actions: worker",
+              )
+              expect(logs.some((item) => item.type === "protocol.run.outcome.recovered")).toBe(true)
             },
           }),
       })

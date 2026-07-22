@@ -365,6 +365,7 @@ export namespace SessionTask {
     actions: unknown[]
     legacy: { title: string; body: string }
     requiresAssignment?: boolean
+    persist?: boolean
   }) {
     const admitted = await admit(input.sessionID)
     const rows = await Promise.all(
@@ -449,7 +450,7 @@ export namespace SessionTask {
             runID: input.runID,
             messageID: input.messageID,
             ...(continuation ? {} : { assignment: { op, target, title: assignment.title, body: plan } }),
-            actions: [],
+            actions: input.persist ? input.actions : [],
           },
           assignment.id,
           continuation,
@@ -569,7 +570,7 @@ export namespace SessionTask {
               })
               .run()
             tx.update(SessionTaskTable).set({ current_revision_id: revision }).where(eq(SessionTaskTable.id, id)).run()
-            if (assignmentID) {
+            if (assignmentID && input.actions.length === 0) {
               const key = `task_revision_bootstrap:${revision}`
               tx.insert(SessionEventOutboxTable)
                 .values({
@@ -668,11 +669,30 @@ export namespace SessionTask {
           }
           if ((task.status === "revising" || task.status === "blocked") && orchestration(input.actions))
             return { type: "execute" as const, task: Task.parse(task), revision: Revision.parse(current) }
-          if (task.status === "revising" || task.status === "blocked")
+          const partial =
+            task.status === "blocked" &&
+            current.status === "active" &&
+            current.result_status === "partial" &&
+            !!input.runID
+          if ((task.status === "revising" || task.status === "blocked") && !partial)
             throw new Conflict("session_task_revision_frozen")
           const reopen = current.status !== "active" && task.source_type !== "delegation" && !!input.runID
           const active =
-            current.status === "active"
+            partial
+              ? tx
+                  .update(TaskRevisionTable)
+                  .set({ result: null, result_source: null, result_status: null })
+                  .where(
+                    and(
+                      eq(TaskRevisionTable.id, current.id),
+                      eq(TaskRevisionTable.task_id, task.id),
+                      eq(TaskRevisionTable.status, "active"),
+                      eq(TaskRevisionTable.result_status, "partial"),
+                    ),
+                  )
+                  .returning()
+                  .get()
+              : current.status === "active"
               ? current
               : reopen
                 ? tx

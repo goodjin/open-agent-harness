@@ -78,6 +78,7 @@ describe("session.llm.hasToolCalls", () => {
       expect(final).toContain('assignment={"op":"update","target":"self"}')
       expect(final).toContain('assignment={"op":"handoff","target":"peer"}')
       expect(final).toContain("continue the current Revision without creating a second Task")
+      expect(final).toContain("complete executable graph in the same package")
       expect(final).not.toContain(
         'After intent is clear and before starting execution work, use `{ id, kind: "confirm", prompt, plan, assignment: { op: "create", target: "self" } }`',
       )
