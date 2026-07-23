@@ -83,6 +83,32 @@ async function flag(all?: string, ledger?: string) {
   return (await new Response(proc.stdout).text()) === "true"
 }
 
+async function claim(input: { task_id: string | null; kind: string; idempotency_key: string }) {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { TaskLedger } from ${JSON.stringify(new URL("../../src/session/task-ledger.ts", import.meta.url).href)}
+        import { Database } from ${JSON.stringify(new URL("../../src/storage/db.ts", import.meta.url).href)}
+        const input = JSON.parse(process.env.COMMAND_INPUT)
+        const row = Database.transaction((tx) => TaskLedger.claim(tx, input), { behavior: "immediate" })
+        console.log(JSON.stringify(row))
+        Database.close()
+      `,
+    ],
+    {
+      cwd: new URL("../..", import.meta.url).pathname,
+      env: { ...process.env, COMMAND_INPUT: JSON.stringify(input) },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const code = await proc.exited
+  if (code !== 0) throw new Error(await new Response(proc.stderr).text())
+  return TaskLedger.Command.parse(JSON.parse((await new Response(proc.stdout).text()).trim()))
+}
+
 describe("task ledger flag", () => {
   test("defaults to false", async () => {
     expect(await flag()).toBe(false)
@@ -825,5 +851,109 @@ describe("task ledger contracts", () => {
       expect(new Set([...first, ...next].map((item) => item.id)).size).toBe(3)
       expect(() => TaskLedger.listEvents(saved.task.id, -1)).toThrow()
       expect(() => TaskLedger.listEvents(saved.task.id, 0, 501)).toThrow()
+    }))
+})
+
+describe("task ledger commands", () => {
+  test("replays duplicate claims and applied results without adding rows", () =>
+    setup(async () => {
+      const saved = await task()
+      const input = {
+        task_id: saved.task.id,
+        kind: "task.create",
+        idempotency_key: `session:${saved.task.session_id}:create`,
+      }
+      const first = Database.transaction((tx) => TaskLedger.claim(tx, input), { behavior: "immediate" })
+      const repeat = Database.transaction((tx) => TaskLedger.claim(tx, input), { behavior: "immediate" })
+      expect(repeat.id).toBe(first.id)
+      const applied = Database.transaction((tx) => TaskLedger.apply(tx, first.id, "task://created"), {
+        behavior: "immediate",
+      })
+      expect(applied).toMatchObject({ status: "applied", result_ref: "task://created" })
+      expect(Database.transaction((tx) => TaskLedger.claim(tx, input), { behavior: "immediate" })).toEqual(applied)
+      expect(
+        Database.transaction((tx) => TaskLedger.apply(tx, first.id, "task://created"), { behavior: "immediate" }),
+      ).toEqual(applied)
+      expect(
+        Database.use((db) =>
+          db.select().from(TaskCommandTable).where(eq(TaskCommandTable.idempotency_key, input.idempotency_key)).all(),
+        ),
+      ).toHaveLength(1)
+    }))
+
+  test("rejects task and kind identity drift for the same stable key", () =>
+    setup(async () => {
+      const saved = await task()
+      const other = await task()
+      const input = {
+        task_id: saved.task.id,
+        kind: "task.create",
+        idempotency_key: "source:session:message:create",
+      }
+      Database.transaction((tx) => TaskLedger.claim(tx, input), { behavior: "immediate" })
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.claim(tx, { ...input, task_id: other.task.id }), {
+          behavior: "immediate",
+        }),
+      ).toThrow(TaskLedger.Conflict)
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.claim(tx, { ...input, kind: "task.revise" }), {
+          behavior: "immediate",
+        }),
+      ).toThrow(TaskLedger.Conflict)
+    }))
+
+  test("allows only accepted commands to become applied", () =>
+    setup(async () => {
+      const saved = await task()
+      const row = {
+        id: "command_rejected",
+        task_id: saved.task.id,
+        kind: "task.create",
+        idempotency_key: "source:rejected",
+        status: "rejected" as const,
+        result_ref: null,
+        time_created: 1,
+        time_applied: null,
+      }
+      Database.use((db) => db.insert(TaskCommandTable).values(row).run())
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.apply(tx, row.id, "task://created"), { behavior: "immediate" }),
+      ).toThrow(TaskLedger.Conflict)
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.apply(tx, "command_missing"), { behavior: "immediate" }),
+      ).toThrow(TaskLedger.Conflict)
+      const accepted = Database.transaction(
+        (tx) =>
+          TaskLedger.claim(tx, {
+            task_id: saved.task.id,
+            kind: "task.create",
+            idempotency_key: "source:accepted",
+          }),
+        { behavior: "immediate" },
+      )
+      Database.transaction((tx) => TaskLedger.apply(tx, accepted.id, "task://created"), { behavior: "immediate" })
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.apply(tx, accepted.id, "task://different"), {
+          behavior: "immediate",
+        }),
+      ).toThrow(TaskLedger.Conflict)
+    }))
+
+  test("serializes concurrent claims onto one command row", () =>
+    setup(async () => {
+      const saved = await task()
+      const input = {
+        task_id: saved.task.id,
+        kind: "task.create",
+        idempotency_key: "source:concurrent:create",
+      }
+      const rows = await Promise.all([claim(input), claim(input)])
+      expect(rows[0]!.id).toBe(rows[1]!.id)
+      expect(
+        Database.use((db) =>
+          db.select().from(TaskCommandTable).where(eq(TaskCommandTable.idempotency_key, input.idempotency_key)).all(),
+        ),
+      ).toHaveLength(1)
     }))
 })

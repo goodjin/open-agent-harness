@@ -1,4 +1,5 @@
 import z from "zod"
+import { randomUUID } from "crypto"
 import { Database, and, asc, desc, eq, gt } from "../storage/db"
 import { TaskCommandTable, TaskEventTable, TaskRequirementTable, TaskResourceTable } from "./session.sql"
 
@@ -85,6 +86,72 @@ export namespace TaskLedger {
     })
     .strict()
   export type Snapshot = z.infer<typeof Snapshot>
+
+  export class Conflict extends Error {}
+
+  const Claim = z
+    .object({
+      task_id: TaskID.nullable(),
+      kind: z.string().min(1),
+      idempotency_key: z.string().min(1),
+    })
+    .strict()
+
+  export function claim(tx: Database.TxOrDb, input: z.input<typeof Claim>) {
+    const parsed = Claim.parse(input)
+    const find = () =>
+      tx
+        .select()
+        .from(TaskCommandTable)
+        .where(eq(TaskCommandTable.idempotency_key, parsed.idempotency_key))
+        .limit(1)
+        .get()
+    const check = (row: typeof TaskCommandTable.$inferSelect) => {
+      if (row.task_id !== parsed.task_id || row.kind !== parsed.kind) throw new Conflict("task_command_identity_drift")
+      return Command.parse(row)
+    }
+    const current = find()
+    if (current) return check(current)
+    try {
+      return Command.parse(
+        tx
+          .insert(TaskCommandTable)
+          .values({
+            id: `command_${randomUUID()}`,
+            task_id: parsed.task_id,
+            kind: parsed.kind,
+            idempotency_key: parsed.idempotency_key,
+            status: "accepted",
+            result_ref: null,
+            time_created: Date.now(),
+            time_applied: null,
+          })
+          .returning()
+          .get(),
+      )
+    } catch (err) {
+      const row = find()
+      if (!row) throw err
+      return check(row)
+    }
+  }
+
+  export function apply(tx: Database.TxOrDb, commandID: string, resultRef?: string) {
+    const id = ID("command").parse(commandID)
+    const result = z.string().min(1).optional().parse(resultRef)
+    const row = tx
+      .update(TaskCommandTable)
+      .set({ status: "applied", result_ref: result ?? null, time_applied: Date.now() })
+      .where(and(eq(TaskCommandTable.id, id), eq(TaskCommandTable.status, "accepted")))
+      .returning()
+      .get()
+    if (row) return Command.parse(row)
+    const current = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.id, id)).limit(1).get()
+    if (!current) throw new Conflict("task_command_missing")
+    if (current.status !== "applied") throw new Conflict("task_command_invalid_state")
+    if (current.result_ref !== (result ?? null)) throw new Conflict("task_command_result_drift")
+    return Command.parse(current)
+  }
 
   export function requirements(taskID: string) {
     const id = TaskID.parse(taskID)
