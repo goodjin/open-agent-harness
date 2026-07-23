@@ -442,4 +442,4 @@ Flag `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 默认关闭。关闭时 create、draft
 
 迁移脚本支持在 schema 已完成约束重建但 journal 缺失时幂等重放：清理遗留临时表、重建约束/trigger、保留既有 Task/Ledger 行并重新登记 journal。迁移与运行时都以外键、Task-local identity、连续 Requirement lineage、Event sequence 和 Command key 唯一性拒绝半套事实。
 
-M0 不实现 Graph、Attempt、Checkpoint、Projection job 或 Event-driven Scheduler；相关 nullable columns 只是向前兼容占位，不构成可用能力。多 Run legacy 仍保持 proposal，不自动合并或执行。同一进程同一时刻的 canonical confirmation 在 ordinary admission 前取得短期优先级；等待最多五秒且在成功、冲突或异常后清理，避免竞态建立非 canonical Task。
+M0 不实现 Graph、Attempt、Checkpoint、Projection job 或 Event-driven Scheduler；相关 nullable columns 只是向前兼容占位，不构成可用能力。多 Run legacy 仍保持 proposal，不自动合并或执行。同一进程同一时刻的 canonical confirmation 在 ordinary admission 前取得短期优先级。Gate 以 generation identity 隔离延迟 release，并在同一五秒 deadline 内持续重读等待期间新增的 confirmation；稳定空态需跨一个 microtask 再确认。timeout 保留 pending gate 并让 ordinary admission 返回 `session_task_admission_pending`，不会进入 legacy migration 或 Task 写入；confirmation 最终 release 后调用方可以重试。

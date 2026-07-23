@@ -20,6 +20,7 @@ import { SessionStatus } from "./status"
 import { SessionResult } from "./result"
 import { Flag } from "@/flag/flag"
 import { TaskLedger } from "./task-ledger"
+import { Admission } from "./task-admission"
 
 export function locators(rows: { run: string; action: string; child: SessionID }[]) {
   const groups = Map.groupBy(rows, (item) => `${item.run}:${item.action}`)
@@ -652,7 +653,7 @@ export namespace SessionTask {
     requiresAssignment?: boolean
     persist?: boolean
   }) {
-    const release = signal(input.sessionID)
+    const release = Admission.signal(input.sessionID)
     try {
       return await confirm(input)
     } finally {
@@ -806,7 +807,10 @@ export namespace SessionTask {
 
   export async function route(raw: z.input<typeof Route>) {
     const input = Route.parse(raw)
-    if (!exists(input.sessionID) && (await wait(input.sessionID)) && exists(input.sessionID)) throw new Conflict()
+    if (!exists(input.sessionID)) {
+      if (!(await Admission.wait(input.sessionID))) throw new Conflict("session_task_admission_pending")
+      if (exists(input.sessionID)) throw new Conflict()
+    }
     if ((await admit(input.sessionID)) === "multiple") throw new Conflict()
     return write(input)
   }
@@ -2568,32 +2572,6 @@ export namespace SessionTask {
           .where(eq(SessionTaskTable.session_id, sessionID))
           .get(),
     )
-  }
-
-  const gates = new Map<SessionID, Set<Promise<void>>>()
-
-  function signal(sessionID: SessionID) {
-    const gate = Promise.withResolvers<void>()
-    const set = gates.get(sessionID) ?? new Set<Promise<void>>()
-    set.add(gate.promise)
-    gates.set(sessionID, set)
-    return () => {
-      set.delete(gate.promise)
-      if (set.size === 0) gates.delete(sessionID)
-      gate.resolve()
-    }
-  }
-
-  async function wait(sessionID: SessionID) {
-    await Promise.resolve()
-    const set = gates.get(sessionID)
-    if (!set) return false
-    const done = await Promise.race([
-      Promise.allSettled(set).then(() => true),
-      Bun.sleep(5_000).then(() => false),
-    ])
-    if (!done && gates.get(sessionID) === set) gates.delete(sessionID)
-    return true
   }
 
   async function admit(sessionID: SessionID) {
