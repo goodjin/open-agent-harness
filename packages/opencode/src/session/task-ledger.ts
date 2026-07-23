@@ -1,7 +1,7 @@
 import z from "zod"
 import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
-import { Database, and, asc, desc, eq, gt } from "../storage/db"
+import { Database, and, asc, desc, eq, gt, max } from "../storage/db"
 import {
   SessionTaskTable,
   TaskCommandTable,
@@ -136,6 +136,21 @@ export namespace TaskLedger {
       created_by: z.enum(["user", "agent", "migration"]),
       confirmed_at: Time.nullable(),
       time_created: Time,
+    })
+    .strict()
+  const Revise = Record.omit({
+    command_key: true,
+  }).extend({
+    command_id: ID("command"),
+    supersedes_id: ID("requirement"),
+  })
+  const Activate = z
+    .object({
+      task_id: TaskID,
+      previous_id: RevisionID,
+      revision_id: RevisionID,
+      command_id: ID("command"),
+      source: z.enum(["direct", "recovery"]),
     })
     .strict()
 
@@ -372,6 +387,201 @@ export namespace TaskLedger {
       requirement,
       resources,
       replay: false as const,
+    }
+  }
+
+  export function revise(tx: Database.Transaction, input: z.input<typeof Revise>) {
+    const parsed = Revise.parse(input)
+    const command = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.id, parsed.command_id)).limit(1).get()
+    if (
+      !command ||
+      command.task_id !== parsed.task_id ||
+      command.kind !== "task.revise" ||
+      command.status !== "accepted"
+    )
+      throw new Conflict("task_revision_command_invalid")
+    const version =
+      (tx
+        .select({ value: max(TaskRequirementTable.version) })
+        .from(TaskRequirementTable)
+        .where(eq(TaskRequirementTable.task_id, parsed.task_id))
+        .get()?.value ?? 0) + 1
+    const requirement = Requirement.parse(
+      tx
+        .insert(TaskRequirementTable)
+        .values({
+          id: `requirement_${randomUUID()}`,
+          task_id: parsed.task_id,
+          version,
+          source_refs: [...new Set(parsed.source_refs)],
+          body_ref: parsed.body_ref,
+          body_hash: parsed.body_hash,
+          constraints: {},
+          acceptance: [],
+          created_by: parsed.created_by,
+          confirmed_at: parsed.confirmed_at,
+          supersedes_id: parsed.supersedes_id,
+          time_created: parsed.time_created,
+        })
+        .returning()
+        .get(),
+    )
+    const resources = [
+      Resource.parse(
+        tx
+          .insert(TaskResourceTable)
+          .values({
+            id: `resource_${randomUUID()}`,
+            task_id: parsed.task_id,
+            revision_id: parsed.revision_id,
+            kind: "spec",
+            uri: parsed.spec_ref,
+            hash: parsed.spec_hash,
+            size: parsed.spec_size,
+            summary: null,
+            producer_type: "revision",
+            producer_id: parsed.revision_id,
+            visibility: "task",
+            lifecycle: "active",
+            time_created: parsed.time_created,
+          })
+          .returning()
+          .get(),
+      ),
+      ...(parsed.plan
+        ? [
+            Resource.parse(
+              tx
+                .insert(TaskResourceTable)
+                .values({
+                  id: `resource_${randomUUID()}`,
+                  task_id: parsed.task_id,
+                  revision_id: parsed.revision_id,
+                  kind: "plan",
+                  uri: parsed.plan.ref,
+                  hash: parsed.plan.hash,
+                  size: parsed.plan.size,
+                  summary: null,
+                  producer_type: "assignment",
+                  producer_id: parsed.plan.producer_id,
+                  visibility: "task",
+                  lifecycle: "active",
+                  time_created: parsed.time_created,
+                })
+                .returning()
+                .get(),
+            ),
+          ]
+        : []),
+    ]
+    const revision = tx
+      .update(TaskRevisionTable)
+      .set({
+        requirement_id: requirement.id,
+        spec_ref: parsed.spec_ref,
+        plan_ref: parsed.plan?.ref ?? null,
+      })
+      .where(
+        and(
+          eq(TaskRevisionTable.task_id, parsed.task_id),
+          eq(TaskRevisionTable.id, parsed.revision_id),
+          eq(TaskRevisionTable.status, "draft"),
+        ),
+      )
+      .returning({ id: TaskRevisionTable.id })
+      .get()
+    if (!revision) throw new Conflict("task_revision_target_missing")
+    const refs = resources.map((item) => item.id)
+    const events = append(tx, parsed.task_id, [
+      {
+        type: "requirement.revised",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data: {
+          requirement_id: requirement.id,
+          supersedes_id: requirement.supersedes_id,
+          version: requirement.version,
+        },
+        resource_refs: parsed.plan ? [resources[1]!.id] : [resources[0]!.id],
+      },
+      {
+        type: "revision.created",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data: { version },
+        resource_refs: refs,
+      },
+      {
+        type: "revision.drafted",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data: { version },
+        resource_refs: refs,
+      },
+    ])
+    return {
+      command: apply(tx, command.id, `revision://${parsed.revision_id}`),
+      events,
+      requirement,
+      resources,
+    }
+  }
+
+  export function activate(tx: Database.Transaction, input: z.input<typeof Activate>) {
+    const parsed = Activate.parse(input)
+    const command = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.id, parsed.command_id)).limit(1).get()
+    if (
+      !command ||
+      command.task_id !== parsed.task_id ||
+      command.kind !== "revision.activate" ||
+      command.status !== "accepted"
+    )
+      throw new Conflict("task_revision_command_invalid")
+    const archived = tx
+      .update(TaskResourceTable)
+      .set({ lifecycle: "archived" })
+      .where(
+        and(
+          eq(TaskResourceTable.task_id, parsed.task_id),
+          eq(TaskResourceTable.revision_id, parsed.previous_id),
+          eq(TaskResourceTable.lifecycle, "active"),
+        ),
+      )
+      .returning()
+      .all()
+      .map((row) => Resource.parse(row))
+    const active = tx
+      .select()
+      .from(TaskResourceTable)
+      .where(
+        and(
+          eq(TaskResourceTable.task_id, parsed.task_id),
+          eq(TaskResourceTable.revision_id, parsed.revision_id),
+          eq(TaskResourceTable.lifecycle, "active"),
+        ),
+      )
+      .all()
+      .map((row) => Resource.parse(row))
+    const events = append(tx, parsed.task_id, [
+      {
+        type: "revision.archived",
+        revision_id: parsed.previous_id,
+        command_id: command.id,
+        data: { activation_source: parsed.source },
+        resource_refs: archived.map((item) => item.id),
+      },
+      {
+        type: "revision.activated",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data: { activation_source: parsed.source },
+        resource_refs: active.map((item) => item.id),
+      },
+    ])
+    return {
+      archived,
+      command: apply(tx, command.id, `revision://${parsed.revision_id}`),
+      events,
     }
   }
 

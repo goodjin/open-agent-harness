@@ -10,6 +10,7 @@ import {
   SessionResultTable,
   SessionTable,
   SessionTaskTable,
+  TaskRequirementTable,
   TaskRevisionTable,
 } from "./session.sql"
 import type { SessionRuns } from "./runs"
@@ -430,6 +431,159 @@ export namespace SessionTask {
     })
   }
 
+  function drafted(
+    tx: Database.Transaction,
+    input: {
+      task: Task
+      previous: Revision
+      title: string
+      body: string
+      reason?: string
+      messageID?: MessageID
+      workflow: Workflow
+      time: number
+      proof?: Proof
+    },
+  ) {
+    const version =
+      (tx
+        .select({ value: max(TaskRevisionTable.version) })
+        .from(TaskRevisionTable)
+        .where(eq(TaskRevisionTable.task_id, input.task.id))
+        .get()?.value ?? input.previous.version) + 1
+    const id = `revision_${randomUUID()}`
+    if (Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER) {
+      if (!input.task.requirement_id) throw new Conflict("task_revision_requirement_missing")
+      const requirement = tx
+        .select()
+        .from(TaskRequirementTable)
+        .where(
+          and(
+            eq(TaskRequirementTable.task_id, input.task.id),
+            eq(TaskRequirementTable.id, input.task.requirement_id),
+          ),
+        )
+        .get()
+      if (!requirement) throw new Conflict("task_revision_requirement_missing")
+      const key = input.proof
+        ? `task.revise:assignment:${input.proof.id}`
+        : input.messageID
+          ? `task.revise:message:${input.task.id}:${input.messageID}`
+          : `task.revise:${input.task.id}:${input.previous.id}:${hash(input.body)}`
+      const command = TaskLedger.claim(tx, {
+        task_id: input.task.id,
+        kind: "task.revise",
+        idempotency_key: key,
+      })
+      if (command.status === "applied") {
+        const saved = command.result_ref?.startsWith("revision://")
+          ? tx
+              .select()
+              .from(TaskRevisionTable)
+              .where(eq(TaskRevisionTable.id, command.result_ref.slice("revision://".length)))
+              .get()
+          : undefined
+        if (
+          !saved ||
+          saved.task_id !== input.task.id ||
+          saved.previous_id !== input.previous.id ||
+          saved.title !== input.title ||
+          saved.body_hash !== hash(input.body) ||
+          saved.source_message_id !== (input.messageID ?? null) ||
+          saved.reason !== (input.reason ?? null)
+        )
+          throw new Conflict("task_revision_command_drift")
+        return { revision: Revision.parse(saved), replay: true as const }
+      }
+      tx.insert(TaskRevisionTable)
+        .values({
+          id,
+          task_id: input.task.id,
+          version,
+          previous_id: input.previous.id,
+          status: "draft",
+          title: input.title,
+          body: input.body,
+          body_hash: hash(input.body),
+          source_message_id: input.messageID ?? null,
+          reason: input.reason ?? null,
+          workflow: input.workflow,
+          result: null,
+          result_source: null,
+          time_created: input.time,
+          time_activated: null,
+          time_completed: null,
+          time_archived: null,
+          archive_reason: null,
+        })
+        .run()
+      const spec = `task://${input.task.id}/revision/${id}`
+      TaskLedger.revise(tx, {
+        task_id: input.task.id,
+        revision_id: id,
+        command_id: command.id,
+        supersedes_id: requirement.id,
+        source_refs: [
+          input.proof ? `assignment:${input.proof.id}` : undefined,
+          input.proof?.source_session_id ? `session:${input.proof.source_session_id}` : undefined,
+          input.proof?.source_message_id ? `message:${input.proof.source_message_id}` : undefined,
+          input.proof?.source_run_id ? `run:${input.proof.source_run_id}` : undefined,
+          input.proof?.source_action_id ? `action:${input.proof.source_action_id}` : undefined,
+          input.messageID ? `message:${input.messageID}` : undefined,
+        ].filter((item): item is string => !!item),
+        body_ref: input.proof?.content_ref ?? spec,
+        body_hash: input.proof?.content_hash ?? hash(input.body),
+        spec_ref: spec,
+        spec_hash: hash(input.body),
+        spec_size: new TextEncoder().encode(input.body).byteLength,
+        ...(input.proof
+          ? {
+              plan: {
+                ref: input.proof.content_ref,
+                hash: input.proof.content_hash,
+                size: input.proof.size,
+                producer_id: input.proof.id,
+              },
+            }
+          : {}),
+        created_by: input.proof ? "agent" : input.messageID ? "user" : "agent",
+        confirmed_at: input.proof || input.messageID ? input.time : null,
+        time_created: input.time,
+      })
+      const saved = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, id)).get()
+      return { revision: Revision.parse(saved), replay: false as const }
+    }
+    return {
+      revision: Revision.parse(
+        tx
+          .insert(TaskRevisionTable)
+          .values({
+            id,
+            task_id: input.task.id,
+            version,
+            previous_id: input.previous.id,
+            status: "draft",
+            title: input.title,
+            body: input.body,
+            body_hash: hash(input.body),
+            source_message_id: input.messageID ?? null,
+            reason: input.reason ?? null,
+            workflow: input.workflow,
+            result: null,
+            result_source: null,
+            time_created: input.time,
+            time_activated: null,
+            time_completed: null,
+            time_archived: null,
+            archive_reason: null,
+          })
+          .returning()
+          .get(),
+      ),
+      replay: false as const,
+    }
+  }
+
   export function request(body: string) {
     return [
       "This is the confirmed Task description prepared from the earlier conversation.",
@@ -740,36 +894,17 @@ export namespace SessionTask {
               throw new Conflict("session_task_update_in_progress")
             if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
             if (!input.runID) throw new Conflict("session_task_run_required")
-            const version =
-              (tx
-                .select({ value: max(TaskRevisionTable.version) })
-                .from(TaskRevisionTable)
-                .where(eq(TaskRevisionTable.task_id, task.id))
-                .get()?.value ?? current.version) + 1
-            const revision = tx
-              .insert(TaskRevisionTable)
-              .values({
-                id: `revision_${randomUUID()}`,
-                task_id: task.id,
-                version,
-                previous_id: current.id,
-                status: "draft",
-                title: input.assignment.title,
-                body: input.assignment.body,
-                body_hash: hash(input.assignment.body),
-                source_message_id: input.messageID ?? null,
-                reason: "Confirmed task update proposal",
-                workflow: flow(input.actions, input.runID, assignmentID),
-                result: null,
-                result_source: null,
-                time_created: now,
-                time_activated: null,
-                time_completed: null,
-                time_archived: null,
-                archive_reason: null,
-              })
-              .returning()
-              .get()
+            const revision = drafted(tx, {
+              task: Task.parse(task),
+              previous: Revision.parse(current),
+              title: input.assignment.title,
+              body: input.assignment.body,
+              reason: "Confirmed task update proposal",
+              messageID: input.messageID,
+              workflow: flow(input.actions, input.runID, assignmentID),
+              time: now,
+              proof: evidence,
+            }).revision
             const frozen = tx
               .update(SessionTaskTable)
               .set({ status: "revising", time_updated: now })
@@ -1297,49 +1432,40 @@ export namespace SessionTask {
         return Database.transaction(
           (tx) => {
             const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
-            if (!task) throw new Conflict("session_task_missing")
-            const version =
-              (tx
-                .select({ value: max(TaskRevisionTable.version) })
-                .from(TaskRevisionTable)
-                .where(eq(TaskRevisionTable.task_id, input.taskID))
-                .get()?.value ?? 0) + 1
-            const row = tx
-              .insert(TaskRevisionTable)
-              .values({
-                id: `revision_${randomUUID()}`,
-                task_id: input.taskID,
-                version,
-                previous_id: task.current_revision_id,
-                status: "draft",
-                title: input.title,
-                body: input.body,
-                body_hash: hash(input.body),
-                source_message_id: input.messageID ?? null,
-                reason: input.reason ?? null,
-                workflow: { actions: [] },
-                result: null,
-                result_source: null,
-                time_created: now,
-                time_activated: null,
-                time_completed: null,
-                time_archived: null,
-                archive_reason: null,
-              })
-              .returning()
+            if (!task?.current_revision_id) throw new Conflict("session_task_missing")
+            const previous = tx
+              .select()
+              .from(TaskRevisionTable)
+              .where(
+                and(
+                  eq(TaskRevisionTable.task_id, input.taskID),
+                  eq(TaskRevisionTable.id, task.current_revision_id),
+                ),
+              )
               .get()
-            const result = Revision.parse(row)
-            Database.effect(() =>
-              TaskDocuments.publish({
-                sessionID: task.session_id,
-                taskID: task.id,
-                version: result.version,
-                title: result.title,
-                body: result.body,
-                current: false,
-              }),
-            )
-            return result
+            if (!previous) throw new Conflict("session_task_revision_missing")
+            const saved = drafted(tx, {
+              task: Task.parse(task),
+              previous: Revision.parse(previous),
+              title: input.title,
+              body: input.body,
+              reason: input.reason,
+              messageID: input.messageID,
+              workflow: { actions: [] },
+              time: now,
+            })
+            if (!saved.replay)
+              Database.effect(() =>
+                TaskDocuments.publish({
+                  sessionID: task.session_id,
+                  taskID: task.id,
+                  version: saved.revision.version,
+                  title: saved.revision.title,
+                  body: saved.revision.body,
+                  current: false,
+                }),
+              )
+            return saved.revision
           },
           { behavior: "immediate" },
         )
@@ -1362,14 +1488,49 @@ export namespace SessionTask {
         (tx) => {
           const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, input.taskID)).get()
           const next = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, input.revisionID)).get()
+          if (!task?.current_revision_id || !next || next.task_id !== input.taskID) throw new Conflict()
+          const command = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+            ? TaskLedger.claim(tx, {
+                task_id: input.taskID,
+                kind: "revision.activate",
+                idempotency_key: `revision.activate:${input.taskID}:${input.revisionID}`,
+              })
+            : undefined
+          if (command?.status === "applied") {
+            if (
+              task.current_revision_id !== next.id ||
+              task.requirement_id !== next.requirement_id ||
+              next.status !== "active"
+            )
+              throw new Conflict("task_revision_command_drift")
+            return Revision.parse(next)
+          }
           if (
-            !task?.current_revision_id ||
-            !next ||
-            next.task_id !== input.taskID ||
             next.status !== "draft" ||
             next.previous_id !== task.current_revision_id
           )
             throw new Conflict()
+          if (Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER) {
+            const requirement = next.requirement_id
+              ? tx
+                  .select()
+                  .from(TaskRequirementTable)
+                  .where(
+                    and(
+                      eq(TaskRequirementTable.task_id, input.taskID),
+                      eq(TaskRequirementTable.id, next.requirement_id),
+                    ),
+                  )
+                  .get()
+              : undefined
+            if (
+              !task.requirement_id ||
+              !requirement ||
+              requirement.id === task.requirement_id ||
+              requirement.supersedes_id !== task.requirement_id
+            )
+              throw new Conflict("task_revision_requirement_invalid")
+          }
           const previous = tx
             .select()
             .from(TaskRevisionTable)
@@ -1424,7 +1585,13 @@ export namespace SessionTask {
           if (!revision) throw new Conflict()
           const updated = tx
             .update(SessionTaskTable)
-            .set({ title: next.title, current_revision_id: next.id, status: "running", time_updated: now })
+            .set({
+              title: next.title,
+              current_revision_id: next.id,
+              requirement_id: Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER ? next.requirement_id : task.requirement_id,
+              status: "running",
+              time_updated: now,
+            })
             .where(
               and(
                 eq(SessionTaskTable.id, input.taskID),
@@ -1437,6 +1604,19 @@ export namespace SessionTask {
           if (!updated) {
             if (lease.get()) throw new Conflict("task_revision_bootstrap_delivering")
             throw new Conflict()
+          }
+          if (command) {
+            TaskLedger.activate(tx, {
+              task_id: input.taskID,
+              previous_id: previous.id,
+              revision_id: revision.id,
+              command_id: command.id,
+              source: input.bootstrap ? "recovery" : "direct",
+            })
+            tx.update(SessionTaskTable)
+              .set({ time_updated: now })
+              .where(eq(SessionTaskTable.id, input.taskID))
+              .run()
           }
           if (input.bootstrap) {
             const key = `task_revision_bootstrap:${revision.id}`

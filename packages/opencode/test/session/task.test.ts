@@ -13,22 +13,28 @@ import { SessionAssignment } from "../../src/session/assignment"
 import { MessageID, SessionID } from "../../src/session/schema"
 import {
   AssignmentTable,
+  SessionEventOutboxTable,
   SessionResultTable,
   SessionTaskTable,
   TaskHandoffTable,
   TaskRevisionTable,
 } from "../../src/session/session.sql"
 import { locators, SessionTask } from "../../src/session/task"
+import { TaskLedger } from "../../src/session/task-ledger"
 import { Markdown, TaskDocuments } from "../../src/session/task-documents"
 import { TaskFS } from "../../src/session/task-fs"
 import { Database, eq, inArray, sql } from "../../src/storage/db"
 import { Storage } from "../../src/storage/storage"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
+import { Flag } from "../../src/flag/flag"
 
 const posix = process.platform === "darwin" || process.platform === "linux" ? test : test.skip
+const ledger = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
 
 afterEach(async () => {
+  // @ts-expect-error test-only flag override
+  Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = ledger
   await resetDatabase()
 })
 
@@ -2028,6 +2034,394 @@ describe("session task", () => {
         SessionTask.Conflict,
       )
       expect((await SessionTask.get(session.id))?.revision.version).toBe(2)
+    }))
+
+  test("dual-writes one immutable Requirement across replayed draft and activation", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Ledger revision",
+        body: "# Ledger revision\n",
+        source: { type: "user", messageID: MessageID.ascending() },
+      })
+      const original = TaskLedger.requirements(first.task.id)[0]!
+      const messageID = MessageID.ascending()
+      const input = {
+        taskID: first.task.id,
+        title: "Ledger revision v2",
+        body: "# Ledger revision\n\nUpdated.\n",
+        reason: "Confirmed update",
+        messageID,
+      }
+      const [draft, replay] = await Promise.all([SessionTask.draft(input), SessionTask.draft(input)])
+      const requirements = TaskLedger.requirements(first.task.id)
+
+      expect(replay.id).toBe(draft.id)
+      expect(requirements.map((item) => item.version)).toEqual([1, 2])
+      expect(requirements[0]).toEqual(original)
+      expect(requirements[1]).toMatchObject({
+        supersedes_id: original.id,
+        source_refs: [`message:${messageID}`],
+        body_ref: `task://${first.task.id}/revision/${draft.id}`,
+        created_by: "user",
+      })
+      expect((await SessionTask.get(session.id))?.task.requirement_id).toBe(original.id)
+      expect(draft).toMatchObject({
+        requirement_id: requirements[1]!.id,
+        spec_ref: `task://${first.task.id}/revision/${draft.id}`,
+        plan_ref: null,
+      })
+      expect(TaskLedger.listEvents(first.task.id).map((item) => item.type)).toEqual([
+        "task.created",
+        "requirement.recorded",
+        "revision.activated",
+        "requirement.revised",
+        "revision.created",
+        "revision.drafted",
+      ])
+      await expect(SessionTask.draft({ ...input, body: "Drifted body" })).rejects.toThrow(
+        "task_revision_command_drift",
+      )
+      expect(TaskLedger.requirements(first.task.id)).toHaveLength(2)
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(6)
+
+      const [active, repeated] = await Promise.all([
+        SessionTask.activate({ taskID: first.task.id, revisionID: draft.id }),
+        SessionTask.activate({ taskID: first.task.id, revisionID: draft.id }),
+      ])
+      const current = await SessionTask.get(session.id)
+      const resources = TaskLedger.listResources(first.task.id)
+
+      expect(repeated.id).toBe(active.id)
+      expect(current?.task).toMatchObject({
+        current_revision_id: draft.id,
+        requirement_id: requirements[1]!.id,
+        last_event_seq: 8,
+      })
+      expect(current?.revision.id).toBe(draft.id)
+      expect(TaskLedger.requirements(first.task.id)[0]).toEqual(original)
+      expect(resources.filter((item) => item.revision_id === first.revision.id).map((item) => item.lifecycle)).toEqual([
+        "archived",
+      ])
+      expect(resources.filter((item) => item.revision_id === draft.id).map((item) => item.lifecycle)).toEqual(["active"])
+      expect(TaskLedger.listEvents(first.task.id).map((item) => item.type)).toEqual([
+        "task.created",
+        "requirement.recorded",
+        "revision.activated",
+        "requirement.revised",
+        "revision.created",
+        "revision.drafted",
+        "revision.archived",
+        "revision.activated",
+      ])
+      expect(TaskLedger.findCommand(`task.revise:message:${first.task.id}:${messageID}`)?.status).toBe("applied")
+      expect(TaskLedger.findCommand(`revision.activate:${first.task.id}:${draft.id}`)?.status).toBe("applied")
+    }))
+
+  test("uses the confirmed update assignment as the Requirement and plan Resource", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Assignment revision",
+        body: "Assignment revision v1",
+        source: { type: "user", messageID: MessageID.ascending() },
+      })
+      const action = {
+        type: "action",
+        id: "confirm_ledger_update",
+        title: "Assignment revision v2",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "update", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const messageID = MessageID.ascending()
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID,
+        plan: "Assignment revision v2 body",
+        runID: "run_ledger_update",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      const input = {
+        sessionID: session.id,
+        runID: "run_ledger_update",
+        actionIDs: [action.id],
+        messageID,
+        actions: [],
+        legacy: { title: "Legacy", body: "Legacy" },
+        requiresAssignment: true,
+      }
+      const saved = await SessionTask.confirmed(input)
+      const replay = await SessionTask.confirmed(input)
+      if (!saved.revision || !replay.revision) throw new Error("revision missing")
+      const requirement = TaskLedger.requirements(first.task.id)[1]!
+      const plan = TaskLedger.listResources(first.task.id).find(
+        (item) => item.revision_id === saved.revision.id && item.kind === "plan",
+      )
+
+      expect(saved.type).toBe("update")
+      expect(replay.type).toBe("replay")
+      expect(replay.revision.id).toBe(saved.revision.id)
+      expect(requirement).toMatchObject({
+        body_ref: assignment.content_ref,
+        body_hash: assignment.content_hash,
+        supersedes_id: first.task.requirement_id,
+        source_refs: [
+          `assignment:${assignment.id}`,
+          `session:${session.id}`,
+          `message:${messageID}`,
+          "run:run_ledger_update",
+          `action:${action.id}`,
+        ],
+      })
+      expect(plan).toMatchObject({
+        uri: assignment.content_ref,
+        hash: assignment.content_hash,
+        producer_id: assignment.id,
+      })
+      expect(saved.revision.plan_ref).toBe(assignment.content_ref)
+      expect(TaskLedger.findCommand(`task.revise:assignment:${assignment.id}`)?.status).toBe("applied")
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(6)
+    }))
+
+  test("keeps draft and activation ledger-free while the flag is off", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Flag off revision",
+        body: "Flag off revision v1",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Flag off revision v2",
+        body: "Flag off revision v2",
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      const current = await SessionTask.get(session.id)
+
+      expect(current?.task).toMatchObject({ requirement_id: null, last_event_seq: 0 })
+      expect(current?.revision).toMatchObject({ requirement_id: null, spec_ref: null, plan_ref: null })
+      expect(TaskLedger.requirements(first.task.id)).toEqual([])
+      expect(TaskLedger.listResources(first.task.id)).toEqual([])
+      expect(TaskLedger.listEvents(first.task.id)).toEqual([])
+    }))
+
+  test("rejects a stale ledger draft without appending activation facts", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Stale ledger revision",
+        body: "Stale ledger revision v1",
+        source: { type: "user" },
+      })
+      const active = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Active ledger revision",
+        body: "Active ledger revision",
+        messageID: MessageID.ascending(),
+      })
+      const stale = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Stale ledger draft",
+        body: "Stale ledger draft",
+        messageID: MessageID.ascending(),
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: active.id })
+      const count = TaskLedger.listEvents(first.task.id).length
+
+      await expect(SessionTask.activate({ taskID: first.task.id, revisionID: stale.id })).rejects.toBeInstanceOf(
+        SessionTask.Conflict,
+      )
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(count)
+      expect(TaskLedger.findCommand(`revision.activate:${first.task.id}:${stale.id}`)).toBeUndefined()
+      expect((await SessionTask.get(session.id))?.revision.id).toBe(active.id)
+    }))
+
+  test("rejects a draft rebound to the old Requirement without mutating history", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Invalid Requirement",
+        body: "Invalid Requirement v1",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Invalid Requirement v2",
+        body: "Invalid Requirement v2",
+      })
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ requirement_id: first.task.requirement_id })
+          .where(eq(TaskRevisionTable.id, draft.id))
+          .run(),
+      )
+      const before = TaskLedger.listEvents(first.task.id)
+
+      await expect(SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })).rejects.toThrow(
+        "task_revision_requirement_invalid",
+      )
+      expect(TaskLedger.listEvents(first.task.id)).toEqual(before)
+      expect(TaskLedger.requirements(first.task.id)).toHaveLength(2)
+      expect((await SessionTask.get(session.id))?.task.requirement_id).toBe(first.task.requirement_id)
+      expect(TaskLedger.findCommand(`revision.activate:${first.task.id}:${draft.id}`)).toBeUndefined()
+    }))
+
+  test("rolls back Revision, Requirement and Resource activation when an Event fails", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Rollback revision",
+        body: "Rollback revision v1",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Rollback revision v2",
+        body: "Rollback revision v2",
+      })
+      Database.use((db) =>
+        db.run(sql`
+          CREATE TRIGGER fail_revision_activation_event
+          BEFORE INSERT ON task_event
+          WHEN NEW.type = 'revision.activated'
+          BEGIN
+            SELECT RAISE(ABORT, 'revision activation event failure');
+          END
+        `),
+      )
+
+      await expect(SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })).rejects.toThrow()
+      const current = await SessionTask.get(session.id)
+      const rows = Database.use((db) =>
+        db
+          .select()
+          .from(TaskRevisionTable)
+          .where(inArray(TaskRevisionTable.id, [first.revision.id, draft.id]))
+          .all(),
+      )
+
+      expect(current?.task).toMatchObject({
+        current_revision_id: first.revision.id,
+        requirement_id: first.task.requirement_id,
+        last_event_seq: 6,
+      })
+      expect(rows.find((item) => item.id === first.revision.id)?.status).toBe("active")
+      expect(rows.find((item) => item.id === draft.id)?.status).toBe("draft")
+      expect(TaskLedger.listResources(first.task.id).every((item) => item.lifecycle === "active")).toBe(true)
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(6)
+      expect(TaskLedger.findCommand(`revision.activate:${first.task.id}:${draft.id}`)).toBeUndefined()
+    }))
+
+  test("records one recovery activation source across bootstrap replays", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Recovery revision",
+        body: "Recovery revision v1",
+        source: { type: "user" },
+      })
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Recovery revision v2",
+        body: "Recovery revision v2",
+      })
+      const input = { taskID: first.task.id, revisionID: draft.id, bootstrap: true }
+      const [active, replay] = await Promise.all([SessionTask.activate(input), SessionTask.activate(input)])
+      const events = TaskLedger.listEvents(first.task.id)
+
+      expect(replay.id).toBe(active.id)
+      expect(events.slice(-2).map((item) => item.data)).toEqual([
+        { activation_source: "recovery" },
+        { activation_source: "recovery" },
+      ])
+      expect(events).toHaveLength(8)
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(SessionEventOutboxTable)
+            .where(eq(SessionEventOutboxTable.dedupe_key, `task_revision_bootstrap:${draft.id}`))
+            .all(),
+        ),
+      ).toHaveLength(1)
+    }))
+
+  test("rolls back a drafted Requirement and Resource when its Event fails", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Rollback draft",
+        body: "Rollback draft v1",
+        source: { type: "user" },
+      })
+      Database.use((db) =>
+        db.run(sql`
+          CREATE TRIGGER fail_revision_created_event
+          BEFORE INSERT ON task_event
+          WHEN NEW.type = 'revision.created'
+          BEGIN
+            SELECT RAISE(ABORT, 'revision created event failure');
+          END
+        `),
+      )
+
+      await expect(
+        SessionTask.draft({
+          taskID: first.task.id,
+          title: "Rollback draft v2",
+          body: "Rollback draft v2",
+        }),
+      ).rejects.toThrow()
+      expect(TaskLedger.requirements(first.task.id)).toHaveLength(1)
+      expect(TaskLedger.listResources(first.task.id)).toHaveLength(1)
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(3)
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(TaskRevisionTable)
+            .where(eq(TaskRevisionTable.task_id, first.task.id))
+            .all(),
+        ),
+      ).toHaveLength(1)
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.id, first.task.id))
+            .get()?.requirement_id,
+        ),
+      ).toBe(first.task.requirement_id)
     }))
 
   test("rejects source ownership drift while retaining target handoff snapshots", () =>
