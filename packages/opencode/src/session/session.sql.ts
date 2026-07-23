@@ -28,6 +28,12 @@ type RevisionTerminal = "completed" | "blocked" | "failed"
 type RevisionResult = "completed" | "partial" | "failed"
 type RevisionStop = "planned" | "applied"
 type HandoffStatus = "proposed" | "confirmed" | "creating" | "started" | "failed" | "cancelled"
+type RequirementCreator = "user" | "agent" | "migration"
+type ResourceKind = "requirement" | "spec" | "plan"
+type ResourceProducer = "requirement" | "revision" | "assignment" | "migration"
+type ResourceVisibility = "private" | "task" | "project" | "exportable"
+type ResourceLifecycle = "active" | "archived" | "tombstoned"
+type CommandStatus = "accepted" | "applied" | "rejected"
 
 export const SessionTable = sqliteTable(
   "session",
@@ -262,6 +268,11 @@ export const SessionTaskTable = sqliteTable(
     title: text().notNull(),
     status: text().$type<TaskStatus>().notNull(),
     current_revision_id: text(),
+    requirement_id: text(),
+    status_reason: text(),
+    last_event_seq: integer().notNull().default(0),
+    checkpoint_id: text(),
+    schema_version: integer().notNull().default(1),
     source_type: text().$type<TaskSource>().notNull(),
     source_ref: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
     time_created: integer().notNull(),
@@ -299,6 +310,12 @@ export const TaskRevisionTable = sqliteTable(
     terminal_status: text().$type<RevisionTerminal>(),
     stopped_child_count: integer(),
     result_status: text().$type<RevisionResult>(),
+    requirement_id: text(),
+    spec_ref: text(),
+    design_ref: text(),
+    plan_ref: text(),
+    graph_id: text(),
+    schema_version: integer().notNull().default(1),
   },
   (table) => [
     uniqueIndex("task_revision_task_version_unique_idx").on(table.task_id, table.version),
@@ -311,6 +328,106 @@ export const TaskRevisionTable = sqliteTable(
       foreignColumns: [table.task_id, table.id],
       name: "task_revision_previous_fk",
     }).onDelete("cascade"),
+  ],
+)
+
+export const TaskRequirementTable = sqliteTable(
+  "task_requirement",
+  {
+    id: text().primaryKey(),
+    task_id: text()
+      .notNull()
+      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    version: integer().notNull(),
+    source_refs: text({ mode: "json" }).$type<string[]>().notNull(),
+    body_ref: text().notNull(),
+    body_hash: text().notNull(),
+    constraints: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    acceptance: text({ mode: "json" }).$type<Record<string, unknown>[]>().notNull(),
+    created_by: text().$type<RequirementCreator>().notNull(),
+    confirmed_at: integer(),
+    supersedes_id: text(),
+    time_created: integer().notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_requirement_task_version_unique_idx").on(table.task_id, table.version),
+    uniqueIndex("task_requirement_task_id_unique_idx").on(table.task_id, table.id),
+    index("task_requirement_task_created_idx").on(table.task_id, table.time_created),
+    foreignKey({
+      columns: [table.task_id, table.supersedes_id],
+      foreignColumns: [table.task_id, table.id],
+      name: "task_requirement_supersedes_fk",
+    }).onDelete("cascade"),
+    check("task_requirement_body_hash_check", sql`length(${table.body_hash}) = 64`),
+  ],
+)
+
+export const TaskResourceTable = sqliteTable(
+  "task_resource",
+  {
+    id: text().primaryKey(),
+    task_id: text()
+      .notNull()
+      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    revision_id: text().references(() => TaskRevisionTable.id, { onDelete: "cascade" }),
+    kind: text().$type<ResourceKind>().notNull(),
+    uri: text().notNull(),
+    hash: text().notNull(),
+    size: integer().notNull(),
+    summary: text(),
+    producer_type: text().$type<ResourceProducer>().notNull(),
+    producer_id: text().notNull(),
+    visibility: text().$type<ResourceVisibility>().notNull(),
+    lifecycle: text().$type<ResourceLifecycle>().notNull(),
+    time_created: integer().notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_resource_identity_unique_idx").on(table.task_id, table.kind, table.hash, table.uri),
+    index("task_resource_revision_idx").on(table.revision_id),
+    index("task_resource_task_kind_idx").on(table.task_id, table.kind),
+    check("task_resource_hash_check", sql`length(${table.hash}) = 64`),
+    check("task_resource_size_check", sql`${table.size} >= 0`),
+  ],
+)
+
+export const TaskCommandTable = sqliteTable(
+  "task_command",
+  {
+    id: text().primaryKey(),
+    task_id: text().references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    kind: text().notNull(),
+    idempotency_key: text().notNull(),
+    status: text().$type<CommandStatus>().notNull(),
+    result_ref: text(),
+    time_created: integer().notNull(),
+    time_applied: integer(),
+  },
+  (table) => [
+    uniqueIndex("task_command_idempotency_unique_idx").on(table.idempotency_key),
+    index("task_command_task_created_idx").on(table.task_id, table.time_created),
+  ],
+)
+
+export const TaskEventTable = sqliteTable(
+  "task_event",
+  {
+    task_id: text()
+      .notNull()
+      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    seq: integer().notNull(),
+    id: text().notNull(),
+    type: text().notNull(),
+    revision_id: text().references(() => TaskRevisionTable.id, { onDelete: "set null" }),
+    command_id: text().references(() => TaskCommandTable.id, { onDelete: "set null" }),
+    data: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    resource_refs: text({ mode: "json" }).$type<string[]>().notNull(),
+    time_created: integer().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.task_id, table.seq] }),
+    uniqueIndex("task_event_id_unique_idx").on(table.id),
+    index("task_event_task_type_idx").on(table.task_id, table.type),
+    index("task_event_revision_idx").on(table.revision_id),
   ],
 )
 

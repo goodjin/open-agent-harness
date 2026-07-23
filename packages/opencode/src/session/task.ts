@@ -91,6 +91,11 @@ export namespace SessionTask {
       title: z.string().min(1),
       status: Status,
       current_revision_id: z.string().nullable(),
+      requirement_id: z.string().nullable(),
+      status_reason: z.string().nullable(),
+      last_event_seq: z.number().int().nonnegative(),
+      checkpoint_id: z.string().nullable(),
+      schema_version: z.number().int().positive(),
       source_type: SourceType,
       source_ref: z.record(z.string(), z.unknown()),
       time_created: z.number().int().nonnegative(),
@@ -121,6 +126,12 @@ export namespace SessionTask {
       terminal_status: TerminalStatus.nullable(),
       stopped_child_count: z.number().int().nonnegative().nullable(),
       result_status: ArchiveResult.nullable(),
+      requirement_id: z.string().nullable(),
+      spec_ref: z.string().nullable(),
+      design_ref: z.string().nullable(),
+      plan_ref: z.string().nullable(),
+      graph_id: z.string().nullable(),
+      schema_version: z.number().int().positive(),
     })
     .strict()
   export type Revision = z.infer<typeof Revision>
