@@ -12,6 +12,8 @@
 - 检查 Event 从 1 到 `last_event_seq` 连续，并验证 Event id、Command、Revision 和 Resource refs。
 - 检查 Command key、Task、kind、status、result_ref 与关联 Event 一致。
 - issues 最多返回 50 条；evidence 只返回计数、游标和截断信息。
+- JSON 列先按 raw text 安全解码，只有 strict parsed rows 能进入索引和规则校验。
+- 校验使用一次性 Map/反向索引和 memoized Requirement lineage，历史扫描为线性 CPU。
 - 审计不写数据库，不调用 `ensure`，不读取 URI 正文，不根据正文重算 hash。
 
 ## 分类规则
@@ -21,6 +23,7 @@
 - `blocked`：identity、完整链、Event seq、已持久化 hash/ref、跨 Task 引用、Resource lifecycle、Command/Event 绑定或当前终态事实冲突。
 
 `blocked` 优先于 `repairable`。返回 issues 被截断时，最终状态仍基于全部已发现问题计算。
+issues 按 severity、code、entity、id 和规范化 refs 稳定去重。
 
 ## 不在范围
 
@@ -46,11 +49,11 @@
 
 ## 验证结果
 
-- audit 聚焦测试：8/8 通过，22 assertions。
+- audit 聚焦测试：15/15 通过，47 assertions。
 - 健康覆盖 native create、draft/activate、terminal finish 与 migration。
-- repairable 覆盖唯一可派生的 Requirement/spec 指针和未完成 accepted Command；多 Requirement 歧义返回 blocked。
-- blocked 覆盖 Requirement chain/hash/ref、Resource identity/cross-Revision/lifecycle、Event seq/cross-Task refs、Command key/state/result/Event family 及终态矛盾。
+- repairable 覆盖唯一可派生的 Requirement/spec/plan 指针和未完成 accepted Command；零候选、多候选和坏 Requirement lineage 返回 blocked。
+- blocked 覆盖坏 JSON/null/strict contract、Requirement branch/orphan/chain/hash/ref、Resource identity/cross-Revision/lifecycle、Event seq/cross-Task refs、Command key/state/result/Event family 及双向终态矛盾。
 - 80 条无效 Event 历史返回 50 条 issues，`issue_count=80`、`truncated=true`。
-- Ledger 与 Task 回归：156/156 通过，729 assertions。
+- 400 条额外 Event 历史使用 `Map.get` 调用计数验证索引路径，调用数低于 Event 数的 30 倍。
+- Ledger 与 Task 回归：163/163 通过，754 assertions；数据库回归 8/8 通过，23 assertions。
 - `bun db check` 与 `bun typecheck` 通过。
-- 独立测试和独立审计保持 pending，待提交后复核。
