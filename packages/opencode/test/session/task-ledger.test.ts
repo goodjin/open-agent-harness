@@ -109,6 +109,50 @@ async function claim(input: { task_id: string | null; kind: string; idempotency_
   return TaskLedger.Command.parse(JSON.parse((await new Response(proc.stdout).text()).trim()))
 }
 
+function failure(column: "id" | "idempotency_key") {
+  const sqlite = new SQLite(":memory:")
+  sqlite.exec("CREATE TABLE task_command (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE)")
+  sqlite.exec("INSERT INTO task_command VALUES ('command_existing', 'source:existing')")
+  const err = (() => {
+    try {
+      sqlite.exec(
+        column === "id"
+          ? "INSERT INTO task_command VALUES ('command_existing', 'source:other')"
+          : "INSERT INTO task_command VALUES ('command_other', 'source:existing')",
+      )
+    } catch (cause) {
+      return cause
+    }
+  })()
+  sqlite.close(false)
+  if (!err) throw new Error("expected sqlite constraint")
+  return err
+}
+
+function adapter(err: unknown, row: TaskLedger.Command) {
+  const state = { reads: 0 }
+  return {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => ({
+            get: () => (state.reads++ === 0 ? undefined : row),
+          }),
+        }),
+      }),
+    }),
+    insert: () => ({
+      values: () => ({
+        returning: () => ({
+          get: () => {
+            throw err
+          },
+        }),
+      }),
+    }),
+  } as unknown as Database.TxOrDb
+}
+
 describe("task ledger flag", () => {
   test("defaults to false", async () => {
     expect(await flag()).toBe(false)
@@ -956,4 +1000,48 @@ describe("task ledger commands", () => {
         ),
       ).toHaveLength(1)
     }))
+
+  test("propagates non-idempotency insert errors without replaying a row", () => {
+    const input = {
+      task_id: "task_existing",
+      kind: "task.create",
+      idempotency_key: "source:existing",
+    }
+    const row = TaskLedger.Command.parse({
+      id: "command_existing",
+      ...input,
+      status: "accepted",
+      result_ref: null,
+      time_created: 1,
+      time_applied: null,
+    })
+    const err = failure("id")
+    const caught = (() => {
+      try {
+        TaskLedger.claim(adapter(err, row), input)
+      } catch (cause) {
+        return cause
+      }
+    })()
+    expect(caught).toBe(err)
+  })
+
+  test("rechecks identity only after the idempotency unique constraint", () => {
+    const input = {
+      task_id: "task_existing",
+      kind: "task.create",
+      idempotency_key: "source:existing",
+    }
+    const row = TaskLedger.Command.parse({
+      id: "command_existing",
+      ...input,
+      status: "accepted",
+      result_ref: null,
+      time_created: 1,
+      time_applied: null,
+    })
+    const err = failure("idempotency_key")
+    expect(TaskLedger.claim(adapter(err, row), input)).toEqual(row)
+    expect(() => TaskLedger.claim(adapter(err, { ...row, kind: "task.revise" }), input)).toThrow(TaskLedger.Conflict)
+  })
 })

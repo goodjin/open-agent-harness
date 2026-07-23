@@ -1,5 +1,6 @@
 import z from "zod"
 import { randomUUID } from "crypto"
+import { SQLiteError } from "bun:sqlite"
 import { Database, and, asc, desc, eq, gt } from "../storage/db"
 import { TaskCommandTable, TaskEventTable, TaskRequirementTable, TaskResourceTable } from "./session.sql"
 
@@ -97,6 +98,18 @@ export namespace TaskLedger {
     })
     .strict()
 
+  function duplicate(err: unknown) {
+    if (!(err instanceof SQLiteError) || err.code !== "SQLITE_CONSTRAINT_UNIQUE") return false
+    return (
+      err.message
+        .split(":")
+        .at(-1)
+        ?.split(",")
+        .map((item) => item.trim())
+        .includes("task_command.idempotency_key") === true
+    )
+  }
+
   export function claim(tx: Database.TxOrDb, input: z.input<typeof Claim>) {
     const parsed = Claim.parse(input)
     const find = () =>
@@ -130,6 +143,7 @@ export namespace TaskLedger {
           .get(),
       )
     } catch (err) {
+      if (!duplicate(err)) throw err
       const row = find()
       if (!row) throw err
       return check(row)
