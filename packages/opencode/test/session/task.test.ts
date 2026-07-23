@@ -16,6 +16,7 @@ import {
   SessionEventOutboxTable,
   SessionResultTable,
   SessionTaskTable,
+  TaskCommandTable,
   TaskHandoffTable,
   TaskRevisionTable,
 } from "../../src/session/session.sql"
@@ -2251,6 +2252,296 @@ describe("session task", () => {
       expect(saved.revision.plan_ref).toBe(assignment.content_ref)
       expect(TaskLedger.findCommand(`task.revise:assignment:${assignment.id}`)?.status).toBe("applied")
       expect(TaskLedger.listEvents(first.task.id)).toHaveLength(6)
+    }))
+
+  test("records compact workflow facts once for completed, failed, blocked, and skipped actions", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_ledger_workflow",
+        assignment: { op: "create", target: "self", title: "Ledger workflow", body: "Ledger workflow" },
+        actions: [
+          { id: "done", title: "Done" },
+          { id: "failed", title: "Failed" },
+          { id: "blocked", title: "Blocked" },
+          { id: "cancelled", title: "Cancelled" },
+        ],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      const base = result("run_ledger_workflow", [
+        { id: "done", title: "Done", status: "completed" },
+        { id: "failed", title: "Failed", status: "failed" },
+        { id: "blocked", title: "Blocked", status: "blocked" },
+      ]).actions
+      const actions = [
+        ...base,
+        {
+          ...base[0]!,
+          id: "cancelled",
+          title: "Cancelled",
+          status: "skipped" as const,
+          summary: "Cancelled before execution",
+        },
+      ]
+
+      const saved = await SessionTask.sync({
+        sessionID: session.id,
+        runID: "run_ledger_workflow",
+        actions,
+      })
+      const replay = await SessionTask.sync({
+        sessionID: session.id,
+        runID: "run_ledger_workflow",
+        actions,
+      })
+      const events = TaskLedger.listEvents(first.task.id)
+      const event = events.at(-1)
+
+      expect(replay).toEqual(saved)
+      expect(event).toMatchObject({
+        type: "task.workflow_synced",
+        revision_id: first.revision.id,
+        data: {
+          run_id: "run_ledger_workflow",
+          run_count: 1,
+          action_count: 4,
+          actions: {
+            pending: 0,
+            running: 0,
+            completed: 1,
+            blocked: 1,
+            failed: 1,
+            skipped: 1,
+          },
+        },
+      })
+      expect(events).toHaveLength(4)
+      expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+      expect(
+        Database.use((db) =>
+          db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.workflow.sync")).get(),
+        ),
+      ).toMatchObject({
+        status: "applied",
+        result_ref: `task://${first.task.id}/revision/${first.revision.id}/workflow`,
+      })
+    }))
+
+  test("records one compact terminal result across concurrent and restart replays", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_ledger_finish",
+        assignment: { op: "create", target: "self", title: "Ledger finish", body: "Ledger finish" },
+        actions: [{ id: "finish", title: "Finish" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      const input = {
+        sessionID: session.id,
+        runID: "run_ledger_finish",
+        summary: "Sensitive terminal result",
+        source: "protocol" as const,
+      }
+      const [saved, replay] = await Promise.all([SessionTask.finish(input), SessionTask.finish(input)])
+      Database.close()
+      const restarted = await SessionTask.finish(input)
+      const events = TaskLedger.listEvents(first.task.id)
+      const terminal = events.slice(-2)
+
+      expect(replay.id).toBe(saved.id)
+      expect(restarted.id).toBe(saved.id)
+      expect(terminal.map((event) => event.type)).toEqual(["result.recorded", "task.completed"])
+      expect(terminal.map((event) => event.data)).toEqual([
+        {
+          run_id: "run_ledger_finish",
+          source: "protocol",
+          result_ref: `task://${first.task.id}/revision/${first.revision.id}/result`,
+        },
+        {
+          run_id: "run_ledger_finish",
+          source: "protocol",
+          result_ref: `task://${first.task.id}/revision/${first.revision.id}/result`,
+        },
+      ])
+      expect(JSON.stringify(terminal)).not.toContain("Sensitive terminal result")
+      expect(terminal.map((event) => event.seq)).toEqual([4, 5])
+      expect(events).toHaveLength(5)
+      expect((await SessionTask.get(session.id))?.task.status).toBe("completed")
+      expect(
+        Database.use((db) => db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.finish")).get()),
+      ).toMatchObject({
+        status: "applied",
+        result_ref: `task://${first.task.id}/revision/${first.revision.id}/result`,
+      })
+    }))
+
+  test("references canonical child results without inventing a Task terminal state", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      for (const item of [
+        { source: "action_result" as const, status: "failed" as const },
+        { source: "fallback_summary" as const, status: "partial" as const },
+      ]) {
+        const session = await Session.create({})
+        const run = `run_ledger_${item.source}`
+        const first = await SessionTask.route({
+          sessionID: session.id,
+          runID: run,
+          assignment: { op: "create", target: "self", title: item.source, body: item.source },
+          actions: [{ id: "result", title: "Result" }],
+        })
+        if (!first.task || !first.revision) throw new Error("task missing")
+        const id = `result_ledger_${item.source}`
+        Database.use((db) =>
+          db
+            .insert(SessionResultTable)
+            .values({
+              id,
+              carrier: item.source,
+              status: item.status,
+              satisfying: false,
+              session_id: session.id,
+              parent_session_id: null,
+              child_session_id: session.id,
+              run_id: run,
+              action_id: "result",
+              target_action_id: null,
+              raw_ref: `session_result_raw/${id}`,
+              summary: "Canonical child result",
+              created_at: Date.now(),
+            })
+            .run(),
+        )
+
+        await SessionTask.finish({
+          sessionID: session.id,
+          runID: run,
+          summary: "Canonical child result",
+          source: item.source,
+        })
+        const events = TaskLedger.listEvents(first.task.id)
+
+        expect(events.at(-1)).toMatchObject({
+          type: "result.recorded",
+          data: {
+            run_id: run,
+            source: item.source,
+            result_ref: `session-result://${id}`,
+          },
+        })
+        expect(events.filter((event) => event.type.startsWith("task.") && event.type !== "task.created")).toEqual([])
+        expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+      }
+    }))
+
+  test("rolls back workflow and terminal results when their Ledger Event fails", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_ledger_event_rollback",
+        assignment: { op: "create", target: "self", title: "Ledger rollback", body: "Ledger rollback" },
+        actions: [{ id: "write", title: "Write" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      const original = JSON.stringify(first.revision.workflow)
+      Database.use((db) =>
+        db.run(sql`
+          CREATE TRIGGER fail_workflow_event
+          BEFORE INSERT ON task_event
+          WHEN NEW.type = 'task.workflow_synced'
+          BEGIN
+            SELECT RAISE(ABORT, 'workflow event failure');
+          END
+        `),
+      )
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_ledger_event_rollback",
+          actions: result("run_ledger_event_rollback", [
+            { id: "write", title: "Write", status: "completed" },
+          ]).actions,
+        }),
+      ).rejects.toThrow()
+      expect(JSON.stringify((await SessionTask.get(session.id))?.revision.workflow)).toBe(original)
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(3)
+      expect(
+        Database.use((db) =>
+          db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.workflow.sync")).all(),
+        ),
+      ).toEqual([])
+
+      Database.use((db) => {
+        db.run("DROP TRIGGER fail_workflow_event")
+        db.run(sql`
+          CREATE TRIGGER fail_terminal_event
+          BEFORE INSERT ON task_event
+          WHEN NEW.type = 'task.completed'
+          BEGIN
+            SELECT RAISE(ABORT, 'terminal event failure');
+          END
+        `)
+      })
+      await expect(
+        SessionTask.finish({
+          sessionID: session.id,
+          runID: "run_ledger_event_rollback",
+          summary: "Should roll back",
+          source: "protocol",
+        }),
+      ).rejects.toThrow()
+      const current = await SessionTask.get(session.id)
+      expect(current?.task.status).toBe("running")
+      expect(current?.revision).toMatchObject({ status: "active", result: null, result_source: null })
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(3)
+      expect(
+        Database.use((db) => db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.finish")).all()),
+      ).toEqual([])
+    }))
+
+  test("keeps workflow and result Ledger-free while the flag is off", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_ledger_off",
+        assignment: { op: "create", target: "self", title: "Ledger off", body: "Ledger off" },
+        actions: [{ id: "done", title: "Done" }],
+      })
+      if (!first.task) throw new Error("task missing")
+      await SessionTask.sync({
+        sessionID: session.id,
+        runID: "run_ledger_off",
+        actions: result("run_ledger_off", [{ id: "done", title: "Done", status: "completed" }]).actions,
+      })
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_ledger_off",
+        summary: "Done",
+        source: "protocol",
+      })
+
+      expect(TaskLedger.listEvents(first.task.id)).toEqual([])
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(TaskCommandTable)
+            .where(eq(TaskCommandTable.task_id, first.task.id))
+            .all(),
+        ),
+      ).toEqual([])
+      expect((await SessionTask.get(session.id))?.task.status).toBe("completed")
     }))
 
   test("keeps draft and activation ledger-free while the flag is off", () =>

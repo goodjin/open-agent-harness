@@ -153,6 +153,29 @@ export namespace TaskLedger {
       source: z.enum(["direct", "recovery"]),
     })
     .strict()
+  const Sync = z
+    .object({
+      task_id: TaskID,
+      revision_id: RevisionID,
+      command_id: ID("command"),
+      run_id: z.string().min(1),
+      actions: z.record(
+        z.enum(["pending", "running", "completed", "blocked", "failed", "skipped"]),
+        z.number().int().nonnegative(),
+      ),
+    })
+    .strict()
+  const Result = z
+    .object({
+      task_id: TaskID,
+      revision_id: RevisionID,
+      command_id: ID("command"),
+      run_id: z.string().min(1),
+      source: z.enum(["protocol", "action_result", "fallback_summary"]),
+      result_ref: z.string().min(1),
+      terminal: z.enum(["completed", "blocked", "failed"]).optional(),
+    })
+    .strict()
 
   function duplicate(err: unknown) {
     if (!(err instanceof SQLiteError) || err.code !== "SQLITE_CONSTRAINT_UNIQUE") return false
@@ -581,6 +604,117 @@ export namespace TaskLedger {
     return {
       archived,
       command: apply(tx, command.id, `revision://${parsed.revision_id}`),
+      events,
+    }
+  }
+
+  export function sync(tx: Database.Transaction, input: z.input<typeof Sync>) {
+    const parsed = Sync.parse(input)
+    const command = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.id, parsed.command_id)).limit(1).get()
+    if (
+      !command ||
+      command.task_id !== parsed.task_id ||
+      command.kind !== "task.workflow.sync" ||
+      command.status !== "accepted"
+    )
+      throw new Conflict("task_workflow_command_invalid")
+    const task = tx
+      .select({ revision_id: SessionTaskTable.current_revision_id, status: TaskRevisionTable.status })
+      .from(SessionTaskTable)
+      .innerJoin(
+        TaskRevisionTable,
+        and(
+          eq(TaskRevisionTable.task_id, SessionTaskTable.id),
+          eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id),
+        ),
+      )
+      .where(eq(SessionTaskTable.id, parsed.task_id))
+      .get()
+    if (task?.revision_id !== parsed.revision_id || task.status !== "active")
+      throw new Conflict("task_workflow_state_invalid")
+    const events = append(tx, parsed.task_id, [
+      {
+        type: "task.workflow_synced",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data: {
+          run_id: parsed.run_id,
+          run_count: 1,
+          action_count: Object.values(parsed.actions).reduce((sum, count) => sum + count, 0),
+          actions: parsed.actions,
+        },
+      },
+    ])
+    return {
+      command: apply(tx, command.id, `task://${parsed.task_id}/revision/${parsed.revision_id}/workflow`),
+      events,
+    }
+  }
+
+  export function result(tx: Database.Transaction, input: z.input<typeof Result>) {
+    const parsed = Result.parse(input)
+    const command = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.id, parsed.command_id)).limit(1).get()
+    if (
+      !command ||
+      command.task_id !== parsed.task_id ||
+      command.kind !== "task.finish" ||
+      command.status !== "accepted"
+    )
+      throw new Conflict("task_result_command_invalid")
+    const task = tx
+      .select({
+        revision_id: SessionTaskTable.current_revision_id,
+        task_status: SessionTaskTable.status,
+        revision_status: TaskRevisionTable.status,
+        result: TaskRevisionTable.result,
+        source: TaskRevisionTable.result_source,
+      })
+      .from(SessionTaskTable)
+      .innerJoin(
+        TaskRevisionTable,
+        and(
+          eq(TaskRevisionTable.task_id, SessionTaskTable.id),
+          eq(TaskRevisionTable.id, SessionTaskTable.current_revision_id),
+        ),
+      )
+      .where(eq(SessionTaskTable.id, parsed.task_id))
+      .get()
+    if (
+      task?.revision_id !== parsed.revision_id ||
+      !task.result ||
+      task.source !== parsed.source ||
+      (!parsed.terminal && task.revision_status !== "active") ||
+      (parsed.terminal && task.task_status !== parsed.terminal) ||
+      (parsed.terminal === "completed" && task.revision_status !== "completed") ||
+      (parsed.terminal === "failed" && task.revision_status !== "failed") ||
+      (parsed.terminal === "blocked" && task.revision_status !== "active")
+    )
+      throw new Conflict("task_result_state_invalid")
+    const data = {
+      run_id: parsed.run_id,
+      source: parsed.source,
+      result_ref: parsed.result_ref,
+    }
+    const events = append(tx, parsed.task_id, [
+      {
+        type: "result.recorded",
+        revision_id: parsed.revision_id,
+        command_id: command.id,
+        data,
+      },
+      ...(parsed.terminal
+        ? [
+            {
+              type: `task.${parsed.terminal}`,
+              revision_id: parsed.revision_id,
+              command_id: command.id,
+              data,
+            },
+          ]
+        : []),
+    ])
+    return {
+      command: apply(tx, command.id, parsed.result_ref),
       events,
     }
   }

@@ -1151,6 +1151,15 @@ export namespace SessionTask {
           throw new Conflict("session_task_stale_run")
         const actions = bounded({ ...flow, actions: reconcile(flow.actions, run.actions, input.runID) })
         if (JSON.stringify(actions) === JSON.stringify(revision.workflow)) return Revision.parse(revision)
+        const command = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+          ? TaskLedger.claim(tx, {
+              task_id: task.id,
+              kind: "task.workflow.sync",
+              idempotency_key: `task.workflow.sync:${task.id}:${revision.id}:${hash(
+                canonical({ run_id: input.runID, actions }),
+              )}`,
+            })
+          : undefined
         const saved = tx
           .update(TaskRevisionTable)
           .set({
@@ -1181,6 +1190,21 @@ export namespace SessionTask {
           .returning({ id: SessionTaskTable.id })
           .get()
         if (!current) throw new Conflict("session_task_stale_run")
+        if (command) {
+          const counts = Object.fromEntries(
+            AgentProtocol.Status.options.map((status) => [
+              status,
+              run.actions.filter((action) => action.status === status).length,
+            ]),
+          ) as Record<AgentProtocol.Status, number>
+          TaskLedger.sync(tx, {
+            task_id: task.id,
+            revision_id: revision.id,
+            command_id: command.id,
+            run_id: input.runID,
+            actions: counts,
+          })
+        }
         return Revision.parse(saved)
       },
       { behavior: "immediate" },
@@ -1207,6 +1231,19 @@ export namespace SessionTask {
             return Revision.parse(revision)
           throw new Conflict("session_task_result_conflict")
         }
+        const command = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+          ? TaskLedger.claim(tx, {
+              task_id: task.id,
+              kind: "task.finish",
+              idempotency_key: `task.finish:${task.id}:${revision.id}:${hash(
+                canonical({
+                  run_id: input.runID,
+                  summary: input.summary,
+                  source: input.source,
+                }),
+              )}`,
+            })
+          : undefined
         const saved = tx
           .update(TaskRevisionTable)
           .set({
@@ -1219,10 +1256,42 @@ export namespace SessionTask {
           .returning()
           .get()
         if (!saved) throw new Conflict("session_task_result_conflict")
-        tx.update(SessionTaskTable)
+        const updated = tx
+          .update(SessionTaskTable)
           .set({ status: input.source === "protocol" ? "completed" : task.status, time_updated: now })
           .where(and(eq(SessionTaskTable.id, task.id), eq(SessionTaskTable.current_revision_id, revision.id)))
-          .run()
+          .returning({ id: SessionTaskTable.id })
+          .get()
+        if (!updated) throw new Conflict("session_task_result_conflict")
+        if (command) {
+          const result =
+            input.source === "protocol"
+              ? undefined
+              : tx
+                  .select({ id: SessionResultTable.id })
+                  .from(SessionResultTable)
+                  .where(
+                    and(
+                      eq(SessionResultTable.session_id, input.sessionID),
+                      eq(SessionResultTable.run_id, input.runID),
+                      eq(SessionResultTable.carrier, input.source),
+                    ),
+                  )
+                  .orderBy(desc(SessionResultTable.created_at))
+                  .limit(1)
+                  .get()
+          TaskLedger.result(tx, {
+            task_id: task.id,
+            revision_id: revision.id,
+            command_id: command.id,
+            run_id: input.runID,
+            source: input.source,
+            result_ref: result
+              ? `session-result://${result.id}`
+              : `task://${task.id}/revision/${revision.id}/result`,
+            ...(input.source === "protocol" ? { terminal: "completed" as const } : {}),
+          })
+        }
         return Revision.parse(saved)
       },
       { behavior: "immediate" },
