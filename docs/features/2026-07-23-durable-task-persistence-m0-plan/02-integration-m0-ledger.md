@@ -2,7 +2,7 @@
 
 - 模块：MOD-05
 - 优先级：P0
-- 依赖：T-01—T-09
+- 依赖：T-01—T-10
 
 ## 1. 测试目标
 
@@ -21,8 +21,9 @@
 | INT-07 | delegated child 和 handoff target create | source refs、Task identity 和现有结果投递保持正确 |
 | INT-08 | Event seq 或 Requirement 关联被破坏 | audit 返回 blocked，不继续追加事件 |
 | INT-09 | 完整 task/recovery 测试 | 当前恢复、Revision switch 和 outbox 行为不回归 |
+| INT-10 | Ledger 开关关闭、开启、关闭后再开启 | 关闭时不写；开启时双写；重新开启时幂等补齐且不重复 |
 
-## 3. T-10：集成验证与模块文档
+## 3. T-11：集成验证与模块文档
 
 **输出文件**
 
@@ -37,8 +38,9 @@
 **实现**
 
 - 补充跨模块集成场景。
+- 在独立进程中验证 `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 默认关闭、显式开启和重启切换。
 - 更新 protocol runtime 模块文档，写明 M0 数据权威边界、双写路径和未启用能力。
-- 明确 M0 Event 尚不驱动 Scheduler，Checkpoint 尚未启用。
+- 明确 M0 Event 尚不驱动 Scheduler，Graph 与 Checkpoint 尚未启用。
 
 **验收**
 
@@ -47,6 +49,7 @@
 - `recovery.test.ts` 全部通过。
 - `bun typecheck` 通过。
 - 文档与实际表、事件类型和写入边界一致。
+- 开关关闭时 Ledger 行数不变，开启后生成完整事实，关闭后再开启不产生重复事实。
 
 **规模**
 

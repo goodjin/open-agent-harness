@@ -1,7 +1,7 @@
 # 任务持久化与断点恢复体系设计
 
 - 日期：2026-07-23
-- 状态：设计完成，待实施评审
+- 状态：设计完成，M0 已确认并实施中
 - 适用范围：单机 SQLite、进程重启、进程崩溃、模型或工具调用中断
 - 暂不覆盖：多节点调度、跨机器自动接管、异地容灾
 - 需求基线：
@@ -1063,13 +1063,24 @@ Idempotency-Key: <stable-key>
 
 ## 18. 迁移方案
 
-### 18.1 阶段 A：只建新事实，不切读取
+### 18.1 阶段 A（跨 M0 与 M1）：只建新事实，不切读取
 
 - 增加新表和索引；
 - Task/Revision 仍按当前路径读取；
-- 新创建任务双写 Requirement、Event、Graph；
+- M0 为新创建和既有 Task 双写 Requirement、Resource、Command 与 Event，不写 Graph；
+- M1 再双写 Graph、Action 与 Edge，并比较新旧进度；
 - 后台比较新旧进度结果；
 - 不影响旧会话。
+
+M0 的 Ledger 写入由 `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 控制。该开关在
+`packages/opencode/src/flag/flag.ts` 按现有 experimental flag 约定读取：
+`OPENCODE_EXPERIMENTAL=true|1` 或专用变量为 `true|1` 时开启，两者均未设置时默认关闭。
+
+- 关闭：migration 与 Drizzle schema 仍加载；现有 Task/Revision/Assignment/Result 路径保持不变；不写
+  Requirement、Resource、Command、Event，也不触发懒回填。
+- 开启：canonical create、revision、workflow sync、finish 和既有 Task 写边界执行同事务 Ledger 双写；
+  Ledger 仍不参与 Task 读取裁决、Scheduler、Session 恢复或 UI。
+- 切换：关闭后重新开启时，由幂等 Command 和 `ensure()` 收敛缺失事实；已写 Ledger 不删除、不反向覆盖旧权威。
 
 ### 18.2 阶段 B：Graph 与 Attempt 成为执行权威
 
@@ -1393,8 +1404,10 @@ after projection rename
 - `task_event`
 - command idempotency
 - 现有 Task 双写 Event
+- `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 写入开关，默认关闭
 
-独立验收：Task 创建、修订和结果能够形成连续 Event 与 Resource refs。
+独立验收：开关关闭时现有 Task 行为和 Ledger 行数不变；开启时 Task 创建、修订和结果能够形成连续
+Event 与 Resource refs；关闭后再开启可幂等补齐且不产生重复事实。M0 不创建或写入 Graph。
 
 ### M1：规范化 Graph
 
@@ -1441,7 +1454,8 @@ after projection rename
 
 独立验收：新旧会话可读，旧数据不被错误重放。
 
-每个里程碑都应支持独立实现、独立验证、渐进启用。通过 feature flag 控制新写入、新读取和新调度，避免在一个发布中同时切换所有权威路径。
+每个里程碑都应支持独立实现、独立验证、渐进启用。M0 使用
+`OPENCODE_EXPERIMENTAL_TASK_LEDGER` 控制旁路写入；后续里程碑分别为新读取和新调度设置开关，避免在一个发布中同时切换所有权威路径。
 
 ## 28. 主要风险
 

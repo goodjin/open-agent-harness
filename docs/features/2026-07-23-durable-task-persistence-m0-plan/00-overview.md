@@ -2,7 +2,7 @@
 
 - Mission：`durable-task-persistence-m0`
 - 日期：2026-07-23
-- 状态：待用户确认
+- 状态：已确认，实施中
 - 设计来源：`docs/features/2026-07-23-durable-task-persistence-and-recovery-design.md`
 - 目标：建立 Requirement、Resource、Task Event 和 Command 幂等基础，并让现有 Task 生命周期同步写入这些事实。
 
@@ -16,6 +16,10 @@ M0 采用旁路双写，不改变当前执行权威：
 - M0 不把 `task_revision.body` 立即迁出 SQLite；先为现有正文和 assignment content 建立稳定 Resource 索引。
 - Event 与对应 Task 状态在同一 SQLite 事务中提交。
 - 现有 Task 没有 M0 数据时采用幂等懒回填，不在 migration 中猜测用户确认和执行结果。
+- Ledger 写入由 `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 控制，默认关闭；全局
+  `OPENCODE_EXPERIMENTAL=true|1` 或专用变量为 `true|1` 时开启。
+- 开关关闭时只加载 migration/schema，不写 Ledger、不触发懒回填；开启后在既有 Task 写边界双写，
+  但不切换读取、调度、恢复或 UI 权威。
 
 ## 2. 模块清单
 
@@ -54,15 +58,16 @@ M0 没有表现组件，因此不安排前端计划或 app smoke test。
 | 批次 | 任务 | 文档 | 依赖 |
 |---|---|---|---|
 | 1 | T-01 Schema 与 migration | `01-backend-m0-ledger.md` | - |
-| 2 | T-02 Ledger contracts | `01-backend-m0-ledger.md` | T-01 |
-| 2 | T-03 Command 幂等 | `01-backend-m0-ledger.md` | T-02 |
-| 2 | T-04 Event 序列 | `01-backend-m0-ledger.md` | T-02 |
-| 3 | T-05 Task 创建与 Requirement 双写 | `01-backend-m0-ledger.md` | T-03、T-04 |
-| 3 | T-06 Revision 生命周期双写 | `01-backend-m0-ledger.md` | T-05 |
-| 3 | T-07 Workflow 与结果事件双写 | `01-backend-m0-ledger.md` | T-06 |
-| 4 | T-08 旧 Task 懒回填 | `01-backend-m0-ledger.md` | T-05—T-07 |
-| 4 | T-09 Ledger 审计读取 | `01-backend-m0-ledger.md` | T-08 |
-| 5 | T-10 集成验证与模块文档 | `02-integration-m0-ledger.md` | T-01—T-09 |
+| 2 | T-02 Ledger 写入开关 | `01-backend-m0-ledger.md` | T-01 |
+| 2 | T-03 Ledger contracts | `01-backend-m0-ledger.md` | T-02 |
+| 2 | T-04 Command 幂等 | `01-backend-m0-ledger.md` | T-03 |
+| 2 | T-05 Event 序列 | `01-backend-m0-ledger.md` | T-03 |
+| 3 | T-06 Task 创建与 Requirement 双写 | `01-backend-m0-ledger.md` | T-04、T-05 |
+| 3 | T-07 Revision 生命周期双写 | `01-backend-m0-ledger.md` | T-06 |
+| 3 | T-08 Workflow 与结果事件双写 | `01-backend-m0-ledger.md` | T-07 |
+| 4 | T-09 旧 Task 懒回填 | `01-backend-m0-ledger.md` | T-06—T-08 |
+| 4 | T-10 Ledger 审计读取 | `01-backend-m0-ledger.md` | T-09 |
+| 5 | T-11 集成验证与模块文档 | `02-integration-m0-ledger.md` | T-01—T-10 |
 
 ## 6. 需求覆盖
 
@@ -71,21 +76,23 @@ M0 没有表现组件，因此不安排前端计划或 app smoke test。
 | FR-01 原始需求持久化 | Requirement、source refs、body hash | M4 文档投影 |
 | FR-02 定义/设计/计划分离 | Resource kind 和 ref 基础 | M4 文档正文迁移 |
 | FR-07 防重复 | Command 幂等基础 | M2 Attempt fencing |
-| FR-08 文档可重建 | Resource 索引基础 | M4 Projection job |
+| FR-08 文档可重建 | T-01/T-03/T-06 建立 Resource 索引与 ref/hash 基础 | M4 正文校验与 Projection job |
 | FR-09 兼容旧数据 | 幂等懒回填 | M5 Run/Graph 迁移 |
 | FR-12 审计历史 | Task Event | M3 Checkpoint |
 
-FR-03—FR-06、FR-10—FR-11 不在 M0 切换实现，由 M1—M5 继续覆盖。
+FR-03—FR-06、FR-10—FR-11 不在 M0 切换实现，由 M1—M5 继续覆盖。T-10 的内部审计只为
+FR-10 提供基础，不代表 M0 已交付查询、恢复和人工处置接口。
 
 ## 7. 提交边界
 
 每个任务完成聚焦测试后提交一次，提交范围只包含该任务列出的文件。建议提交顺序：
 
 1. `feat(session): add durable task ledger schema`
-2. `feat(session): record task commands and events`
-3. `feat(session): persist task requirements and resources`
-4. `feat(session): backfill durable task ledger`
-5. `test(session): audit durable task ledger m0`
+2. `feat(session): gate durable task ledger writes`
+3. `feat(session): record task commands and events`
+4. `feat(session): persist task requirements and resources`
+5. `feat(session): backfill durable task ledger`
+6. `test(session): audit durable task ledger m0`
 
 每个提交推送 `dev`，不带入 `.superpowers/` 或其他无关变更。
 

@@ -9,6 +9,14 @@
 
 使用现有 Bun、TypeScript、Zod、Drizzle SQLite 和 `Database.transaction()`。新增领域代码放在 `packages/opencode/src/session/task-ledger.ts`，避免继续扩大 `task.ts` 的数据规约职责。
 
+M0 沿用 `packages/opencode/src/flag/flag.ts` 的 experimental flag 约定，新增
+`OPENCODE_EXPERIMENTAL_TASK_LEDGER`：
+
+- 默认关闭；`OPENCODE_EXPERIMENTAL=true|1` 或专用变量为 `true|1` 时开启。
+- 关闭时 migration/schema 正常加载，Task Runtime 不写 Ledger，也不触发 `ensure()`。
+- 开启时只在现有 Task 写边界旁路双写；Ledger 不参与读取裁决、Scheduler、恢复或 UI。
+- 测试通过新进程设置环境变量，避免模块级 flag 缓存污染同一测试进程。
+
 M0 的 Resource 是索引：
 
 - assignment 创建的任务引用现有 immutable assignment content；
@@ -112,7 +120,34 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 180 行；文件 3 个；测试 ≤ 6 个。
 
-### T-02：定义 Ledger contracts 与查询
+### T-02：增加 Ledger 写入开关
+
+**输出文件**
+
+- `packages/opencode/src/flag/flag.ts`
+
+**测试文件**
+
+- `packages/opencode/test/session/task-ledger.test.ts`
+
+**实现**
+
+- 导出 `Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER`。
+- 采用 `OPENCODE_EXPERIMENTAL || truthy("OPENCODE_EXPERIMENTAL_TASK_LEDGER")`，默认关闭。
+- 后续 Ledger 写边界统一读取该 flag，不在各调用点重复解析环境变量。
+
+**验收**
+
+- 两个环境变量均未设置时开关为 false。
+- 专用变量为 `true`/`1` 时开启，为 `false`/`0` 时不单独开启。
+- `OPENCODE_EXPERIMENTAL=true|1` 时统一开启。
+- 开关关闭时现有 Task 路径不产生 Ledger row；该集成行为在 T-11 验证。
+
+**规模**
+
+- 源代码 ≤ 10 行；文件 1 个；测试 ≤ 4 个。
+
+### T-03：定义 Ledger contracts 与查询
 
 **输出文件**
 
@@ -139,7 +174,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 180 行；文件 1 个；测试 ≤ 8 个。
 
-### T-03：实现 Command 幂等边界
+### T-04：实现 Command 幂等边界
 
 **输出文件**
 
@@ -166,7 +201,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 120 行；文件 1 个；测试 ≤ 6 个。
 
-### T-04：实现事务内 Event 序列
+### T-05：实现事务内 Event 序列
 
 **输出文件**
 
@@ -193,7 +228,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 150 行；文件 1 个；测试 ≤ 8 个。
 
-### T-05：Task 创建时记录 Requirement 与 Resource
+### T-06：Task 创建时记录 Requirement 与 Resource
 
 **输出文件**
 
@@ -208,6 +243,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 **实现**
 
 - 在 canonical Task create、delegated create 和 handoff target create 的事务内写 Requirement/Resource。
+- 仅在 `Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER` 开启时执行 Ledger 双写。
 - source refs 保留 message、assignment、Run 和 Action identity。
 - assignment path 的 `body_ref` 使用现有 content ref；direct/legacy path 使用稳定 Revision URI。
 - 写 `task.created`、`requirement.recorded`、`revision.activated`。
@@ -225,7 +261,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 200 行；文件 2 个；测试 ≤ 10 个。
 
-### T-06：Revision 生命周期双写
+### T-07：Revision 生命周期双写
 
 **输出文件**
 
@@ -239,6 +275,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 **实现**
 
 - `draft()` 和 update assignment 创建 draft 时记录新 Requirement/Resource。
+- 开关关闭时沿用原事务，不创建 Requirement、Resource、Command 或 Event。
 - 写 `revision.drafted`。
 - `activate()` 与修订恢复激活路径写 `revision.archived`、`revision.activated`。
 - 重放或 stale draft 拒绝不追加事件。
@@ -254,7 +291,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 180 行；文件 2 个；测试 ≤ 8 个。
 
-### T-07：Workflow 与结果事件双写
+### T-08：Workflow 与结果事件双写
 
 **输出文件**
 
@@ -268,6 +305,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 **实现**
 
 - `sync()` 成功追加新 Run/Action 摘要时写 `task.workflow_synced`。
+- 所有 Ledger 事件写入受统一开关控制，关闭时不改变原 workflow/result 路径。
 - `finish()` 成功写结果时写 `result.recorded` 和对应 task terminal Event。
 - 重复相同 finish 返回原结果且不重复写 Event。
 - Event 只保存 run/action count、result source 和 result ref，不复制正文。
@@ -282,7 +320,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 160 行；文件 2 个；测试 ≤ 8 个。
 
-### T-08：旧 Task 幂等懒回填
+### T-09：旧 Task 幂等懒回填
 
 **输出文件**
 
@@ -297,6 +335,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 **实现**
 
 - 提供 `ensure(tx, task, revision)`。
+- `ensure()` 只在开关开启且进入既有写边界时调用；关闭时不检查、不修复 Ledger。
 - 没有 requirement/event 的现有 Task 写 migration Requirement、Resource 和 baseline Event。
 - `confirmed_at` 留空，`created_by=migration`。
 - baseline Event 只描述已知当前快照，不推断历史状态变化。
@@ -312,7 +351,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 源代码 ≤ 180 行；文件 2 个；测试 ≤ 10 个。
 
-### T-09：Ledger 审计读取
+### T-10：Ledger 审计读取
 
 **输出文件**
 
@@ -325,15 +364,17 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 **实现**
 
 - 提供 `audit(taskID)`，返回 `ok`、`repairable` 或 `blocked`。
-- 检查 current Revision、requirement refs、Event seq、Resource hash 和 command identity。
+- 检查 current Revision、requirement refs、Event seq、Requirement/Resource 中已持久化的 hash/ref
+  交叉引用一致性和 command identity。
 - M0 不自动修复 blocked；只返回机器原因。
-- 不扫描 Resource 正文或完整历史 Run。
+- M0 不读取 Resource 正文、不按 URI 重算正文 hash，也不扫描完整历史 Run；正文可读性和内容 hash
+  重算留到 M4。
 
 **验收**
 
 - 健康 Task 为 ok。
 - 缺投影类 M0 字段为 repairable。
-- Event seq 缺口、跨 Task Requirement 和 hash 不一致为 blocked。
+- Event seq 缺口、跨 Task Requirement 和已持久化 hash/ref 交叉引用不一致为 blocked。
 
 **规模**
 
