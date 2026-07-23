@@ -14,6 +14,7 @@
 - Command 摘要只验证持久证据能证明的 Task/Revision ownership、固定前缀和 64hex 结构；紧凑 Event 不用于重算完整 workflow、revision body 或 finish payload digest。
 - `current_revision_id` 缺失且仅有一个 active Revision 时，以它作为 derived current 继续完整审计，不因 pointer repairable 跳过后续 blocked 冲突。
 - accepted Command 的已有 Event 仍校验 family prefix、数量上限、顺序和 Revision role；完整 family 尚未 apply 使用独立的 `command_apply_missing`。
+- accepted activation 即使没有 Event 也从 key target 证明 previous 关系；partial 只验证已出现的 archived role，完整 apply-gap 验证 old archived、target active 和 Task current pointer 后才报告 repairable。
 - issues 最多返回 50 条；evidence 返回计数、游标、截断信息和固定的 Command identity 验证范围。
 - JSON 列先按 raw text 安全解码，只有 strict parsed rows 能进入索引和规则校验。
 - 校验使用一次性 Map/反向索引和 memoized Requirement lineage，历史扫描为线性 CPU。
@@ -54,11 +55,11 @@ issues 按 severity、code、entity、id 和规范化 refs 稳定去重。
 
 ## 验证结果
 
-- audit 聚焦测试：19/19 通过，61 assertions。
+- audit 聚焦测试：20/20 通过，71 assertions。
 - 健康覆盖 native create、draft/activate、terminal finish 与 migration。
 - repairable 覆盖唯一可派生的 Requirement/spec/plan 指针和未完成 accepted Command；零候选、多候选和坏 Requirement lineage 返回 blocked。
 - blocked 覆盖坏 JSON/null/strict contract、Requirement branch/orphan/chain/hash/ref、Resource identity/cross-Revision/lifecycle、Event seq/cross-Task refs、Command key/state/result/Event family 及双向终态矛盾。
 - 80 条无效 Event 历史返回 50 条 issues，`issue_count=80`、`truncated=true`。
 - 400 条额外 Event 历史使用 `Map.get` 调用计数验证索引路径，调用数低于 Event 数的 30 倍。
-- Ledger 与 Task 回归：167/167 通过，768 assertions；数据库回归 8/8 通过，23 assertions。
+- Ledger 与 Task 回归：168/168 通过，778 assertions；数据库回归 8/8 通过，23 assertions。
 - `bun db check` 与 `bun typecheck` 通过。

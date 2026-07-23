@@ -420,4 +420,6 @@ Flag-off 期间激活的新 Revision 不覆盖旧 Requirement。重新开启后�
 
 Command identity 只验证当前持久事实能够证明的部分，返回 evidence 固定标记 `command_identity_scope=persisted_facts_only`，无效 key issue 也带相同 scope ref。create、activate 和 migrate 的稳定身份按真实写入分支精确重建；revise fallback、workflow sync 与 finish 的原始摘要输入没有完整保存在紧凑 Event 中，因此只验证固定 kind、精确 Task/Revision ownership 前缀和 64 位十六进制 suffix，不用 Event 计数或摘要重算正文 digest。accepted Command 的零 Event 或合法不完整 family 为 `command_incomplete`，合法完整 family 但尚未 apply 为 `command_apply_missing`；任何已存在 Event 都要通过 type prefix、数量、顺序和 Revision role 校验。applied Command 才要求完整 family、`time_applied` 和 `result_ref`。
 
+accepted `revision.activate` 的 repairable 还受阶段事实约束：零 Event 时 key target 必须有同 Task previous；出现 `revision.archived` 时该 Event 必须指向 target.previous；完整 family 尚未 apply 时，previous 必须已 archived、target 必须 active 且 Task current pointer 已指向 target。任一阶段不一致直接 blocked，不同时输出 `command_incomplete` 或 `command_apply_missing`。applied activation 对当前 target 校验 current/status/result；已被后续合法激活替代的历史 target 可以是 archived。
+
 缺指针或缺 ref 只有在唯一、同 Task、链健康的候选可证明时才是 repairable。issues 按完整 issue identity 规范化去重，最多返回 50 条，但总数、截断和 blocked 优先级基于全部唯一 issues。读取后预建 Revision、Requirement、Resource、Command、Event 反向索引并 memoize lineage，避免按历史行重复全表扫描。审计只比较数据库已存 hash/ref，不读取 URI 正文或重算内容，不实现外部 FR-10 API 和自动修复。

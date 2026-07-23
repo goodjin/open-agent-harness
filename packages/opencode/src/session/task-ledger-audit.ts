@@ -383,43 +383,53 @@ export namespace TaskLedgerAudit {
     const expected = terminal ? [...base, linked[1]!.type] : [...base]
     const prefix = types.every((type, index) => type === expected[index])
     const complete = prefix && types.length === expected.length
-    if (!prefix || (item.status === "applied" && !complete))
-      add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => `${event.seq}:${event.type}`))
-    if (item.status === "accepted" && prefix) {
+    const known = linked.every((event) => !!event.revision_id && revisions.has(event.revision_id))
+    const keyed = keyedRevision(item, task)
+    const target = keyed ? revisions.get(keyed) : undefined
+    const prior = target?.previous_id ? revisions.get(target.previous_id) : undefined
+    const ids = [...new Set(linked.map((event) => event.revision_id))]
+    const role =
+      item.kind === "revision.activate"
+        ? item.status === "rejected" ||
+          (!!target &&
+            !!prior &&
+            target.previous_id === prior.id &&
+            (!linked[0] || linked[0].revision_id === prior.id) &&
+            (!linked[1] || linked[1].revision_id === target.id))
+        : !linked.length ||
+          (ids.length === 1 &&
+            (!["task.workflow.sync", "task.finish", "task.migrate"].includes(item.kind) || ids[0] === keyed))
+    const staged =
+      item.kind !== "revision.activate" || !complete || item.status === "rejected"
+        ? true
+        : item.status === "accepted"
+          ? prior?.status === "archived" &&
+            target?.status === "active" &&
+            task.current_revision_id === target.id
+          : prior?.status === "archived" &&
+            !!target &&
+            (target.status === "archived"
+              ? task.current_revision_id !== target.id
+              : task.current_revision_id === target.id &&
+                ["active", "completed", "failed"].includes(target.status))
+    const valid = prefix && (item.status !== "applied" || complete) && known && role && staged
+    if (!valid)
+      add("blocked", "command_event_invalid", "command", item.id, [
+        ...linked.map((event) => `${event.seq}:${event.type}:${event.revision_id}`),
+        keyed,
+        target?.previous_id,
+        target?.status,
+        task.current_revision_id,
+      ])
+    if (item.status === "accepted" && valid) {
       if (complete) add("repairable", "command_apply_missing", "command", item.id, [linked.length])
       if (!complete) add("repairable", "command_incomplete", "command", item.id, [linked.length])
     }
-    const known = linked.every((event) => !!event.revision_id && revisions.has(event.revision_id))
-    if (!known && linked.length)
-      add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => event.revision_id))
-    const keyed = keyedRevision(item, task)
-    if (item.kind === "revision.activate" && linked.length) {
-      const old = linked[0]?.revision_id
-      const next = linked[1]?.revision_id ?? keyed
-      if (
-        !old ||
-        !next ||
-        old === next ||
-        revisions.get(next)?.previous_id !== old ||
-        (linked[1] && linked[1].revision_id !== keyed)
-      )
-        add("blocked", "command_event_invalid", "command", item.id, [old, next, keyed])
-    }
-    if (item.kind !== "revision.activate" && linked.length) {
-      const ids = [...new Set(linked.map((event) => event.revision_id))]
-      if (
-        ids.length !== 1 ||
-        ((item.kind === "task.workflow.sync" || item.kind === "task.finish" || item.kind === "task.migrate") &&
-          ids[0] !== keyed)
-      )
-        add("blocked", "command_event_invalid", "command", item.id, [...ids, keyed])
-    }
     if (item.status !== "applied") return
     if (item.kind === "revision.activate" && linked.length >= 2) {
-      const old = linked[0]?.revision_id
       const next = linked[1]?.revision_id
-      if (revisions.get(old!)?.status !== "archived" || item.result_ref !== `revision://${next}`)
-        add("blocked", "command_result_invalid", "command", item.id, [old, next, item.result_ref])
+      if (!valid || item.result_ref !== `revision://${next}`)
+        add("blocked", "command_result_invalid", "command", item.id, [prior?.id, next, item.result_ref])
     }
     if (item.kind === "task.create" && item.result_ref !== `task://${task.id}`)
       add("blocked", "command_result_invalid", "command", item.id, [item.result_ref])

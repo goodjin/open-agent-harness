@@ -190,7 +190,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 **实际交付**
 
-- 保留上述确认时估算，不回写历史口径。实际拆为 2 个源文件：`task-ledger.ts` 只保留公开 facade，审计实现位于 701 行的 `task-ledger-audit.ts`；审计聚焦测试为 19 个。
+- 保留上述确认时估算，不回写历史口径。实际拆为 2 个源文件：`task-ledger.ts` 只保留公开 facade，审计实现位于 711 行的 `task-ledger-audit.ts`；审计聚焦测试为 20 个。
 - 超出估算来自两轮独立门禁要求：raw JSON 损坏隔离、strict contracts、完整 Requirement lineage/branch/orphan 证明、六类 Command identity/family、derived current、双向 terminal、稳定去重与线性索引均需要独立反例和明确边界。该增量没有扩展到自动 repair、正文读取或 M1 Graph。
 
 ### T-04：实现 Command 幂等边界

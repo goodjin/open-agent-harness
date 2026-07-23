@@ -34,6 +34,7 @@
 11. accepted Command 不再跳过 Event role 校验。零 Event、合法不完整 family 与合法完整但尚未 apply 分别记录可修复状态；已有 Event 的 type prefix、数量上限、顺序、Revision ownership 与 activate previous 关系都必须成立。
 12. 缺 Task Requirement 指针但 current Revision 指针存在时，issue 定位到 Task，而不是把 Requirement id 标成 Revision。
 13. 同步 M0 计划、feature output files 与实际交付规模；保留原估算记录，新增 actual 说明。
+14. accepted `revision.activate` 始终从 Command key 取得 target Revision：零 Event 也要证明 target 有同 Task previous；partial `revision.archived` 必须指向 target.previous；完整 apply-gap 还要证明 old 已 archived、target 已 active 且 Task current 指向 target。只约束已落地阶段，不要求零 Event/partial 提前具备未来状态。
 
 ## 验证计划
 
@@ -47,11 +48,12 @@
 - 健康 workflow sync 不误报；create delegation/legacy fallback 与同 kind 跨 Task key 被区分。
 - derived current 仍能发现坏 spec、坏 lineage 与 terminal 漂移。
 - accepted family 覆盖零 Event、合法 prefix、完整未 apply、超长/乱序和 Revision role 冲突。
+- accepted activation 覆盖 v1 target 无 previous、partial archived 角色正确/错误，以及完整 apply-gap 的健康和状态漂移。
 
 ## 验证结果
 
-- audit 聚焦测试 19/19 通过，61 assertions。
+- audit 聚焦测试 20/20 通过，71 assertions。
 - 覆盖坏 JSON、JSON null、strict contract、合法 draft 分支、orphan、坏 lineage、spec 0/1/>1 候选、plan ref、跨 Task Command key、activate result、终态反向缺失、issue 去重和截断后 blocked 优先级。
 - 400 条额外 Event 的审计以 `Map.get` 调用数断言索引路径，未使用耗时阈值。
-- Ledger 与 Task 回归 167/167 通过，768 assertions；数据库回归 8/8 通过，23 assertions。
+- Ledger 与 Task 回归 168/168 通过，778 assertions；数据库回归 8/8 通过，23 assertions。
 - `bun db check`、`bun typecheck` 和 `git diff --check` 通过。

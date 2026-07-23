@@ -2253,6 +2253,113 @@ describe("task ledger audit", () => {
       )
     }))
 
+  test("proves every accepted activation stage from its keyed target Revision", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const zero = await task()
+      const zeroCommand = Database.transaction(
+        (tx) =>
+          TaskLedger.claim(tx, {
+            task_id: zero.task.id,
+            kind: "revision.activate",
+            idempotency_key: `revision.activate:${zero.task.id}:${zero.revision.id}`,
+          }),
+        { behavior: "immediate" },
+      )
+      const zeroIssues = TaskLedger.audit(zero.task.id).issues.filter((item) => item.id === zeroCommand.id)
+      expect(zeroIssues).toContainEqual(
+        expect.objectContaining({ code: "command_event_invalid", severity: "blocked" }),
+      )
+      expect(zeroIssues.map((item) => item.code)).not.toContain("command_incomplete")
+
+      const partial = await task()
+      const draft = await SessionTask.draft({
+        taskID: partial.task.id,
+        title: "Partial activation",
+        body: "Partial activation",
+      })
+      const partialCommand = Database.transaction(
+        (tx) => {
+          const command = TaskLedger.claim(tx, {
+            task_id: partial.task.id,
+            kind: "revision.activate",
+            idempotency_key: `revision.activate:${partial.task.id}:${draft.id}`,
+          })
+          TaskLedger.append(tx, partial.task.id, [
+            {
+              type: "revision.archived",
+              revision_id: partial.revision.id,
+              command_id: command.id,
+            },
+          ])
+          return command
+        },
+        { behavior: "immediate" },
+      )
+      const partialIssues = TaskLedger.audit(partial.task.id).issues.filter((item) => item.id === partialCommand.id)
+      expect(partialIssues).toContainEqual(
+        expect.objectContaining({ code: "command_incomplete", severity: "repairable" }),
+      )
+      expect(partialIssues.map((item) => item.code)).not.toContain("command_event_invalid")
+
+      Database.use((db) =>
+        db
+          .update(TaskEventTable)
+          .set({ revision_id: draft.id })
+          .where(eq(TaskEventTable.command_id, partialCommand.id))
+          .run(),
+      )
+      const wrongIssues = TaskLedger.audit(partial.task.id).issues.filter((item) => item.id === partialCommand.id)
+      expect(wrongIssues).toContainEqual(
+        expect.objectContaining({ code: "command_event_invalid", severity: "blocked" }),
+      )
+      expect(wrongIssues.map((item) => item.code)).not.toContain("command_incomplete")
+
+      const complete = await task()
+      const next = await SessionTask.draft({
+        taskID: complete.task.id,
+        title: "Complete activation",
+        body: "Complete activation",
+      })
+      await SessionTask.activate({ taskID: complete.task.id, revisionID: next.id })
+      const completeCommand = Database.use((db) =>
+        db
+          .select()
+          .from(TaskCommandTable)
+          .where(and(eq(TaskCommandTable.task_id, complete.task.id), eq(TaskCommandTable.kind, "revision.activate")))
+          .get(),
+      )
+      if (!completeCommand) throw new Error("complete activation command missing")
+      Database.use((db) =>
+        db
+          .update(TaskCommandTable)
+          .set({ status: "accepted", result_ref: null, time_applied: null })
+          .where(eq(TaskCommandTable.id, completeCommand.id))
+          .run(),
+      )
+      const completeIssues = TaskLedger.audit(complete.task.id).issues.filter(
+        (item) => item.id === completeCommand.id,
+      )
+      expect(completeIssues).toContainEqual(
+        expect.objectContaining({ code: "command_apply_missing", severity: "repairable" }),
+      )
+      expect(completeIssues.map((item) => item.code)).not.toContain("command_event_invalid")
+
+      Database.use((db) =>
+        db
+          .update(TaskRevisionTable)
+          .set({ status: "draft" })
+          .where(eq(TaskRevisionTable.id, complete.revision.id))
+          .run(),
+      )
+      const driftIssues = TaskLedger.audit(complete.task.id).issues.filter((item) => item.id === completeCommand.id)
+      expect(driftIssues).toContainEqual(
+        expect.objectContaining({ code: "command_event_invalid", severity: "blocked" }),
+      )
+      expect(driftIssues.map((item) => item.code)).not.toContain("command_apply_missing")
+    }))
+
   test("blocks a latest terminal Event that contradicts current Task state", () =>
     setup(async () => {
       // @ts-expect-error test-only flag override
