@@ -469,7 +469,21 @@ export namespace SessionTask {
         ? `task.revise:assignment:${input.proof.id}`
         : input.messageID
           ? `task.revise:message:${input.task.id}:${input.messageID}`
-          : `task.revise:${input.task.id}:${input.previous.id}:${hash(input.body)}`
+          : `task.revise:${input.task.id}:${hash(
+              canonical({
+                previous_id: input.previous.id,
+                title: input.title,
+                body: input.body,
+                reason: input.reason ?? null,
+                workflow: input.workflow,
+                source: {
+                  assignment_id: null,
+                  message_id: null,
+                  content_ref: null,
+                  content_hash: null,
+                },
+              }),
+            )}`
       const command = TaskLedger.claim(tx, {
         task_id: input.task.id,
         kind: "task.revise",
@@ -2409,6 +2423,19 @@ export namespace SessionTask {
 
   function hash(input: string) {
     return new Bun.CryptoHasher("sha256").update(input).digest("hex")
+  }
+
+  function canonical(input: unknown): string {
+    if (Array.isArray(input)) return `[${input.map(canonical).join(",")}]`
+    if (input && typeof input === "object") {
+      const body = input as Record<string, unknown>
+      return `{${Object.keys(body)
+        .filter((key) => body[key] !== undefined)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonical(body[key])}`)
+        .join(",")}}`
+    }
+    return JSON.stringify(input)
   }
 
   function constraint(err: unknown) {

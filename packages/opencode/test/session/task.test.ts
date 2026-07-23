@@ -2121,6 +2121,65 @@ describe("session task", () => {
       expect(TaskLedger.findCommand(`revision.activate:${first.task.id}:${draft.id}`)?.status).toBe("applied")
     }))
 
+  test("uses the complete canonical identity for fallback revision Commands", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Fallback identity",
+        body: "Fallback identity v1",
+        source: { type: "user" },
+      })
+      const base = {
+        taskID: first.task.id,
+        title: "Fallback title A",
+        body: "Shared fallback body",
+        reason: undefined,
+      }
+      const initial = await SessionTask.draft(base)
+      const replay = await SessionTask.draft({
+        reason: undefined,
+        body: base.body,
+        title: base.title,
+        taskID: base.taskID,
+      })
+      const title = await SessionTask.draft({
+        ...base,
+        title: "Fallback title B",
+      })
+      const reason = await SessionTask.draft({
+        ...base,
+        reason: "Reason A",
+      })
+      const changed = await SessionTask.draft({
+        ...base,
+        reason: "Reason B",
+      })
+
+      expect(replay.id).toBe(initial.id)
+      expect(new Set([initial.id, title.id, reason.id, changed.id]).size).toBe(4)
+      expect([initial.previous_id, title.previous_id, reason.previous_id, changed.previous_id]).toEqual([
+        first.revision.id,
+        first.revision.id,
+        first.revision.id,
+        first.revision.id,
+      ])
+      expect(TaskLedger.requirements(first.task.id)).toHaveLength(5)
+      expect(TaskLedger.listResources(first.task.id)).toHaveLength(5)
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(15)
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(TaskRevisionTable)
+            .where(eq(TaskRevisionTable.task_id, first.task.id))
+            .all(),
+        ),
+      ).toHaveLength(5)
+    }))
+
   test("uses the confirmed update assignment as the Requirement and plan Resource", () =>
     setup(async () => {
       // @ts-expect-error test-only flag override
