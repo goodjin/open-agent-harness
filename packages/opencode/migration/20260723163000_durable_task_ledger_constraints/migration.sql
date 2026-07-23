@@ -1,3 +1,13 @@
+DROP TRIGGER IF EXISTS `session_task_current_insert`;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS `session_task_current_update`;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS `task_revision_current_delete`;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS `task_revision_current_task_update`;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS `task_revision_id_immutable`;
+--> statement-breakpoint
 ALTER TABLE `task_event` RENAME TO `__old_task_event`;
 --> statement-breakpoint
 ALTER TABLE `task_resource` RENAME TO `__old_task_resource`;
@@ -175,6 +185,28 @@ DROP TABLE `__old_task_revision`;
 DROP TABLE `__old_task_command`;
 --> statement-breakpoint
 DROP TABLE `__old_task_requirement`;
+--> statement-breakpoint
+CREATE TRIGGER `session_task_current_insert`
+BEFORE INSERT ON `session_task`
+WHEN NEW.`current_revision_id` IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM `task_revision`
+    WHERE `id` = NEW.`current_revision_id` AND `task_id` = NEW.`id`
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'session_task current revision mismatch');
+END;
+--> statement-breakpoint
+CREATE TRIGGER `session_task_current_update`
+BEFORE UPDATE OF `current_revision_id` ON `session_task`
+WHEN NEW.`current_revision_id` IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM `task_revision`
+    WHERE `id` = NEW.`current_revision_id` AND `task_id` = NEW.`id`
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'session_task current revision mismatch');
+END;
 --> statement-breakpoint
 CREATE TRIGGER `task_revision_current_delete`
 BEFORE DELETE ON `task_revision`

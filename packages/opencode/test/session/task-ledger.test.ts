@@ -118,7 +118,9 @@ describe("task ledger schema", () => {
       ) VALUES ('task_old', 'session_old', 'Old task', 'running', NULL, 'user', '{}', 1, 1);
       INSERT INTO task_revision (
         id, task_id, version, previous_id, status, title, body, body_hash, workflow, time_created
-      ) VALUES ('revision_old', 'task_old', 1, NULL, 'active', 'Old', '# Old', '${"a".repeat(64)}', '{}', 1);
+      ) VALUES
+        ('revision_prev', 'task_old', 1, NULL, 'archived', 'Previous', '# Previous', '${"b".repeat(64)}', '{}', 1),
+        ('revision_old', 'task_old', 2, 'revision_prev', 'active', 'Old', '# Old', '${"a".repeat(64)}', '{}', 2);
       UPDATE session_task SET current_revision_id = 'revision_old' WHERE id = 'task_old';
       INSERT INTO task_revision_stop (
         revision_id, child_session_id, run_id, action_id, state, reason, time_created
@@ -153,8 +155,52 @@ describe("task ledger schema", () => {
         'task_old', 1, 'event_old', 'task.created', 'revision_old', 'command_old', '{}', '["resource_old"]', 2
       );
     `)
+    migrate(db, journal(20260723170000))
+    sqlite.exec(
+      "DELETE FROM __drizzle_migrations WHERE name = '20260723163000_durable_task_ledger_constraints'",
+    )
+    expect(
+      sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '__old_%'").all(),
+    ).toEqual([])
+    migrate(db, journal(20260723170000))
+    expect(
+      sqlite
+        .query(
+          "SELECT count(*) AS count FROM __drizzle_migrations WHERE name = '20260723163000_durable_task_ledger_constraints'",
+        )
+        .get(),
+    ).toEqual({ count: 1 })
     migrate(db, journal())
 
+    expect(
+      sqlite
+        .query<{ name: string }, []>(
+          `SELECT name FROM sqlite_master
+           WHERE type = 'trigger'
+             AND name IN (
+               'session_task_current_insert',
+               'session_task_current_update',
+               'task_revision_current_delete',
+               'task_revision_current_task_update',
+               'task_revision_id_immutable'
+             )
+           ORDER BY name`,
+        )
+        .all()
+        .map((row) => row.name),
+    ).toEqual([
+      "session_task_current_insert",
+      "session_task_current_update",
+      "task_revision_current_delete",
+      "task_revision_current_task_update",
+      "task_revision_id_immutable",
+    ])
+    expect(
+      sqlite
+        .query<{ name: string }, []>("SELECT name FROM __drizzle_migrations ORDER BY created_at")
+        .all()
+        .map((row) => row.name),
+    ).toContain("20260723163000_durable_task_ledger_constraints")
     expect(
       sqlite
         .query("SELECT id, current_revision_id, last_event_seq, schema_version FROM session_task WHERE id = 'task_old'")
@@ -175,18 +221,96 @@ describe("task ledger schema", () => {
       requirement_id: "requirement_old",
       schema_version: 1,
     })
+    expect(
+      sqlite.query("SELECT id, previous_id, status FROM task_revision WHERE task_id = 'task_old' ORDER BY version").all(),
+    ).toEqual([
+      { id: "revision_prev", previous_id: null, status: "archived" },
+      { id: "revision_old", previous_id: "revision_prev", status: "active" },
+    ])
     expect(sqlite.query("SELECT count(*) AS count FROM task_revision_stop").get()).toEqual({ count: 1 })
     expect(sqlite.query("SELECT id FROM task_requirement").all()).toEqual([{ id: "requirement_old" }])
     expect(sqlite.query("SELECT id FROM task_resource").all()).toEqual([{ id: "resource_old" }])
     expect(sqlite.query("SELECT id FROM task_command").all()).toEqual([{ id: "command_old" }])
     expect(sqlite.query("SELECT id FROM task_event").all()).toEqual([{ id: "event_old" }])
     expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
+    expect(() =>
+      sqlite.exec("UPDATE session_task SET current_revision_id = 'revision_missing' WHERE id = 'task_old'"),
+    ).toThrow()
+    expect(() => sqlite.exec("DELETE FROM task_revision WHERE id = 'revision_old'")).toThrow()
     sqlite.exec("DELETE FROM session_task WHERE id = 'task_old'")
     expect(
       ["task_requirement", "task_revision", "task_revision_stop", "task_resource", "task_command", "task_event"].map(
         (table) => sqlite.query<{ count: number }, []>(`SELECT count(*) AS count FROM ${table}`).get()?.count,
       ),
     ).toEqual([0, 0, 0, 0, 0, 0])
+    sqlite.close(false)
+  })
+
+  test("rolls back a failed constraint rebuild without advancing the journal", () => {
+    const sqlite = new SQLite(":memory:")
+    sqlite.exec("PRAGMA foreign_keys = ON")
+    const db = drizzle({ client: sqlite })
+    migrate(db, journal(20260723160000))
+    sqlite.exec(`
+      INSERT INTO project (id, worktree, time_created, time_updated, sandboxes)
+      VALUES ('project_rollback', '/rollback', 1, 1, '[]');
+      INSERT INTO session (
+        id, project_id, slug, directory, title, version, time_created, time_updated
+      ) VALUES
+        ('session_rollback_a', 'project_rollback', 'a', '/rollback', 'A', '1', 1, 1),
+        ('session_rollback_b', 'project_rollback', 'b', '/rollback', 'B', '1', 1, 1);
+      INSERT INTO session_task (
+        id, session_id, title, status, current_revision_id, source_type, source_ref, time_created, time_updated
+      ) VALUES
+        ('task_rollback_a', 'session_rollback_a', 'A', 'running', NULL, 'user', '{}', 1, 1),
+        ('task_rollback_b', 'session_rollback_b', 'B', 'running', NULL, 'user', '{}', 1, 1);
+      INSERT INTO task_revision (
+        id, task_id, version, previous_id, status, title, body, body_hash, workflow, time_created
+      ) VALUES
+        ('revision_rollback_a', 'task_rollback_a', 1, NULL, 'active', 'A', '# A', '${"a".repeat(64)}', '{}', 1),
+        ('revision_rollback_b', 'task_rollback_b', 1, NULL, 'active', 'B', '# B', '${"b".repeat(64)}', '{}', 1);
+      UPDATE session_task SET current_revision_id = 'revision_rollback_a' WHERE id = 'task_rollback_a';
+      UPDATE session_task SET current_revision_id = 'revision_rollback_b' WHERE id = 'task_rollback_b';
+      INSERT INTO task_revision_stop (
+        revision_id, child_session_id, run_id, action_id, state, reason, time_created
+      ) VALUES ('revision_rollback_a', 'session_child', 'run_rollback', 'action_rollback', 'planned', 'revision', 1);
+    `)
+    migrate(db, journal(20260723163000))
+    sqlite.exec(`
+      INSERT INTO task_resource (
+        id, task_id, revision_id, kind, uri, hash, size, producer_type, producer_id, visibility, lifecycle, time_created
+      ) VALUES (
+        'resource_cross', 'task_rollback_a', 'revision_rollback_b', 'spec', 'memory://cross',
+        '${"c".repeat(64)}', 1, 'revision', 'revision_rollback_b', 'task', 'active', 2
+      );
+    `)
+    const before = sqlite
+      .query<{ name: string }, []>("SELECT name FROM __drizzle_migrations ORDER BY created_at")
+      .all()
+      .map((row) => row.name)
+
+    expect(() => migrate(db, journal())).toThrow()
+    expect(
+      sqlite
+        .query<{ name: string }, []>("SELECT name FROM __drizzle_migrations ORDER BY created_at")
+        .all()
+        .map((row) => row.name),
+    ).toEqual(before)
+    expect(sqlite.query("SELECT id, task_id, revision_id FROM task_resource").all()).toEqual([
+      { id: "resource_cross", task_id: "task_rollback_a", revision_id: "revision_rollback_b" },
+    ])
+    expect(sqlite.query("SELECT revision_id FROM task_revision_stop").all()).toEqual([
+      { revision_id: "revision_rollback_a" },
+    ])
+    expect(
+      sqlite.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '__old_%'").all(),
+    ).toEqual([])
+    expect(
+      sqlite
+        .query("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'task_revision_current_delete'")
+        .all(),
+    ).toEqual([{ name: "task_revision_current_delete" }])
+    expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
     sqlite.close(false)
   })
 
