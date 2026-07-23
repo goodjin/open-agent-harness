@@ -106,30 +106,40 @@ describe("applyGlobalEvent", () => {
 
   test("handles global.disposed by triggering refresh", () => {
     let refreshCount = 0
+    let syncCount = 0
     applyGlobalEvent({
       event: { type: "global.disposed" },
       project: [],
       refresh: () => {
         refreshCount += 1
       },
+      resync: () => {
+        syncCount += 1
+      },
       setGlobalProject() {},
     })
 
     expect(refreshCount).toBe(1)
+    expect(syncCount).toBe(1)
   })
 
   test("handles server.connected by triggering refresh", () => {
     let refreshCount = 0
+    let syncCount = 0
     applyGlobalEvent({
       event: { type: "server.connected" },
       project: [],
       refresh: () => {
         refreshCount += 1
       },
+      resync: () => {
+        syncCount += 1
+      },
       setGlobalProject() {},
     })
 
     expect(refreshCount).toBe(1)
+    expect(syncCount).toBe(1)
   })
 })
 

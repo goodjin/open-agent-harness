@@ -43,6 +43,7 @@ const live = new Set(["queued", "rate_limited", "retry", "running", "starting", 
 
 type GlobalStore = {
   ready: boolean
+  epoch: number
   error?: InitError
   path: Path
   project: Project[]
@@ -75,6 +76,7 @@ function createGlobalSync() {
 
   const [globalStore, setGlobalStore] = createStore<GlobalStore>({
     ready: false,
+    epoch: 0,
     path: { state: "", config: "", worktree: "", directory: "", home: "" },
     project: projectCache.value,
     session_todo: {},
@@ -387,12 +389,14 @@ function createGlobalSync() {
         project: globalStore.project,
         refresh: queue.refresh,
         setGlobalProject: setProjects,
+        resync: () => {
+          setGlobalStore("epoch", (value) => value + 1)
+          for (const directory of Object.keys(children.children)) {
+            sessionMeta.delete(directory)
+            queue.push(directory)
+          }
+        },
       })
-      if (event.type === "server.connected" || event.type === "global.disposed") {
-        for (const directory of Object.keys(children.children)) {
-          queue.push(directory)
-        }
-      }
       return
     }
 

@@ -416,6 +416,7 @@ export function SessionSidePanel(props: {
   focusReviewDiff: (path: string) => void
   sessionWidth: number
   ready: boolean
+  epoch: number
 }) {
   const layout = useLayout()
   const sync = useSync()
@@ -451,8 +452,9 @@ export function SessionSidePanel(props: {
     if (!props.ready) return
     const id = params.id
     if (!id) return
-    if (seen() === id) return
-    setSeen(id)
+    const key = `${id}:${props.epoch}`
+    if (seen() === key) return
+    setSeen(key)
     void sdk.client.session
       .descendantsBatch({ body_directory: sdk.directory, ids: [id] })
       .then((res) => {

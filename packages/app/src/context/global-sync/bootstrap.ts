@@ -30,6 +30,7 @@ function slimAgent(agent: Agent): Agent {
 
 type GlobalStore = {
   ready: boolean
+  epoch: number
   path: Path
   project: Project[]
   session_todo: {

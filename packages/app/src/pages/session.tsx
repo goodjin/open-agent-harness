@@ -976,6 +976,21 @@ export default function Page() {
 
   createEffect(
     on(
+      () => globalSync.data.epoch,
+      () => {
+        const id = params.id
+        if (!id) return
+        untrack(() => {
+          void syncCurrentSession(id, { force: true })
+          void sync.session.todo(id, { force: true })
+        })
+      },
+      { defer: true },
+    ),
+  )
+
+  createEffect(
+    on(
       () => visibleUserMessages().at(-1)?.id,
       (lastId, prevLastId) => {
         if (lastId && prevLastId && lastId > prevLastId) {
@@ -2464,6 +2479,7 @@ export default function Page() {
             focusReviewDiff={focusReviewDiff}
             sessionWidth={pane()}
             ready={store.sideReady}
+            epoch={globalSync.data.epoch}
           />
         </Show>
       </div>

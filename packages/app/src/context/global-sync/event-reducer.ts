@@ -37,9 +37,11 @@ export function applyGlobalEvent(input: {
   project: Project[]
   setGlobalProject: (next: Project[] | ((draft: Project[]) => void)) => void
   refresh: () => void
+  resync?: () => void
 }) {
   if (input.event.type === "global.disposed" || input.event.type === "server.connected") {
     input.refresh()
+    input.resync?.()
     return
   }
 
