@@ -37,6 +37,7 @@ export namespace TaskLedgerAudit {
     "command_contract_invalid",
     "command_key_invalid",
     "command_incomplete",
+    "command_apply_missing",
     "command_state_invalid",
     "command_event_invalid",
     "command_result_invalid",
@@ -69,6 +70,7 @@ export namespace TaskLedgerAudit {
           last_event_seq: z.number().int().nonnegative(),
           issue_count: z.number().int().nonnegative(),
           truncated: z.boolean(),
+          command_identity_scope: z.literal("persisted_facts_only"),
         })
         .strict(),
     })
@@ -245,22 +247,6 @@ export namespace TaskLedgerAudit {
     if (!values) map.set(key, [value])
   }
 
-  function canonical(input: unknown): string {
-    if (Array.isArray(input)) return `[${input.map(canonical).join(",")}]`
-    if (input && typeof input === "object") {
-      const body = input as Record<string, unknown>
-      return `{${Object.keys(body)
-        .sort()
-        .map((key) => `${JSON.stringify(key)}:${canonical(body[key])}`)
-        .join(",")}}`
-    }
-    return JSON.stringify(input)
-  }
-
-  function hash(input: unknown) {
-    return new Bun.CryptoHasher("sha256").update(canonical(input)).digest("hex")
-  }
-
   function auditLineage(start: Requirement, taskID: string, map: Map<string, Requirement>, memo: Map<string, boolean>, used: Set<string>) {
     if (memo.has(start.id)) return memo.get(start.id)!
     const path: Requirement[] = []
@@ -294,55 +280,91 @@ export namespace TaskLedgerAudit {
     return valid
   }
 
-  function commandKey(item: Command, linked: Event[], task: Task, revisions: Map<string, Revision>, requirements: Map<string, Requirement>) {
-    const ids = [...new Set(linked.flatMap((event) => (event.revision_id ? [event.revision_id] : [])))]
-    const activated = linked.find((event) => event.type === "revision.activated")?.revision_id
-    const target = item.kind === "revision.activate" ? activated : ids.at(-1)
+  function keyedRevision(item: Command, task: Task) {
+    const prefix =
+      item.kind === "revision.activate"
+        ? `revision.activate:${task.id}:`
+        : item.kind === "task.workflow.sync"
+          ? `task.workflow.sync:${task.id}:`
+          : item.kind === "task.finish"
+            ? `task.finish:${task.id}:`
+            : item.kind === "task.migrate"
+              ? `task.migrate:${task.id}:`
+              : undefined
+    if (!prefix || !item.idempotency_key.startsWith(prefix)) return
+    const rest = item.idempotency_key.slice(prefix.length)
+    if (item.kind === "task.workflow.sync" || item.kind === "task.finish") {
+      const match = /^(revision_[^:]+):[0-9a-f]{64}$/.exec(rest)
+      return match?.[1]
+    }
+    return /^revision_[^:]+$/.test(rest) ? rest : undefined
+  }
+
+  function digest(key: string, prefix: string) {
+    return key.startsWith(prefix) && /^[0-9a-f]{64}$/.test(key.slice(prefix.length))
+  }
+
+  function commandKey(
+    item: Command,
+    linked: Event[],
+    task: Task,
+    revisions: Map<string, Revision>,
+    requirements: Map<string, Requirement>,
+    assignments: Set<string>,
+    messages: Set<string>,
+  ) {
+    const target = linked.find((event) => event.revision_id)?.revision_id
     const revision = target ? revisions.get(target) : undefined
     const requirement = revision?.requirement_id ? requirements.get(revision.requirement_id) : undefined
     if (item.kind === "task.create") {
-      const assignment = requirement?.source_refs.find((ref) => ref.startsWith("assignment:"))?.slice("assignment:".length)
-      if (assignment && item.idempotency_key === `task.create:assignment:${assignment}`) return true
+      if (item.idempotency_key.startsWith("task.create:assignment:")) {
+        const assignment = item.idempotency_key.slice("task.create:assignment:".length)
+        return requirement
+          ? requirement.source_refs.includes(`assignment:${assignment}`)
+          : assignments.has(assignment)
+      }
       const source = task.source_ref
+      if (task.source_type === "handoff" && typeof source.handoffID !== "string") return false
+      if (task.source_type === "delegation" && typeof source.sessionID !== "string") return false
+      if (task.source_type === "delegation" && source.runID !== undefined && typeof source.runID !== "string")
+        return false
+      if (task.source_type === "delegation" && source.actionID !== undefined && typeof source.actionID !== "string")
+        return false
+      if (task.source_type === "legacy" && source.runID !== undefined && typeof source.runID !== "string")
+        return false
+      if (task.source_type === "user" && source.messageID !== undefined && typeof source.messageID !== "string")
+        return false
       const expected =
         task.source_type === "handoff"
           ? `task.create:handoff:${source.handoffID}`
-          : task.source_type === "delegation"
+          : task.source_type === "delegation" &&
+              typeof source.sessionID === "string" &&
+              typeof source.runID === "string" &&
+              typeof source.actionID === "string"
             ? `task.create:delegation:${source.sessionID}:${source.runID}:${source.actionID}`
-            : task.source_type === "legacy"
+            : task.source_type === "legacy" && typeof source.runID === "string"
               ? `task.create:legacy:${task.session_id}:${source.runID}`
-              : source.messageID
+              : task.source_type === "user" && typeof source.messageID === "string"
                 ? `task.create:user:${task.session_id}:${source.messageID}`
-                : `task.create:user:${task.session_id}`
+                : `task.create:${task.source_type}:${task.session_id}`
       return item.idempotency_key === expected
     }
-    if ((item.kind === "task.workflow.sync" || item.kind === "task.finish") && !revision) {
-      const match = new RegExp(
-        `^${item.kind.replaceAll(".", "\\.")}:${task.id}:(revision_[^:]+):[0-9a-f]{64}$`,
-      ).exec(item.idempotency_key)
-      return !!match?.[1] && revisions.has(match[1])
-    }
-    if (!revision) return false
     if (item.kind === "task.revise") {
-      const assignment = requirement?.source_refs.find((ref) => ref.startsWith("assignment:"))?.slice("assignment:".length)
-      if (assignment && item.idempotency_key === `task.revise:assignment:${assignment}`) return true
-      if (revision.source_message_id)
-        return item.idempotency_key === `task.revise:message:${task.id}:${revision.source_message_id}`
-      return new RegExp(`^task\\.revise:${task.id}:[0-9a-f]{64}$`).test(item.idempotency_key)
+      if (item.idempotency_key.startsWith("task.revise:assignment:")) {
+        const assignment = item.idempotency_key.slice("task.revise:assignment:".length)
+        return requirement
+          ? requirement.source_refs.includes(`assignment:${assignment}`)
+          : assignments.has(assignment)
+      }
+      const message = `task.revise:message:${task.id}:`
+      if (item.idempotency_key.startsWith(message)) {
+        const id = item.idempotency_key.slice(message.length)
+        return revision ? revision.source_message_id === id : messages.has(id)
+      }
+      return digest(item.idempotency_key, `task.revise:${task.id}:`)
     }
-    if (item.kind === "revision.activate")
-      return item.idempotency_key === `revision.activate:${task.id}:${revision.id}`
-    if (item.kind === "task.workflow.sync") {
-      const event = linked[0]
-      return (
-        !!event &&
-        item.idempotency_key ===
-          `task.workflow.sync:${task.id}:${revision.id}:${hash({ run_id: event.data.run_id, actions: event.data.actions })}`
-      )
-    }
-    if (item.kind === "task.finish")
-      return new RegExp(`^task\\.finish:${task.id}:${revision.id}:[0-9a-f]{64}$`).test(item.idempotency_key)
-    return item.idempotency_key === `task.migrate:${task.id}:${revision.id}`
+    const keyed = keyedRevision(item, task)
+    return !!keyed && revisions.has(keyed)
   }
 
   const families = {
@@ -363,30 +385,42 @@ export namespace TaskLedgerAudit {
     const complete = prefix && types.length === expected.length
     if (!prefix || (item.status === "applied" && !complete))
       add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => `${event.seq}:${event.type}`))
-    if (item.status === "accepted" && prefix)
-      add("repairable", "command_incomplete", "command", item.id, [linked.length])
-    const same = linked.every((event) => !event.revision_id || revisions.has(event.revision_id))
-    if (!same) add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => event.revision_id))
-    if (item.status !== "applied") return
-    if (item.kind === "revision.activate" && linked.length >= 2) {
+    if (item.status === "accepted" && prefix) {
+      if (complete) add("repairable", "command_apply_missing", "command", item.id, [linked.length])
+      if (!complete) add("repairable", "command_incomplete", "command", item.id, [linked.length])
+    }
+    const known = linked.every((event) => !!event.revision_id && revisions.has(event.revision_id))
+    if (!known && linked.length)
+      add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => event.revision_id))
+    const keyed = keyedRevision(item, task)
+    if (item.kind === "revision.activate" && linked.length) {
       const old = linked[0]?.revision_id
-      const next = linked[1]?.revision_id
+      const next = linked[1]?.revision_id ?? keyed
       if (
         !old ||
         !next ||
         old === next ||
-        revisions.get(old)?.status !== "archived" ||
         revisions.get(next)?.previous_id !== old ||
-        item.result_ref !== `revision://${next}`
+        (linked[1] && linked[1].revision_id !== keyed)
       )
+        add("blocked", "command_event_invalid", "command", item.id, [old, next, keyed])
+    }
+    if (item.kind !== "revision.activate" && linked.length) {
+      const ids = [...new Set(linked.map((event) => event.revision_id))]
+      if (
+        ids.length !== 1 ||
+        ((item.kind === "task.workflow.sync" || item.kind === "task.finish" || item.kind === "task.migrate") &&
+          ids[0] !== keyed)
+      )
+        add("blocked", "command_event_invalid", "command", item.id, [...ids, keyed])
+    }
+    if (item.status !== "applied") return
+    if (item.kind === "revision.activate" && linked.length >= 2) {
+      const old = linked[0]?.revision_id
+      const next = linked[1]?.revision_id
+      if (revisions.get(old!)?.status !== "archived" || item.result_ref !== `revision://${next}`)
         add("blocked", "command_result_invalid", "command", item.id, [old, next, item.result_ref])
     }
-    if (item.kind !== "revision.activate" && linked.length && item.kind !== "task.finish") {
-      const ids = [...new Set(linked.map((event) => event.revision_id))]
-      if (ids.length !== 1) add("blocked", "command_event_invalid", "command", item.id, ids)
-    }
-    if (item.kind === "task.finish" && new Set(linked.map((event) => event.revision_id)).size !== 1)
-      add("blocked", "command_event_invalid", "command", item.id, linked.map((event) => event.revision_id))
     if (item.kind === "task.create" && item.result_ref !== `task://${task.id}`)
       add("blocked", "command_result_invalid", "command", item.id, [item.result_ref])
     if (item.kind === "task.revise") {
@@ -466,16 +500,28 @@ export namespace TaskLedgerAudit {
       const eventsByCommand = new Map<string, Event[]>()
       const identities = new Map<string, Resource[]>()
       const requirementsByIdentity = new Map<string, Requirement[]>()
+      const assignments = new Set<string>()
+      const messages = new Set<string>()
       revisions.forEach((item) => item.requirement_id && push(revisionsByRequirement, item.requirement_id, item))
-      requirements.forEach((item) => push(requirementsByIdentity, `${item.body_hash}\0${item.body_ref}`, item))
+      revisions.forEach((item) => item.source_message_id && messages.add(item.source_message_id))
+      requirements.forEach((item) => {
+        push(requirementsByIdentity, `${item.body_hash}\0${item.body_ref}`, item)
+        item.source_refs.forEach((ref) => {
+          if (ref.startsWith("assignment:")) assignments.add(ref.slice("assignment:".length))
+        })
+      })
       resources.forEach((item) => {
         if (item.revision_id) push(resourcesByRevision, item.revision_id, item)
         push(identities, `${item.kind}\0${item.hash}\0${item.uri}`, item)
       })
       events.forEach((item) => item.command_id && push(eventsByCommand, item.command_id, item))
 
-      const current = task?.current_revision_id ? revision.get(task.current_revision_id) : undefined
       const active = revisions.flatMap((item) => (item.status === "active" ? [item] : []))
+      const current = task?.current_revision_id
+        ? revision.get(task.current_revision_id)
+        : active.length === 1
+          ? active[0]
+          : undefined
       if (task && !task.current_revision_id)
         add(active.length === 1 ? "repairable" : "blocked", "revision_pointer_missing", "task", task.id, active.map((item) => item.id))
       if (task?.current_revision_id && !current)
@@ -521,7 +567,13 @@ export namespace TaskLedgerAudit {
           ]
           const known = taskreq ?? revreq
           const safe = known ? candidates.some((item) => item.id === known.id) : candidates.length === 1
-          add(safe ? "repairable" : "blocked", "requirement_pointer_missing", known ? "revision" : "task", known?.id ?? task.id, candidates.map((item) => item.id))
+          add(
+            safe ? "repairable" : "blocked",
+            "requirement_pointer_missing",
+            !taskreq ? "task" : "revision",
+            !taskreq ? task.id : current.id,
+            candidates.map((item) => item.id),
+          )
         }
         const currentResources = resourcesByRevision.get(current.id) ?? []
         const specs = currentResources.flatMap((item) =>
@@ -590,8 +642,11 @@ export namespace TaskLedgerAudit {
       if (task)
         commands.forEach((item) => {
           const linked = eventsByCommand.get(item.id) ?? []
-          if (!commandKey(item, linked, task, revision, requirement))
-            add("blocked", "command_key_invalid", "command", item.id, [item.idempotency_key])
+          if (!commandKey(item, linked, task, revision, requirement, assignments, messages))
+            add("blocked", "command_key_invalid", "command", item.id, [
+              "scope:persisted_facts_only",
+              item.idempotency_key,
+            ])
           if (
             (item.status === "accepted" && (item.result_ref !== null || item.time_applied !== null)) ||
             (item.status === "applied" && item.time_applied === null) ||
@@ -638,6 +693,7 @@ export namespace TaskLedgerAudit {
           last_event_seq: task?.last_event_seq ?? 0,
           issue_count: all.length,
           truncated: all.length > 50,
+          command_identity_scope: "persisted_facts_only",
         },
       })
     })

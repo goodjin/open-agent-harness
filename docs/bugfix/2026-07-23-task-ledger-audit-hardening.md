@@ -26,6 +26,15 @@
 6. Collector 规范化 severity/code/entity/id/refs 后稳定去重，issues 上限 50，但最终 status 基于全部唯一 issues。
 7. 预建反向索引与 memoized lineage，使 Event、Command、Requirement 校验保持线性 CPU。
 
+### 第二轮独立门禁修复
+
+8. Command identity 按可证明程度分层：`task.create`、`revision.activate`、`task.migrate` 从持久事实精确重建；`task.revise` fallback、`task.workflow.sync`、`task.finish` 的正文摘要无法从紧凑 Event 完整重建，只校验固定 kind、精确 Task/Revision ownership 前缀与 64 位十六进制 suffix，不用 Event 摘要冒充原始正文。
+9. `task.create` 镜像真实写路径的 assignment、handoff、delegation 完整/降级、legacy 完整/降级、user message/降级分支，并用同 kind 跨 Task 反例验证 ownership。
+10. `current_revision_id` 缺失且只有一个 active Revision 时，将它作为 derived current 继续 Requirement、spec、plan 和 terminal 审计；派生指针本身是 repairable，但派生目标的冲突仍使最终结果 blocked。
+11. accepted Command 不再跳过 Event role 校验。零 Event、合法不完整 family 与合法完整但尚未 apply 分别记录可修复状态；已有 Event 的 type prefix、数量上限、顺序、Revision ownership 与 activate previous 关系都必须成立。
+12. 缺 Task Requirement 指针但 current Revision 指针存在时，issue 定位到 Task，而不是把 Requirement id 标成 Revision。
+13. 同步 M0 计划、feature output files 与实际交付规模；保留原估算记录，新增 actual 说明。
+
 ## 验证计划
 
 - 坏 JSON、JSON null 和 strict contract 漂移不抛异常。
@@ -35,11 +44,14 @@
 - terminal 覆盖反向缺失、错误 Revision 和 blocked 状态。
 - 重复 issue 去重；前 50 条 repairable、后续 blocked 仍返回 blocked 且 truncated。
 - 大历史通过索引/调用计数证明无重复全表 filter。
+- 健康 workflow sync 不误报；create delegation/legacy fallback 与同 kind 跨 Task key 被区分。
+- derived current 仍能发现坏 spec、坏 lineage 与 terminal 漂移。
+- accepted family 覆盖零 Event、合法 prefix、完整未 apply、超长/乱序和 Revision role 冲突。
 
 ## 验证结果
 
-- audit 聚焦测试 15/15 通过，47 assertions。
+- audit 聚焦测试 19/19 通过，61 assertions。
 - 覆盖坏 JSON、JSON null、strict contract、合法 draft 分支、orphan、坏 lineage、spec 0/1/>1 候选、plan ref、跨 Task Command key、activate result、终态反向缺失、issue 去重和截断后 blocked 优先级。
 - 400 条额外 Event 的审计以 `Map.get` 调用数断言索引路径，未使用耗时阈值。
-- Ledger 与 Task 回归 163/163 通过，754 assertions；数据库回归 8/8 通过，23 assertions。
+- Ledger 与 Task 回归 167/167 通过，768 assertions；数据库回归 8/8 通过，23 assertions。
 - `bun db check`、`bun typecheck` 和 `git diff --check` 通过。

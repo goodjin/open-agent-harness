@@ -1769,6 +1769,7 @@ describe("task ledger audit", () => {
         task_id: native.task.id,
         status: "ok",
         issues: [],
+        evidence: { command_identity_scope: "persisted_facts_only" },
       })
       expect(facts(native.task.id)).toBe(before)
       await SessionTask.route({
@@ -1793,6 +1794,88 @@ describe("task ledger audit", () => {
         status: "ok",
         issues: [],
       })
+    }))
+
+  test("accepts healthy compact workflow sync keys and blocks the same kind owned by another Task", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const saved = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_audit_sync",
+        assignment: { op: "create", target: "self", title: "Audit sync", body: "Audit sync" },
+        actions: [{ id: "sync", title: "Sync" }],
+      })
+      if (!saved.task) throw new Error("task missing")
+      const now = Date.now()
+      await SessionTask.sync({
+        sessionID: session.id,
+        runID: "run_audit_sync",
+        actions: [
+          {
+            id: "sync",
+            title: "Sync",
+            operation: "test",
+            executor: { type: "tool", target: "read", capabilities: [] },
+            input: {},
+            depends_on: [],
+            status: "completed",
+            summary: "Synced",
+            output: "Synced",
+            tool_call_ids: [],
+            duration_ms: 1,
+            time: { started: now, completed: now + 1 },
+          },
+        ],
+      })
+      const command = Database.use((db) =>
+        db
+          .select()
+          .from(TaskCommandTable)
+          .where(and(eq(TaskCommandTable.task_id, saved.task!.id), eq(TaskCommandTable.kind, "task.workflow.sync")))
+          .get(),
+      )
+      if (!command) throw new Error("sync command missing")
+      expect(TaskLedger.audit(saved.task.id).status).toBe("ok")
+
+      const other = await task()
+      Database.use((db) =>
+        db
+          .update(TaskCommandTable)
+          .set({ idempotency_key: command.idempotency_key.replace(saved.task!.id, other.task.id) })
+          .where(eq(TaskCommandTable.id, command.id))
+          .run(),
+      )
+      expect(TaskLedger.audit(saved.task.id).issues).toContainEqual(
+        expect.objectContaining({ code: "command_key_invalid", severity: "blocked" }),
+      )
+    }))
+
+  test("accepts delegation and legacy task.create fallback identities", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const parent = await Session.create({})
+      const child = await Session.create({})
+      const delegated = await SessionTask.create({
+        sessionID: child.id,
+        title: "Delegation fallback",
+        body: "Delegation fallback",
+        source: { type: "delegation", sessionID: parent.id },
+      })
+      const legacySession = await Session.create({})
+      const legacy = await SessionTask.create({
+        sessionID: legacySession.id,
+        title: "Legacy fallback",
+        body: "Legacy fallback",
+        source: { type: "legacy" },
+      })
+
+      expect(TaskLedger.audit(delegated.task.id).status).toBe("ok")
+      expect(TaskLedger.audit(legacy.task.id).status).toBe("ok")
+      expect(TaskLedger.findCommand(`task.create:delegation:${child.id}`)?.status).toBe("applied")
+      expect(TaskLedger.findCommand(`task.create:legacy:${legacySession.id}`)?.status).toBe("applied")
     }))
 
   test("classifies safely derivable pointers and an incomplete accepted Command as repairable", () =>
@@ -1824,7 +1907,61 @@ describe("task ledger audit", () => {
       expect(result.issues.map((item) => item.code)).toEqual(
         expect.arrayContaining(["requirement_pointer_missing", "revision_spec_missing", "command_incomplete"]),
       )
+      expect(result.issues).toContainEqual(
+        expect.objectContaining({
+          code: "requirement_pointer_missing",
+          entity: "task",
+          id: saved.task.id,
+        }),
+      )
       expect(result.issues.every((item) => item.severity === "repairable")).toBe(true)
+    }))
+
+  test("continues full current validation from one derived active Revision", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const spec = await task()
+      Database.use((db) => {
+        db.update(SessionTaskTable)
+          .set({ current_revision_id: null })
+          .where(eq(SessionTaskTable.id, spec.task.id))
+          .run()
+        db.update(TaskRevisionTable)
+          .set({ spec_ref: `${spec.revision.spec_ref}/wrong` })
+          .where(eq(TaskRevisionTable.id, spec.revision.id))
+          .run()
+      })
+      expect(TaskLedger.audit(spec.task.id).issues.map((item) => item.code)).toEqual(
+        expect.arrayContaining(["revision_pointer_missing", "revision_spec_invalid"]),
+      )
+
+      const chain = await task()
+      Database.use((db) => {
+        db.update(SessionTaskTable)
+          .set({ current_revision_id: null })
+          .where(eq(SessionTaskTable.id, chain.task.id))
+          .run()
+        db.update(TaskRequirementTable)
+          .set({ supersedes_id: chain.task.requirement_id })
+          .where(eq(TaskRequirementTable.id, chain.task.requirement_id!))
+          .run()
+      })
+      expect(TaskLedger.audit(chain.task.id).issues.map((item) => item.code)).toEqual(
+        expect.arrayContaining(["revision_pointer_missing", "requirement_chain_invalid"]),
+      )
+
+      const terminal = await task()
+      Database.use((db) =>
+        db
+          .update(SessionTaskTable)
+          .set({ current_revision_id: null, status: "completed" })
+          .where(eq(SessionTaskTable.id, terminal.task.id))
+          .run(),
+      )
+      expect(TaskLedger.audit(terminal.task.id).issues.map((item) => item.code)).toEqual(
+        expect.arrayContaining(["revision_pointer_missing", "terminal_state_invalid"]),
+      )
     }))
 
   test("blocks broken Requirement chains and persisted body hash or ref drift", () =>
@@ -2013,6 +2150,106 @@ describe("task ledger audit", () => {
           "command_event_invalid",
           "command_result_invalid",
         ]),
+      )
+    }))
+
+  test("distinguishes accepted family prefixes, complete apply gaps, and Revision role conflicts", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const complete = await task()
+      const completeCommand = Database.use((db) =>
+        db.select().from(TaskCommandTable).where(eq(TaskCommandTable.task_id, complete.task.id)).get(),
+      )
+      if (!completeCommand) throw new Error("complete command missing")
+      Database.use((db) =>
+        db
+          .update(TaskCommandTable)
+          .set({ status: "accepted", result_ref: null, time_applied: null })
+          .where(eq(TaskCommandTable.id, completeCommand.id))
+          .run(),
+      )
+      expect(TaskLedger.audit(complete.task.id).issues).toContainEqual(
+        expect.objectContaining({ code: "command_apply_missing", severity: "repairable" }),
+      )
+
+      const prefix = await task()
+      const prefixCommand = Database.use((db) =>
+        db.select().from(TaskCommandTable).where(eq(TaskCommandTable.task_id, prefix.task.id)).get(),
+      )
+      if (!prefixCommand) throw new Error("prefix command missing")
+      Database.use((db) => {
+        db.update(TaskCommandTable)
+          .set({ status: "accepted", result_ref: null, time_applied: null })
+          .where(eq(TaskCommandTable.id, prefixCommand.id))
+          .run()
+        db.delete(TaskEventTable)
+          .where(and(eq(TaskEventTable.task_id, prefix.task.id), sql`${TaskEventTable.seq} > 1`))
+          .run()
+        db.update(SessionTaskTable)
+          .set({ last_event_seq: 1 })
+          .where(eq(SessionTaskTable.id, prefix.task.id))
+          .run()
+      })
+      expect(TaskLedger.audit(prefix.task.id).issues).toContainEqual(
+        expect.objectContaining({ code: "command_incomplete", severity: "repairable" }),
+      )
+
+      const conflict = await task()
+      const other = await task()
+      const conflictCommand = Database.use((db) =>
+        db.select().from(TaskCommandTable).where(eq(TaskCommandTable.task_id, conflict.task.id)).get(),
+      )
+      if (!conflictCommand) throw new Error("conflict command missing")
+      Database.use((db) => db.run(sql`PRAGMA foreign_keys = OFF`))
+      Database.use((db) => {
+        db.update(TaskCommandTable)
+          .set({ status: "accepted", result_ref: null, time_applied: null })
+          .where(eq(TaskCommandTable.id, conflictCommand.id))
+          .run()
+        db.update(TaskEventTable)
+          .set({ revision_id: other.revision.id })
+          .where(and(eq(TaskEventTable.task_id, conflict.task.id), eq(TaskEventTable.seq, 2)))
+          .run()
+      })
+      Database.use((db) => db.run(sql`PRAGMA foreign_keys = ON`))
+      expect(TaskLedger.audit(conflict.task.id).issues).toContainEqual(
+        expect.objectContaining({ code: "command_event_invalid", severity: "blocked" }),
+      )
+
+      const activation = await task()
+      const draft = await SessionTask.draft({
+        taskID: activation.task.id,
+        title: "Accepted activation",
+        body: "Accepted activation",
+      })
+      await SessionTask.activate({ taskID: activation.task.id, revisionID: draft.id })
+      const activationCommand = Database.use((db) =>
+        db
+          .select()
+          .from(TaskCommandTable)
+          .where(and(eq(TaskCommandTable.task_id, activation.task.id), eq(TaskCommandTable.kind, "revision.activate")))
+          .get(),
+      )
+      if (!activationCommand) throw new Error("activation command missing")
+      Database.use((db) => {
+        db.update(TaskCommandTable)
+          .set({ status: "accepted", result_ref: null, time_applied: null })
+          .where(eq(TaskCommandTable.id, activationCommand.id))
+          .run()
+        db.update(TaskEventTable)
+          .set({ revision_id: draft.id })
+          .where(
+            and(
+              eq(TaskEventTable.task_id, activation.task.id),
+              eq(TaskEventTable.command_id, activationCommand.id),
+              eq(TaskEventTable.type, "revision.archived"),
+            ),
+          )
+          .run()
+      })
+      expect(TaskLedger.audit(activation.task.id).issues).toContainEqual(
+        expect.objectContaining({ code: "command_event_invalid", severity: "blocked" }),
       )
     }))
 
