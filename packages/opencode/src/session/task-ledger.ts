@@ -806,16 +806,6 @@ export namespace TaskLedger {
     if (task.current_revision_id !== revision.id || revision.task_id !== task.id)
       throw new Conflict("task_migration_revision_invalid")
     const spec = `task://${task.id}/revision/${revision.id}`
-    const requirements = tx
-      .select()
-      .from(TaskRequirementTable)
-      .where(eq(TaskRequirementTable.task_id, task.id))
-      .all()
-    const resources = tx.select().from(TaskResourceTable).where(eq(TaskResourceTable.task_id, task.id)).all()
-    const events = tx.select().from(TaskEventTable).where(eq(TaskEventTable.task_id, task.id)).all()
-    const seqs = events.map((item) => item.seq).sort((a, b) => a - b)
-    if (seqs.length !== task.last_event_seq || seqs.some((seq, index) => seq !== index + 1))
-      throw new Conflict("task_migration_event_sequence_invalid")
     const flow =
       revision.workflow && typeof revision.workflow === "object" && !Array.isArray(revision.workflow)
         ? revision.workflow
@@ -830,6 +820,7 @@ export namespace TaskLedger {
             .select()
             .from(AssignmentTable)
             .where(and(eq(AssignmentTable.id, flow.assignment_id), eq(AssignmentTable.session_id, task.session_id)))
+            .limit(2)
             .all()
         : task.source_type === "delegation" &&
             typeof source.sessionID === "string" &&
@@ -847,6 +838,7 @@ export namespace TaskLedger {
                   eq(AssignmentTable.source_action_id, source.actionID),
                 ),
               )
+              .limit(2)
               .all()
           : []
     if (assignments.length > 1) throw new Conflict("task_migration_assignment_ambiguous")
@@ -854,59 +846,108 @@ export namespace TaskLedger {
     const bodyref = assignment?.content_ref ?? spec
     const bodyhash = assignment?.content_hash ?? revision.body_hash
     const size = new TextEncoder().encode(revision.body).byteLength
-    const current = requirements.find(
-      (item) => item.id === task.requirement_id || item.id === revision.requirement_id,
-    )
-    const specs = resources.filter((item) => item.revision_id === revision.id && item.kind === "spec")
+    const key = `task.migrate:${task.id}:${revision.id}`
+    const command = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.idempotency_key, key)).limit(1).get()
+    if (command && (command.task_id !== task.id || command.kind !== "task.migrate"))
+      throw new Conflict("task_migration_command_drift")
+    const events = tx
+      .select()
+      .from(TaskEventTable)
+      .where(
+        and(
+          eq(TaskEventTable.task_id, task.id),
+          eq(TaskEventTable.revision_id, revision.id),
+          eq(TaskEventTable.type, "task.migrated"),
+        ),
+      )
+      .limit(2)
+      .all()
+    if (events.length > 1) throw new Conflict("task_migration_event_ambiguous")
+    if (events[0] && !command) throw new Conflict("task_migration_event_command_missing")
+    const meta = events[0] ? baselineEvent(events[0], task, revision, command!.id) : undefined
+    const prior = task.requirement_id ? requirement(tx, task.id, task.requirement_id) : undefined
+    const pointed = revision.requirement_id ? requirement(tx, task.id, revision.requirement_id) : undefined
+    if ((task.requirement_id && !prior) || (revision.requirement_id && !pointed))
+      throw new Conflict("task_migration_requirement_missing")
+    const highest =
+      tx
+        .select({ value: max(TaskRequirementTable.version) })
+        .from(TaskRequirementTable)
+        .where(eq(TaskRequirementTable.task_id, task.id))
+        .get()?.value ?? 0
+    const picked = candidate(tx, task.id, prior, pointed, highest, bodyref, bodyhash)
+    if (picked.row && meta && picked.row.id !== meta.requirement)
+      throw new Conflict("task_migration_event_requirement_drift")
+    const specs = tx
+      .select()
+      .from(TaskResourceTable)
+      .where(
+        and(
+          eq(TaskResourceTable.task_id, task.id),
+          eq(TaskResourceTable.revision_id, revision.id),
+          eq(TaskResourceTable.kind, "spec"),
+        ),
+      )
+      .limit(2)
+      .all()
+    if (specs.length > 1) throw new Conflict("task_migration_resource_ambiguous")
+    const indexed = specs[0]
     if (
-      specs.length > 1 ||
-      (specs.length === 1 &&
-        (specs[0]!.uri !== spec ||
-          specs[0]!.hash !== revision.body_hash ||
-          specs[0]!.size !== size ||
-          specs[0]!.lifecycle !== "active"))
+      indexed &&
+      (indexed.uri !== spec ||
+        indexed.hash !== revision.body_hash ||
+        indexed.size !== size ||
+        indexed.visibility !== "task" ||
+        indexed.lifecycle !== "active")
     )
       throw new Conflict("task_migration_resource_drift")
+    const created = tx
+      .select({ id: TaskEventTable.id })
+      .from(TaskEventTable)
+      .where(and(eq(TaskEventTable.task_id, task.id), eq(TaskEventTable.type, "task.created")))
+      .limit(1)
+      .get()
     const complete =
-      !!current &&
-      task.requirement_id === current.id &&
-      revision.requirement_id === current.id &&
-      current.body_ref === bodyref &&
-      current.body_hash === bodyhash &&
+      picked.row &&
+      prior?.id === picked.row.id &&
+      pointed?.id === picked.row.id &&
+      task.requirement_id === picked.row.id &&
+      revision.requirement_id === picked.row.id &&
       revision.spec_ref === spec &&
       (!revision.plan_ref || revision.plan_ref === assignment?.content_ref) &&
-      specs.length === 1 &&
-      events.some((item) => item.type === "task.created" || item.type === "task.migrated")
-    if (complete) return { replay: true as const }
-    const command = claim(tx, {
-      task_id: task.id,
-      kind: "task.migrate",
-      idempotency_key: `task.migrate:${task.id}:${revision.id}`,
-    })
-    if (command.status === "applied") throw new Conflict("task_migration_incomplete")
-    if (requirements.length > 1) throw new Conflict("task_migration_requirement_ambiguous")
-    const requirement = requirements[0]
-    if (
-      requirement &&
-      (requirement.body_ref !== bodyref || requirement.body_hash !== bodyhash)
-    )
-      throw new Conflict("task_migration_requirement_drift")
-    if (
-      (task.requirement_id && task.requirement_id !== requirement?.id) ||
-      (revision.requirement_id && revision.requirement_id !== requirement?.id) ||
-      (revision.spec_ref && revision.spec_ref !== spec) ||
-      (revision.plan_ref && revision.plan_ref !== assignment?.content_ref)
-    )
-      throw new Conflict("task_migration_reference_drift")
+      !!indexed
+    if (!command && !events[0] && created && complete) return { replay: true as const }
+    const tail =
+      tx
+        .select({ value: max(TaskEventTable.seq) })
+        .from(TaskEventTable)
+        .where(eq(TaskEventTable.task_id, task.id))
+        .get()?.value ?? 0
+    if (tail !== task.last_event_seq) throw new Conflict("task_migration_event_sequence_invalid")
+    if (command?.status === "applied") {
+      if (
+        command.result_ref !== `task://${task.id}/revision/${revision.id}/migration-baseline` ||
+        !events[0] ||
+        !complete ||
+        meta?.requirement !== picked.row?.id ||
+        meta.resource !== indexed?.id
+      )
+        throw new Conflict("task_migration_applied_drift")
+      return { replay: true as const }
+    }
+    if (command?.status === "rejected" || command?.result_ref) throw new Conflict("task_migration_command_drift")
+    if (picked.row) chain(tx, task.id, picked.row)
+    if (!picked.row && picked.previous) chain(tx, task.id, picked.previous)
+    const id = picked.row?.id ?? meta?.requirement ?? `requirement_${randomUUID()}`
     const saved =
-      requirement ??
+      picked.row ??
       Requirement.parse(
         tx
           .insert(TaskRequirementTable)
           .values({
-            id: `requirement_${randomUUID()}`,
+            id,
             task_id: task.id,
-            version: 1,
+            version: picked.version,
             source_refs: refs(task, revision, assignment),
             body_ref: bodyref,
             body_hash: bodyhash,
@@ -914,19 +955,19 @@ export namespace TaskLedger {
             acceptance: [],
             created_by: "migration",
             confirmed_at: null,
-            supersedes_id: null,
+            supersedes_id: picked.previous?.id ?? null,
             time_created: revision.time_created,
           })
           .returning()
           .get(),
       )
-    const indexed = specs[0]
+    const resource = indexed
       ? Resource.parse(specs[0])
       : Resource.parse(
         tx
           .insert(TaskResourceTable)
           .values({
-            id: `resource_${randomUUID()}`,
+            id: meta?.resource ?? `resource_${randomUUID()}`,
             task_id: task.id,
             revision_id: revision.id,
             kind: "spec",
@@ -943,35 +984,145 @@ export namespace TaskLedger {
           .returning()
           .get(),
       )
+    if (meta && (meta.requirement !== saved.id || meta.resource !== resource.id))
+      throw new Conflict("task_migration_event_reference_drift")
     tx.update(SessionTaskTable).set({ requirement_id: saved.id }).where(eq(SessionTaskTable.id, task.id)).run()
     tx.update(TaskRevisionTable)
       .set({ requirement_id: saved.id, spec_ref: spec })
       .where(and(eq(TaskRevisionTable.task_id, task.id), eq(TaskRevisionTable.id, revision.id)))
       .run()
-    if (events.some((item) => item.type === "task.migrated")) throw new Conflict("task_migration_event_drift")
-    const migrated = append(tx, task.id, [
-      {
-        type: "task.migrated",
-        revision_id: revision.id,
-        command_id: command.id,
-        data: {
-          baseline: "current_snapshot",
-          requirement_id: saved.id,
-          source_type: task.source_type,
-          task_status: task.status,
-          revision_status: revision.status,
-          revision_version: revision.version,
-        },
-        resource_refs: [indexed.id],
-      },
-    ])
+    const claimed = command ?? claim(tx, { task_id: task.id, kind: "task.migrate", idempotency_key: key })
+    const migrated = events[0]
+      ? [Event.parse(events[0])]
+      : append(tx, task.id, [
+          {
+            type: "task.migrated",
+            revision_id: revision.id,
+            command_id: claimed.id,
+            data: {
+              baseline: "current_snapshot",
+              requirement_id: saved.id,
+              source_type: task.source_type,
+              revision_version: revision.version,
+            },
+            resource_refs: [resource.id],
+          },
+        ])
     return {
-      command: apply(tx, command.id, `task://${task.id}/revision/${revision.id}/migration-baseline`),
+      command: apply(tx, claimed.id, `task://${task.id}/revision/${revision.id}/migration-baseline`),
       events: migrated,
       requirement: saved,
-      resources: [indexed],
+      resources: [resource],
       replay: false as const,
     }
+  }
+
+  function requirement(tx: Database.Transaction, taskID: string, id: string) {
+    return tx
+      .select()
+      .from(TaskRequirementTable)
+      .where(and(eq(TaskRequirementTable.task_id, taskID), eq(TaskRequirementTable.id, id)))
+      .limit(1)
+      .get()
+  }
+
+  function candidate(
+    tx: Database.Transaction,
+    taskID: string,
+    prior: typeof TaskRequirementTable.$inferSelect | undefined,
+    pointed: typeof TaskRequirementTable.$inferSelect | undefined,
+    highest: number,
+    bodyref: string,
+    bodyhash: string,
+  ) {
+    if (pointed) {
+      if (prior?.id !== pointed.id && pointed.version !== highest)
+        throw new Conflict("task_migration_requirement_not_latest")
+      if (prior && prior.id !== pointed.id && (pointed.version !== prior.version + 1 || pointed.supersedes_id !== prior.id))
+        throw new Conflict("task_migration_requirement_chain_invalid")
+      if (pointed.body_ref !== bodyref || pointed.body_hash !== bodyhash)
+        throw new Conflict("task_migration_requirement_drift")
+      return { row: pointed, previous: prior?.id === pointed.id ? undefined : prior, version: pointed.version }
+    }
+    if (prior && highest === prior.version && prior.body_ref === bodyref && prior.body_hash === bodyhash)
+      return { row: prior, previous: undefined, version: prior.version }
+    if (prior && highest !== prior.version && highest !== prior.version + 1)
+      throw new Conflict("task_migration_requirement_chain_invalid")
+    const version = prior ? prior.version + 1 : highest || 1
+    const rows =
+      highest === (prior?.version ?? 0)
+        ? []
+        : tx
+            .select()
+            .from(TaskRequirementTable)
+            .where(
+              and(
+                eq(TaskRequirementTable.task_id, taskID),
+                eq(TaskRequirementTable.version, version),
+                eq(TaskRequirementTable.body_ref, bodyref),
+                eq(TaskRequirementTable.body_hash, bodyhash),
+              ),
+            )
+            .limit(2)
+            .all()
+    if (rows.length > 1) throw new Conflict("task_migration_requirement_ambiguous")
+    if (highest && !prior && !rows[0]) throw new Conflict("task_migration_requirement_chain_invalid")
+    if (prior && highest !== prior.version && !rows[0])
+      throw new Conflict("task_migration_requirement_chain_invalid")
+    if (rows[0] && prior && (rows[0].supersedes_id !== prior.id || rows[0].version !== prior.version + 1))
+      throw new Conflict("task_migration_requirement_chain_invalid")
+    return { row: rows[0], previous: prior, version: rows[0]?.version ?? version }
+  }
+
+  function chain(tx: Database.Transaction, taskID: string, input: typeof TaskRequirementTable.$inferSelect) {
+    let current = input
+    for (let depth = 0; depth < 10_000; depth++) {
+      if (current.task_id !== taskID || current.supersedes_id === current.id)
+        throw new Conflict("task_migration_requirement_chain_invalid")
+      if (current.version === 1) {
+        if (current.supersedes_id) throw new Conflict("task_migration_requirement_chain_invalid")
+        return
+      }
+      if (!current.supersedes_id) throw new Conflict("task_migration_requirement_chain_invalid")
+      const previous = requirement(tx, taskID, current.supersedes_id)
+      if (!previous || previous.version !== current.version - 1)
+        throw new Conflict("task_migration_requirement_chain_invalid")
+      current = previous
+    }
+    throw new Conflict("task_migration_requirement_chain_too_deep")
+  }
+
+  function baselineEvent(
+    event: typeof TaskEventTable.$inferSelect,
+    task: typeof SessionTaskTable.$inferSelect,
+    revision: typeof TaskRevisionTable.$inferSelect,
+    commandID: string,
+  ) {
+    const item = Event.parse(event)
+    const data = item.data
+    const keys = Object.keys(data).sort()
+    const stable = ["baseline", "requirement_id", "revision_version", "source_type"]
+    const legacy = [...stable, "revision_status", "task_status"].sort()
+    const old = JSON.stringify(keys) === JSON.stringify(legacy)
+    if (
+      item.command_id !== commandID ||
+      item.revision_id !== revision.id ||
+      item.resource_refs.length !== 1 ||
+      !item.resource_refs[0]?.startsWith("resource_") ||
+      data.baseline !== "current_snapshot" ||
+      typeof data.requirement_id !== "string" ||
+      !data.requirement_id.startsWith("requirement_") ||
+      data.source_type !== task.source_type ||
+      data.revision_version !== revision.version ||
+      (JSON.stringify(keys) !== JSON.stringify(stable) && !old) ||
+      (old &&
+        (!["running", "waiting_user", "revising", "blocked", "completed", "failed"].includes(
+          String(data.task_status),
+        ) ||
+          !["draft", "active", "completed", "failed", "archived"].includes(String(data.revision_status))))
+    )
+      throw new Conflict("task_migration_event_drift")
+    return { requirement: data.requirement_id, resource: item.resource_refs[0] }
   }
 
   function refs(

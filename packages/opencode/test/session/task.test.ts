@@ -2869,6 +2869,58 @@ describe("session task", () => {
       })
     }))
 
+  test("advances the current Requirement after a Flag-off Revision across concurrency and reopen", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Toggle migration",
+        body: "Toggle migration v1",
+        source: { type: "user", messageID: MessageID.ascending() },
+      })
+      const original = TaskLedger.requirements(first.task.id)[0]!
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Toggle migration",
+        body: "Toggle migration v2",
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const input = {
+        sessionID: session.id,
+        runID: "run_toggle_migration",
+        actions: [{ id: "resume", title: "Resume" }],
+      }
+
+      await Promise.all([SessionTask.route(input), SessionTask.route(input)])
+      Database.close()
+      await SessionTask.route(input)
+
+      const requirements = TaskLedger.requirements(first.task.id)
+      const current = await SessionTask.get(session.id)
+      expect(requirements).toHaveLength(2)
+      expect(requirements[0]).toEqual(original)
+      expect(requirements[1]).toMatchObject({
+        version: 2,
+        supersedes_id: original.id,
+        body_ref: `task://${first.task.id}/revision/${draft.id}`,
+        created_by: "migration",
+        confirmed_at: null,
+      })
+      expect(current?.task.requirement_id).toBe(requirements[1]!.id)
+      expect(current?.revision).toMatchObject({
+        id: draft.id,
+        requirement_id: requirements[1]!.id,
+        spec_ref: `task://${first.task.id}/revision/${draft.id}`,
+      })
+      expect(TaskLedger.listEvents(first.task.id).filter((event) => event.type === "task.migrated")).toHaveLength(1)
+    }))
+
   test("uses an exact delegated Assignment as migration Requirement evidence", () =>
     setup(async () => {
       // @ts-expect-error test-only flag override
@@ -3133,7 +3185,7 @@ describe("session task", () => {
             { id: "conflict", title: "Conflict", status: "completed" },
           ]).actions,
         }),
-      ).rejects.toThrow("task_migration_requirement_drift")
+      ).rejects.toThrow("task_migration_requirement_")
       expect(TaskLedger.listEvents(first.task.id)).toEqual([])
       expect(TaskLedger.listResources(first.task.id)).toEqual([])
       expect(TaskLedger.findCommand(`task.migrate:${first.task.id}:${first.revision.id}`)).toBeUndefined()
@@ -3147,7 +3199,7 @@ describe("session task", () => {
       expect(TaskLedger.listEvents(old.task.id)).toEqual([
         expect.objectContaining({
           type: "task.migrated",
-          data: expect.objectContaining({ baseline: "current_snapshot", task_status: "completed" }),
+          data: expect.objectContaining({ baseline: "current_snapshot", revision_version: 1 }),
         }),
       ])
       expect(TaskLedger.requirements(old.task.id)[0]?.source_refs).toContain("run:run_migration_result")

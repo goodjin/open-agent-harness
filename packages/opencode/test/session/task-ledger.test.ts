@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Database as SQLite } from "bun:sqlite"
 import { drizzle } from "drizzle-orm/bun-sqlite"
 import { migrate } from "drizzle-orm/bun-sqlite/migrator"
@@ -53,6 +53,19 @@ async function task() {
     body: "# Durable task\n",
     source: { type: "user" },
   })
+}
+
+function ensure(taskID: string) {
+  return Database.transaction(
+    (tx) => {
+      const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, taskID)).get()
+      if (!task?.current_revision_id) throw new Error("task missing")
+      const revision = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, task.current_revision_id)).get()
+      if (!revision) throw new Error("revision missing")
+      return TaskLedger.ensure(tx, task, revision)
+    },
+    { behavior: "immediate" },
+  )
 }
 
 function journal(end = Infinity) {
@@ -1456,5 +1469,205 @@ describe("task ledger event sequence", () => {
       expect(run().status).toBe("applied")
       expect(run().status).toBe("applied")
       expect(TaskLedger.listEvents(saved.task.id)).toHaveLength(1)
+    }))
+})
+
+describe("task ledger migration state", () => {
+  test("recovers missing and accepted Commands and reuses a compatible partial Event", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const missing = await task()
+      ensure(missing.task.id)
+      expect(TaskLedger.findCommand(`task.migrate:${missing.task.id}:${missing.revision.id}`)?.status).toBe("applied")
+
+      const partial = await task()
+      const key = `task.migrate:${partial.task.id}:${partial.revision.id}`
+      const command = Database.transaction(
+        (tx) => TaskLedger.claim(tx, { task_id: partial.task.id, kind: "task.migrate", idempotency_key: key }),
+        { behavior: "immediate" },
+      )
+      const event = Database.transaction(
+        (tx) =>
+          TaskLedger.append(tx, partial.task.id, [
+            {
+              type: "task.migrated",
+              revision_id: partial.revision.id,
+              command_id: command.id,
+              data: {
+                baseline: "current_snapshot",
+                requirement_id: "requirement_partial_event",
+                source_type: partial.task.source_type,
+                revision_version: partial.revision.version,
+              },
+              resource_refs: ["resource_partial_event"],
+            },
+          ])[0]!,
+        { behavior: "immediate" },
+      )
+
+      expect(ensure(partial.task.id)).toMatchObject({
+        command: { id: command.id, status: "applied" },
+        events: [{ id: event.id }],
+        requirement: { id: "requirement_partial_event" },
+        resources: [{ id: "resource_partial_event" }],
+      })
+      expect(TaskLedger.listEvents(partial.task.id).map((item) => item.id)).toEqual([event.id])
+      expect((await SessionTask.get(partial.task.session_id))?.task.requirement_id).toBe(
+        "requirement_partial_event",
+      )
+    }))
+
+  test("rejects applied Command drift without repairing immutable facts", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const saved = await task()
+      ensure(saved.task.id)
+      const key = `task.migrate:${saved.task.id}:${saved.revision.id}`
+      const migrated = TaskLedger.findCommand(key)
+      if (!migrated) throw new Error("migration command missing")
+      Database.use((db) =>
+        db
+          .update(TaskCommandTable)
+          .set({ result_ref: "task://drifted" })
+          .where(eq(TaskCommandTable.id, migrated.id))
+          .run(),
+      )
+
+      expect(() => ensure(saved.task.id)).toThrow("task_migration_applied_drift")
+      expect(TaskLedger.findCommand(key)?.result_ref).toBe("task://drifted")
+      expect(TaskLedger.listEvents(saved.task.id)).toHaveLength(1)
+    }))
+
+  test("rejects partial Event command binding and data drift", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      for (const kind of ["binding", "data", "sequence"] as const) {
+        const saved = await task()
+        const key = `task.migrate:${saved.task.id}:${saved.revision.id}`
+        const command = Database.transaction(
+          (tx) => TaskLedger.claim(tx, { task_id: saved.task.id, kind: "task.migrate", idempotency_key: key }),
+          { behavior: "immediate" },
+        )
+        const bound =
+          kind === "binding"
+            ? Database.transaction(
+                (tx) =>
+                  TaskLedger.claim(tx, {
+                    task_id: saved.task.id,
+                    kind: "task.other",
+                    idempotency_key: `task.other:${saved.task.id}`,
+                  }),
+                { behavior: "immediate" },
+              )
+            : command
+        Database.transaction(
+          (tx) =>
+            TaskLedger.append(tx, saved.task.id, [
+              {
+                type: "task.migrated",
+                revision_id: saved.revision.id,
+                command_id: bound.id,
+                data: {
+                  baseline: kind === "data" ? "drifted" : "current_snapshot",
+                  requirement_id: `requirement_${kind}_drift`,
+                  source_type: saved.task.source_type,
+                  revision_version: saved.revision.version,
+                },
+                resource_refs: [`resource_${kind}_drift`],
+              },
+            ]),
+          { behavior: "immediate" },
+        )
+        if (kind === "sequence")
+          Database.use((db) =>
+            db
+              .update(SessionTaskTable)
+              .set({ last_event_seq: 2 })
+              .where(eq(SessionTaskTable.id, saved.task.id))
+              .run(),
+          )
+
+        expect(() => ensure(saved.task.id)).toThrow(
+          kind === "sequence" ? "task_migration_event_sequence_invalid" : "task_migration_event_drift",
+        )
+        expect(TaskLedger.findCommand(key)?.status).toBe("accepted")
+        expect(TaskLedger.requirements(saved.task.id)).toEqual([])
+        expect(TaskLedger.listResources(saved.task.id)).toEqual([])
+      }
+    }))
+
+  test("rejects missing versions, self references, and wrong supersedes links", () =>
+    setup(async () => {
+      for (const kind of ["gap", "self", "wrong"] as const) {
+        // @ts-expect-error test-only flag override
+        Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+        const saved = await task()
+        const original = TaskLedger.requirements(saved.task.id)[0]!
+        // @ts-expect-error test-only flag override
+        Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+        const draft = await SessionTask.draft({
+          taskID: saved.task.id,
+          title: `Chain ${kind}`,
+          body: `Chain ${kind} v2`,
+        })
+        await SessionTask.activate({ taskID: saved.task.id, revisionID: draft.id })
+        const id = `requirement_chain_${kind}`
+        Database.use((db) => {
+          db.insert(TaskRequirementTable)
+            .values({
+              id,
+              task_id: saved.task.id,
+              version: kind === "gap" ? 3 : 2,
+              source_refs: [],
+              body_ref: `task://${saved.task.id}/revision/${draft.id}`,
+              body_hash: draft.body_hash,
+              constraints: {},
+              acceptance: [],
+              created_by: "migration",
+              confirmed_at: null,
+              supersedes_id: kind === "self" ? id : kind === "gap" ? original.id : null,
+              time_created: draft.time_created,
+            })
+            .run()
+          db.update(TaskRevisionTable).set({ requirement_id: id }).where(eq(TaskRevisionTable.id, draft.id)).run()
+        })
+        // @ts-expect-error test-only flag override
+        Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+        expect(() => ensure(saved.task.id)).toThrow("task_migration_requirement_chain_invalid")
+        expect((await SessionTask.get(saved.task.session_id))?.task.requirement_id).toBe(original.id)
+        expect(TaskLedger.findCommand(`task.migrate:${saved.task.id}:${draft.id}`)).toBeUndefined()
+      }
+    }))
+
+  test("keeps the complete fast path independent from full Ledger list readers", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const saved = await task()
+      Database.transaction(
+        (tx) =>
+          TaskLedger.append(
+            tx,
+            saved.task.id,
+            Array.from({ length: 250 }, (_, index) => ({ type: `history.${index}` })),
+          ),
+        { behavior: "immediate" },
+      )
+      const events = spyOn(TaskLedger, "listEvents")
+      const requirements = spyOn(TaskLedger, "requirements")
+      const resources = spyOn(TaskLedger, "listResources")
+
+      expect(ensure(saved.task.id)).toEqual({ replay: true })
+
+      expect(events).toHaveBeenCalledTimes(0)
+      expect(requirements).toHaveBeenCalledTimes(0)
+      expect(resources).toHaveBeenCalledTimes(0)
+      events.mockRestore()
+      requirements.mockRestore()
+      resources.mockRestore()
     }))
 })
