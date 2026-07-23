@@ -86,6 +86,18 @@ export namespace TaskLedger {
     .strict()
   export type Snapshot = z.infer<typeof Snapshot>
 
+  export function requirements(taskID: string) {
+    const id = TaskID.parse(taskID)
+    return Database.use((db) =>
+      db
+        .select()
+        .from(TaskRequirementTable)
+        .where(eq(TaskRequirementTable.task_id, id))
+        .orderBy(asc(TaskRequirementTable.version), asc(TaskRequirementTable.id))
+        .all(),
+    ).map((row) => Requirement.parse(row))
+  }
+
   export function findRequirement(taskID: string, id?: string) {
     const input = z
       .object({ task_id: TaskID, id: ID("requirement").optional() })

@@ -666,9 +666,11 @@ describe("task ledger contracts", () => {
     expect(TaskLedger.Resource.safeParse({ ...row, lifecycle: "deleted" }).success).toBe(false)
   })
 
-  test("finds the latest or requested requirement", () =>
+  test("lists isolated requirement history and finds the latest or requested version", () =>
     setup(async () => {
       const saved = await task()
+      const other = await task()
+      expect(TaskLedger.requirements(saved.task.id)).toEqual([])
       const base = {
         task_id: saved.task.id,
         source_refs: ["message_1"],
@@ -690,10 +692,37 @@ describe("task ledger contracts", () => {
           ])
           .run(),
       )
+      Database.use((db) =>
+        db
+          .insert(TaskRequirementTable)
+          .values({
+            ...base,
+            id: "requirement_other",
+            task_id: other.task.id,
+            body_ref: `task-revision://${other.revision.id}`,
+            body_hash: other.revision.body_hash,
+            version: 1,
+          })
+          .run(),
+      )
+      expect(TaskLedger.requirements(saved.task.id).map((item) => [item.id, item.version])).toEqual([
+        ["requirement_1", 1],
+        ["requirement_2", 2],
+      ])
+      expect(TaskLedger.requirements(other.task.id).map((item) => item.id)).toEqual(["requirement_other"])
       expect(TaskLedger.findRequirement(saved.task.id)?.id).toBe("requirement_2")
       expect(TaskLedger.findRequirement(saved.task.id, "requirement_1")?.version).toBe(1)
       expect(TaskLedger.findRequirement(saved.task.id, "requirement_missing")).toBeUndefined()
+      expect(() => TaskLedger.requirements("invalid")).toThrow()
       expect(() => TaskLedger.findRequirement("invalid")).toThrow()
+      Database.use((db) =>
+        db
+          .update(TaskRequirementTable)
+          .set({ body_hash: "z".repeat(64) })
+          .where(eq(TaskRequirementTable.id, "requirement_2"))
+          .run(),
+      )
+      expect(() => TaskLedger.requirements(saved.task.id)).toThrow()
     }))
 
   test("lists resources in stable creation and id order and parses stored output", () =>
