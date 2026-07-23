@@ -19,6 +19,8 @@ import {
 import { SessionTask } from "./task"
 import { TaskDocuments } from "./task-documents"
 import { SessionAssignment } from "./assignment"
+import { Flag } from "@/flag/flag"
+import { TaskLedger } from "./task-ledger"
 
 export namespace SessionTaskHandoff {
   const log = Log.create({ service: "session.task-handoff" })
@@ -377,8 +379,41 @@ export namespace SessionTaskHandoff {
               archive_reason: null,
             })
             .run()
+          if (Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER) {
+            const spec = `task://${taskID}/revision/${revisionID}`
+            TaskLedger.record(tx, {
+              task_id: taskID,
+              revision_id: revisionID,
+              command_key: `task.create:handoff:${current.id}`,
+              source_refs: [
+                `handoff:${current.id}`,
+                `assignment:${assignment.id}`,
+                `session:${current.source_session_id}`,
+                `session:${session.id}`,
+                ...(current.source_task_id ? [`task:${current.source_task_id}`] : []),
+                `task:${taskID}`,
+                `message:${assignment.source_message_id}`,
+                `run:${assignment.source_run_id}`,
+                `action:${assignment.source_action_id}`,
+              ],
+              body_ref: assignment.content_ref,
+              body_hash: assignment.content_hash,
+              spec_ref: spec,
+              spec_hash: current.body_hash,
+              spec_size: new TextEncoder().encode(current.body).byteLength,
+              plan: {
+                ref: assignment.content_ref,
+                hash: assignment.content_hash,
+                size: new TextEncoder().encode(JSON.stringify(content, null, 2)).byteLength,
+                producer_id: assignment.id,
+              },
+              created_by: "agent",
+              confirmed_at: now,
+              time_created: now,
+            })
+          }
           tx.update(SessionTaskTable)
-            .set({ current_revision_id: revisionID })
+            .set({ current_revision_id: revisionID, time_updated: now })
             .where(eq(SessionTaskTable.id, taskID))
             .run()
         }

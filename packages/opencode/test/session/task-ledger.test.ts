@@ -6,7 +6,10 @@ import { readFileSync, readdirSync } from "fs"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
+import { AgentProtocol } from "../../src/protocol/schema"
 import { Session } from "../../src/session"
+import { SessionAssignment } from "../../src/session/assignment"
+import { MessageID } from "../../src/session/schema"
 import {
   SessionTaskTable,
   TaskCommandTable,
@@ -17,11 +20,16 @@ import {
 } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
 import { TaskLedger } from "../../src/session/task-ledger"
-import { Database, eq } from "../../src/storage/db"
+import { Flag } from "../../src/flag/flag"
+import { Database, eq, sql } from "../../src/storage/db"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
+const original = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+
 afterEach(async () => {
+  // @ts-expect-error test-only flag override
+  Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = original
   await resetDatabase()
 })
 
@@ -203,6 +211,234 @@ describe("task ledger flag", () => {
   test("accepts true and one from the global variable", async () => {
     expect(await Promise.all(["true", "1"].map((value) => flag(value, "false")))).toEqual([true, true])
   })
+})
+
+describe("task ledger create dual-write", () => {
+  test("keeps the existing create path ledger-free while the flag is off", () =>
+    setup(async () => {
+      const saved = await task()
+
+      expect(saved.task.requirement_id).toBeNull()
+      expect(saved.task.last_event_seq).toBe(0)
+      expect(saved.revision.requirement_id).toBeNull()
+      expect(saved.revision.spec_ref).toBeNull()
+      expect(saved.revision.plan_ref).toBeNull()
+      expect(TaskLedger.requirements(saved.task.id)).toEqual([])
+      expect(TaskLedger.listResources(saved.task.id)).toEqual([])
+      expect(TaskLedger.listEvents(saved.task.id)).toEqual([])
+      expect(TaskLedger.findCommand(`task.create:user:${saved.task.session_id}`)).toBeUndefined()
+    }))
+
+  test("records and replays one direct Task create ledger", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const messageID = MessageID.ascending()
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Direct durable task",
+        body: "# Direct durable task\n",
+        source: { type: "user", messageID },
+      })
+      const spec = `task://${saved.task.id}/revision/${saved.revision.id}`
+
+      expect(saved.task).toMatchObject({ requirement_id: expect.stringMatching(/^requirement_/), last_event_seq: 3 })
+      expect(saved.revision).toMatchObject({
+        requirement_id: saved.task.requirement_id,
+        spec_ref: spec,
+        plan_ref: null,
+      })
+      expect(TaskLedger.requirements(saved.task.id)).toEqual([
+        expect.objectContaining({
+          id: saved.task.requirement_id,
+          version: 1,
+          source_refs: [`message:${messageID}`],
+          body_ref: spec,
+          body_hash: saved.revision.body_hash,
+          created_by: "user",
+          confirmed_at: expect.any(Number),
+        }),
+      ])
+      expect(TaskLedger.listResources(saved.task.id)).toEqual([
+        expect.objectContaining({
+          revision_id: saved.revision.id,
+          kind: "spec",
+          uri: spec,
+          hash: saved.revision.body_hash,
+          producer_type: "revision",
+          producer_id: saved.revision.id,
+        }),
+      ])
+      expect(TaskLedger.listEvents(saved.task.id).map((item) => item.type)).toEqual([
+        "task.created",
+        "requirement.recorded",
+        "revision.activated",
+      ])
+      expect(TaskLedger.findCommand(`task.create:user:${session.id}:${messageID}`)).toMatchObject({
+        task_id: saved.task.id,
+        kind: "task.create",
+        status: "applied",
+        result_ref: `task://${saved.task.id}`,
+      })
+      expect(
+        Database.transaction((tx) =>
+          TaskLedger.record(tx, {
+            task_id: saved.task.id,
+            revision_id: saved.revision.id,
+            command_key: `task.create:user:${session.id}:${messageID}`,
+            source_refs: [`message:${messageID}`],
+            body_ref: spec,
+            body_hash: saved.revision.body_hash,
+            spec_ref: spec,
+            spec_hash: saved.revision.body_hash,
+            spec_size: new TextEncoder().encode(saved.revision.body).byteLength,
+            created_by: "user",
+            confirmed_at: saved.task.time_created,
+            time_created: saved.task.time_created,
+          }),
+        ).replay,
+      ).toBe(true)
+      await expect(
+        SessionTask.create({
+          sessionID: session.id,
+          title: "Conflicting replay",
+          body: "Conflicting replay",
+          source: { type: "user", messageID },
+        }),
+      ).rejects.toThrow()
+      expect(TaskLedger.requirements(saved.task.id)).toHaveLength(1)
+      expect(TaskLedger.listResources(saved.task.id)).toHaveLength(1)
+      expect(TaskLedger.listEvents(saved.task.id)).toHaveLength(3)
+    }))
+
+  test("uses canonical assignment identity for delegated create replays", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const messageID = MessageID.ascending()
+      const action = {
+        type: "action",
+        id: "delegate_ledger",
+        title: "Delegated ledger task",
+        operation: "agent",
+        executor: { type: "agent", target: "worker", capabilities: [] },
+        input: { prompt: "Delegated ledger plan" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID,
+        plan: "Delegated ledger plan",
+        runID: "run_delegate_ledger",
+        sessionID: parent.id,
+      })
+      const input = {
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_delegate_ledger",
+        parentActionID: action.id,
+        messageID,
+      }
+      const first = await SessionTask.beginDelegated(input)
+      const replay = await SessionTask.beginDelegated(input)
+      if (!first.revision || !replay.revision) throw new Error("delegated revision missing")
+      const requirement = TaskLedger.requirements(first.task.id)[0]!
+      const resources = TaskLedger.listResources(first.task.id)
+      const plan = resources.find((item) => item.kind === "plan")
+
+      expect(replay.task.id).toBe(first.task.id)
+      expect(requirement).toMatchObject({
+        body_ref: assignment.content_ref,
+        body_hash: assignment.content_hash,
+        created_by: "agent",
+      })
+      expect(requirement.source_refs).toEqual([
+        `assignment:${assignment.id}`,
+        `session:${parent.id}`,
+        `message:${messageID}`,
+        "run:run_delegate_ledger",
+        `action:${action.id}`,
+      ])
+      expect(resources.map((item) => item.kind).toSorted()).toEqual(["plan", "spec"])
+      expect(plan).toMatchObject({
+        uri: assignment.content_ref,
+        hash: assignment.content_hash,
+        producer_type: "assignment",
+        producer_id: assignment.id,
+      })
+      expect(replay.revision).toMatchObject({
+        requirement_id: requirement.id,
+        spec_ref: `task://${first.task.id}/revision/${first.revision.id}`,
+        plan_ref: assignment.content_ref,
+      })
+      expect(TaskLedger.findCommand(`task.create:assignment:${assignment.id}`)?.status).toBe("applied")
+      expect(TaskLedger.listEvents(first.task.id)).toHaveLength(3)
+    }))
+
+  test("keeps legacy source distinguishable on the stable Revision URI", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const saved = await SessionTask.create({
+        sessionID: session.id,
+        title: "Legacy ledger task",
+        body: "Legacy ledger body",
+        source: { type: "legacy", runID: "run_legacy_ledger" },
+      })
+      const spec = `task://${saved.task.id}/revision/${saved.revision.id}`
+
+      expect(TaskLedger.requirements(saved.task.id)).toEqual([
+        expect.objectContaining({
+          source_refs: ["run:run_legacy_ledger"],
+          body_ref: spec,
+          created_by: "migration",
+          confirmed_at: null,
+        }),
+      ])
+      expect(saved.revision).toMatchObject({ spec_ref: spec, plan_ref: null })
+      expect(TaskLedger.findCommand(`task.create:legacy:${session.id}:run_legacy_ledger`)?.status).toBe("applied")
+    }))
+
+  test("rolls back Task, Revision and every ledger row when an initial Event fails", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      Database.use((db) =>
+        db.run(
+          sql`
+            CREATE TRIGGER fail_task_create_event
+            BEFORE INSERT ON task_event
+            WHEN NEW.type = 'requirement.recorded'
+            BEGIN
+              SELECT RAISE(ABORT, 'task ledger event failure');
+            END
+          `,
+        ),
+      )
+
+      await expect(
+        SessionTask.create({
+          sessionID: session.id,
+          title: "Rollback ledger task",
+          body: "Rollback ledger body",
+          source: { type: "user" },
+        }),
+      ).rejects.toThrow()
+      expect(Database.use((db) => db.select().from(SessionTaskTable).all())).toEqual([])
+      expect(Database.use((db) => db.select().from(TaskRevisionTable).all())).toEqual([])
+      expect(Database.use((db) => db.select().from(TaskRequirementTable).all())).toEqual([])
+      expect(Database.use((db) => db.select().from(TaskResourceTable).all())).toEqual([])
+      expect(Database.use((db) => db.select().from(TaskCommandTable).all())).toEqual([])
+      expect(Database.use((db) => db.select().from(TaskEventTable).all())).toEqual([])
+    }))
 })
 
 describe("task ledger schema", () => {

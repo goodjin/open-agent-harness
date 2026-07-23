@@ -17,6 +17,8 @@ import { TaskDocuments } from "./task-documents"
 import { SessionAssignment } from "./assignment"
 import { SessionStatus } from "./status"
 import { SessionResult } from "./result"
+import { Flag } from "@/flag/flag"
+import { TaskLedger } from "./task-ledger"
 
 export function locators(rows: { run: string; action: string; child: SessionID }[]) {
   const groups = Map.groupBy(rows, (item) => `${item.run}:${item.action}`)
@@ -336,6 +338,98 @@ export namespace SessionTask {
     }
   }
 
+  type Proof = {
+    id: string
+    content_ref: string
+    content_hash: string
+    size: number
+    source_session_id?: SessionID
+    source_message_id?: MessageID
+    source_run_id?: string
+    source_action_id?: string
+  }
+
+  function proof(assignment: SessionAssignment.Info, content: unknown): Proof {
+    return {
+      id: assignment.id,
+      content_ref: assignment.content_ref,
+      content_hash: assignment.content_hash,
+      size: new TextEncoder().encode(JSON.stringify(content, null, 2)).byteLength,
+      source_session_id: assignment.source_session_id,
+      source_message_id: assignment.source_message_id,
+      source_run_id: assignment.source_run_id,
+      source_action_id: assignment.source_action_id,
+    }
+  }
+
+  function ledger(
+    tx: Database.Transaction,
+    input: {
+      taskID: string
+      revisionID: string
+      sessionID: SessionID
+      body: string
+      source: Source
+      time: number
+      proof?: Proof
+    },
+  ) {
+    if (!Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER) return
+    const spec = `task://${input.taskID}/revision/${input.revisionID}`
+    const refs = [
+      input.proof ? `assignment:${input.proof.id}` : undefined,
+      input.proof?.source_session_id ? `session:${input.proof.source_session_id}` : undefined,
+      input.proof?.source_message_id ? `message:${input.proof.source_message_id}` : undefined,
+      input.proof?.source_run_id ? `run:${input.proof.source_run_id}` : undefined,
+      input.proof?.source_action_id ? `action:${input.proof.source_action_id}` : undefined,
+      "messageID" in input.source && input.source.messageID ? `message:${input.source.messageID}` : undefined,
+      input.source.type === "delegation" ? `session:${input.source.sessionID}` : undefined,
+      input.source.type === "delegation" && input.source.runID ? `run:${input.source.runID}` : undefined,
+      input.source.type === "delegation" && input.source.actionID ? `action:${input.source.actionID}` : undefined,
+      input.source.type === "handoff" ? `handoff:${input.source.handoffID}` : undefined,
+      input.source.type === "handoff" && input.source.sourceSessionID
+        ? `session:${input.source.sourceSessionID}`
+        : undefined,
+      input.source.type === "handoff" ? `session:${input.sessionID}` : undefined,
+      input.source.type === "legacy" && input.source.runID ? `run:${input.source.runID}` : undefined,
+    ].filter((item): item is string => !!item)
+    const key = input.proof
+      ? `task.create:assignment:${input.proof.id}`
+      : input.source.type === "handoff"
+        ? `task.create:handoff:${input.source.handoffID}`
+        : input.source.type === "delegation" && input.source.runID && input.source.actionID
+          ? `task.create:delegation:${input.source.sessionID}:${input.source.runID}:${input.source.actionID}`
+          : input.source.type === "legacy" && input.source.runID
+            ? `task.create:legacy:${input.sessionID}:${input.source.runID}`
+            : input.source.type === "user" && input.source.messageID
+              ? `task.create:user:${input.sessionID}:${input.source.messageID}`
+              : `task.create:${input.source.type}:${input.sessionID}`
+    TaskLedger.record(tx, {
+      task_id: input.taskID,
+      revision_id: input.revisionID,
+      command_key: key,
+      source_refs: refs,
+      body_ref: input.proof?.content_ref ?? spec,
+      body_hash: input.proof?.content_hash ?? hash(input.body),
+      spec_ref: spec,
+      spec_hash: hash(input.body),
+      spec_size: new TextEncoder().encode(input.body).byteLength,
+      ...(input.proof
+        ? {
+            plan: {
+              ref: input.proof.content_ref,
+              hash: input.proof.content_hash,
+              size: input.proof.size,
+              producer_id: input.proof.id,
+            },
+          }
+        : {}),
+      created_by: input.source.type === "legacy" ? "migration" : input.source.type === "user" ? "user" : "agent",
+      confirmed_at: input.source.type === "legacy" ? null : input.time,
+      time_created: input.time,
+    })
+  }
+
   export function request(body: string) {
     return [
       "This is the confirmed Task description prepared from the earlier conversation.",
@@ -465,6 +559,7 @@ export namespace SessionTask {
           },
           assignment.id,
           continuation,
+          proof(assignment, content),
         )
         if (!SessionAssignment.withCurrent(tx, locator)) throw new Conflict("session_task_assignment_not_current")
         if (op !== "handoff" && !SessionAssignment.consume(tx, locator))
@@ -524,7 +619,7 @@ export namespace SessionTask {
     return write(input)
   }
 
-  function write(raw: z.input<typeof Route>, assignmentID?: string, continuation?: LegacySnapshot) {
+  function write(raw: z.input<typeof Route>, assignmentID?: string, continuation?: LegacySnapshot, evidence?: Proof) {
     const input = Route.parse(raw)
     const now = Date.now()
     try {
@@ -580,7 +675,19 @@ export namespace SessionTask {
                 result_status: null,
               })
               .run()
-            tx.update(SessionTaskTable).set({ current_revision_id: revision }).where(eq(SessionTaskTable.id, id)).run()
+            ledger(tx, {
+              taskID: id,
+              revisionID: revision,
+              sessionID: input.sessionID,
+              body: seed.body,
+              source,
+              time: now,
+              proof: evidence,
+            })
+            tx.update(SessionTaskTable)
+              .set({ current_revision_id: revision, time_updated: now })
+              .where(eq(SessionTaskTable.id, id))
+              .run()
             if (assignmentID && input.actions.length === 0) {
               const key = `task_revision_bootstrap:${revision}`
               tx.insert(SessionEventOutboxTable)
@@ -831,23 +938,28 @@ export namespace SessionTask {
           .from(SessionTaskTable)
           .where(eq(SessionTaskTable.session_id, input.sessionID))
           .get()
-        const saved = write({
-          sessionID: input.sessionID,
-          messageID: input.messageID,
-          ...(current
-            ? {}
-            : {
-                assignment: { op: "create" as const, target: "self" as const, title: assignment.title, body: plan },
-                source: {
-                  type: "delegation" as const,
-                  sessionID: input.parentSessionID,
-                  messageID: input.messageID,
-                  runID: input.parentRunID,
-                  actionID: input.parentActionID,
-                },
-              }),
-          actions: [],
-        })
+        const saved = write(
+          {
+            sessionID: input.sessionID,
+            messageID: input.messageID,
+            ...(current
+              ? {}
+              : {
+                  assignment: { op: "create" as const, target: "self" as const, title: assignment.title, body: plan },
+                  source: {
+                    type: "delegation" as const,
+                    sessionID: input.parentSessionID,
+                    messageID: input.messageID,
+                    runID: input.parentRunID,
+                    actionID: input.parentActionID,
+                  },
+                }),
+            actions: [],
+          },
+          undefined,
+          undefined,
+          proof(assignment, content),
+        )
         const source = saved.task.source_ref
         if (
           saved.task.source_type !== "delegation" ||
@@ -1036,9 +1148,17 @@ export namespace SessionTask {
               archive_reason: null,
             })
             .run()
+          ledger(tx, {
+            taskID: task,
+            revisionID: revision,
+            sessionID: input.sessionID,
+            body: input.body,
+            source: input.source,
+            time: now,
+          })
           const saved = tx
             .update(SessionTaskTable)
-            .set({ current_revision_id: revision })
+            .set({ current_revision_id: revision, time_updated: now })
             .where(eq(SessionTaskTable.id, task))
             .returning()
             .get()
@@ -1674,9 +1794,17 @@ export namespace SessionTask {
                 : null,
             })
             .run()
+          ledger(tx, {
+            taskID: task,
+            revisionID: revision,
+            sessionID,
+            body: run.task,
+            source: { type: "legacy", runID: run.run_id },
+            time: run.time.started,
+          })
           const saved = tx
             .update(SessionTaskTable)
-            .set({ current_revision_id: revision })
+            .set({ current_revision_id: revision, time_updated: run.time.completed ?? now })
             .where(eq(SessionTaskTable.id, task))
             .returning()
             .get()
@@ -2062,7 +2190,10 @@ export namespace SessionTask {
     })
   }
 
-  function transact<T>(fn: (tx: Database.TxOrDb) => T, config?: { behavior?: "deferred" | "immediate" | "exclusive" }) {
+  function transact<T>(
+    fn: (tx: Database.Transaction) => T,
+    config?: { behavior?: "deferred" | "immediate" | "exclusive" },
+  ) {
     try {
       return Database.transaction(fn, config)
     } catch (err) {

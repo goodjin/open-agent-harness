@@ -11,10 +11,16 @@ import { SessionTask } from "../../src/session/task"
 import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionAssignment } from "../../src/session/assignment"
 import { Database, eq } from "../../src/storage/db"
+import { Flag } from "../../src/flag/flag"
+import { TaskLedger } from "../../src/session/task-ledger"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
+const original = Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+
 afterEach(async () => {
+  // @ts-expect-error test-only flag override
+  Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = original
   await resetDatabase()
 })
 
@@ -149,6 +155,68 @@ describe("SessionTaskHandoff", () => {
       expect(target?.task.source_type).toBe("handoff")
       expect(target?.task.source_ref).toEqual({ handoffID: first.id, sourceSessionID: current.session.id })
       expect(target?.revision).toMatchObject({ version: 1, status: "active", body: "Peer body" })
+    }))
+
+  test("records one canonical ledger for a replayed peer target create", () =>
+    setup(async () => {
+      const parent = await Session.create({})
+      const current = await source(parent.id)
+      const proposed = await offer({
+        sourceID: current.session.id,
+        messageID: current.messageID,
+        title: "Durable peer task",
+        body: "Durable peer body",
+        contextRefs: [],
+      })
+      const assignment = await approve({ handoff: proposed, source: current })
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const [first, replay] = await Promise.all([
+        SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
+        SessionTaskHandoff.confirm(proposed.id, { assignmentID: assignment.id }),
+      ])
+      const sessionID = SessionID.make(first.target_session_id ?? "")
+      const target = await SessionTask.get(sessionID)
+      if (!target) throw new Error("handoff target missing")
+      const requirement = TaskLedger.requirements(target.task.id)[0]!
+      const resources = TaskLedger.listResources(target.task.id)
+      const plan = resources.find((item) => item.kind === "plan")
+
+      expect(replay.target_task_id).toBe(first.target_task_id)
+      expect(target.task).toMatchObject({ requirement_id: requirement.id, last_event_seq: 3 })
+      expect(target.revision).toMatchObject({
+        requirement_id: requirement.id,
+        spec_ref: `task://${target.task.id}/revision/${target.revision.id}`,
+        plan_ref: assignment.content_ref,
+      })
+      expect(requirement).toMatchObject({
+        body_ref: assignment.content_ref,
+        body_hash: assignment.content_hash,
+        created_by: "agent",
+      })
+      expect(requirement.source_refs).toEqual([
+        `handoff:${proposed.id}`,
+        `assignment:${assignment.id}`,
+        `session:${current.session.id}`,
+        `session:${sessionID}`,
+        `task:${proposed.source_task_id}`,
+        `task:${target.task.id}`,
+        `message:${assignment.source_message_id}`,
+        `run:${assignment.source_run_id}`,
+        `action:${assignment.source_action_id}`,
+      ])
+      expect(resources.map((item) => item.kind).toSorted()).toEqual(["plan", "spec"])
+      expect(plan).toMatchObject({
+        uri: assignment.content_ref,
+        hash: assignment.content_hash,
+        producer_id: assignment.id,
+      })
+      expect(TaskLedger.listEvents(target.task.id).map((item) => item.type)).toEqual([
+        "task.created",
+        "requirement.recorded",
+        "revision.activated",
+      ])
+      expect(TaskLedger.findCommand(`task.create:handoff:${proposed.id}`)?.status).toBe("applied")
     }))
 
   test("creates a root peer for a root source and rejects a foreign source message", () =>
