@@ -2,7 +2,13 @@ import z from "zod"
 import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
 import { Database, and, asc, desc, eq, gt } from "../storage/db"
-import { TaskCommandTable, TaskEventTable, TaskRequirementTable, TaskResourceTable } from "./session.sql"
+import {
+  SessionTaskTable,
+  TaskCommandTable,
+  TaskEventTable,
+  TaskRequirementTable,
+  TaskResourceTable,
+} from "./session.sql"
 
 export namespace TaskLedger {
   const ID = (prefix: string) => z.string().min(prefix.length + 2).startsWith(`${prefix}_`)
@@ -97,6 +103,15 @@ export namespace TaskLedger {
       idempotency_key: z.string().min(1),
     })
     .strict()
+  const NewEvent = z
+    .object({
+      type: z.string().min(1),
+      revision_id: RevisionID.nullable().default(null),
+      command_id: ID("command").nullable().default(null),
+      data: Data.default({}),
+      resource_refs: z.array(ID("resource")).default([]),
+    })
+    .strict()
 
   function duplicate(err: unknown) {
     if (!(err instanceof SQLiteError) || err.code !== "SQLITE_CONSTRAINT_UNIQUE") return false
@@ -165,6 +180,48 @@ export namespace TaskLedger {
     if (current.status !== "applied") throw new Conflict("task_command_invalid_state")
     if (current.result_ref !== (result ?? null)) throw new Conflict("task_command_result_drift")
     return Command.parse(current)
+  }
+
+  export function append(tx: Database.TxOrDb, taskID: string, events: z.input<typeof NewEvent>[]) {
+    const id = TaskID.parse(taskID)
+    const input = z.array(NewEvent).min(1).parse(events)
+    const task = tx
+      .select({ seq: SessionTaskTable.last_event_seq })
+      .from(SessionTaskTable)
+      .where(eq(SessionTaskTable.id, id))
+      .limit(1)
+      .get()
+    if (!task) throw new Conflict("task_event_task_missing")
+    const end = task.seq + input.length
+    if (!Number.isSafeInteger(task.seq) || task.seq < 0 || !Number.isSafeInteger(end))
+      throw new Conflict("task_event_seq_invalid")
+    const saved = tx
+      .update(SessionTaskTable)
+      .set({ last_event_seq: end, time_updated: Date.now() })
+      .where(and(eq(SessionTaskTable.id, id), eq(SessionTaskTable.last_event_seq, task.seq)))
+      .returning({ seq: SessionTaskTable.last_event_seq })
+      .get()
+    if (saved?.seq !== end) throw new Conflict("task_event_seq_conflict")
+    const time = Date.now()
+    return tx
+      .insert(TaskEventTable)
+      .values(
+        input.map((item, index) => ({
+          task_id: id,
+          seq: task.seq + index + 1,
+          id: `event_${randomUUID()}`,
+          type: item.type,
+          revision_id: item.revision_id,
+          command_id: item.command_id,
+          data: item.data,
+          resource_refs: item.resource_refs,
+          time_created: time,
+        })),
+      )
+      .returning()
+      .all()
+      .map((row) => Event.parse(row))
+      .sort((a, b) => a.seq - b.seq)
   }
 
   export function requirements(taskID: string) {

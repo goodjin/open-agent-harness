@@ -109,6 +109,34 @@ async function claim(input: { task_id: string | null; kind: string; idempotency_
   return TaskLedger.Command.parse(JSON.parse((await new Response(proc.stdout).text()).trim()))
 }
 
+async function event(taskID: string, type: string) {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { TaskLedger } from ${JSON.stringify(new URL("../../src/session/task-ledger.ts", import.meta.url).href)}
+        import { Database } from ${JSON.stringify(new URL("../../src/storage/db.ts", import.meta.url).href)}
+        const row = Database.transaction(
+          (tx) => TaskLedger.append(tx, process.env.TASK_ID, [{ type: process.env.EVENT_TYPE }])[0],
+          { behavior: "immediate" },
+        )
+        console.log(JSON.stringify(row))
+        Database.close()
+      `,
+    ],
+    {
+      cwd: new URL("../..", import.meta.url).pathname,
+      env: { ...process.env, TASK_ID: taskID, EVENT_TYPE: type },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const code = await proc.exited
+  if (code !== 0) throw new Error(await new Response(proc.stderr).text())
+  return TaskLedger.Event.parse(JSON.parse((await new Response(proc.stdout).text()).trim()))
+}
+
 function failure(column: "id" | "idempotency_key") {
   const sqlite = new SQLite(":memory:")
   sqlite.exec("CREATE TABLE task_command (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE)")
@@ -1044,4 +1072,145 @@ describe("task ledger commands", () => {
     expect(TaskLedger.claim(adapter(err, row), input)).toEqual(row)
     expect(() => TaskLedger.claim(adapter(err, { ...row, kind: "task.revise" }), input)).toThrow(TaskLedger.Conflict)
   })
+})
+
+describe("task ledger event sequence", () => {
+  test("appends a strict batch with continuous sequence and references", () =>
+    setup(async () => {
+      const saved = await task()
+      const command = {
+        id: "command_event",
+        task_id: saved.task.id,
+        kind: "task.update",
+        idempotency_key: "source:event",
+        status: "accepted" as const,
+        result_ref: null,
+        time_created: 1,
+        time_applied: null,
+      }
+      const resource = {
+        id: "resource_event",
+        task_id: saved.task.id,
+        revision_id: saved.revision.id,
+        kind: "spec" as const,
+        uri: "memory://event",
+        hash: saved.revision.body_hash,
+        size: 1,
+        summary: null,
+        producer_type: "revision" as const,
+        producer_id: saved.revision.id,
+        visibility: "task" as const,
+        lifecycle: "active" as const,
+        time_created: 1,
+      }
+      Database.use((db) => {
+        db.insert(TaskCommandTable).values(command).run()
+        db.insert(TaskResourceTable).values(resource).run()
+      })
+      const rows = Database.transaction(
+        (tx) =>
+          TaskLedger.append(tx, saved.task.id, [
+            {
+              type: "revision.updated",
+              revision_id: saved.revision.id,
+              command_id: command.id,
+              data: { version: 1 },
+              resource_refs: [resource.id],
+            },
+            { type: "projection.requested" },
+          ]),
+        { behavior: "immediate" },
+      )
+      expect(rows.map((row) => row.seq)).toEqual([1, 2])
+      expect(rows[0]).toMatchObject({
+        task_id: saved.task.id,
+        revision_id: saved.revision.id,
+        command_id: command.id,
+        resource_refs: [resource.id],
+      })
+      expect(
+        Database.use((db) =>
+          db
+            .select({ seq: SessionTaskTable.last_event_seq })
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.id, saved.task.id))
+            .get(),
+        ),
+      ).toEqual({ seq: 2 })
+    }))
+
+  test("rejects missing tasks and invalid event input without advancing sequence", () =>
+    setup(async () => {
+      const saved = await task()
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.append(tx, "task_missing", [{ type: "task.updated" }]), {
+          behavior: "immediate",
+        }),
+      ).toThrow(TaskLedger.Conflict)
+      expect(() =>
+        Database.transaction((tx) => TaskLedger.append(tx, saved.task.id, []), { behavior: "immediate" }),
+      ).toThrow()
+      expect(() =>
+        Database.transaction(
+          (tx) => TaskLedger.append(tx, saved.task.id, [{ type: "task.updated", resource_refs: ["invalid"] }]),
+          { behavior: "immediate" },
+        ),
+      ).toThrow()
+      expect(TaskLedger.listEvents(saved.task.id)).toEqual([])
+    }))
+
+  test("rolls back task sequence and the whole batch when an event insert fails", () =>
+    setup(async () => {
+      const saved = await task()
+      expect(() =>
+        Database.transaction(
+          (tx) =>
+            TaskLedger.append(tx, saved.task.id, [
+              { type: "task.updated" },
+              { type: "task.failed", command_id: "command_missing" },
+            ]),
+          { behavior: "immediate" },
+        ),
+      ).toThrow()
+      expect(TaskLedger.listEvents(saved.task.id)).toEqual([])
+      expect(
+        Database.use((db) =>
+          db
+            .select({ seq: SessionTaskTable.last_event_seq })
+            .from(SessionTaskTable)
+            .where(eq(SessionTaskTable.id, saved.task.id))
+            .get(),
+        ),
+      ).toEqual({ seq: 0 })
+    }))
+
+  test("serializes concurrent writers without sequence gaps", () =>
+    setup(async () => {
+      const saved = await task()
+      const rows = await Promise.all([event(saved.task.id, "writer.one"), event(saved.task.id, "writer.two")])
+      expect(rows.map((row) => row.seq).sort((a, b) => a - b)).toEqual([1, 2])
+      expect(TaskLedger.listEvents(saved.task.id).map((row) => row.seq)).toEqual([1, 2])
+    }))
+
+  test("skips append when a command replay is already applied", () =>
+    setup(async () => {
+      const saved = await task()
+      const run = () =>
+        Database.transaction(
+          (tx) => {
+            const command = TaskLedger.claim(tx, {
+              task_id: saved.task.id,
+              kind: "task.update",
+              idempotency_key: "source:replay:event",
+            })
+            if (command.status === "applied") return command
+            TaskLedger.append(tx, saved.task.id, [{ type: "task.updated", command_id: command.id }])
+            return TaskLedger.apply(tx, command.id, "task://updated")
+          },
+          { behavior: "immediate" },
+        )
+      expect(run().status).toBe("applied")
+      expect(run().status).toBe("applied")
+      expect(TaskLedger.listEvents(saved.task.id)).toHaveLength(1)
+    }))
 })
