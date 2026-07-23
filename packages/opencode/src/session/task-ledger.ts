@@ -798,6 +798,209 @@ export namespace TaskLedger {
     }
   }
 
+  export function ensure(
+    tx: Database.Transaction,
+    task: typeof SessionTaskTable.$inferSelect,
+    revision: typeof TaskRevisionTable.$inferSelect,
+  ) {
+    if (task.current_revision_id !== revision.id || revision.task_id !== task.id)
+      throw new Conflict("task_migration_revision_invalid")
+    const spec = `task://${task.id}/revision/${revision.id}`
+    const requirements = tx
+      .select()
+      .from(TaskRequirementTable)
+      .where(eq(TaskRequirementTable.task_id, task.id))
+      .all()
+    const resources = tx.select().from(TaskResourceTable).where(eq(TaskResourceTable.task_id, task.id)).all()
+    const events = tx.select().from(TaskEventTable).where(eq(TaskEventTable.task_id, task.id)).all()
+    const seqs = events.map((item) => item.seq).sort((a, b) => a - b)
+    if (seqs.length !== task.last_event_seq || seqs.some((seq, index) => seq !== index + 1))
+      throw new Conflict("task_migration_event_sequence_invalid")
+    const flow =
+      revision.workflow && typeof revision.workflow === "object" && !Array.isArray(revision.workflow)
+        ? revision.workflow
+        : {}
+    const source =
+      task.source_ref && typeof task.source_ref === "object" && !Array.isArray(task.source_ref)
+        ? task.source_ref
+        : {}
+    const assignments =
+      typeof flow.assignment_id === "string"
+        ? tx
+            .select()
+            .from(AssignmentTable)
+            .where(and(eq(AssignmentTable.id, flow.assignment_id), eq(AssignmentTable.session_id, task.session_id)))
+            .all()
+        : task.source_type === "delegation" &&
+            typeof source.sessionID === "string" &&
+            typeof source.runID === "string" &&
+            typeof source.actionID === "string"
+          ? tx
+              .select()
+              .from(AssignmentTable)
+              .where(
+                and(
+                  eq(AssignmentTable.source_type, "delegation"),
+                  eq(AssignmentTable.session_id, task.session_id),
+                  eq(AssignmentTable.source_session_id, SessionID.make(source.sessionID)),
+                  eq(AssignmentTable.source_run_id, source.runID),
+                  eq(AssignmentTable.source_action_id, source.actionID),
+                ),
+              )
+              .all()
+          : []
+    if (assignments.length > 1) throw new Conflict("task_migration_assignment_ambiguous")
+    const assignment = assignments[0]
+    const bodyref = assignment?.content_ref ?? spec
+    const bodyhash = assignment?.content_hash ?? revision.body_hash
+    const size = new TextEncoder().encode(revision.body).byteLength
+    const current = requirements.find(
+      (item) => item.id === task.requirement_id || item.id === revision.requirement_id,
+    )
+    const specs = resources.filter((item) => item.revision_id === revision.id && item.kind === "spec")
+    if (
+      specs.length > 1 ||
+      (specs.length === 1 &&
+        (specs[0]!.uri !== spec ||
+          specs[0]!.hash !== revision.body_hash ||
+          specs[0]!.size !== size ||
+          specs[0]!.lifecycle !== "active"))
+    )
+      throw new Conflict("task_migration_resource_drift")
+    const complete =
+      !!current &&
+      task.requirement_id === current.id &&
+      revision.requirement_id === current.id &&
+      current.body_ref === bodyref &&
+      current.body_hash === bodyhash &&
+      revision.spec_ref === spec &&
+      (!revision.plan_ref || revision.plan_ref === assignment?.content_ref) &&
+      specs.length === 1 &&
+      events.some((item) => item.type === "task.created" || item.type === "task.migrated")
+    if (complete) return { replay: true as const }
+    const command = claim(tx, {
+      task_id: task.id,
+      kind: "task.migrate",
+      idempotency_key: `task.migrate:${task.id}:${revision.id}`,
+    })
+    if (command.status === "applied") throw new Conflict("task_migration_incomplete")
+    if (requirements.length > 1) throw new Conflict("task_migration_requirement_ambiguous")
+    const requirement = requirements[0]
+    if (
+      requirement &&
+      (requirement.body_ref !== bodyref || requirement.body_hash !== bodyhash)
+    )
+      throw new Conflict("task_migration_requirement_drift")
+    if (
+      (task.requirement_id && task.requirement_id !== requirement?.id) ||
+      (revision.requirement_id && revision.requirement_id !== requirement?.id) ||
+      (revision.spec_ref && revision.spec_ref !== spec) ||
+      (revision.plan_ref && revision.plan_ref !== assignment?.content_ref)
+    )
+      throw new Conflict("task_migration_reference_drift")
+    const saved =
+      requirement ??
+      Requirement.parse(
+        tx
+          .insert(TaskRequirementTable)
+          .values({
+            id: `requirement_${randomUUID()}`,
+            task_id: task.id,
+            version: 1,
+            source_refs: refs(task, revision, assignment),
+            body_ref: bodyref,
+            body_hash: bodyhash,
+            constraints: {},
+            acceptance: [],
+            created_by: "migration",
+            confirmed_at: null,
+            supersedes_id: null,
+            time_created: revision.time_created,
+          })
+          .returning()
+          .get(),
+      )
+    const indexed = specs[0]
+      ? Resource.parse(specs[0])
+      : Resource.parse(
+        tx
+          .insert(TaskResourceTable)
+          .values({
+            id: `resource_${randomUUID()}`,
+            task_id: task.id,
+            revision_id: revision.id,
+            kind: "spec",
+            uri: spec,
+            hash: revision.body_hash,
+            size,
+            producer_type: "migration",
+            producer_id: revision.id,
+            summary: null,
+            visibility: "task",
+            lifecycle: "active",
+            time_created: revision.time_created,
+          })
+          .returning()
+          .get(),
+      )
+    tx.update(SessionTaskTable).set({ requirement_id: saved.id }).where(eq(SessionTaskTable.id, task.id)).run()
+    tx.update(TaskRevisionTable)
+      .set({ requirement_id: saved.id, spec_ref: spec })
+      .where(and(eq(TaskRevisionTable.task_id, task.id), eq(TaskRevisionTable.id, revision.id)))
+      .run()
+    if (events.some((item) => item.type === "task.migrated")) throw new Conflict("task_migration_event_drift")
+    const migrated = append(tx, task.id, [
+      {
+        type: "task.migrated",
+        revision_id: revision.id,
+        command_id: command.id,
+        data: {
+          baseline: "current_snapshot",
+          requirement_id: saved.id,
+          source_type: task.source_type,
+          task_status: task.status,
+          revision_status: revision.status,
+          revision_version: revision.version,
+        },
+        resource_refs: [indexed.id],
+      },
+    ])
+    return {
+      command: apply(tx, command.id, `task://${task.id}/revision/${revision.id}/migration-baseline`),
+      events: migrated,
+      requirement: saved,
+      resources: [indexed],
+      replay: false as const,
+    }
+  }
+
+  function refs(
+    task: typeof SessionTaskTable.$inferSelect,
+    revision: typeof TaskRevisionTable.$inferSelect,
+    assignment?: typeof AssignmentTable.$inferSelect,
+  ) {
+    const source = task.source_ref
+    const values = [
+      ["assignment", assignment?.id],
+      ["session", assignment?.source_session_id],
+      ["message", assignment?.source_message_id],
+      ["run", assignment?.source_run_id],
+      ["action", assignment?.source_action_id],
+      ["message", revision.source_message_id],
+      ["session", source.sessionID],
+      ["message", source.messageID],
+      ["run", source.runID],
+      ["action", source.actionID],
+      ["handoff", source.handoffID],
+      ["session", source.sourceSessionID],
+    ]
+    return [
+      ...new Set(
+        values.flatMap(([kind, value]) => (typeof value === "string" && value ? [`${kind}:${value}`] : [])),
+      ),
+    ]
+  }
+
   export function requirements(taskID: string) {
     const id = TaskID.parse(taskID)
     return Database.use((db) =>

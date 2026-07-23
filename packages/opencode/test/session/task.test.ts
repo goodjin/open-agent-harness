@@ -18,7 +18,9 @@ import {
   SessionTaskTable,
   TaskCommandTable,
   TaskHandoffTable,
+  TaskRequirementTable,
   TaskRevisionTable,
+  TaskResourceTable,
 } from "../../src/session/session.sql"
 import { locators, SessionTask } from "../../src/session/task"
 import { TaskLedger } from "../../src/session/task-ledger"
@@ -2781,6 +2783,424 @@ describe("session task", () => {
             .all(),
         ),
       ).toHaveLength(1)
+    }))
+
+  test("keeps get current and open read-only when an old Task has no Ledger", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_migration_read",
+        assignment: { op: "create", target: "self", title: "Read only", body: "Read only" },
+        actions: [{ id: "read", title: "Read" }],
+      })
+      if (!first.task) throw new Error("task missing")
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      await SessionTask.get(session.id)
+      await SessionTask.current(session.id)
+      await SessionTask.open(session.id)
+
+      expect(TaskLedger.requirements(first.task.id)).toEqual([])
+      expect(TaskLedger.listResources(first.task.id)).toEqual([])
+      expect(TaskLedger.listEvents(first.task.id)).toEqual([])
+      expect(
+        Database.use((db) => db.select().from(TaskCommandTable).where(eq(TaskCommandTable.task_id, first.task.id)).all()),
+      ).toEqual([])
+    }))
+
+  test("backfills one current snapshot across concurrent writes and database reopen", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_migration_concurrent",
+        assignment: { op: "create", target: "self", title: "Concurrent migration", body: "Concurrent migration" },
+        actions: [{ id: "write", title: "Write" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      Database.transaction(
+        (tx) => TaskLedger.append(tx, first.task.id, [{ type: "legacy.workflow_observed" }]),
+        { behavior: "immediate" },
+      )
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const actions = result("run_migration_concurrent", [
+        { id: "write", title: "Write", status: "completed" },
+      ]).actions
+
+      await Promise.all([
+        SessionTask.sync({ sessionID: session.id, runID: "run_migration_concurrent", actions }),
+        SessionTask.sync({ sessionID: session.id, runID: "run_migration_concurrent", actions }),
+      ])
+      const before = TaskLedger.listEvents(first.task.id)
+      Database.close()
+      await SessionTask.sync({ sessionID: session.id, runID: "run_migration_concurrent", actions })
+
+      expect(TaskLedger.requirements(first.task.id)).toEqual([
+        expect.objectContaining({
+          created_by: "migration",
+          confirmed_at: null,
+          body_ref: `task://${first.task.id}/revision/${first.revision.id}`,
+        }),
+      ])
+      expect(TaskLedger.listResources(first.task.id)).toEqual([
+        expect.objectContaining({
+          revision_id: first.revision.id,
+          kind: "spec",
+          uri: `task://${first.task.id}/revision/${first.revision.id}`,
+          producer_type: "migration",
+        }),
+      ])
+      expect(before.map((event) => event.type)).toEqual([
+        "legacy.workflow_observed",
+        "task.migrated",
+        "task.workflow_synced",
+      ])
+      expect(TaskLedger.listEvents(first.task.id)).toEqual(before)
+      expect(TaskLedger.findCommand(`task.migrate:${first.task.id}:${first.revision.id}`)).toMatchObject({
+        kind: "task.migrate",
+        status: "applied",
+      })
+    }))
+
+  test("uses an exact delegated Assignment as migration Requirement evidence", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const parent = await Session.create({})
+      const child = await Session.create({ parentID: parent.id })
+      const action = {
+        type: "action",
+        id: "migration_delegate",
+        title: "Migration delegate",
+        operation: "delegate",
+        executor: { type: "agent", target: "backend", capabilities: [] },
+        input: { prompt: "Migration assignment" },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const assignment = await SessionAssignment.delegate({
+        action,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        plan: "Migration assignment",
+        runID: "run_migration_delegate",
+        sessionID: parent.id,
+      })
+      const first = await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_migration_delegate",
+        parentActionID: action.id,
+      })
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      await SessionTask.beginDelegated({
+        sessionID: child.id,
+        parentSessionID: parent.id,
+        parentRunID: "run_migration_delegate",
+        parentActionID: action.id,
+      })
+
+      expect(TaskLedger.requirements(first.task.id)).toEqual([
+        expect.objectContaining({
+          body_ref: assignment.content_ref,
+          body_hash: assignment.content_hash,
+          created_by: "migration",
+          confirmed_at: null,
+          source_refs: expect.arrayContaining([
+            `assignment:${assignment.id}`,
+            `session:${parent.id}`,
+            "run:run_migration_delegate",
+            `action:${action.id}`,
+          ]),
+        }),
+      ])
+      expect(TaskLedger.listResources(first.task.id).map((item) => item.kind)).toEqual(["spec"])
+    }))
+
+  test("reuses compatible partial Requirement facts without overwriting them", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_migration_partial",
+        assignment: { op: "create", target: "self", title: "Partial migration", body: "Partial migration" },
+        actions: [{ id: "partial", title: "Partial" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      const ref = `task://${first.task.id}/revision/${first.revision.id}`
+      Database.use((db) => {
+        db.insert(TaskRequirementTable)
+          .values({
+            id: "requirement_migration_partial",
+            task_id: first.task.id,
+            version: 1,
+            source_refs: ["preserved:partial"],
+            body_ref: ref,
+            body_hash: first.revision.body_hash,
+            constraints: { preserved: true },
+            acceptance: [],
+            created_by: "migration",
+            confirmed_at: null,
+            supersedes_id: null,
+            time_created: first.revision.time_created,
+          })
+          .run()
+        db.update(SessionTaskTable)
+          .set({ requirement_id: "requirement_migration_partial" })
+          .where(eq(SessionTaskTable.id, first.task.id))
+          .run()
+      })
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      await SessionTask.sync({
+        sessionID: session.id,
+        runID: "run_migration_partial",
+        actions: result("run_migration_partial", [
+          { id: "partial", title: "Partial", status: "completed" },
+        ]).actions,
+      })
+
+      expect(TaskLedger.requirements(first.task.id)).toEqual([
+        expect.objectContaining({
+          id: "requirement_migration_partial",
+          source_refs: ["preserved:partial"],
+          constraints: { preserved: true },
+        }),
+      ])
+      expect((await SessionTask.get(session.id))?.revision).toMatchObject({
+        requirement_id: "requirement_migration_partial",
+        spec_ref: ref,
+      })
+    }))
+
+  test("establishes the baseline before drafting and activating a new Revision", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Migration revision",
+        body: "Migration revision v1",
+        source: { type: "user" },
+      })
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Migration revision",
+        body: "Migration revision v2",
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+
+      expect(TaskLedger.requirements(first.task.id).map((item) => item.created_by)).toEqual(["migration", "agent"])
+      expect(TaskLedger.listEvents(first.task.id).map((item) => item.type)).toEqual([
+        "task.migrated",
+        "requirement.revised",
+        "revision.created",
+        "revision.drafted",
+        "revision.archived",
+        "revision.activated",
+      ])
+    }))
+
+  test("establishes the baseline before a confirmed update writes its draft", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.create({
+        sessionID: session.id,
+        title: "Migration confirmed update",
+        body: "Migration confirmed update v1",
+        source: { type: "user" },
+      })
+      const action = {
+        type: "action",
+        id: "migration_confirmed_update",
+        title: "Migration confirmed update",
+        operation: "confirm",
+        executor: { type: "human", target: "user", capabilities: ["confirmation"] },
+        input: { assignment: { op: "update", target: "self" } },
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const messageID = MessageID.ascending()
+      const assignment = await SessionAssignment.confirm({
+        action,
+        messageID,
+        plan: "Migration confirmed update v2",
+        runID: "run_migration_confirmed_update",
+        sessionID: session.id,
+      })
+      if (!assignment) throw new Error("assignment missing")
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      const saved = await SessionTask.confirmed({
+        sessionID: session.id,
+        runID: "run_migration_confirmed_update",
+        actionIDs: [action.id],
+        messageID,
+        actions: [],
+        legacy: { title: "Legacy", body: "Legacy" },
+        requiresAssignment: true,
+      })
+
+      expect(saved.type).toBe("update")
+      expect(TaskLedger.requirements(first.task.id).map((item) => item.created_by)).toEqual(["migration", "agent"])
+      expect(TaskLedger.listEvents(first.task.id).map((item) => item.type)).toEqual([
+        "task.migrated",
+        "requirement.revised",
+        "revision.created",
+        "revision.drafted",
+      ])
+    }))
+
+  test("rolls back incompatible migration facts and does not invent historical result events", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const conflict = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: conflict.id,
+        runID: "run_migration_conflict",
+        assignment: { op: "create", target: "self", title: "Migration conflict", body: "Migration conflict" },
+        actions: [{ id: "conflict", title: "Conflict" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      Database.use((db) =>
+        db
+          .insert(TaskRequirementTable)
+          .values({
+            id: "requirement_migration_conflict",
+            task_id: first.task.id,
+            version: 1,
+            source_refs: [],
+            body_ref: "task://conflicting/revision",
+            body_hash: "f".repeat(64),
+            constraints: {},
+            acceptance: [],
+            created_by: "migration",
+            confirmed_at: null,
+            supersedes_id: null,
+            time_created: first.revision.time_created,
+          })
+          .run(),
+      )
+      const finished = await Session.create({})
+      const old = await SessionTask.route({
+        sessionID: finished.id,
+        runID: "run_migration_result",
+        assignment: { op: "create", target: "self", title: "Old result", body: "Old result" },
+        actions: [{ id: "done", title: "Done" }],
+        source: { type: "legacy", runID: "run_migration_result" },
+      })
+      if (!old.task || !old.revision) throw new Error("task missing")
+      await SessionTask.finish({
+        sessionID: finished.id,
+        runID: "run_migration_result",
+        summary: "Persisted old result",
+        source: "protocol",
+      })
+      const counts = Database.use((db) => ({
+        assignments: db.select().from(AssignmentTable).all().length,
+        tasks: db.select().from(SessionTaskTable).all().length,
+      }))
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      await expect(
+        SessionTask.sync({
+          sessionID: conflict.id,
+          runID: "run_migration_conflict",
+          actions: result("run_migration_conflict", [
+            { id: "conflict", title: "Conflict", status: "completed" },
+          ]).actions,
+        }),
+      ).rejects.toThrow("task_migration_requirement_drift")
+      expect(TaskLedger.listEvents(first.task.id)).toEqual([])
+      expect(TaskLedger.listResources(first.task.id)).toEqual([])
+      expect(TaskLedger.findCommand(`task.migrate:${first.task.id}:${first.revision.id}`)).toBeUndefined()
+
+      await SessionTask.finish({
+        sessionID: finished.id,
+        runID: "run_migration_result",
+        summary: "Persisted old result",
+        source: "protocol",
+      })
+      expect(TaskLedger.listEvents(old.task.id)).toEqual([
+        expect.objectContaining({
+          type: "task.migrated",
+          data: expect.objectContaining({ baseline: "current_snapshot", task_status: "completed" }),
+        }),
+      ])
+      expect(TaskLedger.requirements(old.task.id)[0]?.source_refs).toContain("run:run_migration_result")
+      expect(
+        Database.use((db) => ({
+          assignments: db.select().from(AssignmentTable).all().length,
+          tasks: db.select().from(SessionTaskTable).all().length,
+        })),
+      ).toEqual(counts)
+      expect(TaskLedger.listEvents(old.task.id).some((event) => event.type === "result.recorded")).toBe(false)
+      expect(TaskLedger.listEvents(old.task.id).some((event) => event.type === "task.completed")).toBe(false)
+    }))
+
+  test("rolls back the complete migration baseline when its Event insert fails", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+      const session = await Session.create({})
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_migration_rollback",
+        assignment: { op: "create", target: "self", title: "Migration rollback", body: "Migration rollback" },
+        actions: [{ id: "rollback", title: "Rollback" }],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      Database.use((db) =>
+        db.run(sql`
+          CREATE TRIGGER fail_migration_event
+          BEFORE INSERT ON task_event
+          WHEN NEW.type = 'task.migrated'
+          BEGIN
+            SELECT RAISE(ABORT, 'migration event failure');
+          END
+        `),
+      )
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+
+      await expect(
+        SessionTask.sync({
+          sessionID: session.id,
+          runID: "run_migration_rollback",
+          actions: result("run_migration_rollback", [
+            { id: "rollback", title: "Rollback", status: "completed" },
+          ]).actions,
+        }),
+      ).rejects.toThrow()
+
+      expect(TaskLedger.requirements(first.task.id)).toEqual([])
+      expect(TaskLedger.listResources(first.task.id)).toEqual([])
+      expect(TaskLedger.listEvents(first.task.id)).toEqual([])
+      expect(TaskLedger.findCommand(`task.migrate:${first.task.id}:${first.revision.id}`)).toBeUndefined()
+      expect((await SessionTask.get(session.id))?.revision.workflow).toEqual(first.revision.workflow)
     }))
 
   test("rolls back workflow and terminal results when their Ledger Event fails", () =>
