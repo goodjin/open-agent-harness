@@ -17,6 +17,7 @@ The session sidebar renders workspace root sessions, child session trees, status
 - Virtualization must not assume tree computation is cheap; filtering and expansion should keep derived work bounded where practical.
 - Tree guide lines are row-local plus spacer guide lines, so scrolling into the middle of a deep branch still preserves visible ancestry guides.
 - Route changes should preserve sidebar scroll position and should not chase the active row.
+- Recursive child progress keeps the compact `ended/total` display. The numerator counts every explicit terminal outcome, including success, reply, user-completed, failure, error, timeout, and cancellation. Blocked, interrupted, waiting, queued, and running children are not ended. Terminal cancellation contributes to ended progress without being reclassified as successful work.
 
 ## Status Filtering
 

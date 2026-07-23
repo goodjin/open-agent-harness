@@ -1,27 +1,6 @@
 # Rules
 
-- Decompose exactly one epic slice into feature child units.
-- Before decomposing, identify the user's intent, epic goal, success criteria, hard constraints, known context, unresolved details, and risks.
-- Ask important clarifying questions at the beginning when they change the feature graph; once clear or explicitly assumed, declare the complete feature graph and continue from delegated results without asking for the next small step.
-- Treat the initial task as the original user request, or as the delegated handoff content when this session was created by another agent.
-- If this session was created by another agent or the prompt is clearly a delegated handoff, treat the parent assignment as confirmation for this epic scope. Do not ask the user to confirm the same work again; declare the executable feature graph directly unless a new user choice, destructive action, or scope-changing blocker is unavoidable.
-- If the task came directly from the user, first understand the task, clarify graph-changing details, then analyze the feature boundaries and risks, then summarize the proposed feature graph for user confirmation.
-- If a missing detail can change the feature graph, use an `input` item to ask the user before declaring the graph.
-- If the missing detail appears to change the original goal or the required planning layer, use an `input` item with two options: continue planning in this session with an explicit assumption, or reply to the parent session with the blocker and suggested rerouting. If the user chooses to continue, declare the confirmed graph. If the user chooses to reply, emit a terminal `reply` explaining the blocker, the user's choice, and the suggested next default-session clarification.
-- Each feature should have `id`, `name`, `goal`, `scope`, `out_of_scope`, `depends`, `acceptance_signals`, `risks`, and `unresolved_questions`.
-- Before direct user-originated executable work, read Current Session Task. With no Task, emit create/self confirmation with the full proposed feature breakdown. Continue the current Revision without assignment inside the same Task boundary; use update/self for a boundary-changing revision and handoff/peer for a new Task.
-- For delegated graphs from a parent session, skip the `confirm` item and declare executable feature items directly.
-- When `confirm` carries a Task `assignment`, emit it without executable sibling items. Put the complete epic and feature breakdown in `plan`; after confirmation, the runtime delivers that Task as a fresh request, and this planner declares the executable feature graph without confirming the same assignment again. Any graph included in the preparation package is ignored.
-- If the user must choose between plans or provide additional information, use an `input` item and let the model declare the next package from that answer. `confirm` is only for approve/cancel; cancellation stops downstream execution.
-- Express the feature breakdown as an Agent Protocol DSL package with `{ "version": "2", "items": [...] }`.
-- Declare all currently identifiable features in one DSL package.
-- Add one `items[]` entry per feature. Each item should use `kind: "agent"` and `target: "feature-planner"`.
-- Put the feature details in each item's `prompt`, including current layer, next layer, objective, scope, exclusions, acceptance signals, risks, and the instruction to declare implementation and verification child items through DSL.
-- Add `depends` chains for all planner handoff items so feature work is handled sequentially by declaration order unless a specific dependency requires a different order.
-- Use a later DSL package only for features that cannot be defined until a prior runtime result, user answer, artifact, or error is available.
-- Do not assign implementation work to coding agents.
-- Do not create implementation or verification tasks directly.
-- If source context is missing, read small local docs or known source files yourself when that is enough.
-- Delegate to `explore` only when the epic needs read-only discovery across many files, many modules, traces, or unknown entrypoints.
-- Do not use `explore` for known files, narrow symbols, or context that fits in your own read/search pass.
-- Stop after declaring the confirmed feature child graph.
+- Do not create, update, hand off, or execute new work.
+- Do not delegate to `feature-planner` or any specialist.
+- When resumed only to inspect historical output, answer from the stored evidence without declaring executable items.
+- When asked to continue or start work, emit a terminal `reply` explaining that `epic-planner` is retired and that the work must be routed through `default`, `milestone-planner`, or `feature-planner`.

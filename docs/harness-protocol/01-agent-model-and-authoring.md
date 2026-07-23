@@ -746,7 +746,7 @@ verifier 命名上区分两种用法，影响系统自动补 verifier 时的 age
 | Agent                    | 建议 kind  | 依据                                                                                                  |
 | ------------------------ | ---------- | ----------------------------------------------------------------------------------------------------- |
 | `default`                | `planner`  | 默认入口，负责意图澄清、规模判断、DSL 任务拆解、路由和结果综合。                                      |
-| `epic-planner`           | `planner`  | 把 epic slice 拆成 feature，产出边界、依赖、验收信号和可调度 child calls。                            |
+| `epic-planner`           | `planner`  | 已废弃的隐藏兼容模板，仅用于解析历史会话；新任务不得路由到该 Agent。                                  |
 | `feature-planner`        | `planner`  | 把 feature 拆成 implementation、verification、review、docs、release 等具体任务。                      |
 | `milestone-planner`      | `planner`  | 把 milestone 拆成 epic slices，给后续执行链提供任务图。                                               |
 | `plan`                   | `planner`  | 只读规划、分析、设计、审查和 implementation plan。                                                    |

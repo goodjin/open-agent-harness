@@ -15,6 +15,7 @@ const all = [
   agent("design-reviewer"),
   agent("dynamic-worker", false, true),
   agent("retired-worker", false, true, false),
+  agent("epic-planner", false, true, false),
 ]
 
 function agent(name: string, primary = false, hidden = false, delegable = true) {
@@ -83,6 +84,7 @@ describe("agent delegation visibility", () => {
     const dynamic = all.find((item) => item.name === "dynamic-worker")
     const retired = all.find((item) => item.name === "retired-worker")
     expect(names("default")).not.toContain("dynamic-worker")
+    expect(names("default")).not.toContain("epic-planner")
     expect(dynamic && AgentDelegation.explicit(dynamic, "default")).toBe(true)
     expect(retired && AgentDelegation.explicit(retired, "default")).toBe(false)
   })
@@ -293,33 +295,4 @@ describe("agent delegation visibility", () => {
     expect(got.input.missing_inputs).toEqual([])
   })
 
-  test("epic planner starts without required goal fields", () => {
-    const got = AgentDelegation.runtime({
-      agent: "epic-planner",
-      meta: {
-        contracts: {
-          input: [{ name: "epic_goal", type: "text", required: true }],
-          output: [],
-        },
-        observability: {
-          level: "minimal",
-        },
-      },
-      action: {
-        id: "act_e1",
-        title: "Epic Planner",
-        operation: "agent",
-        executor: { type: "agent", target: "epic-planner", capabilities: [] },
-        input: {},
-        depends_on: [],
-        context_refs: [],
-        result_policy: "summary",
-      },
-      trigger: "missing_input",
-    })
-
-    expect(got.status).toBe("ready")
-    expect(got.input.status).toBe("ready")
-    expect(got.input.missing_inputs).toEqual([])
-  })
 })

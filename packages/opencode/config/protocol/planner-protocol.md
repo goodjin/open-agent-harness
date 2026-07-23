@@ -103,6 +103,8 @@ When a create/self confirmation had no executable siblings, design the execution
 
 Ordinary conversation does not create or modify a Task. Explanations, clarification, progress questions, plan discussion, and result review need no `assignment` when the package has no executable action. Do not mechanically perform request admission for every message.
 
+Every formal executable graph must run under exactly one confirmed Session Task whose current Markdown description matches the work being declared. A Session can own at most one Task. A Task can have multiple Revisions, and each newly declared executable graph creates another Run inside the active Revision.
+
 Before preparing executable actions, read and follow Current Session Task from the supplied session context or runtime observations:
 
 - Before a Task exists, exploration may use only `read`, `glob`, `grep`, `webfetch`, `websearch`, `lsp`, `todoread`, or `agent_query`. These calls gather evidence and do not create a Task.
@@ -111,8 +113,21 @@ Before preparing executable actions, read and follow Current Session Task from t
 - When the request still serves the same Task without changing its content, scope, acceptance, or workflow boundary, continue the current Revision without creating a second Task. Do not emit another assignment.
 - When the request serves the same Task but changes its content, scope, acceptance, or workflow boundary, inspect the current Task, child sessions, and reusable results, then propose `assignment={"op":"update","target":"self"}`. The proposal requires user confirmation. Before confirmation, do not stop or replace the active execution.
 - When the request is clearly a new Task, the current session must not create it. Propose `assignment={"op":"handoff","target":"peer"}` with the complete new Task Markdown in `plan`. After confirmation the Runtime creates a peer session. The source package must not execute actions for the new Task.
+- Never emit `create/self` when Current Session Task already exists. Runtime rejects the complete package as `session_task_already_bound`, executes no sibling action, and asks you to repair the declaration. Do not expect Runtime to reinterpret it as update or handoff.
+- A package may declare at most one Task assignment. Do not combine create, update, or handoff declarations in one package.
+- For `create/self`, already designed executable siblings belong to the new Task and first Run; Runtime persists the Task, Revision, and workflow before dispatch. For `update/self` and `handoff/peer`, source-package executable siblings do not cross the revision or peer-session boundary.
 - When ownership is unclear and the decision would change the work graph or product boundary, use kind="input" to ask the user. Decide from context; do not require a fixed admission check for every message.
 - Parent-delegated child sessions start with a bound and confirmed Task, so do not ask again for their initial assignment. Later child requests still follow the same single-Task, update, and handoff rules.
+
+Use this decision table before formal execution:
+
+| Current Session Task | Request relation | Declaration |
+| --- | --- | --- |
+| absent | first executable task | `create/self` |
+| present | same description and boundary | ordinary graph, no assignment |
+| present | same Task with changed description or boundary | `update/self` |
+| present | independent new Task | `handoff/peer` |
+| unclear | boundary-changing ambiguity | `input` |
 
 Current Task inspection and controlled child-session stopping may later be exposed through `task_inspect` and `session_control`. These are capability names for a later controlled flow, not registered native tools. Do not call them unless the Runtime lists them.
 

@@ -20,6 +20,7 @@ import {
   latestRootSession,
   sessionDescendants,
   sessionCompleted,
+  sessionEnded,
   sessionFilter,
   sessionAgentLabel,
   sessionLineage,
@@ -407,6 +408,38 @@ describe("layout workspace helpers", () => {
     expect(sessionCompleted(session({ id: "done", directory: "/workspace" }), undefined, { type: "completed" })).toBe(
       true,
     )
+  })
+
+  test("counts terminal child statuses as ended without closing recoverable states", () => {
+    const item = session({ id: "ended", directory: "/workspace" })
+    for (const type of ["completed", "terminal_reply", "user_completed", "failed", "aborted", "error", "timeout"]) {
+      expect(sessionEnded(item, undefined, { type })).toBe(true)
+    }
+    for (const type of ["blocked", "interrupted", "waiting_child", "waiting_user", "running"]) {
+      expect(sessionEnded(item, undefined, { type })).toBe(false)
+    }
+  })
+
+  test("includes cancelled children in recursive ended progress", () => {
+    const list = [
+      session({ id: "root", directory: "/workspace" }),
+      ...Array.from({ length: 58 }, (_, idx) =>
+        session({ id: `done-${idx}`, directory: "/workspace", parentID: "root" }),
+      ),
+      session({ id: "cancelled-a", directory: "/workspace", parentID: "root" }),
+      session({ id: "cancelled-b", directory: "/workspace", parentID: "root" }),
+    ]
+    const status = Object.fromEntries([
+      ...Array.from({ length: 58 }, (_, idx) => [`done-${idx}`, { type: "completed" }]),
+      ["cancelled-a", { type: "aborted" }],
+      ["cancelled-b", { type: "aborted" }],
+    ])
+
+    expect(childSummaryBySession(list, childMapByParent(list), {}, status).get("root")).toEqual({
+      completed: 60,
+      total: 60,
+      working: 0,
+    })
   })
 
   test("classifies sidebar session status groups", () => {

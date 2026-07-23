@@ -1378,7 +1378,7 @@ describe("SessionRunner", () => {
                   (part) =>
                     part.type === "text" &&
                     part.metadata?.kind === "protocol_dispatch_failed" &&
-                    part.text.includes("session_task_conflict"),
+                    part.text.includes("session_task_already_bound"),
                 ),
               ).toBe(true)
               expect(logs.some((item) => item.type === "protocol.dispatch.retry")).toBe(true)

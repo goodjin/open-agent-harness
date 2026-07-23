@@ -352,7 +352,7 @@ export namespace SessionTask {
     const assignment = assignments[0]
     if (!assignment) return
     const current = await get(sessionID)
-    if (current && assignment.op === "create") throw new Conflict()
+    if (current && assignment.op === "create") throw new Conflict("session_task_already_bound")
     if (!current && assignment.op === "update") throw new Conflict("session_task_update_requires_bound_source")
     if (!current && assignment.op === "handoff") throw new Conflict("task_handoff_requires_bound_source")
   }
@@ -615,7 +615,7 @@ export namespace SessionTask {
           if (!current || current.task_id !== task.id) throw new Conflict("session_task_revision_missing")
           if (continuation && !legacySnapshot(Stored.parse({ task, revision: current }), continuation))
             throw new Conflict("session_task_legacy_continuation_stale")
-          if (input.assignment?.op === "create") throw new Conflict()
+          if (input.assignment?.op === "create") throw new Conflict("session_task_already_bound")
           if (input.assignment?.op === "handoff") return { type: "handoff" as const, task: Task.parse(task) }
           if (input.assignment?.op === "update") {
             if (task.status === "revising" || task.status === "blocked")

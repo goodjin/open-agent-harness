@@ -354,7 +354,17 @@ describe("session task", () => {
           assignment: { op: "create", target: "self", title: "Second task", body: "Second plan" },
           actions: [{ id: "second" }],
         }),
-      ).rejects.toThrow("session_task_conflict")
+      ).rejects.toThrow("session_task_already_bound")
+      await expect(
+        SessionTask.preflight(session.id, [
+          {
+            operation: "confirm",
+            executor: { type: "human" },
+            input: { assignment: { op: "create", target: "self" } },
+          },
+          { id: "second", operation: "tool", executor: { type: "tool", target: "read" } },
+        ]),
+      ).rejects.toThrow("session_task_already_bound")
       expect((await SessionTask.get(session.id))?.revision.workflow.actions).toEqual([
         { id: "first", run_id: "run_task_create" },
       ])

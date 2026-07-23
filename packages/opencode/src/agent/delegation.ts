@@ -64,8 +64,7 @@ export namespace AgentDelegation {
   const deny: Record<string, string[]> = {
     default: ["default"],
     "milestone-planner": ["default", "milestone-planner"],
-    "epic-planner": ["default", "milestone-planner", "epic-planner"],
-    "feature-planner": ["default", "milestone-planner", "epic-planner", "feature-planner"],
+    "feature-planner": ["default", "milestone-planner", "feature-planner"],
   }
 
   const chain = new Set(Object.keys(deny))

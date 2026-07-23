@@ -234,6 +234,9 @@ describe("AgentTemplateLoader", () => {
         expect(agent?.meta.runner).toBe("protocol")
         expect(agent?.protocol?.file).toBe("planner-protocol.md")
         expect(agent?.protocol?.prompt).toContain("This is the planner/coordinator protocol")
+        expect(agent?.protocol?.prompt).toContain("session_task_already_bound")
+        expect(agent?.protocol?.prompt).toContain("independent new Task")
+        expect(agent?.protocol?.prompt).toContain("ordinary graph, no assignment")
         expect(agent?.protocol?.prompt).not.toContain("Worker result fields")
       })
       ;["backend", "frontend", "general-executor", "test-engineer"].forEach((id) => {
@@ -375,6 +378,19 @@ describe("AgentTemplateLoader", () => {
               : "chat"
         expect(agent.meta.runner).toBe(expected)
       }
+    })
+
+    test("keeps epic planner only as a hidden retired compatibility template", async () => {
+      const agent = (await loader.loadAll()).find((item) => item.id === "epic-planner")
+
+      expect(agent).toBeDefined()
+      expect(agent?.meta.entry).toMatchObject({
+        primary: false,
+        delegable: false,
+        mentionable: false,
+        hidden: true,
+      })
+      expect(agent?.meta.lifecycle?.status).toBe("retired")
     })
 
     test("migration-runner package template exposes workflow metadata", async () => {

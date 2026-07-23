@@ -167,7 +167,7 @@ export const childSummaryBySession = (
         const next = visit(child)
         return {
           completed:
-            acc.completed + next.completed + (sessionCompleted(session, messages[child], status[child]) ? 1 : 0),
+            acc.completed + next.completed + (sessionEnded(session, messages[child], status[child]) ? 1 : 0),
           total: acc.total + next.total + 1,
           working: acc.working + next.working + (sessionWorking(messages[child], status[child]) ? 1 : 0),
         }
@@ -205,6 +205,7 @@ type Status = {
 const closed = ["idle", "completed", "terminal_reply", "user_completed", "archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
 const active = ["queued", "starting", "rate_limited", "retry", "waiting_permission", "waiting_user", "waiting_child", "paused", "aborting"]
 const failed = ["archived", "failed", "blocked", "interrupted", "aborted", "error", "timeout"]
+const ended = ["completed", "terminal_reply", "user_completed", "failed", "aborted", "error", "timeout"]
 const live = ["running", "queued", "starting", "retry"]
 const wait = ["waiting_permission", "waiting_user", "waiting_child", "rate_limited", "paused"]
 const stop = ["idle", "archived"]
@@ -256,6 +257,11 @@ export const sessionCompleted = (session: Session, messages: Message[] | undefin
   })
 }
 
+export const sessionEnded = (session: Session, messages: Message[] | undefined, status: Status | undefined) => {
+  if (status?.type && ended.includes(status.type)) return true
+  return sessionCompleted(session, messages, status)
+}
+
 export const sessionFilter = (input: {
   session: Session
   messages: Message[] | undefined
@@ -280,7 +286,7 @@ export const childSessionSummary = (
 ) => {
   if (children.length === 0) return
   return {
-    completed: children.filter((child) => sessionCompleted(child, messages[child.id], status[child.id])).length,
+    completed: children.filter((child) => sessionEnded(child, messages[child.id], status[child.id])).length,
     total: children.length,
   }
 }

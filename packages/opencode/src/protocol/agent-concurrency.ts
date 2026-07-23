@@ -29,7 +29,6 @@ export namespace AgentConcurrency {
   export function limit(input: { agent: string; kind?: string; cfg?: AgentConcurrencyConfig }) {
     if (input.cfg?.concurrency === -1) return
     if (input.cfg?.concurrency) return input.cfg.concurrency
-    if (input.agent === "epic-planner") return 2
     if (input.agent === "feature-planner") return 5
     if (input.kind === "planner") return 1
     return
