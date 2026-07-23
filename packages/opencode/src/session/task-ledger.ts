@@ -98,6 +98,69 @@ export namespace TaskLedger {
     .strict()
   export type Snapshot = z.infer<typeof Snapshot>
 
+  export const AuditIssue = z
+    .object({
+      severity: z.enum(["repairable", "blocked"]),
+      code: z.enum([
+        "task_missing",
+        "revision_pointer_missing",
+        "revision_pointer_invalid",
+        "revision_active_conflict",
+        "requirement_pointer_missing",
+        "requirement_pointer_invalid",
+        "requirement_chain_invalid",
+        "requirement_contract_invalid",
+        "requirement_ref_invalid",
+        "requirement_hash_mismatch",
+        "resource_contract_invalid",
+        "resource_revision_invalid",
+        "resource_identity_conflict",
+        "resource_lifecycle_invalid",
+        "revision_spec_missing",
+        "revision_spec_invalid",
+        "revision_plan_missing",
+        "revision_plan_invalid",
+        "event_sequence_invalid",
+        "event_contract_invalid",
+        "event_revision_invalid",
+        "event_command_invalid",
+        "event_resource_invalid",
+        "command_contract_invalid",
+        "command_key_invalid",
+        "command_incomplete",
+        "command_state_invalid",
+        "command_event_invalid",
+        "command_result_invalid",
+        "terminal_state_invalid",
+      ]),
+      entity: z.enum(["task", "revision", "requirement", "resource", "event", "command"]),
+      id: z.string().max(256).nullable(),
+      refs: z.array(z.string().max(256)).max(8),
+    })
+    .strict()
+  export type AuditIssue = z.infer<typeof AuditIssue>
+
+  export const Audit = z
+    .object({
+      task_id: TaskID,
+      status: z.enum(["ok", "repairable", "blocked"]),
+      issues: z.array(AuditIssue).max(50),
+      evidence: z
+        .object({
+          revisions: z.number().int().nonnegative(),
+          requirements: z.number().int().nonnegative(),
+          resources: z.number().int().nonnegative(),
+          events: z.number().int().nonnegative(),
+          commands: z.number().int().nonnegative(),
+          last_event_seq: z.number().int().nonnegative(),
+          issue_count: z.number().int().nonnegative(),
+          truncated: z.boolean(),
+        })
+        .strict(),
+    })
+    .strict()
+  export type Audit = z.infer<typeof Audit>
+
   export class Conflict extends Error {}
 
   const Claim = z
@@ -1075,7 +1138,17 @@ export namespace TaskLedger {
   }
 
   function chain(tx: Database.Transaction, taskID: string, input: typeof TaskRequirementTable.$inferSelect) {
-    const result = tx.get<{ valid: number; depth: number; terminal: number }>(sql`
+    const result = lineage(tx, taskID, input)
+    if (result?.valid === 1) return
+    throw new Conflict(
+      input.version > 10_000 && result?.depth === 10_000
+        ? "task_migration_requirement_chain_too_deep"
+        : "task_migration_requirement_chain_invalid",
+    )
+  }
+
+  function lineage(tx: Database.Transaction, taskID: string, input: typeof TaskRequirementTable.$inferSelect) {
+    return tx.get<{ valid: number; depth: number; terminal: number }>(sql`
       WITH RECURSIVE lineage(id, version, supersedes_id, depth) AS (
         SELECT id, version, supersedes_id, 1
         FROM task_requirement
@@ -1105,12 +1178,6 @@ export namespace TaskLedger {
         COALESCE(MIN(version), 0) AS terminal
       FROM lineage
     `)
-    if (result?.valid === 1) return
-    throw new Conflict(
-      input.version > 10_000 && result?.depth === 10_000
-        ? "task_migration_requirement_chain_too_deep"
-        : "task_migration_requirement_chain_invalid",
-    )
   }
 
   function baselineEvent(
@@ -1226,6 +1293,440 @@ export namespace TaskLedger {
       db.select().from(TaskCommandTable).where(eq(TaskCommandTable.idempotency_key, id)).limit(1).get(),
     )
     return row ? Command.parse(row) : undefined
+  }
+
+  export function audit(taskID: string) {
+    const id = TaskID.parse(taskID)
+    return Database.transaction((tx) => {
+      const state = { total: 0, blocked: false, items: [] as AuditIssue[] }
+      const issue = (input: z.input<typeof AuditIssue>) => {
+        state.total++
+        if (input.severity === "blocked") state.blocked = true
+        if (state.items.length < 50)
+          state.items.push(
+            AuditIssue.parse({
+              ...input,
+              id: input.id?.slice(0, 256) ?? null,
+              refs: input.refs.slice(0, 8).map((ref) => ref.slice(0, 256)),
+            }),
+          )
+      }
+      const task = tx.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, id)).limit(1).get()
+      if (!task) {
+        issue({ severity: "blocked", code: "task_missing", entity: "task", id, refs: [] })
+        return Audit.parse({
+          task_id: id,
+          status: "blocked",
+          issues: state.items,
+          evidence: {
+            revisions: 0,
+            requirements: 0,
+            resources: 0,
+            events: 0,
+            commands: 0,
+            last_event_seq: 0,
+            issue_count: state.total,
+            truncated: false,
+          },
+        })
+      }
+      const revisions = tx.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.task_id, id)).all()
+      const requirements = tx.select().from(TaskRequirementTable).where(eq(TaskRequirementTable.task_id, id)).all()
+      const resources = tx.select().from(TaskResourceTable).where(eq(TaskResourceTable.task_id, id)).all()
+      const events = tx
+        .select()
+        .from(TaskEventTable)
+        .where(eq(TaskEventTable.task_id, id))
+        .orderBy(asc(TaskEventTable.seq))
+        .all()
+      const commands = tx.select().from(TaskCommandTable).where(eq(TaskCommandTable.task_id, id)).all()
+      const revision = new Map(revisions.map((item) => [item.id, item]))
+      const requirement = new Map(requirements.map((item) => [item.id, item]))
+      const resource = new Map(resources.map((item) => [item.id, item]))
+      const command = new Map(commands.map((item) => [item.id, item]))
+      const active = revisions.filter((item) => item.status === "active")
+      const current = task.current_revision_id ? revision.get(task.current_revision_id) : undefined
+      if (!task.current_revision_id)
+        issue({
+          severity: active.length === 1 ? "repairable" : "blocked",
+          code: "revision_pointer_missing",
+          entity: "task",
+          id,
+          refs: active.slice(0, 8).map((item) => item.id),
+        })
+      if (task.current_revision_id && !current)
+        issue({
+          severity: "blocked",
+          code: "revision_pointer_invalid",
+          entity: "task",
+          id,
+          refs: [task.current_revision_id],
+        })
+      if (active.length > 1)
+        issue({
+          severity: "blocked",
+          code: "revision_active_conflict",
+          entity: "task",
+          id,
+          refs: active.slice(0, 8).map((item) => item.id),
+        })
+      const taskreq = task.requirement_id ? requirement.get(task.requirement_id) : undefined
+      const revreq = current?.requirement_id ? requirement.get(current.requirement_id) : undefined
+      const derivable = !!taskreq || !!revreq || requirements.length <= 1
+      if (!task.requirement_id)
+        issue({
+          severity: derivable ? "repairable" : "blocked",
+          code: "requirement_pointer_missing",
+          entity: "task",
+          id,
+          refs: requirements.slice(0, 8).map((item) => item.id),
+        })
+      if (task.requirement_id && !taskreq)
+        issue({
+          severity: "blocked",
+          code: "requirement_pointer_invalid",
+          entity: "task",
+          id,
+          refs: [task.requirement_id],
+        })
+      if (current && !current.requirement_id)
+        issue({
+          severity: derivable ? "repairable" : "blocked",
+          code: "requirement_pointer_missing",
+          entity: "revision",
+          id: current.id,
+          refs: requirements.slice(0, 8).map((item) => item.id),
+        })
+      if (current?.requirement_id && !revreq)
+        issue({
+          severity: "blocked",
+          code: "requirement_pointer_invalid",
+          entity: "revision",
+          id: current.id,
+          refs: [current.requirement_id],
+        })
+      if (taskreq && revreq && taskreq.id !== revreq.id)
+        issue({
+          severity: "blocked",
+          code: "requirement_pointer_invalid",
+          entity: "task",
+          id,
+          refs: [taskreq.id, revreq.id],
+        })
+      const selected = revreq ?? taskreq
+      if (selected && lineage(tx, id, selected)?.valid !== 1)
+        issue({
+          severity: "blocked",
+          code: "requirement_chain_invalid",
+          entity: "requirement",
+          id: selected.id,
+          refs: [String(selected.version), selected.supersedes_id ?? "null"],
+        })
+      requirements.forEach((item) => {
+        if (!Requirement.safeParse(item).success)
+          issue({
+            severity: "blocked",
+            code: "requirement_contract_invalid",
+            entity: "requirement",
+            id: item.id,
+            refs: [],
+          })
+        revisions
+          .filter((row) => row.requirement_id === item.id)
+          .forEach((row) => {
+            const refs = resources.filter((entry) => entry.revision_id === row.id && entry.uri === item.body_ref)
+            if (refs.length !== 1)
+              issue({
+                severity: "blocked",
+                code: "requirement_ref_invalid",
+                entity: "requirement",
+                id: item.id,
+                refs: refs.slice(0, 8).map((entry) => entry.id),
+              })
+            if (refs[0] && refs[0].hash !== item.body_hash)
+              issue({
+                severity: "blocked",
+                code: "requirement_hash_mismatch",
+                entity: "requirement",
+                id: item.id,
+                refs: [item.body_hash, refs[0].hash],
+              })
+          })
+      })
+      const identities = new Map<string, string[]>()
+      resources.forEach((item) => {
+        if (!Resource.safeParse(item).success)
+          issue({ severity: "blocked", code: "resource_contract_invalid", entity: "resource", id: item.id, refs: [] })
+        const key = `${item.kind}\u0000${item.hash}\u0000${item.uri}`
+        identities.set(key, [...(identities.get(key) ?? []), item.id])
+        const owner = item.revision_id ? revision.get(item.revision_id) : undefined
+        if (item.revision_id && !owner)
+          issue({
+            severity: "blocked",
+            code: "resource_revision_invalid",
+            entity: "resource",
+            id: item.id,
+            refs: [item.revision_id],
+          })
+        if (owner?.status === "archived" && item.lifecycle === "active")
+          issue({
+            severity: "blocked",
+            code: "resource_lifecycle_invalid",
+            entity: "resource",
+            id: item.id,
+            refs: [owner.id, owner.status, item.lifecycle],
+          })
+      })
+      identities.forEach((items) => {
+        if (items.length > 1)
+          issue({
+            severity: "blocked",
+            code: "resource_identity_conflict",
+            entity: "resource",
+            id: items[0]!,
+            refs: items.slice(0, 8),
+          })
+      })
+      if (current) {
+        const specs = resources.filter(
+          (item) => item.revision_id === current.id && item.kind === "spec" && item.lifecycle === "active",
+        )
+        if (!current.spec_ref)
+          issue({
+            severity: specs.length <= 1 ? "repairable" : "blocked",
+            code: "revision_spec_missing",
+            entity: "revision",
+            id: current.id,
+            refs: specs.slice(0, 8).map((item) => item.id),
+          })
+        const spec = current.spec_ref ? specs.filter((item) => item.uri === current.spec_ref) : []
+        if (current.spec_ref && spec.length !== 1)
+          issue({
+            severity: "blocked",
+            code: "revision_spec_invalid",
+            entity: "revision",
+            id: current.id,
+            refs: [current.spec_ref, ...spec.slice(0, 7).map((item) => item.id)],
+          })
+        if (spec[0] && spec[0].hash !== current.body_hash)
+          issue({
+            severity: "blocked",
+            code: "revision_spec_invalid",
+            entity: "revision",
+            id: current.id,
+            refs: [current.body_hash, spec[0].hash],
+          })
+        const plans = resources.filter(
+          (item) => item.revision_id === current.id && item.kind === "plan" && item.lifecycle === "active",
+        )
+        if (!current.plan_ref && plans.length === 1)
+          issue({
+            severity: "repairable",
+            code: "revision_plan_missing",
+            entity: "revision",
+            id: current.id,
+            refs: [plans[0]!.id],
+          })
+        if (!current.plan_ref && plans.length > 1)
+          issue({
+            severity: "blocked",
+            code: "revision_plan_invalid",
+            entity: "revision",
+            id: current.id,
+            refs: plans.slice(0, 8).map((item) => item.id),
+          })
+        if (current.plan_ref && plans.filter((item) => item.uri === current.plan_ref).length !== 1)
+          issue({
+            severity: "blocked",
+            code: "revision_plan_invalid",
+            entity: "revision",
+            id: current.id,
+            refs: [current.plan_ref],
+          })
+      }
+      if (events.length !== task.last_event_seq || events.some((item, index) => item.seq !== index + 1))
+        issue({
+          severity: "blocked",
+          code: "event_sequence_invalid",
+          entity: "task",
+          id,
+          refs: [String(task.last_event_seq), String(events.length), String(events.at(-1)?.seq ?? 0)],
+        })
+      events.forEach((item) => {
+        const parsed = Event.safeParse(item)
+        if (!parsed.success) {
+          issue({ severity: "blocked", code: "event_contract_invalid", entity: "event", id: item.id, refs: [] })
+          return
+        }
+        if (item.revision_id && !revision.has(item.revision_id))
+          issue({
+            severity: "blocked",
+            code: "event_revision_invalid",
+            entity: "event",
+            id: item.id,
+            refs: [item.revision_id],
+          })
+        if (item.command_id && !command.has(item.command_id))
+          issue({
+            severity: "blocked",
+            code: "event_command_invalid",
+            entity: "event",
+            id: item.id,
+            refs: [item.command_id],
+          })
+        const invalid = item.resource_refs.filter((ref) => !resource.has(ref))
+        const duplicate = new Set(item.resource_refs).size !== item.resource_refs.length
+        if (invalid.length || duplicate)
+          issue({
+            severity: "blocked",
+            code: "event_resource_invalid",
+            entity: "event",
+            id: item.id,
+            refs: [...invalid, ...(duplicate ? item.resource_refs : [])].slice(0, 8),
+          })
+        item.resource_refs.forEach((ref) => {
+          if (resource.get(ref)?.lifecycle === "tombstoned")
+            issue({
+              severity: "blocked",
+              code: "resource_lifecycle_invalid",
+              entity: "resource",
+              id: ref,
+              refs: [item.id, "tombstoned"],
+            })
+        })
+      })
+      const kinds = ["task.create", "task.revise", "revision.activate", "task.workflow.sync", "task.finish", "task.migrate"]
+      const families = {
+        "task.create": ["task.created", "requirement.recorded", "revision.activated"],
+        "task.revise": ["requirement.revised", "revision.created", "revision.drafted"],
+        "revision.activate": ["revision.archived", "revision.activated"],
+        "task.workflow.sync": ["task.workflow_synced"],
+        "task.finish": ["result.recorded", "task.completed", "task.blocked", "task.failed"],
+        "task.migrate": ["task.migrated"],
+      } as const
+      const required = {
+        "task.create": "task.created",
+        "task.revise": "revision.created",
+        "revision.activate": "revision.activated",
+        "task.workflow.sync": "task.workflow_synced",
+        "task.finish": "result.recorded",
+        "task.migrate": "task.migrated",
+      } as const
+      commands.forEach((item) => {
+        if (!Command.safeParse(item).success)
+          issue({ severity: "blocked", code: "command_contract_invalid", entity: "command", id: item.id, refs: [] })
+        if (!kinds.includes(item.kind) || !item.idempotency_key.startsWith(`${item.kind}:`))
+          issue({
+            severity: "blocked",
+            code: "command_key_invalid",
+            entity: "command",
+            id: item.id,
+            refs: [item.kind, item.idempotency_key],
+          })
+        const linked = events.filter((event) => event.command_id === item.id)
+        const family = kinds.includes(item.kind) ? families[item.kind as keyof typeof families] : undefined
+        if (
+          family &&
+          (linked.some((event) => !family.some((type) => type === event.type)) ||
+            (item.status === "applied" && !linked.some((event) => event.type === required[item.kind as keyof typeof required])))
+        )
+          issue({
+            severity: "blocked",
+            code: "command_event_invalid",
+            entity: "command",
+            id: item.id,
+            refs: linked.slice(0, 8).map((event) => `${event.seq}:${event.type}`),
+          })
+        if (item.status === "accepted")
+          issue({
+            severity: "repairable",
+            code: "command_incomplete",
+            entity: "command",
+            id: item.id,
+            refs: [String(linked.length)],
+          })
+        if (
+          (item.status === "accepted" && (item.result_ref !== null || item.time_applied !== null)) ||
+          (item.status === "applied" && (!item.time_applied || linked.length === 0)) ||
+          (item.status === "rejected" && (item.result_ref !== null || linked.length > 0))
+        )
+          issue({
+            severity: "blocked",
+            code: "command_state_invalid",
+            entity: "command",
+            id: item.id,
+            refs: [item.status, item.result_ref ?? "null", String(linked.length)],
+          })
+        if (item.status !== "applied") return
+        const ids = [...new Set(linked.flatMap((event) => (event.revision_id ? [event.revision_id] : [])))]
+        const valid =
+          item.kind === "task.create"
+            ? item.result_ref === `task://${id}`
+            : item.kind === "task.revise" || item.kind === "revision.activate"
+              ? !!item.result_ref?.startsWith("revision://") &&
+                ids.includes(item.result_ref.slice("revision://".length)) &&
+                revision.has(item.result_ref.slice("revision://".length))
+              : item.kind === "task.workflow.sync"
+                ? ids.some((revisionID) => item.result_ref === `task://${id}/revision/${revisionID}/workflow`)
+                : item.kind === "task.migrate"
+                  ? ids.some(
+                      (revisionID) =>
+                        item.result_ref === `task://${id}/revision/${revisionID}/migration-baseline` &&
+                        linked.some((event) => event.type === "task.migrated"),
+                    )
+                  : linked.some(
+                      (event) => event.type === "result.recorded" && event.data.result_ref === item.result_ref,
+                    )
+        if (!valid)
+          issue({
+            severity: "blocked",
+            code: "command_result_invalid",
+            entity: "command",
+            id: item.id,
+            refs: [item.result_ref ?? "null", ...ids.slice(0, 7)],
+          })
+      })
+      const last = events.at(-1)
+      const terminal =
+        last?.type === "task.completed"
+          ? "completed"
+          : last?.type === "task.failed"
+            ? "failed"
+            : last?.type === "task.blocked"
+              ? "blocked"
+              : undefined
+      if (terminal && task.status !== terminal)
+        issue({
+          severity: "blocked",
+          code: "terminal_state_invalid",
+          entity: "task",
+          id,
+          refs: [task.status, last!.type],
+        })
+      if ((task.status === "completed" || task.status === "failed") && current?.status !== task.status)
+        issue({
+          severity: "blocked",
+          code: "terminal_state_invalid",
+          entity: "revision",
+          id: current?.id ?? null,
+          refs: [task.status, current?.status ?? "missing"],
+        })
+      return Audit.parse({
+        task_id: id,
+        status: state.blocked ? "blocked" : state.total ? "repairable" : "ok",
+        issues: state.items,
+        evidence: {
+          revisions: revisions.length,
+          requirements: requirements.length,
+          resources: resources.length,
+          events: events.length,
+          commands: commands.length,
+          last_event_seq: task.last_event_seq,
+          issue_count: state.total,
+          truncated: state.total > state.items.length,
+        },
+      })
+    })
   }
 
   export function listEvents(taskID: string, after = 0, limit = 100) {

@@ -46,7 +46,7 @@
 - Ledger、Task 与 Recovery 差分：166/167 通过，832 assertions；唯一失败为既有 `SessionControl` child scope 基线问题，Recovery 单组为 18/19，与本次改动无关。
 - `bun db check` 通过。
 - `bun typecheck` 通过。
-- 上一轮独立审计已指出逐节点查询的非阻塞性能问题，本轮以 recursive CTE 一并消除；本轮 T-09 独立测试和独立审计仍保持 pending，待提交后重新复核。
+- 上一轮独立审计指出的逐节点查询性能问题已由 recursive CTE 消除；提交 `6ca623865` 已通过重新独立测试和审计，T-09 门禁关闭。
 
 ## 影响文件
 
