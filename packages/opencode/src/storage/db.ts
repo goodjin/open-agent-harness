@@ -175,7 +175,7 @@ export namespace Database {
   export function transaction<T>(callback: (tx: Transaction) => T, config?: SQLiteTransactionConfig): T {
     const current = context()
     if (current?.atomic) return callback(current.tx as Transaction)
-    const effects = current?.effects ?? []
+    const effects: (() => void | Promise<void>)[] = []
     const client = (current?.tx ?? Client()) as Client
     const transact = client.transaction.bind(client) as unknown as (
       callback: (tx: Transaction) => T,
@@ -185,6 +185,7 @@ export namespace Database {
       (tx) => ctx.provide({ tx, effects, atomic: true }, () => callback(tx)),
       config,
     )
+    if (current) current.effects.push(...effects)
     if (!current) for (const effect of effects) effect()
     return result
   }
