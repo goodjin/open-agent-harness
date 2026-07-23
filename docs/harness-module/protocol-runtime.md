@@ -423,3 +423,23 @@ Command identity 只验证当前持久事实能够证明的部分，返回 evide
 accepted `revision.activate` 的 repairable 还受阶段事实约束：零 Event 时 key target 必须有同 Task previous；出现 `revision.archived` 时该 Event 必须指向 target.previous；完整 family 尚未 apply 时，previous 必须已 archived、target 必须 active 且 Task current pointer 已指向 target。任一阶段不一致直接 blocked，不同时输出 `command_incomplete` 或 `command_apply_missing`。applied activation 对当前 target 校验 current/status/result；已被后续合法激活替代的历史 target 可以是 archived。
 
 缺指针或缺 ref 只有在唯一、同 Task、链健康的候选可证明时才是 repairable。issues 按完整 issue identity 规范化去重，最多返回 50 条，但总数、截断和 blocked 优先级基于全部唯一 issues。读取后预建 Revision、Requirement、Resource、Command、Event 反向索引并 memoize lineage，避免按历史行重复全表扫描。审计只比较数据库已存 hash/ref，不读取 URI 正文或重算内容，不实现外部 FR-10 API 和自动修复。
+
+### M0 Durable Task Persistence 边界
+
+M0 的恢复权威仍是 SQLite。`session_task` 保存当前 Task、current Revision、Requirement pointer、Event cursor 与终态；`task_revision` 保存不可变需求正文、兼容执行 workflow 和结果；`session_result` 保存 child canonical result 索引。Markdown 是数据库提交后的可重建投影，发布失败不回滚数据库，也不参与启动恢复决策。
+
+Flag `OPENCODE_EXPERIMENTAL_TASK_LEDGER` 默认关闭。关闭时 create、draft、activate、sync、finish 不写 Requirement、Resource、Command、Event；开启时这些事实与现有 Task/Revision 状态在同一 SQLite 事务提交。关闭期间产生的 Revision 在重新开启后的首个写边界执行 current-snapshot 懒回填，稳定 Command 与 identity 保证重复执行和数据库重开不增加事实。`get`、`current`、`open` 和 `TaskLedger.audit` 始终只读。
+
+写入路径分工如下：
+
+- create：写 Task、active Revision、Requirement、spec Resource、applied Command 与 `task.created` / `requirement.recorded` / `revision.activated`。
+- revise/activate：为新 Revision 写下一版 Requirement 与 spec Resource，激活时归档旧 Revision 并切换 current pointers。
+- sync：仅 workflow 实际变化时写 compact counts 和 `task.workflow_synced`。
+- finish：首次结果写 `result.recorded`，existing protocol completion 另写 `task.completed`；精确重放不追加 terminal Event。
+- migration：只证明当前快照，不伪造历史 Run、workflow、result、确认时间或 terminal Event。
+
+启动恢复先由现有 Task/Revision、outbox、SessionResult 路径恢复执行；M0 Event 是审计账本，不驱动 Scheduler。审计为 `ok` 只说明持久事实内部一致，`repairable` 表示存在唯一可证明候选，`blocked` 表示引用、序列、identity 或终态矛盾；M0 不自动修复，也没有对外 audit API。
+
+迁移脚本支持在 schema 已完成约束重建但 journal 缺失时幂等重放：清理遗留临时表、重建约束/trigger、保留既有 Task/Ledger 行并重新登记 journal。迁移与运行时都以外键、Task-local identity、连续 Requirement lineage、Event sequence 和 Command key 唯一性拒绝半套事实。
+
+M0 不实现 Graph、Attempt、Checkpoint、Projection job 或 Event-driven Scheduler；相关 nullable columns 只是向前兼容占位，不构成可用能力。多 Run legacy 仍保持 proposal，不自动合并或执行。同一进程同一时刻的 canonical confirmation 在 ordinary admission 前取得短期优先级；等待最多五秒且在成功、冲突或异常后清理，避免竞态建立非 canonical Task。

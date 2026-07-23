@@ -5454,6 +5454,31 @@ describe("session task", () => {
         run_ids: ["run_legacy_race_followup"],
       })
     }))
+
+  test("clears failed confirmed admission priority before a later ordinary route", () =>
+    setup(async () => {
+      const session = await Session.create({})
+      await expect(
+        SessionTask.confirmed({
+          sessionID: session.id,
+          runID: "run_failed_priority",
+          actionIDs: ["missing"],
+          actions: [{ id: "failed" }],
+          legacy: { title: "Ignored", body: "Ignored" },
+          requiresAssignment: true,
+        }),
+      ).rejects.toThrow("session_task_assignment_source_conflict")
+
+      await expect(
+        SessionTask.route({
+          sessionID: session.id,
+          runID: "run_after_failed_priority",
+          legacy: { title: "Ordinary admission", body: "Ordinary admission" },
+          actions: [{ id: "ordinary" }],
+        }),
+      ).resolves.toMatchObject({ type: "execute", revision: { version: 1 } })
+      expect(await SessionTask.current(session.id)).toMatchObject({ title: "Ordinary admission", version: 1 })
+    }))
 })
 
 async function legacyRuns(sessionID: SessionID, key: string) {

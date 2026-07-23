@@ -652,6 +652,15 @@ export namespace SessionTask {
     requiresAssignment?: boolean
     persist?: boolean
   }) {
+    const release = signal(input.sessionID)
+    try {
+      return await confirm(input)
+    } finally {
+      release()
+    }
+  }
+
+  async function confirm(input: Parameters<typeof confirmed>[0]) {
     const admitted = await admit(input.sessionID)
     const rows = await Promise.all(
       input.actionIDs.map((actionID) =>
@@ -664,14 +673,16 @@ export namespace SessionTask {
     if (inherited === null) throw new Conflict("session_task_assignment_source_conflict")
     const assignment = sourced ?? inherited
     if (!assignment && input.requiresAssignment) throw new Conflict("session_task_assignment_source_conflict")
-    if (!assignment)
-      return route({
+    if (!assignment) {
+      if (admitted === "multiple") throw new Conflict()
+      return write({
         sessionID: input.sessionID,
         runID: input.runID,
         messageID: input.messageID,
         legacy: input.legacy,
         actions: input.actions,
       })
+    }
     if (assignment.source_type !== "confirm") throw new Conflict("session_task_assignment_not_current")
     if (assignment.session_id !== input.sessionID || assignment.source_session_id !== input.sessionID)
       throw new Conflict("session_task_assignment_source_conflict")
@@ -795,6 +806,7 @@ export namespace SessionTask {
 
   export async function route(raw: z.input<typeof Route>) {
     const input = Route.parse(raw)
+    if (!exists(input.sessionID) && (await wait(input.sessionID)) && exists(input.sessionID)) throw new Conflict()
     if ((await admit(input.sessionID)) === "multiple") throw new Conflict()
     return write(input)
   }
@@ -2556,6 +2568,32 @@ export namespace SessionTask {
           .where(eq(SessionTaskTable.session_id, sessionID))
           .get(),
     )
+  }
+
+  const gates = new Map<SessionID, Set<Promise<void>>>()
+
+  function signal(sessionID: SessionID) {
+    const gate = Promise.withResolvers<void>()
+    const set = gates.get(sessionID) ?? new Set<Promise<void>>()
+    set.add(gate.promise)
+    gates.set(sessionID, set)
+    return () => {
+      set.delete(gate.promise)
+      if (set.size === 0) gates.delete(sessionID)
+      gate.resolve()
+    }
+  }
+
+  async function wait(sessionID: SessionID) {
+    await Promise.resolve()
+    const set = gates.get(sessionID)
+    if (!set) return false
+    const done = await Promise.race([
+      Promise.allSettled(set).then(() => true),
+      Bun.sleep(5_000).then(() => false),
+    ])
+    if (!done && gates.get(sessionID) === set) gates.delete(sessionID)
+    return true
   }
 
   async function admit(sessionID: SessionID) {

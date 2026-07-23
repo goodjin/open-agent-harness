@@ -76,3 +76,14 @@
 - M0 audit 对全部新建 Task 返回 ok。
 - 旧 Task 回填后返回 ok 或有明确 repairable 原因。
 - 未实现的 Graph、Attempt、Checkpoint、Projection job 不在 UI/API 中伪装为可用。
+
+## 6. T-11 实际执行
+
+- 状态：实现与 M0 测试门禁完成；存在一项已确认的非 M0 Recovery 基线失败。
+- 新增真实文件 SQLite 集成：独立进程开启 Flag，完成 create、sync、revise、activate、finish；关闭数据库并重开后 Task、两版 Revision/Requirement/Resource、六条 Command 和十二条 Event 完全一致，audit 为 `ok` 且审计前后无写入。
+- 新增迁移恢复：复制已到 163000 schema 的临时数据库，删除对应 journal 记录后重放；journal 恢复为单条，无 `__old_*` 遗留，约束 trigger 与 `foreign_key_check` 正常。测试只操作自动删除的临时目录，不读取或复制用户数据库。
+- INT-06 隔离复现发现 ordinary route 与 confirmed create 的同进程 admission 排队竞态；增加 bounded confirmed priority gate，连续五次隔离运行均由 confirmed create 获胜。confirmed 失败会在 `finally` 清理，后续 ordinary route 仍可成功。
+- `task-ledger.test.ts` + `task.test.ts`：171/171 通过，795 assertions。
+- `task-handoff.test.ts`、`action-result.test.ts`、`storage/db.test.ts`、`storage/json-migration.test.ts` 全部通过；与 Recovery 合跑共 76/77 通过，423 assertions。
+- `recovery.test.ts` 唯一失败为既有 `collects every scoped child before activation and ignores unrelated tree sessions`，隔离运行同样返回空列表；该用例与 `SessionTask.scope` 均早于 M0，T-11 未修改 Recovery/SessionControl，按已确认范围记录为 known non-M0 baseline。
+- M0 范围未增加 Graph、Attempt、Checkpoint、Projection job、外部 audit API 或自动修复。

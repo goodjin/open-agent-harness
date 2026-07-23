@@ -193,6 +193,131 @@ async function event(taskID: string, type: string) {
   return TaskLedger.Event.parse(JSON.parse((await new Response(proc.stdout).text()).trim()))
 }
 
+async function lifecycle(dir: string) {
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `
+        import { WorkspaceID } from ${JSON.stringify(new URL("../../src/control-plane/schema.ts", import.meta.url).href)}
+        import { WorkspaceContext } from ${JSON.stringify(new URL("../../src/control-plane/workspace-context.ts", import.meta.url).href)}
+        import { Instance } from ${JSON.stringify(new URL("../../src/project/instance.ts", import.meta.url).href)}
+        import { Session } from ${JSON.stringify(new URL("../../src/session/index.ts", import.meta.url).href)}
+        import { SessionTask } from ${JSON.stringify(new URL("../../src/session/task.ts", import.meta.url).href)}
+        import { TaskLedger } from ${JSON.stringify(new URL("../../src/session/task-ledger.ts", import.meta.url).href)}
+        import { Database } from ${JSON.stringify(new URL("../../src/storage/db.ts", import.meta.url).href)}
+        const result = await Instance.provide({
+          directory: process.env.TASK_PROJECT,
+          fn: () => WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_task_ledger_process"),
+            fn: async () => {
+              const session = await Session.create({})
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_process_create",
+                assignment: {
+                  op: "create",
+                  target: "self",
+                  title: "Process lifecycle",
+                  body: "Process lifecycle v1",
+                },
+                actions: [{ id: "create", title: "Create" }],
+              })
+              const start = Date.now()
+              await SessionTask.sync({
+                sessionID: session.id,
+                runID: "run_process_create",
+                actions: [{
+                  id: "create",
+                  title: "Create",
+                  operation: "test",
+                  executor: { type: "tool", target: "read", capabilities: [] },
+                  input: {},
+                  depends_on: [],
+                  status: "completed",
+                  summary: "Created",
+                  output: "Created",
+                  tool_call_ids: [],
+                  duration_ms: 1,
+                  time: { started: start, completed: start + 1 },
+                }],
+              })
+              const draft = await SessionTask.draft({
+                taskID: first.task.id,
+                title: "Process lifecycle v2",
+                body: "Process lifecycle v2",
+              })
+              await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+              await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_process_finish",
+                actions: [{ id: "finish", title: "Finish" }],
+              })
+              await SessionTask.sync({
+                sessionID: session.id,
+                runID: "run_process_finish",
+                actions: [{
+                  id: "finish",
+                  title: "Finish",
+                  operation: "test",
+                  executor: { type: "tool", target: "read", capabilities: [] },
+                  input: {},
+                  depends_on: [],
+                  status: "completed",
+                  summary: "Finished",
+                  output: "Finished",
+                  tool_call_ids: [],
+                  duration_ms: 1,
+                  time: { started: start + 2, completed: start + 3 },
+                }],
+              })
+              await SessionTask.finish({
+                sessionID: session.id,
+                runID: "run_process_finish",
+                summary: "Lifecycle complete",
+                source: "protocol",
+              })
+              return {
+                session_id: session.id,
+                task_id: first.task.id,
+                revision_id: draft.id,
+                audit: TaskLedger.audit(first.task.id),
+              }
+            },
+          }),
+        })
+        process.stdout.write("TASK_LIFECYCLE:" + JSON.stringify(result) + "\\n")
+        Database.close()
+        process.exit(0)
+      `,
+    ],
+    {
+      cwd: new URL("../..", import.meta.url).pathname,
+      env: {
+        ...process.env,
+        OPENCODE_EXPERIMENTAL_TASK_LEDGER: "1",
+        TASK_PROJECT: dir,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ])
+  if (code !== 0) throw new Error(stderr || stdout)
+  const line = stdout.split("\n").find((item) => item.startsWith("TASK_LIFECYCLE:"))
+  if (!line) throw new Error(`missing lifecycle result: ${stdout}`)
+  return JSON.parse(line.slice("TASK_LIFECYCLE:".length)) as {
+    session_id: string
+    task_id: string
+    revision_id: string
+    audit: TaskLedger.Audit
+  }
+}
+
 function failure(column: "id" | "idempotency_key") {
   const sqlite = new SQLite(":memory:")
   sqlite.exec("CREATE TABLE task_command (id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE)")
@@ -489,7 +614,78 @@ describe("task ledger create dual-write", () => {
     }))
 })
 
+describe("task ledger process lifecycle", () => {
+  test(
+    "persists create, revise, sync, and finish facts across a process and database reopen",
+    async () => {
+      await using tmp = await tmpdir({ git: true })
+      const saved = await lifecycle(tmp.path)
+
+      expect(saved.audit).toMatchObject({ task_id: saved.task_id, status: "ok", issues: [] })
+      const before = facts(saved.task_id)
+      const rows = JSON.parse(before) as {
+        task: { status: string; current_revision_id: string; last_event_seq: number }
+        revisions: unknown[]
+        requirements: unknown[]
+        resources: unknown[]
+        events: unknown[]
+        commands: unknown[]
+      }
+      expect(rows.task).toMatchObject({
+        status: "completed",
+        current_revision_id: saved.revision_id,
+        last_event_seq: 12,
+      })
+      expect(rows.revisions).toHaveLength(2)
+      expect(rows.requirements).toHaveLength(2)
+      expect(rows.resources).toHaveLength(2)
+      expect(rows.events).toHaveLength(12)
+      expect(rows.commands).toHaveLength(6)
+
+      Database.close()
+      expect(facts(saved.task_id)).toBe(before)
+      expect(TaskLedger.audit(saved.task_id)).toMatchObject({ status: "ok", issues: [] })
+      expect(facts(saved.task_id)).toBe(before)
+    },
+    15_000,
+  )
+})
+
 describe("task ledger schema", () => {
+  test("recovers a copied 163000 schema whose migration journal entry is missing", async () => {
+    await using tmp = await tmpdir()
+    const source = `${tmp.path}/source.db`
+    const target = `${tmp.path}/copy.db`
+    const sqlite = new SQLite(source, { create: true })
+    sqlite.exec("PRAGMA foreign_keys = ON")
+    migrate(drizzle({ client: sqlite }), journal(20260723170000))
+    sqlite.close(false)
+    await Bun.write(target, Bun.file(source))
+
+    const copy = new SQLite(target)
+    copy.exec("PRAGMA foreign_keys = ON")
+    copy.exec("DELETE FROM __drizzle_migrations WHERE name = '20260723163000_durable_task_ledger_constraints'")
+    migrate(drizzle({ client: copy }), journal(20260723170000))
+
+    expect(
+      copy
+        .query(
+          "SELECT count(*) AS count FROM __drizzle_migrations WHERE name = '20260723163000_durable_task_ledger_constraints'",
+        )
+        .get(),
+    ).toEqual({ count: 1 })
+    expect(copy.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '__old_%'").all()).toEqual([])
+    expect(
+      copy
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'task_revision_current_delete'",
+        )
+        .all(),
+    ).toEqual([{ name: "task_revision_current_delete" }])
+    expect(copy.query("PRAGMA foreign_key_check").all()).toEqual([])
+    copy.close(false)
+  })
+
   test("migrates existing task, revision, and stop rows without inventing events", () => {
     const sqlite = new SQLite(":memory:")
     sqlite.exec("PRAGMA foreign_keys = ON")
