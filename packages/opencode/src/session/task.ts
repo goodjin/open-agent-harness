@@ -1264,22 +1264,7 @@ export namespace SessionTask {
           .get()
         if (!updated) throw new Conflict("session_task_result_conflict")
         if (command) {
-          const result =
-            input.source === "protocol"
-              ? undefined
-              : tx
-                  .select({ id: SessionResultTable.id })
-                  .from(SessionResultTable)
-                  .where(
-                    and(
-                      eq(SessionResultTable.session_id, input.sessionID),
-                      eq(SessionResultTable.run_id, input.runID),
-                      eq(SessionResultTable.carrier, input.source),
-                    ),
-                  )
-                  .orderBy(desc(SessionResultTable.created_at))
-                  .limit(1)
-                  .get()
+          const result = input.source === "protocol" ? undefined : resultref(tx, task, revision, input.runID, input.source)
           TaskLedger.result(tx, {
             task_id: task.id,
             revision_id: revision.id,
@@ -1289,6 +1274,7 @@ export namespace SessionTask {
             result_ref: result
               ? `session-result://${result.id}`
               : `task://${task.id}/revision/${revision.id}/result`,
+            ...(result ? { locator: result } : {}),
             ...(input.source === "protocol" ? { terminal: "completed" as const } : {}),
           })
         }
@@ -2120,6 +2106,84 @@ export namespace SessionTask {
     const parsed = ResultSource.safeParse(source)
     if (!body || !parsed.success) return {}
     return { result: body, result_source: parsed.data }
+  }
+
+  function resultref(
+    tx: Database.Transaction,
+    task: typeof SessionTaskTable.$inferSelect,
+    revision: typeof TaskRevisionTable.$inferSelect,
+    runID: string,
+    carrier: "action_result" | "fallback_summary",
+  ) {
+    const match = (input: {
+      parent_session_id: SessionID
+      child_session_id: SessionID
+      run_id: string
+      action_id: string
+      carrier: "action_result" | "fallback_summary"
+    }) =>
+      tx
+        .select()
+        .from(SessionResultTable)
+        .where(
+          and(
+            eq(SessionResultTable.session_id, input.child_session_id),
+            eq(SessionResultTable.parent_session_id, input.parent_session_id),
+            eq(SessionResultTable.child_session_id, input.child_session_id),
+            eq(SessionResultTable.run_id, input.run_id),
+            eq(SessionResultTable.action_id, input.action_id),
+            eq(SessionResultTable.carrier, input.carrier),
+          ),
+        )
+        .all()
+        .map((item) => ({ id: item.id, ...input }))
+    const source = task.source_ref
+    const delegated =
+      task.source_type === "delegation" &&
+      typeof source.sessionID === "string" &&
+      typeof source.runID === "string" &&
+      typeof source.actionID === "string"
+        ? match({
+            parent_session_id: SessionID.make(source.sessionID),
+            child_session_id: task.session_id,
+            run_id: source.runID,
+            action_id: source.actionID,
+            carrier,
+          })
+        : []
+    const flow = Workflow.parse(revision.workflow)
+    const rows =
+      task.source_type === "delegation"
+        ? delegated
+        : workflow(flow)
+            .filter((action) => action.run_id === runID && action.executor.type === "agent")
+            .flatMap((action) =>
+              tx
+                .select()
+                .from(AssignmentTable)
+                .where(
+                  and(
+                    eq(AssignmentTable.source_type, "delegation"),
+                    eq(AssignmentTable.source_session_id, task.session_id),
+                    eq(AssignmentTable.source_run_id, action.run_id),
+                    eq(AssignmentTable.source_action_id, action.id),
+                  ),
+                )
+                .all()
+                .filter((item) => item.parent_id === (flow.assignment_id ?? null))
+                .flatMap((item) =>
+                  match({
+                    parent_session_id: task.session_id,
+                    child_session_id: item.session_id,
+                    run_id: action.run_id,
+                    action_id: action.id,
+                    carrier,
+                  }),
+                ),
+            )
+    const found = [...new Map(rows.map((item) => [item.id, item])).values()]
+    if (found.length > 1) throw new Conflict("session_task_result_ambiguous")
+    return found[0]
   }
 
   function archive(tx: Database.TxOrDb, sessionID: SessionID, revision: typeof TaskRevisionTable.$inferSelect) {

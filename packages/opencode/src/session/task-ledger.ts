@@ -2,7 +2,10 @@ import z from "zod"
 import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
 import { Database, and, asc, desc, eq, gt, max } from "../storage/db"
+import { SessionID } from "./schema"
 import {
+  AssignmentTable,
+  SessionResultTable,
   SessionTaskTable,
   TaskCommandTable,
   TaskEventTable,
@@ -173,6 +176,17 @@ export namespace TaskLedger {
       run_id: z.string().min(1),
       source: z.enum(["protocol", "action_result", "fallback_summary"]),
       result_ref: z.string().min(1),
+      locator: z
+        .object({
+          id: z.string().min(1),
+          parent_session_id: SessionID.zod,
+          child_session_id: SessionID.zod,
+          run_id: z.string().min(1),
+          action_id: z.string().min(1),
+          carrier: z.enum(["action_result", "fallback_summary"]),
+        })
+        .strict()
+        .optional(),
       terminal: z.enum(["completed", "blocked", "failed"]).optional(),
     })
     .strict()
@@ -668,6 +682,10 @@ export namespace TaskLedger {
         revision_status: TaskRevisionTable.status,
         result: TaskRevisionTable.result,
         source: TaskRevisionTable.result_source,
+        session_id: SessionTaskTable.session_id,
+        source_type: SessionTaskTable.source_type,
+        source_ref: SessionTaskTable.source_ref,
+        workflow: TaskRevisionTable.workflow,
       })
       .from(SessionTaskTable)
       .innerJoin(
@@ -690,6 +708,67 @@ export namespace TaskLedger {
       (parsed.terminal === "blocked" && task.revision_status !== "active")
     )
       throw new Conflict("task_result_state_invalid")
+    const fallback = `task://${parsed.task_id}/revision/${parsed.revision_id}/result`
+    if (!parsed.locator && parsed.result_ref !== fallback) throw new Conflict("task_result_ref_invalid")
+    if (parsed.locator) {
+      if (parsed.result_ref !== `session-result://${parsed.locator.id}` || parsed.locator.carrier !== parsed.source)
+        throw new Conflict("task_result_ref_invalid")
+      const row = tx.select().from(SessionResultTable).where(eq(SessionResultTable.id, parsed.locator.id)).get()
+      if (
+        !row ||
+        row.session_id !== parsed.locator.child_session_id ||
+        row.parent_session_id !== parsed.locator.parent_session_id ||
+        row.child_session_id !== parsed.locator.child_session_id ||
+        row.run_id !== parsed.locator.run_id ||
+        row.action_id !== parsed.locator.action_id ||
+        row.carrier !== parsed.locator.carrier
+      )
+        throw new Conflict("task_result_locator_invalid")
+      const source =
+        task.source_ref && typeof task.source_ref === "object" && !Array.isArray(task.source_ref)
+          ? task.source_ref
+          : {}
+      const delegated =
+        task.source_type === "delegation" &&
+        task.session_id === parsed.locator.child_session_id &&
+        source.sessionID === parsed.locator.parent_session_id &&
+        source.runID === parsed.locator.run_id &&
+        source.actionID === parsed.locator.action_id
+      const flow =
+        task.workflow && typeof task.workflow === "object" && !Array.isArray(task.workflow) ? task.workflow : {}
+      const action =
+        Array.isArray(flow.actions) &&
+        flow.actions.some(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            !Array.isArray(item) &&
+            item.run_id === parsed.locator!.run_id &&
+            item.id === parsed.locator!.action_id &&
+            item.executor &&
+            typeof item.executor === "object" &&
+            !Array.isArray(item.executor) &&
+            item.executor.type === "agent",
+        )
+      const assignment =
+        task.source_type === "delegation"
+          ? undefined
+          : tx
+              .select()
+              .from(AssignmentTable)
+              .where(
+                and(
+                  eq(AssignmentTable.source_type, "delegation"),
+                  eq(AssignmentTable.source_session_id, task.session_id),
+                  eq(AssignmentTable.session_id, parsed.locator.child_session_id),
+                  eq(AssignmentTable.source_run_id, parsed.locator.run_id),
+                  eq(AssignmentTable.source_action_id, parsed.locator.action_id),
+                ),
+              )
+              .all()
+              .find((item) => item.parent_id === (typeof flow.assignment_id === "string" ? flow.assignment_id : null))
+      if (!delegated && (!action || !assignment)) throw new Conflict("task_result_locator_unowned")
+    }
     const data = {
       run_id: parsed.run_id,
       source: parsed.source,

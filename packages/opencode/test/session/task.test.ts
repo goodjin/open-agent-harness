@@ -2389,17 +2389,37 @@ describe("session task", () => {
         { source: "action_result" as const, status: "failed" as const },
         { source: "fallback_summary" as const, status: "partial" as const },
       ]) {
-        const session = await Session.create({})
-        const run = `run_ledger_${item.source}`
-        const first = await SessionTask.route({
-          sessionID: session.id,
-          runID: run,
-          assignment: { op: "create", target: "self", title: item.source, body: item.source },
-          actions: [{ id: "result", title: "Result" }],
+        const parent = await Session.create({})
+        const child = await Session.create({ parentID: parent.id })
+        const sourceRun = `run_parent_${item.source}`
+        const childRun = `run_child_${item.source}`
+        const action = {
+          type: "action",
+          id: `action_${item.source}`,
+          title: item.source,
+          operation: "delegate",
+          executor: { type: "agent", target: "backend", capabilities: [] },
+          input: {},
+          depends_on: [],
+          context_refs: [],
+          result_policy: "summary",
+        } as AgentProtocol.Action
+        await SessionAssignment.delegate({
+          action,
+          childID: child.id,
+          messageID: MessageID.ascending(),
+          runID: sourceRun,
+          sessionID: parent.id,
         })
-        if (!first.task || !first.revision) throw new Error("task missing")
+        const first = await SessionTask.beginDelegated({
+          sessionID: child.id,
+          parentSessionID: parent.id,
+          parentRunID: sourceRun,
+          parentActionID: action.id,
+        })
+        await SessionTask.route({ sessionID: child.id, runID: childRun, actions: [] })
         const id = `result_ledger_${item.source}`
-        Database.use((db) =>
+        Database.use((db) => {
           db
             .insert(SessionResultTable)
             .values({
@@ -2407,22 +2427,46 @@ describe("session task", () => {
               carrier: item.source,
               status: item.status,
               satisfying: false,
-              session_id: session.id,
-              parent_session_id: null,
-              child_session_id: session.id,
-              run_id: run,
-              action_id: "result",
+              session_id: child.id,
+              parent_session_id: parent.id,
+              child_session_id: child.id,
+              run_id: sourceRun,
+              action_id: action.id,
               target_action_id: null,
               raw_ref: `session_result_raw/${id}`,
               summary: "Canonical child result",
               created_at: Date.now(),
             })
-            .run(),
-        )
+            .run()
+          db.insert(SessionResultTable)
+            .values({
+              id: `result_noise_${item.source}`,
+              carrier: item.source,
+              status: item.status,
+              satisfying: false,
+              session_id: child.id,
+              parent_session_id: parent.id,
+              child_session_id: child.id,
+              run_id: sourceRun,
+              action_id: `noise_${action.id}`,
+              target_action_id: null,
+              raw_ref: `session_result_raw/result_noise_${item.source}`,
+              summary: "Cross-action interference",
+              created_at: Date.now() + 1,
+            })
+            .run()
+        })
 
         await SessionTask.finish({
-          sessionID: session.id,
-          runID: run,
+          sessionID: child.id,
+          runID: childRun,
+          summary: "Canonical child result",
+          source: item.source,
+        })
+        Database.close()
+        await SessionTask.finish({
+          sessionID: child.id,
+          runID: childRun,
           summary: "Canonical child result",
           source: item.source,
         })
@@ -2431,14 +2475,312 @@ describe("session task", () => {
         expect(events.at(-1)).toMatchObject({
           type: "result.recorded",
           data: {
-            run_id: run,
+            run_id: childRun,
             source: item.source,
             result_ref: `session-result://${id}`,
           },
         })
         expect(events.filter((event) => event.type.startsWith("task.") && event.type !== "task.created")).toEqual([])
-        expect((await SessionTask.get(session.id))?.task.status).toBe("running")
+        expect((await SessionTask.get(child.id))?.task.status).toBe("running")
       }
+    }))
+
+  test("falls back to the current Revision result when only old or cross-action results exist", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const child = await Session.create({ parentID: session.id })
+      const old = {
+        type: "action",
+        id: "old_result",
+        title: "Old result",
+        operation: "delegate",
+        executor: { type: "agent", target: "backend", capabilities: [] },
+        input: {},
+        depends_on: [],
+        context_refs: [],
+        result_policy: "summary",
+      } as AgentProtocol.Action
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_old_result",
+        assignment: { op: "create", target: "self", title: "Old result", body: "Old result" },
+        actions: [old],
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      await SessionAssignment.delegate({
+        action: old,
+        childID: child.id,
+        messageID: MessageID.ascending(),
+        runID: "run_old_result",
+        sessionID: session.id,
+      })
+      Database.use((db) =>
+        db
+          .insert(SessionResultTable)
+          .values({
+            id: "result_old_revision",
+            carrier: "action_result",
+            status: "completed",
+            satisfying: true,
+            session_id: child.id,
+            parent_session_id: session.id,
+            child_session_id: child.id,
+            run_id: "run_old_result",
+            action_id: old.id,
+            target_action_id: null,
+            raw_ref: "session_result_raw/result_old_revision",
+            summary: "Old result",
+            created_at: Date.now(),
+          })
+          .run(),
+      )
+      const draft = await SessionTask.draft({
+        taskID: first.task.id,
+        title: "Current result",
+        body: "Current result",
+      })
+      await SessionTask.activate({ taskID: first.task.id, revisionID: draft.id })
+      await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_current_result",
+        actions: [{ id: "current_tool", executor: { type: "tool", target: "read" } }],
+      })
+      Database.use((db) =>
+        db
+          .insert(SessionResultTable)
+          .values({
+            id: "result_cross_action",
+            carrier: "action_result",
+            status: "completed",
+            satisfying: true,
+            session_id: child.id,
+            parent_session_id: session.id,
+            child_session_id: child.id,
+            run_id: "run_current_result",
+            action_id: "other_action",
+            target_action_id: null,
+            raw_ref: "session_result_raw/result_cross_action",
+            summary: "Cross action",
+            created_at: Date.now() + 1,
+          })
+          .run(),
+      )
+
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_current_result",
+        summary: "Current fallback",
+        source: "action_result",
+      })
+      const ref = `task://${first.task.id}/revision/${draft.id}/result`
+
+      expect(TaskLedger.listEvents(first.task.id).at(-1)).toMatchObject({
+        type: "result.recorded",
+        revision_id: draft.id,
+        data: { result_ref: ref },
+      })
+      expect(
+        Database.use((db) => db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.finish")).get()),
+      ).toMatchObject({ result_ref: ref })
+    }))
+
+  test("rejects multiple canonical result locators instead of choosing by timestamp", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const children = await Promise.all([Session.create({ parentID: session.id }), Session.create({ parentID: session.id })])
+      const actions = ["first", "second"].map(
+        (id) =>
+          ({
+            type: "action",
+            id,
+            title: id,
+            operation: "delegate",
+            executor: { type: "agent", target: "backend", capabilities: [] },
+            input: {},
+            depends_on: [],
+            context_refs: [],
+            result_policy: "summary",
+          }) as AgentProtocol.Action,
+      )
+      const first = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_ambiguous_result",
+        assignment: { op: "create", target: "self", title: "Ambiguous result", body: "Ambiguous result" },
+        actions,
+      })
+      if (!first.task || !first.revision) throw new Error("task missing")
+      const assignments = await Promise.all(
+        actions.map((action, index) =>
+          SessionAssignment.delegate({
+            action,
+            childID: children[index]!.id,
+            messageID: MessageID.ascending(),
+            runID: "run_ambiguous_result",
+            sessionID: session.id,
+          }),
+        ),
+      )
+      expect(assignments).toHaveLength(2)
+      const now = Date.now()
+      const completed = result("run_ambiguous_result", [
+        { id: "first", title: "first", status: "completed" },
+        { id: "second", title: "second", status: "completed" },
+      ]).actions.map((item) => ({
+        ...item,
+        operation: "delegate",
+        executor: { type: "agent" as const, target: "backend", capabilities: [] },
+      }))
+      await SessionTask.sync({ sessionID: session.id, runID: "run_ambiguous_result", actions: completed })
+      Database.use((db) =>
+        db
+          .insert(SessionResultTable)
+          .values(
+            actions.map((action, index) => ({
+              id: `result_ambiguous_${index}`,
+              carrier: "action_result" as const,
+              status: "completed" as const,
+              satisfying: true,
+              session_id: children[index]!.id,
+              parent_session_id: session.id,
+              child_session_id: children[index]!.id,
+              run_id: "run_ambiguous_result",
+              action_id: action.id,
+              target_action_id: null,
+              raw_ref: `session_result_raw/result_ambiguous_${index}`,
+              summary: action.title,
+              created_at: now,
+            })),
+          )
+          .run(),
+      )
+
+      await expect(
+        SessionTask.finish({
+          sessionID: session.id,
+          runID: "run_ambiguous_result",
+          summary: "Do not guess",
+          source: "action_result",
+        }),
+      ).rejects.toThrow("session_task_result_ambiguous")
+      expect((await SessionTask.get(session.id))?.revision).toMatchObject({ result: null, result_source: null })
+      expect(TaskLedger.listEvents(first.task.id).map((event) => event.type)).toEqual([
+        "task.created",
+        "requirement.recorded",
+        "revision.activated",
+        "task.workflow_synced",
+      ])
+      expect(
+        Database.use((db) => db.select().from(TaskCommandTable).where(eq(TaskCommandTable.kind, "task.finish")).all()),
+      ).toEqual([])
+      Database.use((db) =>
+        db.delete(SessionResultTable).where(eq(SessionResultTable.id, "result_ambiguous_1")).run(),
+      )
+      Database.close()
+      await SessionTask.finish({
+        sessionID: session.id,
+        runID: "run_ambiguous_result",
+        summary: "Do not guess",
+        source: "action_result",
+      })
+      expect(TaskLedger.listEvents(first.task.id).at(-1)).toMatchObject({
+        type: "result.recorded",
+        data: { result_ref: "session-result://result_ambiguous_0" },
+      })
+    }))
+
+  test("rejects forged and cross-Task session result locators inside the Ledger boundary", () =>
+    setup(async () => {
+      // @ts-expect-error test-only flag override
+      Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+      const session = await Session.create({})
+      const target = await SessionTask.route({
+        sessionID: session.id,
+        runID: "run_locator_target",
+        assignment: { op: "create", target: "self", title: "Locator target", body: "Locator target" },
+        actions: [{ id: "target", title: "Target" }],
+      })
+      const foreign = await Session.create({})
+      const child = await Session.create({ parentID: foreign.id })
+      await SessionTask.route({
+        sessionID: foreign.id,
+        runID: "run_locator_foreign",
+        assignment: { op: "create", target: "self", title: "Locator foreign", body: "Locator foreign" },
+        actions: [{ id: "foreign", title: "Foreign" }],
+      })
+      if (!target.task || !target.revision) throw new Error("task missing")
+      Database.use((db) =>
+        db
+          .insert(SessionResultTable)
+          .values({
+            id: "result_foreign_task",
+            carrier: "action_result",
+            status: "completed",
+            satisfying: true,
+            session_id: child.id,
+            parent_session_id: foreign.id,
+            child_session_id: child.id,
+            run_id: "run_locator_foreign",
+            action_id: "foreign",
+            target_action_id: null,
+            raw_ref: "session_result_raw/result_foreign_task",
+            summary: "Foreign",
+            created_at: Date.now(),
+          })
+          .run(),
+      )
+      const locator = {
+        id: "result_foreign_task",
+        parent_session_id: foreign.id,
+        child_session_id: child.id,
+        run_id: "run_locator_foreign",
+        action_id: "foreign",
+        carrier: "action_result" as const,
+      }
+      const attempt = (ref: string, key: string) =>
+        Database.transaction(
+          (tx) => {
+            tx.update(TaskRevisionTable)
+              .set({ result: "Forged", result_source: "action_result" })
+              .where(eq(TaskRevisionTable.id, target.revision.id))
+              .run()
+            const command = TaskLedger.claim(tx, {
+              task_id: target.task.id,
+              kind: "task.finish",
+              idempotency_key: key,
+            })
+            return TaskLedger.result(tx, {
+              task_id: target.task.id,
+              revision_id: target.revision.id,
+              command_id: command.id,
+              run_id: "run_locator_target",
+              source: "action_result",
+              result_ref: ref,
+              locator,
+            })
+          },
+          { behavior: "immediate" },
+        )
+
+      expect(() => attempt("session-result://result_other", "task.finish:forged-ref")).toThrow(
+        "task_result_ref_invalid",
+      )
+      expect(() => attempt("session-result://result_foreign_task", "task.finish:cross-task")).toThrow(
+        "task_result_locator_unowned",
+      )
+      expect((await SessionTask.get(session.id))?.revision).toMatchObject({ result: null, result_source: null })
+      expect(
+        Database.use((db) =>
+          db
+            .select()
+            .from(TaskCommandTable)
+            .where(eq(TaskCommandTable.task_id, target.task.id))
+            .all(),
+        ),
+      ).toHaveLength(1)
     }))
 
   test("rolls back workflow and terminal results when their Ledger Event fails", () =>
