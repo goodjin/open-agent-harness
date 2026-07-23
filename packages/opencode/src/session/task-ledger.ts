@@ -125,7 +125,7 @@ export namespace TaskLedger {
     )
   }
 
-  export function claim(tx: Database.TxOrDb, input: z.input<typeof Claim>) {
+  export function claim(tx: Database.Transaction, input: z.input<typeof Claim>) {
     const parsed = Claim.parse(input)
     const find = () =>
       tx
@@ -165,7 +165,7 @@ export namespace TaskLedger {
     }
   }
 
-  export function apply(tx: Database.TxOrDb, commandID: string, resultRef?: string) {
+  export function apply(tx: Database.Transaction, commandID: string, resultRef?: string) {
     const id = ID("command").parse(commandID)
     const result = z.string().min(1).optional().parse(resultRef)
     const row = tx
@@ -182,7 +182,7 @@ export namespace TaskLedger {
     return Command.parse(current)
   }
 
-  export function append(tx: Database.TxOrDb, taskID: string, events: z.input<typeof NewEvent>[]) {
+  export function append(tx: Database.Transaction, taskID: string, events: z.input<typeof NewEvent>[]) {
     const id = TaskID.parse(taskID)
     const input = z.array(NewEvent).min(1).parse(events)
     const task = tx

@@ -178,8 +178,14 @@ function adapter(err: unknown, row: TaskLedger.Command) {
         }),
       }),
     }),
-  } as unknown as Database.TxOrDb
+  } as unknown as Database.Transaction
 }
+
+if (false)
+  Database.use((db) => {
+    // @ts-expect-error append requires the transaction handle supplied by Database.transaction
+    TaskLedger.append(db, "task_compile_contract", [{ type: "compile.contract" }])
+  })
 
 describe("task ledger flag", () => {
   test("defaults to false", async () => {
@@ -1163,13 +1169,15 @@ describe("task ledger event sequence", () => {
     setup(async () => {
       const saved = await task()
       expect(() =>
-        Database.transaction(
-          (tx) =>
-            TaskLedger.append(tx, saved.task.id, [
-              { type: "task.updated" },
-              { type: "task.failed", command_id: "command_missing" },
-            ]),
-          { behavior: "immediate" },
+        Database.use(() =>
+          Database.transaction(
+            (tx) =>
+              TaskLedger.append(tx, saved.task.id, [
+                { type: "task.updated" },
+                { type: "task.failed", command_id: "command_missing" },
+              ]),
+            { behavior: "immediate" },
+          ),
         ),
       ).toThrow()
       expect(TaskLedger.listEvents(saved.task.id)).toEqual([])

@@ -143,20 +143,25 @@ export namespace Database {
   const ctx = Context.create<{
     tx: TxOrDb
     effects: (() => void | Promise<void>)[]
+    atomic: boolean
   }>("database")
 
-  export function use<T>(callback: (trx: TxOrDb) => T): T {
+  function context() {
     try {
-      return callback(ctx.use().tx)
+      return ctx.use()
     } catch (err) {
-      if (err instanceof Context.NotFound) {
-        const effects: (() => void | Promise<void>)[] = []
-        const result = ctx.provide({ effects, tx: Client() }, () => callback(Client()))
-        for (const effect of effects) effect()
-        return result
-      }
+      if (err instanceof Context.NotFound) return
       throw err
     }
+  }
+
+  export function use<T>(callback: (trx: TxOrDb) => T): T {
+    const current = context()
+    if (current) return callback(current.tx)
+    const effects: (() => void | Promise<void>)[] = []
+    const result = ctx.provide({ effects, tx: Client(), atomic: false }, () => callback(Client()))
+    for (const effect of effects) effect()
+    return result
   }
 
   export function effect(fn: () => any | Promise<any>) {
@@ -167,23 +172,20 @@ export namespace Database {
     }
   }
 
-  export function transaction<T>(callback: (tx: TxOrDb) => T, config?: SQLiteTransactionConfig): T {
-    try {
-      return callback(ctx.use().tx)
-    } catch (err) {
-      if (err instanceof Context.NotFound) {
-        const effects: (() => void | Promise<void>)[] = []
-        const transact = Client().transaction.bind(Client()) as unknown as (
-          callback: (tx: TxOrDb) => T,
-          config?: SQLiteTransactionConfig,
-        ) => T
-        const result = transact((tx) => {
-          return ctx.provide({ tx, effects }, () => callback(tx))
-        }, config)
-        for (const effect of effects) effect()
-        return result
-      }
-      throw err
-    }
+  export function transaction<T>(callback: (tx: Transaction) => T, config?: SQLiteTransactionConfig): T {
+    const current = context()
+    if (current?.atomic) return callback(current.tx as Transaction)
+    const effects = current?.effects ?? []
+    const client = (current?.tx ?? Client()) as Client
+    const transact = client.transaction.bind(client) as unknown as (
+      callback: (tx: Transaction) => T,
+      config?: SQLiteTransactionConfig,
+    ) => T
+    const result = transact(
+      (tx) => ctx.provide({ tx, effects, atomic: true }, () => callback(tx)),
+      config,
+    )
+    if (!current) for (const effect of effects) effect()
+    return result
   }
 }
