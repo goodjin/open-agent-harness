@@ -30,8 +30,21 @@ export function formatServerError(error: unknown, translate?: Translator, fallba
   if (isProviderModelNotFoundErrorLike(error)) return parseReadableProviderModelNotFoundError(error, translate)
   if (error instanceof Error && error.message) return error.message
   if (typeof error === "string" && error) return error
+  const message = serverMessage(error)
+  if (message) return message
   if (fallback) return fallback
   return tr(translate, "error.chain.unknown", "Unknown error")
+}
+
+function serverMessage(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || Array.isArray(error)) return
+  const value = error as Record<string, unknown>
+  if (typeof value.message === "string" && value.message.trim()) return value.message
+  if (typeof value.data === "object" && value.data !== null && !Array.isArray(value.data)) {
+    const message = (value.data as Record<string, unknown>).message
+    if (typeof message === "string" && message.trim()) return message
+  }
+  return serverMessage(value.error)
 }
 
 function isConfigInvalidErrorLike(error: unknown): error is ConfigInvalidError {

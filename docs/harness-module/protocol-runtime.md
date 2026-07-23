@@ -145,6 +145,8 @@ When an `input` answer resumes the model, Runtime must present a resolved-input 
 
 The session UI surfaces pending questions both in the timeline context and in the composer dock. The composer dock is the stable fallback: an actionable question must remain visible even if the active message changes or the timeline filter hides the original turn.
 
+The question dock is bounded by the visible viewport. Long confirmation or input content scrolls inside the dock while the action footer remains visible. After a successful reply or rejection, the app removes the matching request from its local question store immediately instead of depending only on a later server event. The submitted request stays locked during that transition. If an already-settled request returns `ConflictError`, the app treats the local card as stale, removes it, and renders the structured server message instead of stringifying the response as `[object Object]`.
+
 ## Assignment Confirmation
 
 Assignment is the persisted task-management record for a session. It is not a separate Agent Protocol item kind. Model output still uses ordinary protocol items, and assignment creation or content updates are expressed as metadata on `kind: "confirm"`.

@@ -90,6 +90,21 @@ describe("formatServerError", () => {
     expect(formatServerError("Failed to connect to server", language.t)).toBe("Failed to connect to server")
   })
 
+  test("formats structured server conflict messages", () => {
+    expect(
+      formatServerError(
+        { name: "ConflictError", data: { message: "Protocol confirmation is not current" } },
+        language.t,
+      ),
+    ).toBe("Protocol confirmation is not current")
+  })
+
+  test("formats nested SDK error messages", () => {
+    expect(formatServerError({ error: { data: { message: "Request was already answered" } } }, language.t)).toBe(
+      "Request was already answered",
+    )
+  })
+
   test("uses translated unknown fallback", () => {
     expect(formatServerError(0, language.t)).toBe("Erro desconhecido")
   })

@@ -8,6 +8,8 @@ import { showToast } from "@open-agent-harness/ui/toast"
 import type { QuestionAnswer, QuestionRequest } from "@open-agent-harness/sdk/v2"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
+import { useSync } from "@/context/sync"
+import { formatServerError } from "@/utils/server-errors"
 
 type Notes = Record<string, string>
 type Response = "confirm" | "cancel"
@@ -62,6 +64,7 @@ export function confirmOnly(questions: ConfirmQuestion[]) {
 
 export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit: () => void }> = (props) => {
   const sdk = useSDK()
+  const sync = useSync()
   const language = useLanguage()
 
   const questions = createMemo(() => props.request.questions)
@@ -129,9 +132,20 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     })
   })
 
+  const drop = () => {
+    sync.set("question", props.request.sessionID, (items = []) => items.filter((item) => item.id !== props.request.id))
+  }
+
+  const conflict = (err: unknown) => {
+    if (typeof err !== "object" || err === null || Array.isArray(err)) return false
+    return (err as Record<string, unknown>).name === "ConflictError"
+  }
+
   const fail = (err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err)
-    showToast({ title: language.t("common.requestFailed"), description: message })
+    showToast({
+      title: language.t("common.requestFailed"),
+      description: formatServerError(err, language.t),
+    })
   }
 
   const reply = async (answers: QuestionAnswer[], response?: Response) => {
@@ -142,11 +156,18 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       await sdk.client.question.reply({ requestID: props.request.id, answers, response })
       replied = true
       cache.delete(props.request.id)
+      drop()
       props.onSubmit()
     } catch (err) {
       fail(err)
+      if (conflict(err)) {
+        replied = true
+        cache.delete(props.request.id)
+        drop()
+        props.onSubmit()
+      }
     } finally {
-      setStore("sending", false)
+      if (!replied) setStore("sending", false)
     }
   }
 
@@ -158,11 +179,18 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
       await sdk.client.question.reject({ requestID: props.request.id })
       replied = true
       cache.delete(props.request.id)
+      drop()
       props.onSubmit()
     } catch (err) {
       fail(err)
+      if (conflict(err)) {
+        replied = true
+        cache.delete(props.request.id)
+        drop()
+        props.onSubmit()
+      }
     } finally {
-      setStore("sending", false)
+      if (!replied) setStore("sending", false)
     }
   }
 
