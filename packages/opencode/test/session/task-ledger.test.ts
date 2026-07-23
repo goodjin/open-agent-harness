@@ -59,6 +59,47 @@ function journal(end = Infinity) {
     .sort((a, b) => a.timestamp - b.timestamp)
 }
 
+async function flag(all?: string, ledger?: string) {
+  const env = { ...process.env }
+  delete env.OPENCODE_EXPERIMENTAL
+  delete env.OPENCODE_EXPERIMENTAL_TASK_LEDGER
+  if (all) env.OPENCODE_EXPERIMENTAL = all
+  if (ledger) env.OPENCODE_EXPERIMENTAL_TASK_LEDGER = ledger
+  const proc = Bun.spawn(
+    [
+      "bun",
+      "-e",
+      `import { Flag } from ${JSON.stringify(new URL("../../src/flag/flag.ts", import.meta.url).href)}; process.stdout.write(String(Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER))`,
+    ],
+    {
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  )
+  const code = await proc.exited
+  if (code !== 0) throw new Error(await new Response(proc.stderr).text())
+  return (await new Response(proc.stdout).text()) === "true"
+}
+
+describe("task ledger flag", () => {
+  test("defaults to false", async () => {
+    expect(await flag()).toBe(false)
+  })
+
+  test("accepts true and one from the dedicated variable", async () => {
+    expect(await Promise.all(["true", "1"].map((value) => flag(undefined, value)))).toEqual([true, true])
+  })
+
+  test("keeps false and zero disabled without the global variable", async () => {
+    expect(await Promise.all(["false", "0"].map((value) => flag(undefined, value)))).toEqual([false, false])
+  })
+
+  test("accepts true and one from the global variable", async () => {
+    expect(await Promise.all(["true", "1"].map((value) => flag(value, "false")))).toEqual([true, true])
+  })
+})
+
 describe("task ledger schema", () => {
   test("migrates existing task, revision, and stop rows without inventing events", () => {
     const sqlite = new SQLite(":memory:")
