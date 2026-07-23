@@ -139,6 +139,43 @@ describe("task ledger schema", () => {
     expect(sqlite.query("SELECT id FROM task_command").all()).toEqual([{ id: "command_old" }])
     expect(sqlite.query("SELECT id FROM task_event").all()).toEqual([{ id: "event_old" }])
     expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
+    sqlite.exec("DELETE FROM session_task WHERE id = 'task_old'")
+    expect(
+      ["task_requirement", "task_revision", "task_revision_stop", "task_resource", "task_command", "task_event"].map(
+        (table) => sqlite.query<{ count: number }, []>(`SELECT count(*) AS count FROM ${table}`).get()?.count,
+      ),
+    ).toEqual([0, 0, 0, 0, 0, 0])
+    sqlite.close(false)
+  })
+
+  test("rejects migration when an existing task has a dangling current requirement", () => {
+    const sqlite = new SQLite(":memory:")
+    sqlite.exec("PRAGMA foreign_keys = ON")
+    const db = drizzle({ client: sqlite })
+    migrate(db, journal(20260723170000))
+    sqlite.exec(`
+      INSERT INTO project (id, worktree, time_created, time_updated, sandboxes)
+      VALUES ('project_bad', '/bad', 1, 1, '[]');
+      INSERT INTO session (
+        id, project_id, slug, directory, title, version, time_created, time_updated
+      ) VALUES ('session_bad', 'project_bad', 'bad', '/bad', 'Bad', '1', 1, 1);
+      INSERT INTO session_task (
+        id, session_id, title, status, current_revision_id, requirement_id, source_type, source_ref,
+        time_created, time_updated
+      ) VALUES (
+        'task_bad', 'session_bad', 'Bad task', 'running', NULL, 'requirement_missing', 'user', '{}', 1, 1
+      );
+    `)
+
+    expect(() => migrate(db, journal())).toThrow()
+    expect(
+      sqlite
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM sqlite_master WHERE type = 'trigger' AND name = 'session_task_requirement_update'",
+        )
+        .get(),
+    ).toEqual({ count: 0 })
+    expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
     sqlite.close(false)
   })
 
@@ -186,6 +223,7 @@ describe("task ledger schema", () => {
       expect(() =>
         Database.use((db) => db.delete(TaskRequirementTable).where(eq(TaskRequirementTable.id, row.id)).run()),
       ).toThrow()
+      Database.use((db) => db.delete(TaskRequirementTable).where(eq(TaskRequirementTable.id, "requirement_4")).run())
       Database.use((db) =>
         db
           .insert(TaskRequirementTable)
@@ -210,12 +248,86 @@ describe("task ledger schema", () => {
       expect(() =>
         Database.use((db) =>
           db
+            .update(SessionTaskTable)
+            .set({ requirement_id: "requirement_5" })
+            .where(eq(SessionTaskTable.id, saved.task.id))
+            .run(),
+        ),
+      ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(SessionTaskTable)
+            .set({ requirement_id: "requirement_missing" })
+            .where(eq(SessionTaskTable.id, saved.task.id))
+            .run(),
+        ),
+      ).toThrow()
+      Database.use((db) =>
+        db.update(SessionTaskTable).set({ requirement_id: row.id }).where(eq(SessionTaskTable.id, saved.task.id)).run(),
+      )
+      expect(() =>
+        Database.use((db) =>
+          db
             .update(TaskRevisionTable)
             .set({ requirement_id: "requirement_5" })
             .where(eq(TaskRevisionTable.id, saved.revision.id))
             .run(),
         ),
       ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRequirementTable)
+            .set({ task_id: other.task.id })
+            .where(eq(TaskRequirementTable.id, row.id))
+            .run(),
+        ),
+      ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRequirementTable)
+            .set({ id: "requirement_renamed" })
+            .where(eq(TaskRequirementTable.id, row.id))
+            .run(),
+        ),
+      ).toThrow()
+      expect(() =>
+        Database.use((db) => db.delete(TaskRequirementTable).where(eq(TaskRequirementTable.id, row.id)).run()),
+      ).toThrow()
+      const session = await Session.create({})
+      const insert = {
+        id: "task_insert_cross",
+        session_id: session.id,
+        title: "Cross task requirement",
+        status: "running" as const,
+        current_revision_id: null,
+        requirement_id: "requirement_5",
+        status_reason: null,
+        last_event_seq: 0,
+        checkpoint_id: null,
+        schema_version: 1,
+        source_type: "user" as const,
+        source_ref: {},
+        time_created: Date.now(),
+        time_updated: Date.now(),
+      }
+      expect(() => Database.use((db) => db.insert(SessionTaskTable).values(insert).run())).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .insert(SessionTaskTable)
+            .values({ ...insert, id: "task_insert_missing", requirement_id: "requirement_missing" })
+            .run(),
+        ),
+      ).toThrow()
+      Database.use((db) =>
+        db.update(SessionTaskTable).set({ requirement_id: null }).where(eq(SessionTaskTable.id, saved.task.id)).run(),
+      )
+      expect(() =>
+        Database.use((db) => db.delete(TaskRequirementTable).where(eq(TaskRequirementTable.id, row.id)).run()),
+      ).not.toThrow()
     }))
 
   test("enforces resource identity, event sequence, and command idempotency", () =>
@@ -346,6 +458,19 @@ describe("task ledger schema", () => {
         "task_event_id_unique_idx",
       ]),
     )
+    expect(
+      sqlite
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%requirement%' ORDER BY name",
+        )
+        .all()
+        .map((row) => row.name),
+    ).toEqual([
+      "session_task_requirement_insert",
+      "session_task_requirement_update",
+      "task_requirement_current_delete",
+      "task_requirement_identity_immutable",
+    ])
     expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
     sqlite.close(false)
   })

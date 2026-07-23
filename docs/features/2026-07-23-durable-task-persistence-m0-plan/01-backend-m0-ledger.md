@@ -81,6 +81,9 @@ M0 的 Resource 是索引：
 - `checkpoint_id`
 - `schema_version NOT NULL DEFAULT 1`
 
+`requirement_id` 由 SQLite trigger 校验，只能绑定当前 Task 的 Requirement。绑定后禁止删除当前
+Requirement 或修改其稳定 identity；删除 Task 根记录时仍允许整棵账本按外键级联清理。
+
 `task_revision` 增加：
 
 - `requirement_id`
@@ -101,6 +104,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 - `packages/opencode/src/session/session.sql.ts`
 - `packages/opencode/migration/20260723160000_durable_task_ledger/migration.sql`
 - `packages/opencode/migration/20260723163000_durable_task_ledger_constraints/migration.sql`
+- `packages/opencode/migration/20260723170000_task_current_requirement/migration.sql`
 - `packages/opencode/src/storage/schema.ts`
 - `packages/opencode/src/session/task.ts`
 
@@ -113,6 +117,7 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 - 定义四张新表和现有表增量字段。
 - 使用 snake_case 字段和明确索引。
 - 为 Requirement、Revision、Resource、Command 和 Event 建立同 Task 组合外键；不可变 Requirement 链不使用删除级联。
+- 使用 SQLite trigger 维护 Task 当前 Requirement 引用，覆盖插入、更新、删除和 Requirement identity 变化。
 - 把现有 Task 表及新表补入 storage schema export。
 - migration 只建结构和默认值，不生成历史 Event。
 
@@ -122,10 +127,11 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 - 旧数据库 migration 后现有 Task、Revision 和 RevisionStop 行仍可读取，且不生成历史 Event。
 - 同一 Task 重复 requirement version、重复 Event seq、重复 command key 被数据库拒绝。
 - 跨 Task 的 requirement、revision 和 command 引用被 SQLite 拒绝；被 supersede 的 Requirement 不会被级联删除。
+- `session_task.requirement_id` 的跨 Task、悬空、删除当前引用和 Requirement 归属变化均被拒绝，Task 根删除仍可级联完成。
 
 **规模**
 
-- 领域 schema 增量 ≤ 180 行；文件 5 个；测试 ≤ 6 个。
+- 领域 schema 增量 ≤ 180 行；文件 6 个；测试 ≤ 6 个。
 
 ### T-02：增加 Ledger 写入开关
 
