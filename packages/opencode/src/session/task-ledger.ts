@@ -1,7 +1,7 @@
 import z from "zod"
 import { randomUUID } from "crypto"
 import { SQLiteError } from "bun:sqlite"
-import { Database, and, asc, desc, eq, gt, max } from "../storage/db"
+import { Database, and, asc, desc, eq, gt, max, sql } from "../storage/db"
 import { SessionID } from "./schema"
 import {
   AssignmentTable,
@@ -916,6 +916,8 @@ export namespace TaskLedger {
       revision.spec_ref === spec &&
       (!revision.plan_ref || revision.plan_ref === assignment?.content_ref) &&
       !!indexed
+    if (picked.row) chain(tx, task.id, picked.row)
+    if (!picked.row && picked.previous) chain(tx, task.id, picked.previous)
     if (!command && !events[0] && created && complete) return { replay: true as const }
     const tail =
       tx
@@ -936,8 +938,6 @@ export namespace TaskLedger {
       return { replay: true as const }
     }
     if (command?.status === "rejected" || command?.result_ref) throw new Conflict("task_migration_command_drift")
-    if (picked.row) chain(tx, task.id, picked.row)
-    if (!picked.row && picked.previous) chain(tx, task.id, picked.previous)
     const id = picked.row?.id ?? meta?.requirement ?? `requirement_${randomUUID()}`
     const saved =
       picked.row ??
@@ -1075,21 +1075,42 @@ export namespace TaskLedger {
   }
 
   function chain(tx: Database.Transaction, taskID: string, input: typeof TaskRequirementTable.$inferSelect) {
-    let current = input
-    for (let depth = 0; depth < 10_000; depth++) {
-      if (current.task_id !== taskID || current.supersedes_id === current.id)
-        throw new Conflict("task_migration_requirement_chain_invalid")
-      if (current.version === 1) {
-        if (current.supersedes_id) throw new Conflict("task_migration_requirement_chain_invalid")
-        return
-      }
-      if (!current.supersedes_id) throw new Conflict("task_migration_requirement_chain_invalid")
-      const previous = requirement(tx, taskID, current.supersedes_id)
-      if (!previous || previous.version !== current.version - 1)
-        throw new Conflict("task_migration_requirement_chain_invalid")
-      current = previous
-    }
-    throw new Conflict("task_migration_requirement_chain_too_deep")
+    const result = tx.get<{ valid: number; depth: number; terminal: number }>(sql`
+      WITH RECURSIVE lineage(id, version, supersedes_id, depth) AS (
+        SELECT id, version, supersedes_id, 1
+        FROM task_requirement
+        WHERE task_id = ${taskID}
+          AND id = ${input.id}
+          AND version = ${input.version}
+        UNION ALL
+        SELECT prior.id, prior.version, prior.supersedes_id, lineage.depth + 1
+        FROM lineage
+        JOIN task_requirement AS prior
+          ON prior.task_id = ${taskID}
+          AND prior.id = lineage.supersedes_id
+          AND prior.version = lineage.version - 1
+        WHERE lineage.depth < 10000
+      )
+      SELECT
+        CASE
+          WHEN COUNT(*) = ${input.version}
+            AND MAX(depth) = ${input.version}
+            AND MIN(version) = 1
+            AND MAX(version) = ${input.version}
+            AND SUM(CASE WHEN version = 1 AND supersedes_id IS NULL THEN 1 ELSE 0 END) = 1
+          THEN 1
+          ELSE 0
+        END AS valid,
+        COUNT(*) AS depth,
+        COALESCE(MIN(version), 0) AS terminal
+      FROM lineage
+    `)
+    if (result?.valid === 1) return
+    throw new Conflict(
+      input.version > 10_000 && result?.depth === 10_000
+        ? "task_migration_requirement_chain_too_deep"
+        : "task_migration_requirement_chain_invalid",
+    )
   }
 
   function baselineEvent(

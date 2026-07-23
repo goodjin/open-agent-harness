@@ -68,6 +68,28 @@ function ensure(taskID: string) {
   )
 }
 
+function corrupt(row: TaskLedger.Requirement, kind: "null" | "self" | "wrong") {
+  const wrong = `${row.id}_wrong`
+  Database.use((db) => {
+    if (kind === "wrong")
+      db
+        .insert(TaskRequirementTable)
+        .values({
+          ...row,
+          id: wrong,
+          version: row.version + 1,
+          body_ref: `${row.body_ref}/wrong`,
+          supersedes_id: row.id,
+        })
+        .run()
+    db
+      .update(TaskRequirementTable)
+      .set({ supersedes_id: kind === "null" ? null : kind === "self" ? row.id : wrong })
+      .where(eq(TaskRequirementTable.id, row.id))
+      .run()
+  })
+}
+
 function journal(end = Infinity) {
   const dir = new URL("../../migration/", import.meta.url)
   return readdirSync(dir, { withFileTypes: true })
@@ -1473,6 +1495,51 @@ describe("task ledger event sequence", () => {
 })
 
 describe("task ledger migration state", () => {
+  test("rejects a complete task.created fast path whose shared current Requirement has a broken chain", () =>
+    setup(async () => {
+      for (const kind of ["null", "self", "wrong"] as const) {
+        // @ts-expect-error test-only flag override
+        Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = true
+        const saved = await task()
+        const draft = await SessionTask.draft({
+          taskID: saved.task.id,
+          title: `Created chain ${kind}`,
+          body: `Created chain ${kind} v2`,
+        })
+        await SessionTask.activate({ taskID: saved.task.id, revisionID: draft.id })
+        const current = TaskLedger.requirements(saved.task.id).find((item) => item.version === 2)
+        if (!current) throw new Error("current requirement missing")
+        corrupt(current, kind)
+
+        expect(() => ensure(saved.task.id)).toThrow("task_migration_requirement_chain_invalid")
+        expect(TaskLedger.findCommand(`task.migrate:${saved.task.id}:${draft.id}`)).toBeUndefined()
+      }
+    }))
+
+  test("rejects an applied migration replay whose shared current Requirement has a broken chain", () =>
+    setup(async () => {
+      for (const kind of ["null", "self", "wrong"] as const) {
+        // @ts-expect-error test-only flag override
+        Flag.OPENCODE_EXPERIMENTAL_TASK_LEDGER = false
+        const saved = await task()
+        ensure(saved.task.id)
+        const draft = await SessionTask.draft({
+          taskID: saved.task.id,
+          title: `Applied chain ${kind}`,
+          body: `Applied chain ${kind} v2`,
+        })
+        await SessionTask.activate({ taskID: saved.task.id, revisionID: draft.id })
+        const replay = ensure(saved.task.id)
+        const current = TaskLedger.requirements(saved.task.id).find((item) => item.version === 2)
+        if (!current) throw new Error("current requirement missing")
+        corrupt(current, kind)
+
+        expect(replay).toMatchObject({ command: { status: "applied" } })
+        expect(() => ensure(saved.task.id)).toThrow("task_migration_requirement_chain_invalid")
+        expect(TaskLedger.findCommand(`task.migrate:${saved.task.id}:${draft.id}`)?.status).toBe("applied")
+      }
+    }))
+
   test("recovers missing and accepted Commands and reuses a compatible partial Event", () =>
     setup(async () => {
       // @ts-expect-error test-only flag override
