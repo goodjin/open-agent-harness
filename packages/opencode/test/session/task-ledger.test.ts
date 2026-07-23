@@ -16,6 +16,7 @@ import {
   TaskResourceTable,
 } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
+import { TaskLedger } from "../../src/session/task-ledger"
 import { Database, eq } from "../../src/storage/db"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -515,4 +516,161 @@ describe("task ledger schema", () => {
     expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
     sqlite.close(false)
   })
+})
+
+describe("task ledger contracts", () => {
+  test("rejects unknown fields, malformed hashes, kinds, and lifecycle values", () => {
+    const row = {
+      id: "resource_1",
+      task_id: "task_1",
+      revision_id: null,
+      kind: "spec" as const,
+      uri: "memory://spec",
+      hash: "a".repeat(64),
+      size: 1,
+      summary: null,
+      producer_type: "revision" as const,
+      producer_id: "revision_1",
+      visibility: "task" as const,
+      lifecycle: "active" as const,
+      time_created: 1,
+    }
+    expect(TaskLedger.Resource.parse(row)).toEqual(row)
+    expect(TaskLedger.Resource.safeParse({ ...row, extra: true }).success).toBe(false)
+    expect(TaskLedger.Resource.safeParse({ ...row, hash: "z".repeat(64) }).success).toBe(false)
+    expect(TaskLedger.Resource.safeParse({ ...row, kind: "artifact" }).success).toBe(false)
+    expect(TaskLedger.Resource.safeParse({ ...row, lifecycle: "deleted" }).success).toBe(false)
+  })
+
+  test("finds the latest or requested requirement", () =>
+    setup(async () => {
+      const saved = await task()
+      const base = {
+        task_id: saved.task.id,
+        source_refs: ["message_1"],
+        body_ref: `task-revision://${saved.revision.id}`,
+        body_hash: saved.revision.body_hash,
+        constraints: {},
+        acceptance: [],
+        created_by: "user" as const,
+        confirmed_at: null,
+        supersedes_id: null,
+        time_created: 1,
+      }
+      Database.use((db) =>
+        db
+          .insert(TaskRequirementTable)
+          .values([
+            { ...base, id: "requirement_1", version: 1 },
+            { ...base, id: "requirement_2", version: 2, supersedes_id: "requirement_1", time_created: 2 },
+          ])
+          .run(),
+      )
+      expect(TaskLedger.findRequirement(saved.task.id)?.id).toBe("requirement_2")
+      expect(TaskLedger.findRequirement(saved.task.id, "requirement_1")?.version).toBe(1)
+      expect(TaskLedger.findRequirement(saved.task.id, "requirement_missing")).toBeUndefined()
+      expect(() => TaskLedger.findRequirement("invalid")).toThrow()
+    }))
+
+  test("lists resources in stable creation and id order and parses stored output", () =>
+    setup(async () => {
+      const saved = await task()
+      const base = {
+        task_id: saved.task.id,
+        revision_id: saved.revision.id,
+        kind: "spec" as const,
+        uri: "memory://spec",
+        hash: saved.revision.body_hash,
+        size: 1,
+        summary: null,
+        producer_type: "revision" as const,
+        producer_id: saved.revision.id,
+        visibility: "task" as const,
+        lifecycle: "active" as const,
+        time_created: 1,
+      }
+      Database.use((db) =>
+        db
+          .insert(TaskResourceTable)
+          .values([
+            { ...base, id: "resource_b", uri: "memory://b" },
+            { ...base, id: "resource_a", uri: "memory://a" },
+            { ...base, id: "resource_c", uri: "memory://c", time_created: 2 },
+          ])
+          .run(),
+      )
+      expect(TaskLedger.listResources(saved.task.id).map((item) => item.id)).toEqual([
+        "resource_a",
+        "resource_b",
+        "resource_c",
+      ])
+      Database.use((db) =>
+        db
+          .update(TaskResourceTable)
+          .set({ lifecycle: "deleted" as "active" })
+          .where(eq(TaskResourceTable.id, "resource_c"))
+          .run(),
+      )
+      expect(() => TaskLedger.listResources(saved.task.id)).toThrow()
+    }))
+
+  test("finds commands by idempotency key and rejects malformed stored output", () =>
+    setup(async () => {
+      const saved = await task()
+      Database.use((db) =>
+        db
+          .insert(TaskCommandTable)
+          .values({
+            id: "command_1",
+            task_id: saved.task.id,
+            kind: "task.create",
+            idempotency_key: "create:1",
+            status: "applied",
+            result_ref: saved.task.id,
+            time_created: 1,
+            time_applied: 2,
+          })
+          .run(),
+      )
+      expect(TaskLedger.findCommand("create:1")?.id).toBe("command_1")
+      expect(TaskLedger.findCommand("missing")).toBeUndefined()
+      Database.use((db) =>
+        db
+          .update(TaskCommandTable)
+          .set({ status: "broken" as "applied" })
+          .where(eq(TaskCommandTable.id, "command_1"))
+          .run(),
+      )
+      expect(() => TaskLedger.findCommand("create:1")).toThrow()
+    }))
+
+  test("lists events with an exclusive bounded cursor without duplicates", () =>
+    setup(async () => {
+      const saved = await task()
+      Database.use((db) =>
+        db
+          .insert(TaskEventTable)
+          .values(
+            [3, 1, 2].map((seq) => ({
+              task_id: saved.task.id,
+              seq,
+              id: `event_${seq}`,
+              type: "task.updated",
+              revision_id: saved.revision.id,
+              command_id: null,
+              data: { seq },
+              resource_refs: [],
+              time_created: 4 - seq,
+            })),
+          )
+          .run(),
+      )
+      const first = TaskLedger.listEvents(saved.task.id, 0, 2)
+      const next = TaskLedger.listEvents(saved.task.id, first.at(-1)!.seq, 2)
+      expect(first.map((item) => item.seq)).toEqual([1, 2])
+      expect(next.map((item) => item.seq)).toEqual([3])
+      expect(new Set([...first, ...next].map((item) => item.id)).size).toBe(3)
+      expect(() => TaskLedger.listEvents(saved.task.id, -1)).toThrow()
+      expect(() => TaskLedger.listEvents(saved.task.id, 0, 501)).toThrow()
+    }))
 })
