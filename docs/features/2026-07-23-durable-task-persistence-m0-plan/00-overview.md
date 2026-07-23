@@ -2,7 +2,7 @@
 
 - Mission：`durable-task-persistence-m0`
 - 日期：2026-07-23
-- 状态：已确认，实施中
+- 状态：已完成；T-01—T-11 的实现、测试、审查与归档门禁均通过
 - 设计来源：`docs/features/2026-07-23-durable-task-persistence-and-recovery-design.md`
 - 目标：建立 Requirement、Resource、Task Event 和 Command 幂等基础，并让现有 Task 生命周期同步写入这些事实。
 
@@ -108,3 +108,28 @@ bun typecheck
 ```
 
 禁止从仓库根目录运行测试，禁止直接调用 `tsc`。
+
+## 9. 实际交付与闭环
+
+M0 从设计提交 `660dfaf68` 开始，到最终 admission gate 修复 `161cf4655` 完成。各任务的最终
+证明提交如下：
+
+| 任务 | 最终证明提交 | 交付结论 |
+|---|---|---|
+| T-01 | `7770602c7` | migration、schema ownership 与 journal 恢复通过 |
+| T-02 | `0a6c9382a` | 默认关闭的 Ledger flag 通过 |
+| T-03 | `4a28bc8e8` | 严格 contracts 与完整 Requirement history 通过 |
+| T-04 | `2cdd6fd2d` | Command 幂等冲突边界通过 |
+| T-05 | `392bcf95c` | Event 原子序列与 commit 后 effect 合并通过 |
+| T-06 | `ad407e84a` | create、delegation、handoff 与 legacy 双写通过 |
+| T-07 | `72bcd607a` | Revision lifecycle 与 canonical Command identity 通过 |
+| T-08 | `64f5145e1` | workflow/result Event 与 canonical result locator 通过 |
+| T-09 | `6ca623865` | 懒回填状态机与完整 Requirement 链验证通过 |
+| T-10 | `ff06e052d` | 只读 audit 的 persisted-facts 证明边界通过 |
+| T-11 | `161cf4655` | admission generation gate 与集成矩阵通过 |
+
+最终 admission、Ledger、Task 测试为 177/177 通过、807 assertions；migration check 与
+`bun typecheck` 通过。其余矩阵为 76/77；唯一失败是早于 M0 的 Recovery scoped-child
+基线，Recovery 单组为 18/19，且在多个 M0 前置差分点复现。该后续项不属于 M0 变更，
+也不扩大 M0 边界：Graph、Attempt、Checkpoint、Projection job、Event-driven Scheduler
+和完整断点恢复仍由 M1—M5 交付。

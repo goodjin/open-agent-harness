@@ -1,7 +1,7 @@
 # 任务持久化与断点恢复体系设计
 
 - 日期：2026-07-23
-- 状态：设计完成，M0 已确认并实施中
+- 状态：设计完成，M0 已于 2026-07-23 交付并通过测试、审查与归档门禁
 - 适用范围：单机 SQLite、进程重启、进程崩溃、模型或工具调用中断
 - 暂不覆盖：多节点调度、跨机器自动接管、异地容灾
 - 需求基线：
@@ -1408,6 +1408,12 @@ after projection rename
 
 独立验收：开关关闭时现有 Task 行为和 Ledger 行数不变；开启时 Task 创建、修订和结果能够形成连续
 Event 与 Resource refs；关闭后再开启可幂等补齐且不产生重复事实。M0 不创建或写入 Graph。
+
+M0 实际交付范围为 `660dfaf68..161cf4655`。T-01—T-11 均完成实现、独立测试和代码审查；
+最终 admission、Ledger、Task 串行集成为 177/177 通过，migration check 与 `bun typecheck`
+通过。其余回归矩阵为 76/77；唯一失败是早于 M0 的 Recovery scoped-child 用例，单组为
+18/19，并已在多个 M0 前置差分点复现。该基线不改变 M0 验收结论，也不表示 M0 已实现
+Graph、Attempt、Checkpoint、Projection job、Event-driven Scheduler 或完整断点恢复。
 
 ### M1：规范化 Graph
 

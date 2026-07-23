@@ -3,6 +3,7 @@
 - 模块：MOD-05
 - 优先级：P0
 - 依赖：T-01—T-10
+- 状态：已完成；实现、独立测试和代码审查均通过
 
 ## 1. 测试目标
 
@@ -79,7 +80,7 @@
 
 ## 6. T-11 实际执行
 
-- 状态：实现与 M0 测试门禁完成；存在一项已确认的非 M0 Recovery 基线失败。
+- 状态：T-11 实现、独立测试和代码审查均通过；M0 全部门禁完成。
 - 新增真实文件 SQLite 集成：独立进程开启 Flag，完成 create、sync、revise、activate、finish；关闭数据库并重开后 Task、两版 Revision/Requirement/Resource、六条 Command 和十二条 Event 完全一致，audit 为 `ok` 且审计前后无写入。
 - 新增迁移恢复：复制已到 163000 schema 的临时数据库，删除对应 journal 记录后重放；journal 恢复为单条，无 `__old_*` 遗留，约束 trigger 与 `foreign_key_check` 正常。测试只操作自动删除的临时目录，不读取或复制用户数据库。
 - INT-06 隔离复现发现 ordinary route 与 confirmed create 的同进程 admission 排队竞态；最终 gate 使用 generation identity、动态 pending 重读、稳定空态 double-check 和 timeout fail-closed。confirmed 异常在 `finally` 释放；timeout 不删 gate、不写 Task，release 后可重试。
@@ -88,3 +89,4 @@
 - `task-handoff.test.ts`、`action-result.test.ts`、`storage/db.test.ts`、`storage/json-migration.test.ts` 全部通过；与 Recovery 合跑共 76/77 通过，423 assertions。
 - `recovery.test.ts` 唯一失败为既有 `collects every scoped child before activation and ignores unrelated tree sessions`，隔离运行同样返回空列表；该用例与 `SessionTask.scope` 均早于 M0，T-11 未修改 Recovery/SessionControl，按已确认范围记录为 known non-M0 baseline。
 - M0 范围未增加 Graph、Attempt、Checkpoint、Projection job、外部 audit API 或自动修复。
+- T-11 最终证明提交为 `161cf4655`；M0 实现提交区间为 `cd4f85071..161cf4655`，设计与计划基线从 `660dfaf68` 开始。
