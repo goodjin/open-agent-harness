@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Database as SQLite } from "bun:sqlite"
+import { drizzle } from "drizzle-orm/bun-sqlite"
+import { migrate } from "drizzle-orm/bun-sqlite/migrator"
+import { readFileSync, readdirSync } from "fs"
 import { WorkspaceID } from "../../src/control-plane/schema"
 import { WorkspaceContext } from "../../src/control-plane/workspace-context"
 import { Instance } from "../../src/project/instance"
@@ -8,6 +12,7 @@ import {
   TaskCommandTable,
   TaskEventTable,
   TaskRequirementTable,
+  TaskRevisionTable,
   TaskResourceTable,
 } from "../../src/session/session.sql"
 import { SessionTask } from "../../src/session/task"
@@ -41,21 +46,106 @@ async function task() {
   })
 }
 
-describe("task ledger schema", () => {
-  test("defaults existing task and revision rows to schema version one", () =>
-    setup(async () => {
-      const saved = await task()
-      const row = Database.use((db) =>
-        db.select().from(SessionTaskTable).where(eq(SessionTaskTable.id, saved.task.id)).get(),
-      )
-      expect(row?.last_event_seq).toBe(0)
-      expect(row?.schema_version).toBe(1)
-      expect(saved.revision.schema_version).toBe(1)
+function journal(end = Infinity) {
+  const dir = new URL("../../migration/", import.meta.url)
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => ({
+      sql: readFileSync(new URL(`${entry.name}/migration.sql`, dir), "utf8"),
+      timestamp: Number(entry.name.slice(0, 14)),
+      name: entry.name,
     }))
+    .filter((entry) => entry.timestamp < end)
+    .sort((a, b) => a.timestamp - b.timestamp)
+}
+
+describe("task ledger schema", () => {
+  test("migrates existing task, revision, and stop rows without inventing events", () => {
+    const sqlite = new SQLite(":memory:")
+    sqlite.exec("PRAGMA foreign_keys = ON")
+    const db = drizzle({ client: sqlite })
+    migrate(db, journal(20260723160000))
+    sqlite.exec(`
+      INSERT INTO project (id, worktree, time_created, time_updated, sandboxes)
+      VALUES ('project_old', '/old', 1, 1, '[]');
+      INSERT INTO session (
+        id, project_id, slug, directory, title, version, time_created, time_updated
+      ) VALUES ('session_old', 'project_old', 'old', '/old', 'Old', '1', 1, 1);
+      INSERT INTO session_task (
+        id, session_id, title, status, current_revision_id, source_type, source_ref, time_created, time_updated
+      ) VALUES ('task_old', 'session_old', 'Old task', 'running', NULL, 'user', '{}', 1, 1);
+      INSERT INTO task_revision (
+        id, task_id, version, previous_id, status, title, body, body_hash, workflow, time_created
+      ) VALUES ('revision_old', 'task_old', 1, NULL, 'active', 'Old', '# Old', '${"a".repeat(64)}', '{}', 1);
+      UPDATE session_task SET current_revision_id = 'revision_old' WHERE id = 'task_old';
+      INSERT INTO task_revision_stop (
+        revision_id, child_session_id, run_id, action_id, state, reason, time_created
+      ) VALUES ('revision_old', 'session_child', 'run_old', 'action_old', 'planned', 'revision', 1);
+    `)
+    migrate(db, journal(20260723163000))
+    sqlite.exec(`
+      INSERT INTO task_requirement (
+        id, task_id, version, source_refs, body_ref, body_hash, constraints, acceptance, created_by, time_created
+      ) VALUES (
+        'requirement_old', 'task_old', 1, '[]', 'task-revision://revision_old', '${"a".repeat(64)}',
+        '{}', '[]', 'migration', 2
+      );
+      UPDATE session_task
+      SET requirement_id = 'requirement_old', last_event_seq = 1
+      WHERE id = 'task_old';
+      UPDATE task_revision
+      SET requirement_id = 'requirement_old', spec_ref = 'resource_old'
+      WHERE id = 'revision_old';
+      INSERT INTO task_command (
+        id, task_id, kind, idempotency_key, status, result_ref, time_created, time_applied
+      ) VALUES ('command_old', 'task_old', 'task.create', 'old:create', 'applied', 'task_old', 2, 2);
+      INSERT INTO task_resource (
+        id, task_id, revision_id, kind, uri, hash, size, producer_type, producer_id, visibility, lifecycle, time_created
+      ) VALUES (
+        'resource_old', 'task_old', 'revision_old', 'spec', 'task-revision://revision_old',
+        '${"a".repeat(64)}', 5, 'migration', 'revision_old', 'task', 'active', 2
+      );
+      INSERT INTO task_event (
+        task_id, seq, id, type, revision_id, command_id, data, resource_refs, time_created
+      ) VALUES (
+        'task_old', 1, 'event_old', 'task.created', 'revision_old', 'command_old', '{}', '["resource_old"]', 2
+      );
+    `)
+    migrate(db, journal())
+
+    expect(
+      sqlite
+        .query("SELECT id, current_revision_id, last_event_seq, schema_version FROM session_task WHERE id = 'task_old'")
+        .get(),
+    ).toEqual({
+      id: "task_old",
+      current_revision_id: "revision_old",
+      last_event_seq: 1,
+      schema_version: 1,
+    })
+    expect(
+      sqlite
+        .query("SELECT id, task_id, requirement_id, schema_version FROM task_revision WHERE id = 'revision_old'")
+        .get(),
+    ).toEqual({
+      id: "revision_old",
+      task_id: "task_old",
+      requirement_id: "requirement_old",
+      schema_version: 1,
+    })
+    expect(sqlite.query("SELECT count(*) AS count FROM task_revision_stop").get()).toEqual({ count: 1 })
+    expect(sqlite.query("SELECT id FROM task_requirement").all()).toEqual([{ id: "requirement_old" }])
+    expect(sqlite.query("SELECT id FROM task_resource").all()).toEqual([{ id: "resource_old" }])
+    expect(sqlite.query("SELECT id FROM task_command").all()).toEqual([{ id: "command_old" }])
+    expect(sqlite.query("SELECT id FROM task_event").all()).toEqual([{ id: "event_old" }])
+    expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
+    sqlite.close(false)
+  })
 
   test("enforces one requirement version per task and task foreign keys", () =>
     setup(async () => {
       const saved = await task()
+      const other = await task()
       const row = {
         id: "requirement_1",
         task_id: saved.task.id,
@@ -82,11 +172,56 @@ describe("task ledger schema", () => {
             .run(),
         ),
       ).toThrow()
+      Database.use((db) =>
+        db
+          .insert(TaskRequirementTable)
+          .values({
+            ...row,
+            id: "requirement_4",
+            version: 2,
+            supersedes_id: row.id,
+          })
+          .run(),
+      )
+      expect(() =>
+        Database.use((db) => db.delete(TaskRequirementTable).where(eq(TaskRequirementTable.id, row.id)).run()),
+      ).toThrow()
+      Database.use((db) =>
+        db
+          .insert(TaskRequirementTable)
+          .values({
+            ...row,
+            id: "requirement_5",
+            task_id: other.task.id,
+            body_ref: `task-revision://${other.revision.id}`,
+            body_hash: other.revision.body_hash,
+          })
+          .run(),
+      )
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRequirementTable)
+            .set({ supersedes_id: row.id })
+            .where(eq(TaskRequirementTable.id, "requirement_5"))
+            .run(),
+        ),
+      ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .update(TaskRevisionTable)
+            .set({ requirement_id: "requirement_5" })
+            .where(eq(TaskRevisionTable.id, saved.revision.id))
+            .run(),
+        ),
+      ).toThrow()
     }))
 
   test("enforces resource identity, event sequence, and command idempotency", () =>
     setup(async () => {
       const saved = await task()
+      const other = await task()
       const command = {
         id: "command_1",
         task_id: saved.task.id,
@@ -123,6 +258,14 @@ describe("task ledger schema", () => {
       expect(() =>
         Database.use((db) => db.insert(TaskResourceTable).values({ ...resource, id: "resource_2" }).run()),
       ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db
+            .insert(TaskResourceTable)
+            .values({ ...resource, id: "resource_3", revision_id: other.revision.id })
+            .run(),
+        ),
+      ).toThrow()
 
       const event = {
         task_id: saved.task.id,
@@ -139,5 +282,71 @@ describe("task ledger schema", () => {
       expect(() =>
         Database.use((db) => db.insert(TaskEventTable).values({ ...event, id: "event_2" }).run()),
       ).toThrow()
+      expect(() =>
+        Database.use((db) =>
+          db.insert(TaskEventTable).values({ ...event, seq: 2, id: "event_3", revision_id: other.revision.id }).run(),
+        ),
+      ).toThrow()
+      const foreign = { ...command, id: "command_3", task_id: other.task.id, idempotency_key: "task:create:other" }
+      Database.use((db) => db.insert(TaskCommandTable).values(foreign).run())
+      expect(() =>
+        Database.use((db) =>
+          db.insert(TaskEventTable).values({ ...event, seq: 2, id: "event_4", command_id: foreign.id }).run(),
+        ),
+      ).toThrow()
+      expect(() =>
+        Database.use((db) => db.delete(SessionTaskTable).where(eq(SessionTaskTable.id, saved.task.id)).run()),
+      ).not.toThrow()
+      expect(
+        Database.use((db) => db.select().from(TaskEventTable).where(eq(TaskEventTable.task_id, saved.task.id)).all()),
+      ).toEqual([])
     }))
+
+  test("exposes every ledger foreign key and unique index in sqlite metadata", () => {
+    const sqlite = new SQLite(":memory:")
+    sqlite.exec("PRAGMA foreign_keys = ON")
+    migrate(drizzle({ client: sqlite }), journal())
+    const fks = ["task_requirement", "task_revision", "task_resource", "task_command", "task_event"].flatMap((table) =>
+      sqlite
+        .query<{ from: string; table: string; to: string }, []>(`PRAGMA foreign_key_list(${table})`)
+        .all()
+        .map((row) => `${table}.${row.from}->${row.table}.${row.to}`),
+    )
+    expect(fks).toEqual(
+      expect.arrayContaining([
+        "task_requirement.task_id->task_requirement.task_id",
+        "task_requirement.supersedes_id->task_requirement.id",
+        "task_revision.task_id->task_requirement.task_id",
+        "task_revision.requirement_id->task_requirement.id",
+        "task_resource.task_id->task_revision.task_id",
+        "task_resource.revision_id->task_revision.id",
+        "task_event.task_id->task_command.task_id",
+        "task_event.command_id->task_command.id",
+        "task_event.task_id->task_revision.task_id",
+        "task_event.revision_id->task_revision.id",
+      ]),
+    )
+    const unique = ["task_requirement", "task_revision", "task_resource", "task_command", "task_event"].flatMap((table) =>
+      sqlite
+        .query<{ name: string; unique: number }, []>(`PRAGMA index_list(${table})`)
+        .all()
+        .filter((row) => row.unique === 1)
+        .map((row) => row.name),
+    )
+    expect(unique).toEqual(
+      expect.arrayContaining([
+        "task_requirement_task_version_unique_idx",
+        "task_requirement_task_id_unique_idx",
+        "task_revision_task_version_unique_idx",
+        "task_revision_task_id_unique_idx",
+        "task_revision_one_active_idx",
+        "task_resource_identity_unique_idx",
+        "task_command_idempotency_unique_idx",
+        "task_command_task_id_unique_idx",
+        "task_event_id_unique_idx",
+      ]),
+    )
+    expect(sqlite.query("PRAGMA foreign_key_check").all()).toEqual([])
+    sqlite.close(false)
+  })
 })

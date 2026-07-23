@@ -34,7 +34,7 @@ M0 的 Resource 是索引：
 
 - `(task_id, version)` 唯一；
 - `body_hash` 为 64 位 SHA-256；
-- `supersedes_id` 只能指向同一 Task，由领域层校验；
+- `supersedes_id` 通过组合外键只能指向同一 Task，删除被引用版本时不得级联破坏不可变需求链；
 - migration 回填的需求不设置 `confirmed_at`。
 
 ### `task_resource`
@@ -44,6 +44,7 @@ M0 的 Resource 是索引：
 约束：
 
 - `(task_id, kind, hash, uri)` 唯一；
+- `revision_id` 通过组合外键只能引用同一 Task 的 Revision；
 - M0 kind 只开放 `requirement`、`spec`、`plan`；
 - M0 lifecycle 只写 `active` 或 `archived`。
 
@@ -55,6 +56,7 @@ M0 的 Resource 是索引：
 
 - 主键 `(task_id, seq)`；
 - Event id 全局唯一；
+- `revision_id`、`command_id` 通过组合外键只能引用同一 Task 的事实；
 - seq 由 `session_task.last_event_seq` 在同一事务中分配；
 - Event payload 只保存小型 JSON。
 
@@ -65,6 +67,7 @@ M0 的 Resource 是索引：
 约束：
 
 - `idempotency_key` 唯一；
+- `(task_id, id)` 唯一，供 Event 强制校验 Command 的 Task 归属；
 - M0 status 为 `accepted`、`applied`、`rejected`；
 - 重放命令返回已存在的 command，不重新追加 Event。
 
@@ -97,7 +100,9 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - `packages/opencode/src/session/session.sql.ts`
 - `packages/opencode/migration/20260723160000_durable_task_ledger/migration.sql`
+- `packages/opencode/migration/20260723163000_durable_task_ledger_constraints/migration.sql`
 - `packages/opencode/src/storage/schema.ts`
+- `packages/opencode/src/session/task.ts`
 
 **测试文件**
 
@@ -107,18 +112,20 @@ M0 只写 `requirement_id`、`spec_ref`、`plan_ref` 和 `schema_version`；`des
 
 - 定义四张新表和现有表增量字段。
 - 使用 snake_case 字段和明确索引。
+- 为 Requirement、Revision、Resource、Command 和 Event 建立同 Task 组合外键；不可变 Requirement 链不使用删除级联。
 - 把现有 Task 表及新表补入 storage schema export。
 - migration 只建结构和默认值，不生成历史 Event。
 
 **验收**
 
 - 新数据库包含全部表、外键和唯一索引。
-- 旧数据库 migration 后现有 Task 行仍可读取。
+- 旧数据库 migration 后现有 Task、Revision 和 RevisionStop 行仍可读取，且不生成历史 Event。
 - 同一 Task 重复 requirement version、重复 Event seq、重复 command key 被数据库拒绝。
+- 跨 Task 的 requirement、revision 和 command 引用被 SQLite 拒绝；被 supersede 的 Requirement 不会被级联删除。
 
 **规模**
 
-- 源代码 ≤ 180 行；文件 3 个；测试 ≤ 6 个。
+- 领域 schema 增量 ≤ 180 行；文件 5 个；测试 ≤ 6 个。
 
 ### T-02：增加 Ledger 写入开关
 

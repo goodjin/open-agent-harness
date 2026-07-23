@@ -284,6 +284,37 @@ export const SessionTaskTable = sqliteTable(
   ],
 )
 
+export const TaskRequirementTable = sqliteTable(
+  "task_requirement",
+  {
+    id: text().primaryKey(),
+    task_id: text()
+      .notNull()
+      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
+    version: integer().notNull(),
+    source_refs: text({ mode: "json" }).$type<string[]>().notNull(),
+    body_ref: text().notNull(),
+    body_hash: text().notNull(),
+    constraints: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    acceptance: text({ mode: "json" }).$type<Record<string, unknown>[]>().notNull(),
+    created_by: text().$type<RequirementCreator>().notNull(),
+    confirmed_at: integer(),
+    supersedes_id: text(),
+    time_created: integer().notNull(),
+  },
+  (table) => [
+    uniqueIndex("task_requirement_task_version_unique_idx").on(table.task_id, table.version),
+    uniqueIndex("task_requirement_task_id_unique_idx").on(table.task_id, table.id),
+    index("task_requirement_task_created_idx").on(table.task_id, table.time_created),
+    foreignKey({
+      columns: [table.task_id, table.supersedes_id],
+      foreignColumns: [table.task_id, table.id],
+      name: "task_requirement_supersedes_fk",
+    }),
+    check("task_requirement_body_hash_check", sql`length(${table.body_hash}) = 64`),
+  ],
+)
+
 export const TaskRevisionTable = sqliteTable(
   "task_revision",
   {
@@ -328,37 +359,11 @@ export const TaskRevisionTable = sqliteTable(
       foreignColumns: [table.task_id, table.id],
       name: "task_revision_previous_fk",
     }).onDelete("cascade"),
-  ],
-)
-
-export const TaskRequirementTable = sqliteTable(
-  "task_requirement",
-  {
-    id: text().primaryKey(),
-    task_id: text()
-      .notNull()
-      .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
-    version: integer().notNull(),
-    source_refs: text({ mode: "json" }).$type<string[]>().notNull(),
-    body_ref: text().notNull(),
-    body_hash: text().notNull(),
-    constraints: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
-    acceptance: text({ mode: "json" }).$type<Record<string, unknown>[]>().notNull(),
-    created_by: text().$type<RequirementCreator>().notNull(),
-    confirmed_at: integer(),
-    supersedes_id: text(),
-    time_created: integer().notNull(),
-  },
-  (table) => [
-    uniqueIndex("task_requirement_task_version_unique_idx").on(table.task_id, table.version),
-    uniqueIndex("task_requirement_task_id_unique_idx").on(table.task_id, table.id),
-    index("task_requirement_task_created_idx").on(table.task_id, table.time_created),
     foreignKey({
-      columns: [table.task_id, table.supersedes_id],
-      foreignColumns: [table.task_id, table.id],
-      name: "task_requirement_supersedes_fk",
-    }).onDelete("cascade"),
-    check("task_requirement_body_hash_check", sql`length(${table.body_hash}) = 64`),
+      columns: [table.task_id, table.requirement_id],
+      foreignColumns: [TaskRequirementTable.task_id, TaskRequirementTable.id],
+      name: "task_revision_requirement_fk",
+    }),
   ],
 )
 
@@ -369,7 +374,7 @@ export const TaskResourceTable = sqliteTable(
     task_id: text()
       .notNull()
       .references(() => SessionTaskTable.id, { onDelete: "cascade" }),
-    revision_id: text().references(() => TaskRevisionTable.id, { onDelete: "cascade" }),
+    revision_id: text(),
     kind: text().$type<ResourceKind>().notNull(),
     uri: text().notNull(),
     hash: text().notNull(),
@@ -385,6 +390,11 @@ export const TaskResourceTable = sqliteTable(
     uniqueIndex("task_resource_identity_unique_idx").on(table.task_id, table.kind, table.hash, table.uri),
     index("task_resource_revision_idx").on(table.revision_id),
     index("task_resource_task_kind_idx").on(table.task_id, table.kind),
+    foreignKey({
+      columns: [table.task_id, table.revision_id],
+      foreignColumns: [TaskRevisionTable.task_id, TaskRevisionTable.id],
+      name: "task_resource_revision_fk",
+    }),
     check("task_resource_hash_check", sql`length(${table.hash}) = 64`),
     check("task_resource_size_check", sql`${table.size} >= 0`),
   ],
@@ -404,6 +414,7 @@ export const TaskCommandTable = sqliteTable(
   },
   (table) => [
     uniqueIndex("task_command_idempotency_unique_idx").on(table.idempotency_key),
+    uniqueIndex("task_command_task_id_unique_idx").on(table.task_id, table.id),
     index("task_command_task_created_idx").on(table.task_id, table.time_created),
   ],
 )
@@ -417,8 +428,8 @@ export const TaskEventTable = sqliteTable(
     seq: integer().notNull(),
     id: text().notNull(),
     type: text().notNull(),
-    revision_id: text().references(() => TaskRevisionTable.id, { onDelete: "set null" }),
-    command_id: text().references(() => TaskCommandTable.id, { onDelete: "set null" }),
+    revision_id: text(),
+    command_id: text(),
     data: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
     resource_refs: text({ mode: "json" }).$type<string[]>().notNull(),
     time_created: integer().notNull(),
@@ -428,6 +439,16 @@ export const TaskEventTable = sqliteTable(
     uniqueIndex("task_event_id_unique_idx").on(table.id),
     index("task_event_task_type_idx").on(table.task_id, table.type),
     index("task_event_revision_idx").on(table.revision_id),
+    foreignKey({
+      columns: [table.task_id, table.revision_id],
+      foreignColumns: [TaskRevisionTable.task_id, TaskRevisionTable.id],
+      name: "task_event_revision_fk",
+    }),
+    foreignKey({
+      columns: [table.task_id, table.command_id],
+      foreignColumns: [TaskCommandTable.task_id, TaskCommandTable.id],
+      name: "task_event_command_fk",
+    }),
   ],
 )
 
