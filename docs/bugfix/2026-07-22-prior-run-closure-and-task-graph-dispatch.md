@@ -1,5 +1,10 @@
 # Bug Fix: 上一 Run 闭包恢复与任务图同包派发
 
+> 此文档中的“Task 准入同包派发执行图”方案已被
+> `docs/bugfix/2026-07-24-two-phase-task-admission-and-graph-execution.md`
+> 取代。当前规则是 create/update 只持久化 Task 或 Revision，忽略同包执行图，
+> 再由 durable bootstrap 请求模型生成新图。本文其余内容仅保留为历史设计记录。
+
 ## 用户目标
 
 修复父会话在子会话结果已经返回后，模型连续漏交上一 Run 终态结果，最终报错 `Protocol package omitted or misplaced the terminal result for the previous Run.` 的问题。同时允许协议包在首次创建 Task 时携带完整任务图，由 Runtime 先持久化 Task/Revision，再派发任务图中的子会话。

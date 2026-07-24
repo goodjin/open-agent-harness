@@ -1457,8 +1457,15 @@ export namespace SessionRunner {
     recovered: boolean
   }) {
     const runID = Identifier.ascending("log").replace(/^log_/, "apr_")
-    const base =
+    const raw =
       input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
+    const gates = raw.filter((item) => {
+      if (item.operation !== "confirm" || item.executor.type !== "human") return false
+      const intent = object(object(item.input).assignment)
+      return intent.op === "create" || intent.op === "update"
+    })
+    const gate = gates.length === 1 ? gates[0] : undefined
+    const base = gate ? [{ ...gate, depends_on: [] }] : raw
     const agents = AgentDelegation.list(await Agent.list(), input.stream.agent.name)
     const checked = AgentVerification.apply({ actions: base, agents })
     const sorted = gated(checked.actions)
@@ -1484,6 +1491,7 @@ export namespace SessionRunner {
       raw: input.parsed.raw,
       recovered: input.recovered,
       verification: { injected: checked.injected },
+      ...(gate ? { task_admission_ignored_actions: raw.length - 1 } : {}),
     }
     if (!work) {
       await SessionLog.emit({
@@ -3780,14 +3788,13 @@ export namespace SessionRunner {
             runID: input.runID,
             messageID: input.messageID,
             actionIDs: [input.action.id],
-            actions: input.actions.filter((item) => item.executor.type !== "human"),
+            actions: [],
             legacy: { title: input.action.title, body: plan },
             persist: true,
             requiresAssignment: true,
           })
         : undefined
-    const graph = input.actions.some((item) => item.executor.type !== "human")
-    if (created?.type === "execute" && !graph)
+    if (created?.type === "execute")
       Database.effect(() =>
         SessionTaskRecovery.resume(input.sessionID).catch((err) => {
           log.warn("task bootstrap blocked", { err, sessionID: input.sessionID })
@@ -3820,15 +3827,12 @@ export namespace SessionRunner {
       if (created)
         return {
           title: input.action.title,
-          output:
-            created.type === "execute" && graph
-              ? "Task and workflow persisted. The Runtime will now dispatch the confirmed action graph."
-              : "Task confirmed and persisted. The Runtime queued the formal Task request.",
+          output: "Task confirmed and persisted. The Runtime will ask the model to generate the execution graph.",
           metadata: {
-            blocked: created.type !== "execute" || !graph,
+            blocked: true,
             confirmed: true,
-            dispatched: true,
-            task_graph_bound: created.type === "execute" && graph,
+            dispatched: false,
+            task_graph_bound: false,
           },
         }
       return {

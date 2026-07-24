@@ -138,6 +138,7 @@ export namespace SessionTaskConfirmation {
             }
           }
           if (input.op === "update" && input.action === "confirm") {
+            supersede(input.sessionID, input.proposalID)
             const task = await SessionTask.get(input.sessionID)
             if (task?.task.status === "blocked") await SessionTaskRecovery.resume(input.sessionID)
             return { ...proof.result, status: "revising" }
@@ -234,6 +235,9 @@ export namespace SessionTaskConfirmation {
       const saved = complete(proof, result, status, assignment)
       await Storage.write(["session_protocol_confirmation", input.sessionID, run, action], saved)
       return result
+    } catch (err) {
+      if (claimed.owner) failed(proof, err)
+      throw err
     } finally {
       beat?.stop()
     }
@@ -295,6 +299,14 @@ export namespace SessionTaskConfirmation {
     return typeof input === "string" ? input : undefined
   }
 
+  function reason(input: unknown) {
+    if (rec(input) && rec(input.data)) {
+      const message = text(input.data.message)
+      if (message) return message
+    }
+    return input instanceof Error ? input.message : String(input)
+  }
+
   function snap(
     sessionID: SessionID,
     item: Record<string, unknown>,
@@ -311,6 +323,36 @@ export namespace SessionTaskConfirmation {
       intent,
       ...(handoff ? { handoff_id: handoff.id, context_refs: handoff.context_refs } : {}),
     }
+  }
+
+  function supersede(sessionID: SessionID, proposalID: string) {
+    Database.use((tx) => {
+      const session = tx
+        .select({ ctx: SessionTable.dsl_context })
+        .from(SessionTable)
+        .where(eq(SessionTable.id, sessionID))
+        .get()
+      if (!session) return
+      const ctx = rec(session.ctx) ? session.ctx : {}
+      const protocol = rec(ctx.protocol) ? ctx.protocol : {}
+      const vals = Array.isArray(protocol.confirmations) ? protocol.confirmations : []
+      const now = Date.now()
+      const next = vals.map((value) => {
+        if (!rec(value) || `${value.run_id}:${value.action_id}` === proposalID) return value
+        const intent = rec(value.assignment_intent)
+          ? value.assignment_intent
+          : rec(value.assignment)
+            ? value.assignment
+            : {}
+        if (value.status !== "pending" || intent.op !== "update") return value
+        return { ...value, status: "superseded", updated_at: now }
+      })
+      if (next.every((value, index) => value === vals[index])) return
+      tx.update(SessionTable)
+        .set({ dsl_context: { ...ctx, protocol: { ...protocol, confirmations: next } } })
+        .where(eq(SessionTable.id, sessionID))
+        .run()
+    })
   }
 
   function digest(input: unknown) {
@@ -380,6 +422,28 @@ export namespace SessionTaskConfirmation {
         .get(),
     )
     if (!valid) throw new ConflictError({ message: `Task confirmation lease was lost: ${proof.id}` })
+  }
+
+  function failed(proof: typeof TaskConfirmationTable.$inferSelect, err: unknown) {
+    Database.use((db) =>
+      db
+        .update(TaskConfirmationTable)
+        .set({
+          status: "failed",
+          error: reason(err),
+          lease_until: 0,
+          time_updated: Date.now(),
+        })
+        .where(
+          and(
+            eq(TaskConfirmationTable.id, proof.id),
+            owned(proof.owner_token),
+            eq(TaskConfirmationTable.generation, proof.generation),
+            inArray(TaskConfirmationTable.status, ["claimed", "continuation_pending"]),
+          ),
+        )
+        .run(),
+    )
   }
 
   function renew(proof: typeof TaskConfirmationTable.$inferSelect) {
@@ -624,10 +688,23 @@ export namespace SessionTaskConfirmation {
             updated_at: Date.now(),
           }
         })
+        const settled =
+          proof.operation === "update" && status === "confirmed"
+            ? next.map((value) => {
+                if (!rec(value) || `${value.run_id}:${value.action_id}` === proof.proposal_id) return value
+                const intent = rec(value.assignment_intent)
+                  ? value.assignment_intent
+                  : rec(value.assignment)
+                    ? value.assignment
+                    : {}
+                if (value.status !== "pending" || intent.op !== "update") return value
+                return { ...value, status: "superseded", updated_at: Date.now() }
+              })
+            : next
         if (!next.some((value) => rec(value) && `${value.run_id}:${value.action_id}` === proof.proposal_id))
           throw new ConflictError({ message: `Task proposal is not current: ${proof.proposal_id}` })
         tx.update(SessionTable)
-          .set({ dsl_context: { ...ctx, protocol: { ...protocol, confirmations: next } } })
+          .set({ dsl_context: { ...ctx, protocol: { ...protocol, confirmations: settled } } })
           .where(eq(SessionTable.id, proof.session_id))
           .run()
       },
@@ -769,7 +846,7 @@ export namespace SessionTaskConfirmation {
       fence(proof)
       if (!delivered) throw new ConflictError({ message: `Task continuation lease was lost: ${proof.id}` })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const message = reason(err)
       Database.use((db) => {
         const current = db.select().from(SessionEventOutboxTable).where(eq(SessionEventOutboxTable.id, outbox.id)).get()
         const meta = rec(current?.payload) ? current.payload : {}

@@ -83,7 +83,7 @@ Use `confirm` when a planner has designed a plan that must be approved before ex
 
 For an ordinary approval without `assignment`, the planner may emit the `confirm` item and gated executable items in the same protocol package. The runtime asks the user before running the other items. If the user confirms, the remaining items execute from the persisted package; cancellation stops them.
 
-For the first `create/self` Task, put the complete organized Task Markdown in `plan`. When the execution graph is already known, place its executable `agent` or `tool` items in the same package. After confirmation, the Runtime persists the Task, Revision, assignment, and complete workflow before dispatching any executable item. If no executable siblings are present, the Runtime starts a fresh model turn from the confirmed Task description.
+For `create/self` or `update/self`, put only the complete organized Task Markdown in `plan`. Task admission and execution graph generation are separate model turns. Runtime ignores every executable `agent` or `tool` item included beside a create or update assignment, even if the graph is already known. After confirmation, Runtime persists the Task or Revision with an empty workflow and starts a fresh model turn from the confirmed Task description. Generate the execution graph only in that later turn.
 
 `update/self` keeps the revision shutdown and recovery boundary; do not assume update siblings can execute before the old Revision is stopped and the new Revision is active. `handoff/peer` never executes sibling actions for the new Task in the source session.
 
@@ -95,9 +95,9 @@ Planner agents must follow this order:
 2. Ask questions or delegate read-only exploration when the intent, context, constraints, risks, or task boundaries are not clear enough.
 3. After the intent is clear and the execution plan is designed, emit a `confirm` item whose `plan` is the full assignment content for final user approval.
 4. Choose `assignment` from Session Task Admission below. Do not use assignment confirmation merely to explore, clarify, discuss a plan, report progress, or review results.
-5. For the first create/self Task, include the complete executable graph beside the assignment confirmation when it is already designed. The Runtime records that graph before dispatch. For update/self, respect revision shutdown and recovery. For handoff/peer, the Runtime starts the peer session from the complete `plan`; the source session does not execute the new Task.
+5. End a create/self or update/self package at the assignment confirmation. After Runtime reports that the Task is confirmed, generate the complete execution graph in the next package without another assignment. For update/self, Runtime completes revision shutdown and recovery before delivering that request. For handoff/peer, Runtime starts the peer session from the complete `plan`; the source session does not execute the new Task.
 
-When a create/self confirmation had no executable siblings, design the execution graph after the Runtime delivers the confirmed Task as a fresh request. Do not ask for the same assignment confirmation again.
+After every create/self or update/self confirmation, design the execution graph only after Runtime delivers the confirmed Task as a fresh request. Do not ask for the same assignment confirmation again.
 
 ## Session Task Admission
 
@@ -115,7 +115,7 @@ Before preparing executable actions, read and follow Current Session Task from t
 - When the request is clearly a new Task, the current session must not create it. Propose `assignment={"op":"handoff","target":"peer"}` with the complete new Task Markdown in `plan`. After confirmation the Runtime creates a peer session. The source package must not execute actions for the new Task.
 - Never emit `create/self` when Current Session Task already exists. Runtime rejects the complete package as `session_task_already_bound`, executes no sibling action, and asks you to repair the declaration. Do not expect Runtime to reinterpret it as update or handoff.
 - A package may declare at most one Task assignment. Do not combine create, update, or handoff declarations in one package.
-- For `create/self`, already designed executable siblings belong to the new Task and first Run; Runtime persists the Task, Revision, and workflow before dispatch. For `update/self` and `handoff/peer`, source-package executable siblings do not cross the revision or peer-session boundary.
+- For `create/self` and `update/self`, Runtime ignores source-package executable siblings. Confirmation persists only the Task or Revision and queues a fresh model turn for graph generation. For `handoff/peer`, source-package executable siblings do not cross the peer-session boundary.
 - When ownership is unclear and the decision would change the work graph or product boundary, use kind="input" to ask the user. Decide from context; do not require a fixed admission check for every message.
 - Parent-delegated child sessions start with a bound and confirmed Task, so do not ask again for their initial assignment. Later child requests still follow the same single-Task, update, and handoff rules.
 

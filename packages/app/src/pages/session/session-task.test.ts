@@ -1032,7 +1032,12 @@ describe("session task", () => {
 
   test("uses dedicated proposal cards instead of the generic confirmation question", async () => {
     const src = await Bun.file(new URL("message-timeline.tsx", import.meta.url)).text()
+    const card = await Bun.file(new URL("session-task-proposal.tsx", import.meta.url)).text()
     expect(src).toContain("<SessionTaskProposal")
-    expect(src).toContain("!taskQuestion()")
+    expect(card).not.toContain('language.t("session.task.proposal.children"')
+    expect(card).not.toContain('language.t("session.task.proposal.ownership"')
+    expect(card).not.toContain('language.t("session.task.proposal.refs"')
+    expect(card).not.toContain("props.value.summary")
+    expect(card).not.toContain("props.value.title")
   })
 })

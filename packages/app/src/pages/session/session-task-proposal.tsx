@@ -350,9 +350,6 @@ export function SessionTaskProposal(props: {
                   ? language.t("session.task.proposal.update")
                   : language.t("session.task.proposal.handoff")}
               </div>
-              <Show when={props.value.kind === "handoff" ? props.value.title : props.value.summary}>
-                {(value) => <div class="mt-0.5 text-11-regular text-text-weak break-words">{value()}</div>}
-              </Show>
             </div>
             <span
               class="shrink-0 rounded-sm border border-border-weak-base px-1.5 py-0.5 text-10-medium text-text-weak"
@@ -363,21 +360,6 @@ export function SessionTaskProposal(props: {
             </span>
           </header>
           <div class="flex flex-col gap-3 p-3">
-            <Show when={props.value.kind === "update" && props.value.children.length}>
-              <div class="text-11-regular text-text-weak">
-                {language.t("session.task.proposal.children", {
-                  sessions: props.value.kind === "update" ? props.value.children.join(", ") : "",
-                })}
-              </div>
-            </Show>
-            <Show when={props.value.kind === "handoff"}>
-              <div class="text-11-regular text-text-weak">{language.t("session.task.proposal.ownership")}</div>
-            </Show>
-            <Show when={props.value.refs.length}>
-              <div class="text-11-regular text-text-weak">
-                {language.t("session.task.proposal.refs", { refs: props.value.refs.join(", ") })}
-              </div>
-            </Show>
             <Show when={props.value.body}>
               {(body) => (
                 <div

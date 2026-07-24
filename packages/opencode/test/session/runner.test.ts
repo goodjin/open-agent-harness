@@ -4194,7 +4194,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("protocol runner persists a confirmed task graph before executing sibling actions", async () => {
+  test("protocol runner ignores task admission siblings and bootstraps a fresh graph turn", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -4350,13 +4350,6 @@ describe("SessionRunner", () => {
                   ],
                   prompt: "",
                   execute: async () => {
-                    const task = await SessionTask.get(session.id)
-                    expect(task?.revision.workflow.actions).toEqual(
-                      expect.arrayContaining([
-                        expect.objectContaining({ id: "impl" }),
-                        expect.objectContaining({ id: "verify" }),
-                      ]),
-                    )
                     tools++
                     return { title: "read", output: "ok", metadata: {} }
                   },
@@ -4382,18 +4375,18 @@ describe("SessionRunner", () => {
                 response: "confirm",
               })
               await run
-              expect(tools).toBe(2)
+              await poll(() => bootstraps.some((item) => item.metadata?.source === "task_revision_bootstrap"))
+              expect(tools).toBe(0)
               expect(await SessionTask.current(session.id)).toMatchObject({
                 title: "confirm_plan",
                 body: "Run backend work.",
                 version: 1,
               })
-              expect(
-                (await SessionTask.get(session.id))?.revision.workflow.actions.map((item) =>
-                  item && typeof item === "object" && "id" in item ? item.id : undefined,
-                ),
-              ).toEqual(expect.arrayContaining(["impl", "verify"]))
-              expect(bootstraps).toHaveLength(0)
+              expect((await SessionTask.get(session.id))?.revision.workflow.actions).toEqual([])
+              expect(bootstraps).toHaveLength(1)
+              expect(bootstraps[0]?.parts[0]?.type === "text" ? bootstraps[0].parts[0].text : "").toContain(
+                "Generate a fresh execution graph",
+              )
               const parts = await MessageV2.parts(assistant.id)
               const prepared = parts.find((part) => part.type === "tool" && part.tool === LLM.PROTOCOL_OUTPUT_TOOL) as
                 | MessageV2.ToolPart

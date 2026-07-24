@@ -613,10 +613,10 @@ export namespace SessionTask {
 
   export function request(body: string) {
     return [
-      "This is the confirmed Task description prepared from the earlier conversation.",
-      "The Task is already bound to this session. Do not ask for assignment confirmation or inspect the Task before starting.",
-      "Treat the description below as the complete execution request. Create a fresh execution graph from it and begin the work.",
-      "Ignore any execution graph that may have appeared while the Task was being prepared.",
+      "The user confirmed this Task and Runtime has bound it to the current session.",
+      "Do not create or update the Task again.",
+      "Generate a fresh execution graph from the complete Task description below and begin the work.",
+      "Any execution graph submitted with the earlier Task proposal was intentionally ignored.",
       "",
       body,
     ].join("\n")
@@ -935,7 +935,8 @@ export namespace SessionTask {
           if (input.assignment?.op === "update") {
             if (task.status === "revising" || task.status === "blocked")
               throw new Conflict("session_task_update_in_progress")
-            if (current.status !== "active") throw new Conflict("session_task_revision_not_active")
+            if (current.status !== "active" && current.status !== "completed" && current.status !== "failed")
+              throw new Conflict("session_task_revision_not_active")
             if (!input.runID) throw new Conflict("session_task_run_required")
             const revision = drafted(tx, {
               task: Task.parse(bound),
@@ -955,7 +956,7 @@ export namespace SessionTask {
                 and(
                   eq(SessionTaskTable.id, task.id),
                   eq(SessionTaskTable.current_revision_id, current.id),
-                  inArray(SessionTaskTable.status, ["running", "waiting_user"]),
+                  inArray(SessionTaskTable.status, ["running", "waiting_user", "completed", "failed"]),
                 ),
               )
               .returning()
@@ -1666,7 +1667,7 @@ export namespace SessionTask {
               and(
                 eq(TaskRevisionTable.id, task.current_revision_id),
                 eq(TaskRevisionTable.task_id, input.taskID),
-                eq(TaskRevisionTable.status, "active"),
+                inArray(TaskRevisionTable.status, ["active", "completed", "failed"]),
               ),
             )
             .returning({ id: TaskRevisionTable.id })

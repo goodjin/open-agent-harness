@@ -14,8 +14,8 @@ Make every planner understand the single-Task Session contract before declaring 
   - a new independent Task uses `handoff/peer`.
 - Keep model-declared routing authoritative. Runtime validates the structured operation but does not reinterpret natural-language intent.
 - Reject `create/self` when the Session already owns a Task with the explicit conflict code `session_task_already_bound`; execute no sibling action from the rejected package and ask the model to repair its declaration.
-- Allow a first `create/self` confirmation to carry an already reviewed executable graph. Persist the Task, Revision, and workflow before dispatch.
-- Keep `update/self` and `handoff/peer` as boundaries that do not execute source-package sibling actions.
+- Treat `create/self` and `update/self` as Task-only confirmation packages. Ignore source-package executable siblings, persist an empty Revision workflow, and bootstrap a fresh model turn for graph generation.
+- Keep `handoff/peer` as a boundary that does not execute source-package sibling actions.
 - Allow at most one Task assignment declaration in a protocol package.
 - Retire `epic-planner` from new routing, delegation policy, and special concurrency behavior.
 - Keep the hidden `epic-planner` template installed only so historical Sessions can resolve their bound agent.

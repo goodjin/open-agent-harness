@@ -23,7 +23,7 @@
 | `answer` | 回复用户；不创建 Run |
 | `input` | 等待用户输入；不创建 Run |
 | `confirm` | 执行模型声明的确认门；不单独创建 Run |
-| `create/self` | 在当前 Session 创建 Task；同包有图时同时创建首个 Run |
+| `create/self` | 在当前 Session 创建 Task；忽略同包执行图，确认后由 bootstrap 要求模型生成新图 |
 | `update/self` | 创建新 Revision，执行旧 Revision 停止与激活流程；新图在新 Revision 下创建 Run |
 | `handoff/peer` | 创建平级 Session，并在目标 Session 创建 Task；源 Session 不执行新 Task |
 | executable action graph | 在当前活动 Revision 下创建新 Run |
@@ -58,7 +58,7 @@ Runtime 不把 `create/self` 自动改成 `handoff/peer`，不把普通图自动
 1. 为 Runtime 提供规范化的 Run Result 查询，区分“未结束”“已有合法结果”“结果损坏”。
 2. Runner 在处理 synthetic delegation 前识别已有 Run Result：
    - 已有合法结果时跳过重复闭包要求和重复写入；
-   - 同包存在合法图时创建新 Run并执行；
+   - create/update 准入包中的图一律忽略，bootstrap 后的新包才创建 Run并执行；
    - 不再比较 Turn、assistant message 或 summary 是否相同。
 3. 保持旧 Run Result 不可覆盖；不同总结只记复用诊断。
 4. previous Run Result 缺失时保留模型终态、一次修复和规范化子结果 fallback；这些流程只负责关闭旧 Run，不再成为后续新图的永久阻断条件。
@@ -82,8 +82,8 @@ Runtime 不把 `create/self` 自动改成 `handoff/peer`，不把普通图自动
 3. 已有 Run Result，模型输出不同 terminal summary，旧结果不变，新 graph 正常执行。
 4. Run Result 文件损坏时记录诊断；不依赖旧 Run 的新 graph 仍可创建和执行。
 5. 新 graph 显式依赖未满足的历史 Action 时，仍由依赖校验阻止对应分支。
-6. `create/self + graph` 继续先落库 Task/Revision/Run 图再派发。
-7. `update/self + graph` 继续经过 Revision 停止和恢复边界。
+6. `create/self + graph` 只落库 Task/Revision 空 workflow，忽略同包图；bootstrap 后的新图才创建 Run。
+7. `update/self + graph` 忽略同包图，经过 Revision 停止、激活和 bootstrap 后由新模型回合创建 Run。
 8. `handoff/peer` 继续在平级 Session 创建新 Task，源 Session 不执行新图。
 9. `answer`、`input`、`confirm` 和 result-only 包不创建新 Run。
 10. 当前真实会话 `ses_085580713ffexAJoVcOdJcnnIW` 的已存在 outcome 不再导致 `prior_run_outcome_failed`；重新提交 verifier 图时可创建子会话。

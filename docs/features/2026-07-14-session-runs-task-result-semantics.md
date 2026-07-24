@@ -20,7 +20,7 @@ Runs 页面中的一个 Run 代表模型通过可执行 Agent Protocol DSL 正�
 - 模型通过 DSL 包的边界决定哪些子任务属于同一个 Run。
 - 父会话 DSL 中的 `agent` action 创建子会话时，该委派任务同时成为子会话可见的一个 Run。子会话无需再次输出 DSL 才能看到这项任务。
 - 只有 `input` 的协议包属于需求澄清，不创建 Run。
-- 只有 `confirm` 的协议包属于批准流程，不创建 Run；`confirm` 与实际执行任务同包时，在用户批准并开始执行后创建 Run。
+- 只有 `confirm` 的协议包属于批准流程，不创建 Run；不带 Task assignment 的普通 `confirm` 与实际执行任务同包时，在用户批准并开始执行后创建 Run。带 `create/self` 或 `update/self` 的确认包忽略同包执行项，确认后由下一模型回合生成执行图。
 - 只有 `answer`、`done`、`success`、`failure`、`error` 或 `reply` 等终态内容、且不包含可执行项的协议包，不创建新的 Run。
 
 ### Run 完成边界

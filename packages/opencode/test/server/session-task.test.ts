@@ -570,6 +570,178 @@ describe("session task endpoints", () => {
     }
   })
 
+  test("confirms an update from a completed revision and bootstraps an empty successor workflow", async () => {
+    await using tmp = await tmpdir({ git: true })
+    const prompt = spyOn(SessionPrompt, "prompt").mockResolvedValue(undefined as never)
+    try {
+      await Instance.provide({
+        directory: tmp.path,
+        fn: () =>
+          WorkspaceContext.provide({
+            workspaceID: WorkspaceID.make("wrk_session_task_terminal_update"),
+            fn: async () => {
+              const session = await Session.create({})
+              const first = await SessionTask.route({
+                sessionID: session.id,
+                runID: "run_terminal_old",
+                legacy: { title: "Completed task", body: "Completed body" },
+                actions: [],
+              })
+              if (first.type !== "execute") throw new Error("task missing")
+              Database.use((db) => {
+                db.update(TaskRevisionTable)
+                  .set({
+                    status: "completed",
+                    result: "Done",
+                    result_source: "protocol",
+                    result_status: "completed",
+                    terminal_status: "completed",
+                    time_completed: Date.now(),
+                  })
+                  .where(eq(TaskRevisionTable.id, first.revision.id))
+                  .run()
+                db.update(SessionTaskTable)
+                  .set({ status: "completed" })
+                  .where(eq(SessionTaskTable.id, first.task.id))
+                  .run()
+              })
+              const messageID = await message(session.id)
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID: "run_terminal_stale",
+                actionID: "confirm_terminal_stale",
+                title: "Stale update",
+                plan: "Stale body",
+                op: "update",
+                target: "self",
+              })
+              await proposal({
+                sessionID: session.id,
+                messageID,
+                runID: "run_terminal_update",
+                actionID: "confirm_terminal_update",
+                title: "Continued task",
+                plan: "Continued body",
+                op: "update",
+                target: "self",
+              })
+
+              const result = await SessionTaskConfirmation.respond({
+                sessionID: session.id,
+                proposalID: "run_terminal_update:confirm_terminal_update",
+                revisionID: first.revision.id,
+                action: "confirm",
+                op: "update",
+              })
+              expect(result).toMatchObject({ status: "revising" })
+              const saved = await Session.get(session.id)
+              const protocol = saved.dsl_context?.protocol as
+                | { confirmations?: { action_id?: string; status?: string }[] }
+                | undefined
+              expect(protocol?.confirmations).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ action_id: "confirm_terminal_stale", status: "superseded" }),
+                  expect.objectContaining({ action_id: "confirm_terminal_update", status: "confirmed" }),
+                ]),
+              )
+              await SessionTaskRecovery.resume(session.id)
+
+              const current = await SessionTask.get(session.id)
+              expect(current).toMatchObject({
+                task: { status: "running" },
+                revision: {
+                  version: 2,
+                  status: "active",
+                  title: "Continued task",
+                  body: "Continued body",
+                  workflow: { actions: [] },
+                },
+              })
+              expect(
+                Database.use((db) =>
+                  db.select().from(TaskRevisionTable).where(eq(TaskRevisionTable.id, first.revision.id)).get(),
+                ),
+              ).toMatchObject({ status: "archived", terminal_status: "completed" })
+              expect(
+                Database.use((db) =>
+                  db
+                    .select()
+                    .from(SessionEventOutboxTable)
+                    .where(eq(SessionEventOutboxTable.dedupe_key, `task_revision_bootstrap:${current?.revision.id}`))
+                    .get(),
+                ),
+              ).toMatchObject({ status: "delivered" })
+            },
+          }),
+      })
+    } finally {
+      prompt.mockRestore()
+    }
+  })
+
+  test("persists owner-side task confirmation failures instead of abandoning claimed rows", async () => {
+    await using tmp = await tmpdir({ git: true })
+    await Instance.provide({
+      directory: tmp.path,
+      fn: () =>
+        WorkspaceContext.provide({
+          workspaceID: WorkspaceID.make("wrk_session_task_confirmation_failure"),
+          fn: async () => {
+            const session = await Session.create({})
+            const task = await SessionTask.route({
+              sessionID: session.id,
+              runID: "run_failure_old",
+              legacy: { title: "Original", body: "Original" },
+              actions: [],
+            })
+            if (task.type !== "execute") throw new Error("task missing")
+            const messageID = await message(session.id)
+            await proposal({
+              sessionID: session.id,
+              messageID,
+              runID: "run_failure",
+              actionID: "confirm_failure",
+              title: "Blocked update",
+              plan: "Blocked body",
+              op: "update",
+              target: "self",
+            })
+            Database.use((db) =>
+              db
+                .update(SessionTaskTable)
+                .set({ status: "blocked" })
+                .where(eq(SessionTaskTable.id, task.task.id))
+                .run(),
+            )
+
+            await expect(
+              SessionTaskConfirmation.respond({
+                sessionID: session.id,
+                proposalID: "run_failure:confirm_failure",
+                revisionID: task.revision.id,
+                action: "confirm",
+                op: "update",
+              }),
+            ).rejects.toBeInstanceOf(ConflictError)
+            expect(
+              Database.use((db) =>
+                db
+                  .select()
+                  .from(TaskConfirmationTable)
+                  .where(eq(TaskConfirmationTable.proposal_id, "run_failure:confirm_failure"))
+                  .get(),
+              ),
+            ).toMatchObject({
+              status: "failed",
+              lease_until: 0,
+              error: "session_task_update_in_progress",
+            })
+          },
+        }),
+    })
+  })
+
   test("publishes the task proposal decision before continuation completes", async () => {
     await using tmp = await tmpdir({ git: true })
     let enter = () => {}
