@@ -9,6 +9,7 @@ export {
   SessionEventOutboxTable,
   AssignmentTable,
   TaskConfirmationTable,
+  RuntimeInteractionTable,
   SessionTaskTable,
   TaskRevisionTable,
   TaskRequirementTable,

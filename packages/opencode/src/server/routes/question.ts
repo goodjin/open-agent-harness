@@ -5,14 +5,17 @@ import { Bus } from "@/bus"
 import { QuestionID } from "@/question/schema"
 import { Question } from "../../question"
 import { Session } from "@/session"
-import { SessionPrompt } from "@/session/prompt"
 import { MessageID, SessionID } from "@/session/schema"
 import { SessionAssignment } from "@/session/assignment"
 import { SessionTaskConfirmation } from "@/session/task-confirmation"
 import { SessionTask } from "@/session/task"
 import { SessionTaskHandoff } from "@/session/task-handoff"
+import { SessionTaskRecovery } from "@/session/task-recovery"
+import { SessionInteraction } from "@/session/interaction"
+import { SessionRuns } from "@/session/runs"
+import { RuntimeInteractionTable } from "@/session/session.sql"
 import { SessionResult } from "@/session/result"
-import { ConflictError } from "@/storage/db"
+import { and, ConflictError, Database, eq } from "@/storage/db"
 import { MessageV2 } from "@/session/message-v2"
 import { Storage } from "@/storage/storage"
 import { Log } from "@/util/log"
@@ -148,12 +151,6 @@ function inputs(sessions: Session.Info[]) {
   return Array.from(latest.values())
 }
 
-function resume(input: Parameters<typeof SessionPrompt.prompt>[0]) {
-  void SessionPrompt.prompt(input).catch((err) => {
-    log.warn("failed to continue restored protocol question", { sessionID: input.sessionID, err })
-  })
-}
-
 async function confirm(input: {
   answers?: Question.Answer[]
   reject?: boolean
@@ -200,6 +197,37 @@ async function confirm(input: {
     }
   })
   const item = next.find((val) => rec(val) && val.run_id === key.run && val.action_id === key.action)
+  const request = SessionInteraction.request({
+    sessionID: key.sessionID,
+    runID: key.run,
+    actionID: key.action,
+    kind: "protocol_confirm",
+  })
+  if (rec(item))
+    await SessionInteraction.open({
+      requestID: request,
+      sessionID: key.sessionID,
+      questions: [
+        {
+          question: text(item.plan) ?? text(item.action_title) ?? key.action,
+          header: "Confirm plan",
+          options: [
+            { label: "Confirm", description: "Approve this plan and continue execution." },
+            { label: "Cancel", description: "Do not execute this plan." },
+          ],
+          custom: false,
+        },
+      ],
+      tool: text(item.message_id)
+        ? { messageID: MessageID.make(String(item.message_id)), callID: `call_${key.action}` }
+        : undefined,
+      kind: rec(item.assignment_intent) || rec(item.assignment) ? "task_confirm" : "protocol_confirm",
+      runID: key.run,
+      actionID: key.action,
+      payload: { plan: text(item.plan), title: text(item.action_title) },
+      checkpoint: { run_id: key.run, action_id: key.action, ready: true },
+    })
+  let created: Awaited<ReturnType<typeof SessionTask.confirmed>> | undefined
   if (rec(item)) {
     if (status === "confirmed") {
       const msg = text(item.message_id)
@@ -225,6 +253,18 @@ async function confirm(input: {
             content_ref: assignment.content_ref,
             content_version: assignment.content_version,
           }
+          const intent = rec(item.assignment_intent) ? item.assignment_intent : rec(item.assignment) ? item.assignment : {}
+          if (intent.op === "create" && intent.target === "self")
+            created = await SessionTask.confirmed({
+              sessionID: key.sessionID,
+              runID: run,
+              messageID: MessageID.make(msg),
+              actionIDs: [action],
+              actions: [],
+              legacy: { title, body: plan },
+              persist: true,
+              requiresAssignment: true,
+            })
         }
       }
     }
@@ -240,6 +280,14 @@ async function confirm(input: {
       },
     },
   })
+  await settle(
+    key.sessionID,
+    key.run,
+    key.action,
+    status === "confirmed"
+      ? "Plan confirmed by user. Continue executing work that follows this confirmation."
+      : "User cancelled the plan confirmation. Do not execute dependent work.",
+  )
   if (input.reject) {
     await Bus.publish(Question.Event.Rejected, {
       sessionID: key.sessionID,
@@ -253,18 +301,31 @@ async function confirm(input: {
       response: input.response,
     })
   }
-  resume({
-    sessionID: key.sessionID,
-    parts: [
-      {
-        type: "text",
-        text:
-          status === "confirmed"
-            ? `User confirmed protocol action ${key.action} from run ${key.run}. Continue from the current protocol state without re-asking this confirmation.`
-            : `User cancelled protocol action ${key.action} from run ${key.run}. Do not execute downstream work that depended on that confirmation.`,
-      },
-    ],
+  const intent = rec(item)
+    ? rec(item.assignment_intent)
+      ? item.assignment_intent
+      : rec(item.assignment)
+        ? item.assignment
+        : {}
+    : {}
+  SessionInteraction.resolve({
+    requestID: request,
+    answers: input.answers ?? [],
+    response: status === "confirmed" ? "confirm" : "cancel",
+    rejected: input.reject,
+    resume: status === "confirmed" && !(intent.op === "create" && intent.target === "self"),
+    source: "protocol_confirmation",
+    text:
+      status === "confirmed"
+        ? `User confirmed protocol action ${key.action} from run ${key.run}. Continue from the persisted protocol state without re-asking this confirmation.`
+        : `User cancelled protocol action ${key.action} from run ${key.run}. Do not execute downstream work that depended on that confirmation.`,
   })
+  if (created?.type === "execute")
+    Database.effect(() =>
+      SessionTaskRecovery.resume(key.sessionID).catch((err) => {
+        log.warn("task bootstrap blocked", { err, sessionID: key.sessionID })
+      }),
+    )
   return true
 }
 
@@ -343,6 +404,28 @@ async function task(input: {
       : undefined
   if (intent.op === "handoff" && !handoff)
     throw new ConflictError({ message: `Task proposal has no canonical Handoff: ${run}:${id}` })
+  await SessionInteraction.open({
+    requestID: input.requestID,
+    sessionID,
+    questions: [
+      {
+        question: text(item.plan) ?? text(item.action_title) ?? id,
+        header: "Confirm plan",
+        options: [
+          { label: "Confirm", description: "Approve this task proposal." },
+          { label: "Cancel", description: "Cancel this task proposal." },
+        ],
+        custom: false,
+      },
+    ],
+    tool: text(item.message_id)
+      ? { messageID: MessageID.make(String(item.message_id)), callID: `call_${id}` }
+      : undefined,
+    kind: "task_confirm",
+    runID: run,
+    actionID: id,
+    checkpoint: { run_id: run, action_id: id, ready: true },
+  })
   await SessionTaskConfirmation.respond({
     sessionID,
     proposalID: `${run}:${id}`,
@@ -350,6 +433,13 @@ async function task(input: {
     op: intent.op,
     revisionID: current?.revision.id,
     handoffID: handoff?.id,
+  })
+  SessionInteraction.resolve({
+    requestID: input.requestID,
+    answers: input.answers ?? [],
+    response: decision,
+    resume: false,
+    source: "task_confirmation",
   })
   return true
 }
@@ -402,12 +492,8 @@ async function answer(input: { answers?: Question.Answer[]; reject?: boolean; re
     await Storage.write(["session_protocol_input", key.sessionID, key.run, key.action], item)
   }
   const qs = rec(item) ? questions(item.questions) : []
-  const lines = (input.answers ?? []).flatMap((ans, idx) => {
-    const q = qs[idx]
-    const label = q?.header ?? `question_${idx + 1}`
-    if (ans.length === 0) return [`- ${label}: no answer`]
-    return [`- ${label}: ${ans.map((part) => `"${part}"`).join(", ")}`]
-  })
+  const capture = await captured(key.sessionID, key.run, key.action, input.answers ?? [])
+  await settle(key.sessionID, key.run, key.action, capture)
   if (input.reject) {
     await Bus.publish(Question.Event.Rejected, {
       sessionID: key.sessionID,
@@ -420,22 +506,103 @@ async function answer(input: { answers?: Question.Answer[]; reject?: boolean; re
       answers: input.answers ?? [],
     })
   }
-  resume({
+  await SessionInteraction.open({
+    requestID: input.requestID,
     sessionID: key.sessionID,
-    parts: [
-      {
-        type: "text",
-        text: input.reject
-          ? `User dismissed protocol input ${key.action} from run ${key.run}. Continue from the current protocol state without re-asking the same question unless a different answer is required.`
-          : [
-              `User answered protocol input ${key.action} from run ${key.run}.`,
-              "Use this captured answer and continue from the current protocol state without re-asking the same question:",
-              ...lines,
-            ].join("\n"),
-      },
-    ],
+    questions: qs,
+    tool: rec(item) && text(item.message_id)
+      ? { messageID: MessageID.make(String(item.message_id)), callID: `call_${key.action}` }
+      : undefined,
+    kind: "protocol_input",
+    runID: key.run,
+    actionID: key.action,
+    checkpoint: { run_id: key.run, action_id: key.action, ready: true },
+  })
+  SessionInteraction.resolve({
+    requestID: input.requestID,
+    answers: input.answers ?? [],
+    rejected: input.reject,
+    resume: true,
+    source: "protocol_input",
+    text: input.reject
+      ? `User dismissed protocol input ${key.action} from run ${key.run}. Continue from the persisted protocol state without re-asking the same question unless a different answer is required.`
+      : [
+          `User answered protocol input ${key.action} from run ${key.run}.`,
+          "Use this captured answer and continue from the persisted protocol state without re-asking the same question:",
+          capture,
+        ].join("\n"),
   })
   return true
+}
+
+async function settle(sessionID: SessionID, runID: string, actionID: string, output: string) {
+  const run = await Storage.read<Record<string, unknown>>(["session_protocol_run", sessionID, runID]).catch(() => undefined)
+  if (!run || !Array.isArray(run.actions)) return
+  const actions = run.actions.map((value) => {
+    if (!rec(value) || value.id !== actionID) return value
+    return { ...value, output, error: undefined, summary: output }
+  })
+  await SessionRuns.store(sessionID, { ...run, actions } as never)
+}
+
+async function captured(
+  sessionID: SessionID,
+  runID: string,
+  actionID: string,
+  answers: Question.Answer[],
+) {
+  const run = await Storage.read<Record<string, unknown>>(["session_protocol_run", sessionID, runID]).catch(() => undefined)
+  const action = Array.isArray(run?.actions)
+    ? run.actions.find((value) => rec(value) && value.id === actionID)
+    : undefined
+  const interaction = Database.use((db) =>
+    db
+      .select({ payload: RuntimeInteractionTable.payload })
+      .from(RuntimeInteractionTable)
+      .where(
+        and(
+          eq(RuntimeInteractionTable.session_id, sessionID),
+          eq(RuntimeInteractionTable.run_id, runID),
+          eq(RuntimeInteractionTable.action_id, actionID),
+        ),
+      )
+      .get(),
+  )
+  const data =
+    rec(action) && rec(action.input)
+      ? action.input
+      : rec(interaction?.payload.input)
+        ? interaction.payload.input
+        : {}
+  const fields = Array.isArray(data.fields) ? data.fields : []
+  const lines = fields.length
+    ? fields.flatMap((value, index) => {
+        const field = rec(value) ? value : {}
+        const id = text(field.id) ?? `field_${index + 1}`
+        const label = text(field.label) ?? id
+        const options = Array.isArray(field.options) ? field.options.filter(rec) : []
+        const selected = answers[index] ?? []
+        return [
+          `- ${id} (${label}):`,
+          ...selected.flatMap((answer) => {
+            const option = options.find((item) => text(item.label) === answer)
+            return [
+              `  - selected: ${text(option?.id) ?? answer} ("${answer}")`,
+              ...(text(option?.description) ? [`    description: ${text(option?.description)}`] : []),
+            ]
+          }),
+          ...(selected.length ? [] : ["  - no answer"]),
+        ]
+      })
+    : answers.flatMap((answer, index) => [
+        `- question_${index + 1}: ${answer.length ? answer.map((item) => `"${item}"`).join(", ") : "no answer"}`,
+      ])
+  return [
+    "User has answered the persisted runtime input. This is the final answer; do not re-ask the same question:",
+    ...lines,
+    "",
+    "The runtime captured this input and will continue from the durable checkpoint.",
+  ].join("\n")
 }
 
 export const QuestionRoutes = lazy(() =>

@@ -9,6 +9,7 @@ import { Session } from "../../src/session"
 import { MessageV2 } from "../../src/session/message-v2"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
 import { SessionRunner } from "../../src/session/runner"
+import { RuntimeTools } from "../../src/session/runtime-tools"
 import { SessionLog } from "../../src/session/log"
 import { LLM } from "../../src/session/llm"
 import { SessionPrompt } from "../../src/session/prompt"
@@ -32,10 +33,25 @@ import { SessionTaskHandoff } from "../../src/session/task-handoff"
 import { SessionTaskConfirmation } from "../../src/session/task-confirmation"
 import { SessionTaskTable, TaskHandoffTable, TaskRevisionTable } from "../../src/session/session.sql"
 import { Database, eq } from "../../src/storage/db"
+import { Server } from "../../src/server/server"
 
 afterEach(() => mock.restore())
 
 describe("SessionRunner", () => {
+  const reply = async (requestID: unknown, answers: string[][], response?: "confirm" | "cancel") => {
+    const res = await Server.Default().request(`/question/${String(requestID)}/reply`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answers, response }),
+    })
+    expect(res.status).toBe(200)
+  }
+
+  const reject = async (requestID: unknown) => {
+    const res = await Server.Default().request(`/question/${String(requestID)}/reject`, { method: "POST" })
+    expect(res.status).toBe(200)
+  }
+
   const finalTools = {
     catalog: [
       {
@@ -1746,7 +1762,7 @@ describe("SessionRunner", () => {
                 const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
                 return protocol?.confirmations?.[0]?.status === "pending"
               })
-              expect((await Question.list()).filter((item) => item.sessionID === session.id)).toHaveLength(0)
+              expect((await Question.list()).filter((item) => item.sessionID === session.id)).toHaveLength(1)
               const before = await SessionTask.get(session.id)
               if (!before) throw new Error("task missing")
               await result
@@ -1841,7 +1857,7 @@ describe("SessionRunner", () => {
                 const protocol = current.dsl_context?.protocol as { confirmations?: { status?: string }[] } | undefined
                 return protocol?.confirmations?.[0]?.status === "pending"
               })
-              expect((await Question.list()).filter((item) => item.sessionID === cancelled.id)).toHaveLength(0)
+              expect((await Question.list()).filter((item) => item.sessionID === cancelled.id)).toHaveLength(1)
               await cancelResult
               const cancelBefore = await SessionTask.get(cancelled.id)
               const cancelSession = await Session.get(cancelled.id)
@@ -1989,7 +2005,7 @@ describe("SessionRunner", () => {
               )
               expect(proposed?.status).toBe("proposed")
               expect(await Session.children(parent.id)).toHaveLength(1)
-              expect((await Question.list()).filter((item) => item.sessionID === source.id)).toHaveLength(0)
+              expect((await Question.list()).filter((item) => item.sessionID === source.id)).toHaveLength(1)
               await result
               const current = await Session.get(source.id)
               const protocol = current.dsl_context?.protocol as
@@ -2374,12 +2390,6 @@ describe("SessionRunner", () => {
       version: "2",
       items: [
         {
-          id: "confirm_tools",
-          kind: "confirm",
-          prompt: "Run tools?",
-          plan: "Run the confirmed tools.",
-        },
-        {
           id: "read_failed",
           kind: "tool",
           target: "read",
@@ -2490,6 +2500,7 @@ describe("SessionRunner", () => {
                 model,
                 abort: abort.signal,
               })
+              const released = Date.now()
               const run = runner.process({
                 user,
                 sessionID: session.id,
@@ -2534,15 +2545,6 @@ describe("SessionRunner", () => {
                   },
                 } as never,
               })
-              await poll(async () => (await Question.list()).length > 0)
-              const questions = await Question.list()
-              expect(questions).toHaveLength(1)
-              const released = Date.now()
-              await Question.reply({
-                requestID: questions[0]!.id,
-                answers: [["Confirm"]],
-                response: "confirm",
-              })
               const result = await run.catch((err) => err)
               const messages = await Session.messages({ sessionID: session.id })
               const part = messages
@@ -2579,16 +2581,15 @@ describe("SessionRunner", () => {
               expect(part?.state.status).toBe("error")
               expect(rows).toHaveLength(1)
               expect(stored?.status).toBe("failed")
-              expect(stored?.actions[0]?.status).toBe("completed")
+              expect(stored?.actions[0]?.status).toBe("failed")
+              expect(stored?.actions[0]?.output).toBeUndefined()
+              expect(stored?.actions[0]?.error).toBe("unique failed output before abort")
+              expect(stored?.actions[0]?.summary).toBe("unique failed output before abort")
+              expect(stored?.actions[0]?.tool_call_ids).toEqual(["call_read_failed", "inner_failed"])
+              expect(stored?.actions[0]?.duration_ms).toBeGreaterThanOrEqual(0)
               expect(stored?.actions[1]?.status).toBe("failed")
-              expect(stored?.actions[1]?.output).toBeUndefined()
-              expect(stored?.actions[1]?.error).toBe("unique failed output before abort")
-              expect(stored?.actions[1]?.summary).toBe("unique failed output before abort")
-              expect(stored?.actions[1]?.tool_call_ids).toEqual(["call_read_failed", "inner_failed"])
-              expect(stored?.actions[1]?.duration_ms).toBeGreaterThanOrEqual(0)
-              expect(stored?.actions[2]?.status).toBe("failed")
-              expect(stored?.actions[2]?.error).toContain("cancelled")
-              expect(stored?.actions[3]?.status).toBe("blocked")
+              expect(stored?.actions[1]?.error).toContain("cancelled")
+              expect(stored?.actions[2]?.status).toBe("blocked")
               expect(stored?.metrics.internal_tool_calls).toBe(2)
               expect(events).toEqual(["call_read_failed", "inner_failed"])
               expect(trace?.tool_calls.map((item) => item.call_id)).toEqual(events)
@@ -2598,7 +2599,6 @@ describe("SessionRunner", () => {
               expect(protocol?.runs?.[0]?.status).toBe("failed")
               expect(lifecycle).toEqual([
                 "protocol.started",
-                "protocol.action.completed",
                 "protocol.action.failed",
                 "protocol.action.failed",
                 "protocol.action.blocked",
@@ -2613,7 +2613,7 @@ describe("SessionRunner", () => {
     }
   })
 
-  test("recovers unfinished native protocol output and restores pending confirm", async () => {
+  test("recovers unfinished confirmation and deterministically continues its persisted graph", async () => {
     await using tmp = await tmpdir()
     const model = {
       id: ModelID.make("gpt-5.2"),
@@ -2622,6 +2622,29 @@ describe("SessionRunner", () => {
       limit: { context: 200_000 },
     } as never
     const hook = spyOn(Provider, "getModel").mockImplementation(async () => model)
+    let tools = 0
+    const built = spyOn(RuntimeTools, "build").mockResolvedValue({
+      catalog: [
+        {
+          id: "read",
+          description: "Read file",
+          schema: {
+            type: "object",
+            properties: { filePath: { type: "string" } },
+            required: ["filePath"],
+          },
+        },
+      ],
+      prompt: "",
+      execute: async () => {
+        tools++
+        return {
+          title: "read",
+          output: "The parent session will resume automatically when the child result is available.",
+          metadata: { delegated: true },
+        }
+      },
+    } as never)
 
     try {
       await Instance.provide({
@@ -2631,6 +2654,26 @@ describe("SessionRunner", () => {
             workspaceID: WorkspaceID.ascending(),
             fn: async () => {
               const session = await Session.create({})
+              await SessionTask.confirmed({
+                sessionID: session.id,
+                runID: "setup",
+                actionIDs: ["setup"],
+                actions: [
+                  {
+                    type: "action",
+                    id: "read_after_confirm",
+                    title: "read_after_confirm",
+                    operation: "read",
+                    executor: { type: "tool", target: "read", capabilities: [] },
+                    input: { filePath: "alignment.md" },
+                    depends_on: [],
+                    context_refs: [],
+                    result_policy: "summary",
+                  },
+                ],
+                legacy: { title: "Recovery task", body: "Continue the confirmed recovery graph." },
+                persist: true,
+              })
               const user = (await Session.updateMessage({
                 id: MessageID.ascending(),
                 sessionID: session.id,
@@ -2680,6 +2723,12 @@ describe("SessionRunner", () => {
                         prompt: "Confirm this plan before execution.",
                         plan: "1. Inspect alignment guides.\n2. Patch snapping behavior.",
                       },
+                      {
+                        id: "read_after_confirm",
+                        kind: "tool",
+                        target: "read",
+                        args: { filePath: "alignment.md" },
+                      },
                     ],
                   },
                   title: "Agent Protocol Output",
@@ -2698,12 +2747,15 @@ describe("SessionRunner", () => {
               expect(questions[0]?.questions[0]?.header).toBe("Confirm plan")
               expect(questions[0]?.questions[0]?.question).toContain("Inspect alignment guides")
               expect(logs.some((item) => item.type === "protocol.recovery.started")).toBe(true)
-              await Question.reject(questions[0]!.id)
+              await reply(questions[0]!.id, [["Confirm"]], "confirm")
+              await poll(() => tools === 1)
+              expect(tools).toBe(1)
             },
           }),
       })
     } finally {
       hook.mockRestore()
+      built.mockRestore()
     }
   })
 
@@ -4369,11 +4421,7 @@ describe("SessionRunner", () => {
               expect(questions[0]?.tool?.callID).toBe("call_confirm_plan")
               expect(protocol?.confirmations?.[0]?.status).toBe("pending")
 
-              await Question.reply({
-                requestID: questions[0]!.id,
-                answers: [["Confirm"]],
-                response: "confirm",
-              })
+              await reply(questions[0]!.id, [["Confirm"]], "confirm")
               await run
               await poll(() => bootstraps.some((item) => item.metadata?.source === "task_revision_bootstrap"))
               expect(tools).toBe(0)
@@ -4546,11 +4594,7 @@ describe("SessionRunner", () => {
               const questions = await Question.list()
 
               expect(questions).toHaveLength(1)
-              await Question.reply({
-                requestID: questions[0]!.id,
-                answers: [["Confirm"]],
-                response: "confirm",
-              })
+              await reply(questions[0]!.id, [["Confirm"]], "confirm")
               await run
               await poll(() => bootstraps.some((item) => item.metadata?.source === "task_revision_bootstrap"))
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
@@ -4791,9 +4835,11 @@ describe("SessionRunner", () => {
     }
     let calls = 0
     const systems: string[] = []
+    const contexts: string[] = []
     const stream = spyOn(LLM, "stream").mockImplementation(async (req) => {
       calls++
       systems.push((req.system ?? []).join("\n"))
+      contexts.push(JSON.stringify(req.messages))
       const input = calls === 1 ? body : done
       return {
         fullStream: (async function* () {
@@ -4905,11 +4951,14 @@ describe("SessionRunner", () => {
               expect(pendingProtocol?.inputs?.[0]?.questions).toHaveLength(2)
               expect(await Storage.list(["session_protocol_run", session.id])).toHaveLength(0)
 
-              await Question.reply({
-                requestID: questions[0]!.id,
-                answers: [["src/visual-state/history.ts"], ["Truncate redo branch"]],
-              })
+              await reply(questions[0]!.id, [["src/visual-state/history.ts"], ["Truncate redo branch"]])
               expect(await run).toBe("stop")
+              await poll(() => calls === 2)
+              await poll(async () =>
+                (await Session.messages({ sessionID: session.id }))
+                  .flatMap((item) => item.parts)
+                  .some((part) => part.type === "text" && part.text.includes("Proceeding with the selected path and policy.")),
+              )
 
               const messages = await Session.messages({ sessionID: session.id })
               const text = messages
@@ -4922,16 +4971,14 @@ describe("SessionRunner", () => {
               const doneProtocol = doneSession.dsl_context?.protocol as
                 | { inputs?: { action_id?: string; answers?: string[][]; status?: string }[] }
                 | undefined
-              expect(calls).toBe(2)
-              expect(systems[1]).toContain("Use an `answer` item")
-              expect(systems[1]).toContain("Use a `done` item")
-              expect(systems[1]).toContain("Resolved user input from the previous runtime interaction:")
-              expect(systems[1]).toContain("Input action: resolve_path_and_contracts")
-              expect(systems[1]).toContain("Question: Choose the path and contracts.")
-              expect(systems[1]).toContain('selected: src_visual_state ("src/visual-state/history.ts")')
-              expect(systems[1]).toContain("description: Create src path.")
-              expect(systems[1]).toContain('selected: truncate_redo ("Truncate redo branch")')
-              expect(systems[1]).toContain("Treat the selected option(s), custom answer(s), and provided text above")
+              const context = contexts.find((item) => item.includes("User answered protocol input")) ?? ""
+              expect(calls).toBeGreaterThanOrEqual(2)
+              expect(context).toContain("User answered protocol input resolve_path_and_contracts")
+              expect(context).toContain("Choose the path and contracts.")
+              expect(context).toContain('selected: src_visual_state (\\"src/visual-state/history.ts\\")')
+              expect(context).toContain("description: Create src path.")
+              expect(context).toContain('selected: truncate_redo (\\"Truncate redo branch\\")')
+              expect(context).toContain("do not re-ask the same question")
               expect(doneProtocol?.inputs?.[0]?.status).toBe("answered")
               expect(doneProtocol?.inputs?.[0]?.answers).toEqual([
                 ["src/visual-state/history.ts"],

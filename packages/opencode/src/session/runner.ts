@@ -38,6 +38,7 @@ import { SessionTaskRecovery } from "./task-recovery"
 import { SessionTaskHandoff } from "./task-handoff"
 import { DelegatedTask } from "./delegated-task"
 import { Database } from "@/storage/db"
+import { SessionInteraction } from "./interaction"
 
 export namespace SessionRunner {
   const log = Log.create({ service: "session.runner" })
@@ -69,6 +70,10 @@ export namespace SessionRunner {
   }
 
   const resumes = Instance.state(() => new Set<SessionID>())
+
+  export function active(sessionID: SessionID) {
+    return resumes().has(sessionID)
+  }
 
   function prior(user: MessageV2.User) {
     const meta = user.metadata
@@ -315,8 +320,25 @@ export namespace SessionRunner {
           data: { error: err instanceof Error ? err.message : String(err) },
         }).catch(() => {})
       })
-      .finally(() => set.delete(input.sessionID))
+      .finally(() => {
+        set.delete(input.sessionID)
+        void SessionInteraction.scan()
+      })
     return true
+  }
+
+  export async function resume(input: { sessionID: SessionID; messageID?: MessageID; runID?: string }) {
+    const set = resumes()
+    if (set.has(input.sessionID)) return false
+    const data = await resumable(input.sessionID, true, input.messageID)
+    if (!data) return false
+    set.add(input.sessionID)
+    try {
+      await replay(data, input.runID)
+      return true
+    } finally {
+      set.delete(input.sessionID)
+    }
   }
 
   export function create(input: Parameters<typeof SessionProcessor.create>[0]) {
@@ -811,6 +833,7 @@ export namespace SessionRunner {
       stats: stats(run),
       user: stream.user,
     })
+    SessionInteraction.ready({ sessionID, runID: run.run_id })
     return "stop"
   }
 
@@ -926,18 +949,23 @@ export namespace SessionRunner {
     )
   }
 
-  async function resumable(sessionID: SessionID): Promise<Resume | undefined> {
+  async function resumable(
+    sessionID: SessionID,
+    forced = false,
+    messageID?: MessageID,
+  ): Promise<Resume | undefined> {
     const state = SessionStatus.get(sessionID)
-    if (SessionStatus.shouldContinue(state)) return
+    if (!forced && SessionStatus.shouldContinue(state)) return
     if ((await Question.list()).some((item) => item.sessionID === sessionID)) return
     const messages = await MessageV2.filterCompacted(MessageV2.stream(sessionID))
     const message = messages.findLast(
-      (item): item is MessageV2.WithParts & { info: MessageV2.Assistant } => item.info.role === "assistant",
+      (item): item is MessageV2.WithParts & { info: MessageV2.Assistant } =>
+        item.info.role === "assistant" && (!messageID || item.info.id === messageID),
     )
     if (!message) return
-    if (messages.at(-1)?.info.id !== message.info.id) return
+    if (!forced && messages.at(-1)?.info.id !== message.info.id) return
     if (message.info.error) return
-    if (completed(message.parts)) return
+    if (!forced && completed(message.parts)) return
     const parsed = await nativeOutput(message.info.id)
     if (!parsed?.ok) return
     const user = messages.findLast(
@@ -966,7 +994,7 @@ export namespace SessionRunner {
     return parts.some((part) => part.type === "text" && kinds.has(String(part.metadata?.kind ?? "")))
   }
 
-  async function replay(input: Resume) {
+  async function replay(input: Resume, runID?: string) {
     SessionStatus.set(input.sessionID, { type: "running" })
     await SessionLog.emit({
       sessionID: input.sessionID,
@@ -1010,6 +1038,28 @@ export namespace SessionRunner {
       })
       return
     }
+    const gate = recoverableConfirm(input.parsed)
+    if (gate) {
+      const exec = await execute({
+        chat,
+        stream,
+        sessionID: input.sessionID,
+        parsed: input.parsed,
+        recovered: true,
+        runID,
+      })
+      await settle({ chat, stream, sessionID: input.sessionID, ...exec })
+      await mark({
+        assistant: chat.message,
+        outcome: outcome(exec.run),
+        reason: reason(exec.run),
+        runID: exec.run.run_id,
+        stats: stats(exec.run),
+        user: input.user.info,
+      })
+      SessionInteraction.ready({ sessionID: input.sessionID, runID: exec.run.run_id })
+      return
+    }
     const action = recoverable(input.parsed)
     if (!action) {
       await guide(input, "The interrupted protocol package did not contain a safe recovery action.")
@@ -1022,6 +1072,7 @@ export namespace SessionRunner {
         sessionID: input.sessionID,
         parsed: single(input.parsed, action),
         recovered: true,
+        runID,
       })
       await settle({ chat, stream, sessionID: input.sessionID, ...exec })
       await mark({
@@ -1032,6 +1083,7 @@ export namespace SessionRunner {
         stats: stats(exec.run),
         user: input.user.info,
       })
+      SessionInteraction.ready({ sessionID: input.sessionID, runID: exec.run.run_id })
       return
     }
     if (action.executor.type === "agent") {
@@ -1042,6 +1094,7 @@ export namespace SessionRunner {
         sessionID: input.sessionID,
         parsed: single(input.parsed, action),
         recovered: true,
+        runID,
       })
       await settle({ chat, stream, sessionID: input.sessionID, ...exec })
       await mark({
@@ -1052,6 +1105,7 @@ export namespace SessionRunner {
         stats: stats(exec.run),
         user: input.user.info,
       })
+      SessionInteraction.ready({ sessionID: input.sessionID, runID: exec.run.run_id })
       SessionStatus.set(input.sessionID, {
         type: "waiting_child",
         message: "Waiting for recovered delegated child session.",
@@ -1077,6 +1131,13 @@ export namespace SessionRunner {
     if (!action) return
     if (action.depends_on.length > 0) return
     return action
+  }
+
+  function recoverableConfirm(input: AgentProtocolParser.Parsed) {
+    if (input.declaration.payload.type !== "action_graph") return
+    return input.declaration.payload.actions.find(
+      (item) => item.executor.type === "human" && item.operation === "confirm" && item.depends_on.length === 0,
+    )
   }
 
   function single(input: AgentProtocolParser.Parsed, action: AgentProtocol.Action): AgentProtocolParser.Parsed {
@@ -1455,8 +1516,9 @@ export namespace SessionRunner {
     sessionID: SessionID
     parsed: AgentProtocolParser.Parsed
     recovered: boolean
+    runID?: string
   }) {
-    const runID = Identifier.ascending("log").replace(/^log_/, "apr_")
+    const runID = input.runID ?? Identifier.ascending("log").replace(/^log_/, "apr_")
     const raw =
       input.parsed.declaration.payload.type === "action_graph" ? input.parsed.declaration.payload.actions : []
     const gates = raw.filter((item) => {
@@ -3366,7 +3428,8 @@ export namespace SessionRunner {
   }
 
   function revision(run: AgentProtocol.Result) {
-    return receipt(run) !== undefined
+    if (receipt(run) === undefined) return false
+    return !run.actions.some((item) => (item.output ?? item.summary).includes("interaction boundary"))
   }
 
   function preparing(run: AgentProtocol.Result) {
@@ -3534,98 +3597,10 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
       status: "pending",
     })
-    let answers: Question.Answer[]
-    try {
-      answers = await Question.ask({
-        sessionID: input.sessionID,
-        questions: qs,
-        tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
-      })
-    } catch (err) {
-      await storeInput({
-        action: input.action,
-        messageID: input.messageID,
-        questions: qs,
-        runID: input.runID,
-        sessionID: input.sessionID,
-        status: "rejected",
-      })
-      throw err
-    }
-    await storeInput({
-      action: input.action,
-      answers,
-      messageID: input.messageID,
-      questions: qs,
-      runID: input.runID,
-      sessionID: input.sessionID,
-      status: "answered",
-    })
-
-    const lines: string[] = []
-    if (form) {
-      fields.forEach((field, index) => {
-        const opts = Array.isArray(field.options) ? field.options.map(object) : []
-        const valid = new Set(opts.flatMap((item) => (typeof item.label === "string" ? [item.label] : [])))
-        const parsed = parseInquireAnswer(answers[index], valid)
-        const labels = new Map(opts.flatMap((item) => (typeof item.label === "string" ? [[item.label, item]] : [])))
-        const id = typeof field.id === "string" ? field.id : `field_${index + 1}`
-        const label = typeof field.label === "string" ? field.label : id
-        lines.push(`- ${id} (${label}):`)
-        if (parsed.selected.length) {
-          for (const selected of parsed.selected) {
-            const opt = labels.get(selected)
-            const value = typeof opt?.id === "string" ? opt.id : selected
-            lines.push(`  - selected: ${value} ("${selected}")`)
-            if (typeof opt?.description === "string") lines.push(`    description: ${opt.description}`)
-          }
-        }
-        if (parsed.custom.length) {
-          lines.push(`  - custom: ${parsed.custom.map((item) => `"${item}"`).join(", ")}`)
-        }
-        for (const [selected, note] of Object.entries(parsed.notes)) {
-          lines.push(`  - details for "${selected}": "${note}"`)
-        }
-        if (!parsed.selected.length && !parsed.custom.length) lines.push("  - no answer")
-      })
-    } else {
-      const valid = new Set(options.map((item) => item.label))
-      const parsed = parseInquireAnswer(answers[0], valid)
-      if (parsed.selected.length) {
-        lines.push("- Selected options:")
-        const labels = new Map(options.map((item) => [item.label, item]))
-        for (const selected of parsed.selected) {
-          const opt = labels.get(selected)
-          lines.push(`  - id: ${opt?.id ?? selected}`)
-          lines.push(`    label: ${selected}`)
-          if (opt?.description) lines.push(`    description: ${opt.description}`)
-        }
-      }
-      if (parsed.custom.length) {
-        lines.push(
-          `- Custom answer${parsed.custom.length > 1 ? "s" : ""}: ${parsed.custom.map((item) => `"${item}"`).join(", ")}`,
-        )
-      }
-      const notes = Object.entries(parsed.notes)
-      if (notes.length) {
-        lines.push("- Additional details provided by the user:")
-        for (const [label, note] of notes) {
-          lines.push(`  - "${label}": "${note}"`)
-        }
-      }
-    }
-    const answered = form ? answers.some((item) => (item?.length ?? 0) > 0) : lines.length > 0
-    const header = answered
-      ? `User has answered your question "${prompt}" (this is the user's final answer; do not re-ask this question):`
-      : `The user did not provide an answer to "${prompt}". You may ask a different question or proceed with a reasonable default.`
     return {
       title: input.action.title,
-      output: [
-        lines.length ? `${header}\n${lines.join("\n")}` : header,
-        "",
-        "The runtime captured this input and stopped the current runtime interaction so the model can continue with the resolved answer.",
-      ].join("\n"),
-      metadata: { blocked: true, reason: "input_received", answers },
+      output: "The runtime persisted this input request and stopped at a recoverable interaction boundary.",
+      metadata: { blocked: true, reason: "waiting_user", durable: true },
     }
   }
 
@@ -3674,6 +3649,23 @@ export namespace SessionRunner {
         },
       },
     })
+    if (input.status === "pending")
+      await SessionInteraction.open({
+        requestID: SessionInteraction.request({
+          sessionID: input.sessionID,
+          runID: input.runID,
+          actionID: input.action.id,
+          kind: "protocol_input",
+        }),
+        sessionID: input.sessionID,
+        questions: input.questions,
+        tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+        kind: "protocol_input",
+        runID: input.runID,
+        actionID: input.action.id,
+        payload: { title: input.action.title, input: input.action.input },
+        checkpoint: { run_id: input.runID, action_id: input.action.id },
+      })
   }
 
   async function confirm(input: {
@@ -3685,8 +3677,26 @@ export namespace SessionRunner {
   }): Promise<AgentProtocolExecutor.ToolResult> {
     const data = object(input.action.input)
     const plan = typeof data.plan === "string" ? data.plan : ""
-    const prompt = typeof data.prompt === "string" ? data.prompt : "Please confirm this plan before execution."
     const intent = object(data.assignment)
+    const session = await Session.get(input.sessionID)
+    const protocol = object(object(session.dsl_context).protocol)
+    const saved = Array.isArray(protocol.confirmations)
+      ? protocol.confirmations
+          .map(object)
+          .find((item) => item.run_id === input.runID && item.action_id === input.action.id)
+      : undefined
+    if (saved?.status === "confirmed")
+      return {
+        title: input.action.title,
+        output: "The persisted user confirmation was applied. Continue the confirmed execution graph.",
+        metadata: { confirmed: true, durable: true },
+      }
+    if (saved?.status === "cancelled")
+      return {
+        title: input.action.title,
+        output: "The persisted user decision cancelled this execution graph.",
+        metadata: { blocked: true, cancelled: true, durable: true, reason: "user_cancelled" },
+      }
     if (intent.op === "create" || intent.op === "update" || intent.op === "handoff") await discard(input.messageID)
     const refs = input.action.context_refs.filter((item): item is string => typeof item === "string")
     const handoff =
@@ -3739,123 +3749,17 @@ export namespace SessionRunner {
       sessionID: input.sessionID,
       status: "pending",
     })
-    if (intent.op === "update" || intent.op === "handoff")
-      return {
-        title: input.action.title,
-        output:
-          intent.op === "update"
-            ? "Task update proposal is waiting for the user's decision."
-            : "Task handoff proposal is waiting for the user's decision.",
-        metadata: { blocked: true, proposal: true },
-      }
-    const reply = await Question.askReply({
-      sessionID: input.sessionID,
-      questions: [
-        {
-          question: [prompt, "", plan].filter((item) => item.trim().length > 0).join("\n"),
-          header: "Confirm plan",
-          options: [
-            { label: "Confirm", description: "Approve this plan and continue execution." },
-            { label: "Cancel", description: "Do not execute this plan." },
-          ],
-          multiple: false,
-          custom: false,
-        },
-      ],
-      tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
-    })
-    if (reply.rerouted)
-      return {
-        title: input.action.title,
-        output: "Plan confirmation moved to its durable continuation carrier.",
-        metadata: { blocked: true, confirmed: true, rerouted: true },
-      }
-    const answer = reply.answers[0]?.[0] ?? ""
-    const ok = reply.response ? reply.response === "confirm" : yes(answer)
-    const assignment = ok
-      ? await SessionAssignment.confirm({
-          action: input.action,
-          messageID: input.messageID,
-          plan,
-          runID: input.runID,
-          sessionID: input.sessionID,
-        })
-      : undefined
-    const created =
-      ok && assignment && intent.op === "create" && intent.target === "self"
-        ? await SessionTask.confirmed({
-            sessionID: input.sessionID,
-            runID: input.runID,
-            messageID: input.messageID,
-            actionIDs: [input.action.id],
-            actions: [],
-            legacy: { title: input.action.title, body: plan },
-            persist: true,
-            requiresAssignment: true,
-          })
-        : undefined
-    if (created?.type === "execute")
-      Database.effect(() =>
-        SessionTaskRecovery.resume(input.sessionID).catch((err) => {
-          log.warn("task bootstrap blocked", { err, sessionID: input.sessionID })
-        }),
-      )
-    const transferred =
-      ok && assignment && handoff
-        ? await SessionTaskHandoff.confirm(handoff.id, { assignmentID: assignment.id })
-        : undefined
-    if (!ok && handoff) await SessionTaskHandoff.cancel(handoff.id)
-    await storeConfirm({
-      action: input.action,
-      assignment,
-      messageID: input.messageID,
-      plan,
-      response: ok ? "confirm" : "cancel",
-      runID: input.runID,
-      sessionID: input.sessionID,
-      status: ok ? "confirmed" : "cancelled",
-    })
-    await recordConfirm({
-      action: input.action,
-      messageID: input.messageID,
-      plan,
-      response: ok ? "confirm" : "cancel",
-      runID: input.runID,
-      sessionID: input.sessionID,
-    })
-    if (ok) {
-      if (created)
-        return {
-          title: input.action.title,
-          output: "Task confirmed and persisted. The Runtime will ask the model to generate the execution graph.",
-          metadata: {
-            blocked: true,
-            confirmed: true,
-            dispatched: false,
-            task_graph_bound: false,
-          },
-        }
-      return {
-        title: input.action.title,
-        output: transferred
-          ? "Task handoff confirmed. The Runtime created a peer session; source actions will not execute."
-          : "Plan confirmed by user. Continue executing the remaining package actions in this run.",
-        metadata: transferred
-          ? {
-              confirmed: true,
-              handoff_id: transferred.id,
-              target_session_id: transferred.target_session_id,
-              target_task_id: transferred.target_task_id,
-            }
-          : { confirmed: true },
-      }
-    }
     return {
       title: input.action.title,
-      output: ["User cancelled the plan confirmation.", "The runtime did not execute the remaining package actions."]
-        .filter((item) => item.length > 0)
-        .join("\n"),
-      metadata: { blocked: true, confirmed: false, cancelled: true },
+      output:
+        intent.op === "update"
+          ? "Task update proposal is waiting at a durable interaction boundary."
+          : intent.op === "handoff"
+            ? "Task handoff proposal is waiting at a durable interaction boundary."
+            : intent.op === "create"
+              ? "Task creation proposal is waiting at a durable interaction boundary."
+              : "Plan confirmation is waiting at a durable interaction boundary.",
+      metadata: { blocked: true, proposal: true, durable: true, reason: "waiting_user" },
     }
   }
 
@@ -4016,6 +3920,34 @@ export namespace SessionRunner {
         },
       },
     })
+    if (input.status === "pending")
+      await SessionInteraction.open({
+        requestID: SessionInteraction.request({
+          sessionID: input.sessionID,
+          runID: input.runID,
+          actionID: input.action.id,
+          kind: "protocol_confirm",
+        }),
+        sessionID: input.sessionID,
+        questions: [
+          {
+            question: input.plan,
+            header: "Confirm plan",
+            options: [
+              { label: "Confirm", description: "Approve this plan and continue execution." },
+              { label: "Cancel", description: "Do not execute this plan." },
+            ],
+            multiple: false,
+            custom: false,
+          },
+        ],
+        tool: { messageID: input.messageID, callID: `call_${input.action.id}` },
+        kind: object(input.action.input).assignment ? "task_confirm" : "protocol_confirm",
+        runID: input.runID,
+        actionID: input.action.id,
+        payload: { title: input.action.title, plan: input.plan },
+        checkpoint: { run_id: input.runID, action_id: input.action.id },
+      })
   }
 
   async function delegate(input: {

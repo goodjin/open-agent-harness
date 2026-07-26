@@ -537,7 +537,7 @@ describe("question routes", () => {
       expect(res.status).toBe(200)
       expect(vals?.confirmations?.[0]?.status).toBe("cancelled")
       expect(vals?.confirmations?.[0]?.response).toBe("cancel")
-      expect(prompt).toHaveBeenCalled()
+      expect(prompt).not.toHaveBeenCalled()
     } finally {
       prompt.mockRestore()
     }

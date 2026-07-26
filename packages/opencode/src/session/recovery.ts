@@ -10,6 +10,7 @@ import type { MessageID, PartID, SessionID } from "./schema"
 import { SessionTaskRecovery } from "./task-recovery"
 import { SessionTaskHandoff } from "./task-handoff"
 import { SessionTaskConfirmation } from "./task-confirmation"
+import { SessionInteraction } from "./interaction"
 
 export namespace SessionRecovery {
   const error = "Tool call interrupted by process restart before finish/error was recorded."
@@ -147,6 +148,7 @@ export namespace SessionRecovery {
     await SessionTaskRecovery.scan()
     await SessionTaskHandoff.scan()
     await SessionTaskConfirmation.scan()
+    await SessionInteraction.scan({ recover: true })
     const packets = await detect(input)
     const now = Date.now()
     for (const packet of packets) {

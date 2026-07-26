@@ -143,9 +143,9 @@ Agent Protocol v2 `answer` items are response metadata, not executable actions. 
 
 ## User Input Questions
 
-Agent Protocol v2 `input` items are runtime user-choice gates. Runtime maps them to human actions, emits a `Question.ask` request, and stores a matching `protocol.inputs` record in the parent session `dsl_context` before waiting for the reply.
+Agent Protocol v2 `input` items are runtime user-choice gates. Runtime maps them to human actions and persists a matching `runtime_interaction` plus the `protocol.inputs` projection before publishing the Question event. The protocol executor then stops at a recoverable interaction boundary; it does not hold a required `Question.ask` Deferred across the user wait.
 
-Live replies still resolve the in-memory `Question.ask` deferred. If the page reloads, the app reconnects, or the server loses the live pending map, `/question` restores pending `protocol.inputs` records into normal question requests. Replying to a restored input updates that record to `answered`, stores the selected answers, and sends a continuation prompt into the same session with the captured answer text. Rejecting the restored input marks it `rejected` and resumes the session with an explicit dismissal note.
+Replying updates the DSL projection and atomically moves the interaction from `pending` to `answered` or `rejected` while inserting one deduplicated `runtime_continuation` outbox row. The continuation prompt carries the captured answer into the same session. Page reload, hot reload, and process restart all read the same interaction row, so losing the in-memory Question map does not change the reply or recovery path.
 
 Restored protocol confirmations and inputs must acknowledge the HTTP reply immediately after the persisted record is updated and the matching `question.replied` or `question.rejected` event is published. The continuation prompt runs in the background. The UI must not wait for the next model request, provider queue slot, or streamed model output before removing the pending question card and showing the next session status.
 
@@ -154,6 +154,20 @@ When an `input` answer resumes the model, Runtime must present a resolved-input 
 The session UI surfaces pending questions both in the timeline context and in the composer dock. The composer dock is the stable fallback: an actionable question must remain visible even if the active message changes or the timeline filter hides the original turn.
 
 The question dock is bounded by the visible viewport. Long confirmation or input content scrolls inside the dock while the action footer remains visible. After a successful reply or rejection, the app removes the matching request from its local question store immediately instead of depending only on a later server event. The submitted request stays locked during that transition. If an already-settled request returns `ConflictError`, the app treats the local card as stale, removes it, and renders the structured server message instead of stringifying the response as `[object Object]`.
+
+## Durable Interaction and Continuation
+
+`runtime_interaction` is the authority for every Runtime-owned confirmation and input. It stores the Session, Run, Action, source assistant message, display payload, decision, generation, and checkpoint. `QuestionService.pending` is only a live notification optimization. `dsl_context.protocol.confirmations` and `dsl_context.protocol.inputs` remain public projections and legacy reconstruction evidence.
+
+The interaction is committed before it is visible. A user decision and its `runtime_continuation` command commit in one immediate SQLite transaction under a stable `runtime_continuation:<interaction>:<generation>` dedupe key. The command worker claims with an owner token and lease, renews its heartbeat during delivery, and can complete the outbox only while the same token still owns the persisted payload. A stale delivering lease and a failed delivery are recoverable on startup.
+
+Interaction visibility and execution readiness are separate persisted facts. A human action can become visible before the current protocol turn has finished writing its summary. The worker therefore cannot claim an ordinary live continuation until the interaction checkpoint is `ready`. Runner marks it ready only after the protocol summary and Turn terminal state are committed. If the user confirms immediately, the command stays pending instead of racing the original assistant message.
+
+An ordinary confirmation stores the source assistant message id and original Run id in the continuation checkpoint. Delivery reloads the persisted `AgentProtocolOutput`, reuses the same Run id, reads the confirmation decision from SQLite, and continues the original action graph without another model declaration. A cancellation records the terminal decision and does not enqueue graph execution. Task create/update/handoff confirmation remains a separate admission boundary: Runtime ignores every executable sibling in that proposal package, persists the approved Task/Revision or Handoff state, and uses the Task bootstrap path to request a fresh execution graph.
+
+Protocol input is intentionally different from ordinary confirmation. The selected values can change the graph, so its continuation is a new model turn containing the exact captured option ids, labels, descriptions, details, and custom text. Both continuation kinds use the same durable outbox and recovery scan.
+
+At startup, recovery reconciles legacy DSL projections into stable interaction ids, restores pending Questions, reclaims failed or expired continuation leases, and repairs Session status from persisted interaction/outbox facts. Recovery mode may claim a not-yet-ready checkpoint because no original process execution survives a restart. If the source assistant message already contains the matching protocol summary, reconciliation marks the checkpoint ready directly. Competing recovery workers do not fail the command: a worker that finds the Session recovery fence occupied atomically releases its lease back to `pending`, and the current owner scans again after releasing the fence.
 
 ## Assignment Confirmation
 

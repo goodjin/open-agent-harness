@@ -6,6 +6,7 @@ import { SessionStatus } from "@/session/status"
 import { Log } from "@/util/log"
 import z from "zod"
 import { QuestionID } from "./schema"
+import { SessionInteraction } from "@/session/interaction"
 
 const log = Log.create({ service: "question" })
 
@@ -155,6 +156,14 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
           questions: input.questions,
           tool: input.tool,
         }
+        yield* Effect.sync(() =>
+          SessionInteraction.open({
+            requestID: id,
+            sessionID: input.sessionID,
+            questions: input.questions,
+            tool: input.tool,
+          }),
+        )
         pending.set(id, { info, deferred })
         const current = SessionStatus.get(input.sessionID)
         if (current.type !== "waiting_user") {
@@ -193,11 +202,28 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
       }) {
         const existing = pending.get(input.requestID)
         if (!existing) {
-          log.warn("reply for unknown request", { requestID: input.requestID })
-          return false
+          const restored = yield* Effect.sync(() =>
+            SessionInteraction.resolve({
+              requestID: input.requestID,
+              answers: input.answers,
+              response: input.response,
+              resume: true,
+              source: "restored_question",
+            }),
+          )
+          if (!restored) log.warn("reply for unknown request", { requestID: input.requestID })
+          return !!restored
         }
         if (input.guard && !input.guard()) return false
         pending.delete(input.requestID)
+        yield* Effect.sync(() =>
+          SessionInteraction.resolve({
+            requestID: input.requestID,
+            answers: input.answers,
+            response: input.response,
+            resume: false,
+          }),
+        )
         log.info("replied", { requestID: input.requestID, answers: input.answers, response: input.response })
         Bus.publish(Event.Replied, {
           sessionID: existing.info.sessionID,
@@ -216,10 +242,27 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
       const reject = Effect.fn("QuestionService.reject")(function* (requestID: QuestionID) {
         const existing = pending.get(requestID)
         if (!existing) {
-          log.warn("reject for unknown request", { requestID })
+          const restored = yield* Effect.sync(() =>
+            SessionInteraction.resolve({
+              requestID,
+              answers: [],
+              rejected: true,
+              resume: true,
+              source: "restored_question",
+            }),
+          )
+          if (!restored) log.warn("reject for unknown request", { requestID })
           return
         }
         pending.delete(requestID)
+        yield* Effect.sync(() =>
+          SessionInteraction.resolve({
+            requestID,
+            answers: [],
+            rejected: true,
+            resume: false,
+          }),
+        )
         log.info("rejected", { requestID })
         Bus.publish(Event.Rejected, {
           sessionID: existing.info.sessionID,
@@ -229,7 +272,9 @@ export class QuestionService extends ServiceMap.Service<QuestionService, Questio
       })
 
       const list = Effect.fn("QuestionService.list")(function* () {
-        return Array.from(pending.values(), (x) => x.info)
+        const live = Array.from(pending.values(), (x) => x.info)
+        const ids = new Set(live.map((item) => item.id))
+        return [...live, ...SessionInteraction.pending().filter((item) => !ids.has(item.id))]
       })
 
       return QuestionService.of({ ask, askReply, reply, reject, list })

@@ -7,6 +7,7 @@ import type { PermissionNext } from "../permission/next"
 import type { ProjectID } from "../project/schema"
 import type { SessionID, MessageID, PartID } from "./schema"
 import type { WorkspaceID } from "../control-plane/schema"
+import type { QuestionID } from "../question/schema"
 import { Timestamps } from "../storage/schema.sql"
 
 type PartData = Omit<MessageV2.Part, "id" | "sessionID" | "messageID">
@@ -20,7 +21,14 @@ type AssignmentResult = "completed" | "partial" | "blocked" | "failed" | "waitin
 type StatusClass = "active" | "blocked" | "interrupted" | "terminal" | "archived"
 type StatusSource = "runtime" | "recovery" | "user" | "system"
 type OutboxStatus = "pending" | "delivering" | "delivered" | "acked" | "failed"
-type OutboxKind = "parent_handoff" | "task_revision_bootstrap" | "task_handoff" | "task_confirmation"
+type OutboxKind =
+  | "parent_handoff"
+  | "task_revision_bootstrap"
+  | "task_handoff"
+  | "task_confirmation"
+  | "runtime_continuation"
+type InteractionKind = "question" | "protocol_input" | "protocol_confirm" | "task_confirm"
+type InteractionStatus = "pending" | "answered" | "confirmed" | "cancelled" | "rejected" | "completed" | "failed"
 type TaskStatus = "running" | "waiting_user" | "revising" | "blocked" | "completed" | "failed"
 type TaskSource = "user" | "delegation" | "handoff" | "legacy"
 type RevisionStatus = "draft" | "active" | "completed" | "failed" | "archived"
@@ -254,6 +262,44 @@ export const TaskConfirmationTable = sqliteTable(
   (table) => [
     uniqueIndex("task_confirmation_session_proposal_unique_idx").on(table.session_id, table.proposal_id),
     index("task_confirmation_status_idx").on(table.status),
+  ],
+)
+
+export const RuntimeInteractionTable = sqliteTable(
+  "runtime_interaction",
+  {
+    id: text().primaryKey(),
+    session_id: text()
+      .$type<SessionID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    task_id: text(),
+    revision_id: text(),
+    run_id: text(),
+    action_id: text(),
+    message_id: text().$type<MessageID>(),
+    request_id: text().$type<QuestionID>().notNull(),
+    kind: text().$type<InteractionKind>().notNull(),
+    status: text().$type<InteractionStatus>().notNull(),
+    payload: text({ mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    decision: text({ mode: "json" }).$type<Record<string, unknown>>(),
+    checkpoint: text({ mode: "json" }).$type<Record<string, unknown>>(),
+    generation: integer().notNull().default(1),
+    error: text(),
+    time_created: integer().notNull(),
+    time_updated: integer().notNull(),
+    time_resolved: integer(),
+  },
+  (table) => [
+    uniqueIndex("runtime_interaction_request_unique_idx").on(table.request_id),
+    uniqueIndex("runtime_interaction_protocol_unique_idx").on(
+      table.session_id,
+      table.run_id,
+      table.action_id,
+      table.kind,
+    ),
+    index("runtime_interaction_session_status_idx").on(table.session_id, table.status),
+    index("runtime_interaction_status_updated_idx").on(table.status, table.time_updated),
   ],
 )
 

@@ -5,8 +5,14 @@ import { Metrics } from "@/observability/metrics"
 import { SessionID } from "./schema"
 import z from "zod"
 import { SessionLog } from "./log"
-import { and, Database, desc, eq, gt } from "@/storage/db"
-import { MessageTable, SessionResultTable, SessionTable } from "./session.sql"
+import { and, Database, desc, eq, gt, inArray } from "@/storage/db"
+import {
+  MessageTable,
+  RuntimeInteractionTable,
+  SessionEventOutboxTable,
+  SessionResultTable,
+  SessionTable,
+} from "./session.sql"
 
 export namespace SessionStatus {
   export const Info = z
@@ -202,6 +208,7 @@ export namespace SessionStatus {
     ],
     running: [
       "idle",
+      "queued",
       "running",
       "rate_limited",
       "waiting_permission",
@@ -258,6 +265,7 @@ export namespace SessionStatus {
     ],
     waiting_user: [
       "idle",
+      "queued",
       "running",
       "rate_limited",
       "waiting_permission",
@@ -703,6 +711,24 @@ export namespace SessionStatus {
       !["archived", "aborted", "failed", "error", "timeout", "terminal_reply", "user_completed"].includes(status.type)
     )
       return { type: "waiting_user" }
+    const continuation = Database.use((db) =>
+      db
+        .select({ status: SessionEventOutboxTable.status })
+        .from(SessionEventOutboxTable)
+        .where(
+          and(
+            eq(SessionEventOutboxTable.session_id, row.id),
+            eq(SessionEventOutboxTable.kind, "runtime_continuation"),
+            inArray(SessionEventOutboxTable.status, ["pending", "delivering", "failed"]),
+          ),
+        )
+        .orderBy(desc(SessionEventOutboxTable.updated_at))
+        .limit(1)
+        .get(),
+    )
+    if (continuation?.status === "delivering") return { type: "running" }
+    if (continuation) return { type: "queued" }
+    if (status.type === "waiting_user") return { type: "idle" }
     if (status.type !== "waiting_child") return status
     const pending = obj(obj(row.dsl_context).protocol).pending_delegations ?? {}
     const entries = Object.entries(obj(pending))
@@ -726,6 +752,21 @@ export namespace SessionStatus {
   }
 
   function awaiting(row: Row) {
+    const interaction = Database.use(
+      (db) =>
+        !!db
+          .select({ id: RuntimeInteractionTable.id })
+          .from(RuntimeInteractionTable)
+          .where(
+            and(
+              eq(RuntimeInteractionTable.session_id, row.id),
+              eq(RuntimeInteractionTable.status, "pending"),
+            ),
+          )
+          .limit(1)
+          .get(),
+    )
+    if (interaction) return true
     const protocol = obj(obj(row.dsl_context).protocol)
     return [protocol.confirmations, protocol.inputs].some(
       (items) => Array.isArray(items) && items.some((item) => obj(item).status === "pending"),

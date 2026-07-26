@@ -22,6 +22,7 @@ import { SessionAssignment } from "./assignment"
 import { SessionTaskHandoff } from "./task-handoff"
 import { SessionTask } from "./task"
 import { SessionTaskRecovery } from "./task-recovery"
+import { SessionInteraction } from "./interaction"
 import { MessageV2 } from "./message-v2"
 import { MessageID, SessionID } from "./schema"
 import {
@@ -791,9 +792,25 @@ export namespace SessionTaskConfirmation {
       if (!rec(outbox.payload)) throw new ConflictError({ message: `Task delivery proof is invalid: ${proof.id}` })
       const mode = outbox.payload.mode
       beat?.guard()
-      if (outbox.payload.request_id)
+      const request =
+        typeof outbox.payload.request_id === "string"
+          ? QuestionID.make(outbox.payload.request_id)
+          : SessionInteraction.request({
+              sessionID,
+              runID: run,
+              actionID: action,
+              kind: "protocol_confirm",
+            })
+      SessionInteraction.resolve({
+        requestID: request,
+        answers: [[decision === "confirm" ? "Confirm" : "Cancel"]],
+        response: decision,
+        resume: false,
+        source: "task_confirmation",
+      })
+      if (requestID)
         await Question.reply({
-          requestID: QuestionID.make(String(outbox.payload.request_id)),
+          requestID,
           answers: [[decision === "confirm" ? "Confirm" : "Cancel"]],
           response: decision,
           guard: () => right(proof, outbox.id, "prompt"),
